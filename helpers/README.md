@@ -187,3 +187,11 @@ before each segment and obeys a configurable output budget (1 MiB–32 GiB,
 512 MiB default). This is passthrough only: unsupported containers/codecs fail.
 No memory sandbox is claimed. Playback cache management, authenticated HLS
 routes and subtitle renditions are still pending; the app player is unchanged.
+
+Packaging now writes a master `media.m3u8` and a `track-N/` directory per audio or
+video track. AVFoundation rejected the combined H.264 + AC-3 writer configuration;
+separate rendition writers preserve both compressed streams without re-encoding.
+A real 1.33 GB MP4 episode packaged on Diamond and AVPlayer opened it, discovered
+one audio option, and advanced playback (muted diagnostic; no audible sync check).
+MKV is rejected by AVFoundation before track loading and still needs a separate
+remux path. MP4 `tx3g` text extraction is also still needed for translated MP4 captions.

@@ -46,24 +46,43 @@ pub async fn package(input: &Path, output: &Path, helper: &Path, max_bytes: u64)
         );
         let playlist = fs::read_to_string(output.join("media.m3u8"))?;
         ensure!(
-            playlist.starts_with("#EXTM3U\n") && playlist.ends_with("#EXT-X-ENDLIST\n"),
-            "Incomplete media playlist"
+            playlist.starts_with("#EXTM3U\n") && playlist.contains("#EXT-X-STREAM-INF:"),
+            "Missing master playlist"
         );
-        ensure!(
-            output.join("init.mp4").metadata()?.len() > 0,
-            "Missing initialization segment"
-        );
-        let mut total = 0u64;
+        let mut total = playlist.len() as u64;
+        let mut tracks = 0;
         for entry in fs::read_dir(output)? {
             let entry = entry?;
+            if entry.file_name() == "media.m3u8" {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
             ensure!(
-                entry.file_type()?.is_file(),
-                "Unexpected packaging artifact"
+                entry.file_type()?.is_dir()
+                    && name
+                        .strip_prefix("track-")
+                        .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())),
+                "Unexpected packaging directory"
             );
-            total = total
-                .checked_add(entry.metadata()?.len())
-                .context("Packaging size overflow")?;
+            tracks += 1;
+            let media = fs::read_to_string(entry.path().join("media.m3u8"))?;
+            ensure!(
+                media.starts_with("#EXTM3U\n") && media.ends_with("#EXT-X-ENDLIST\n"),
+                "Incomplete track playlist"
+            );
+            ensure!(
+                entry.path().join("init.mp4").metadata()?.len() > 0,
+                "Missing initialization segment"
+            );
+            for file in fs::read_dir(entry.path())? {
+                let file = file?;
+                ensure!(file.file_type()?.is_file(), "Unexpected packaging artifact");
+                total = total
+                    .checked_add(file.metadata()?.len())
+                    .context("Packaging size overflow")?;
+            }
         }
+        ensure!((1..=8).contains(&tracks), "Invalid track count");
         ensure!(total <= max_bytes + 1_048_576, "Packaging exceeded budget");
         Ok(())
     });
