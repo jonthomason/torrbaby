@@ -95,8 +95,6 @@ struct SettingsView: View {
     @AppStorage("showMenuBarRates") private var showMenuBarRates = true
     #endif
     @State private var magnetStatus: String?
-    @State private var tmdbToken = ""
-    @State private var tmdbSaved = false
     @State private var showPairing = false
     @State private var showSubtitles = false
     var body: some View {
@@ -134,18 +132,6 @@ struct SettingsView: View {
                 }
                 if let notificationStatus { Text(notificationStatus).font(.caption) }
                 #endif
-            }
-            SwiftUI.Section("Metadata") {
-                SecureField("TMDB API key or Read Access Token", text: $tmdbToken)
-                Button(tmdbSaved ? "Saved on Diamond" : "Save TMDB credential on Diamond") {
-                    store.perform {
-                        try await store.send("POST", "/v1/providers/tmdb", body: ["token": tmdbToken])
-                        tmdbToken = ""
-                        tmdbSaved = true
-                    }
-                }.disabled(tmdbToken.isEmpty || store.busy)
-                Link("Get a free TMDB API key", destination: URL(string: "https://www.themoviedb.org/settings/api")!)
-                Text("This product uses the TMDB API but is not endorsed or certified by TMDB.").font(.caption2).foregroundStyle(.secondary)
             }
             SwiftUI.Section("Devices") {
                 Button { showPairing = true } label: { Label("Link a device", systemImage: "qrcode") }

@@ -367,6 +367,18 @@ struct PlayerScreen: View {
 }
 
 
+@MainActor
+private enum SubtitlePreferenceCache {
+    static func key(_ store: Store) -> String { "subtitle-defaults:" + store.server + ":" + store.clientId }
+    static func load(_ store: Store) -> SubtitlePreferences? {
+        UserDefaults.standard.data(forKey: key(store)).flatMap { try? JSONDecoder().decode(SubtitlePreferences.self, from: $0) }
+    }
+    static func save(_ value: SubtitlePreferences, store: Store, pending: Bool) {
+        if let data = try? JSONEncoder().encode(value) { UserDefaults.standard.set(data, forKey: key(store)) }
+        UserDefaults.standard.set(pending, forKey: key(store) + ":pending")
+    }
+}
+
 /// Native subtitle rendering and native selection UI remain owned by AVKit.
 @MainActor
 final class SubtitlePlaybackController {
@@ -380,10 +392,21 @@ final class SubtitlePlaybackController {
             guard let self, let item else { return }
             let path = store.deviceSubtitlePath
             do {
-                let response: SubtitlePreferenceResponse = try await store.request("GET", path, timeout: 5)
+                let cached = SubtitlePreferenceCache.load(store)
+                let local = (item.asset as? AVURLAsset)?.url.isFileURL == true
+                var p = cached ?? SubtitlePreferences()
+                if !local {
+                    if let cached, UserDefaults.standard.bool(forKey: SubtitlePreferenceCache.key(store) + ":pending") {
+                        if (try? await store.send("PUT", path, body: cached.body)) != nil {
+                            SubtitlePreferenceCache.save(cached, store: store, pending: false)
+                        }
+                    } else if let response: SubtitlePreferenceResponse = try? await store.request("GET", path, timeout: 5) {
+                        p = response.effective
+                        SubtitlePreferenceCache.save(p, store: store, pending: false)
+                    }
+                }
                 guard !Task.isCancelled, !self.stopped else { return }
-                self.preferences = response.effective
-                let p = response.effective
+                self.preferences = p
                 let fonts = ["default": kCMTextMarkupGenericFontName_Default, "serif": kCMTextMarkupGenericFontName_Serif,
                              "sans-serif": kCMTextMarkupGenericFontName_SansSerif, "monospace": kCMTextMarkupGenericFontName_Monospace]
                 let attributes: [String: Any] = [
@@ -399,6 +422,7 @@ final class SubtitlePlaybackController {
                 else if p.language == "original" { option = group.defaultOption ?? group.options.first }
                 else {
                     option = AVMediaSelectionGroup.mediaSelectionOptions(from: group.options, with: Locale(identifier: p.language)).first
+                        ?? group.defaultOption ?? group.options.first
                 }
                 item.select(option, in: group)
                 self.lastOption = option
@@ -415,8 +439,13 @@ final class SubtitlePlaybackController {
                             else if language.hasPrefix("en") { self.preferences.language = "en" }
                             else { self.preferences.language = "original" }
                         }
-                        do { try await store.send("PUT", store.deviceSubtitlePath, body: self.preferences.body) }
-                        catch { store.actionError = "Couldn’t save subtitle preference: " + error.localizedDescription }
+                        SubtitlePreferenceCache.save(self.preferences, store: store, pending: true)
+                        if store.connected {
+                            do {
+                                try await store.send("PUT", store.deviceSubtitlePath, body: self.preferences.body)
+                                SubtitlePreferenceCache.save(self.preferences, store: store, pending: false)
+                            } catch { /* Keep the device preference for the next connection. */ }
+                        }
                     }
                 }
             } catch {
@@ -443,26 +472,27 @@ struct SubtitlePreferencesView: View {
             Form {
                 if let error { Text(error).foregroundStyle(.orange) }
                 SwiftUI.Section {
-                    Toggle("Subtitles", isOn: $preferences.enabled)
-                    Picker("Language", selection: $preferences.language) {
-                        Text("Original").tag("original")
-                        Text("English").tag("en")
-                        Text("简体中文").tag("zh-Hans")
-                    }
-                    Picker("Font", selection: $preferences.font) {
-                        Text("Default").tag("default")
-                        Text("Sans serif").tag("sans-serif")
-                        Text("Serif").tag("serif")
-                        Text("Monospace").tag("monospace")
-                    }
-                    Picker("Size", selection: $preferences.sizePercent) {
-                        ForEach(Array(stride(from: 50, through: 200, by: 10)), id: \.self) { Text("\($0)%").tag($0) }
-                    }
-                    Picker("Text opacity", selection: $preferences.textOpacity) {
-                        ForEach(Array(stride(from: 0, through: 100, by: 10)), id: \.self) { Text("\($0)%").tag($0) }
-                    }
-                    Picker("Background opacity", selection: $preferences.backgroundOpacity) {
-                        ForEach(Array(stride(from: 0, through: 100, by: 10)), id: \.self) { Text("\($0)%").tag($0) }
+                    subtitleChoice("Off", value: "off")
+                    subtitleChoice("English", value: "en")
+                    subtitleChoice("Chinese (Simplified)", value: "zh-Hans")
+                    NavigationLink("Style") {
+                        Form {
+                            Picker("Font", selection: $preferences.font) {
+                                Text("Default").tag("default")
+                                Text("Sans serif").tag("sans-serif")
+                                Text("Serif").tag("serif")
+                                Text("Monospace").tag("monospace")
+                            }
+                            Picker("Size", selection: $preferences.sizePercent) {
+                                ForEach(Array(stride(from: 50, through: 200, by: 10)), id: \.self) { Text("\($0)%").tag($0) }
+                            }
+                            Picker("Text opacity", selection: $preferences.textOpacity) {
+                                ForEach(Array(stride(from: 0, through: 100, by: 10)), id: \.self) { Text("\($0)%").tag($0) }
+                            }
+                            Picker("Background opacity", selection: $preferences.backgroundOpacity) {
+                                ForEach(Array(stride(from: 0, through: 100, by: 10)), id: \.self) { Text("\($0)%").tag($0) }
+                            }
+                        }.navigationTitle("Subtitle style")
                     }
                 }.disabled(!loaded || saving)
             }.navigationTitle("Subtitles on this device")
@@ -480,12 +510,28 @@ struct SubtitlePreferencesView: View {
         .frame(width: 500, height: 470)
         #endif
     }
+    private func subtitleChoice(_ title: String, value: String) -> some View {
+        let selected = preferences.enabled ? preferences.language : "off"
+        return Button {
+            preferences.enabled = value != "off"
+            if value != "off" { preferences.language = value }
+        } label: {
+            HStack {
+                Text(title).foregroundStyle(.primary)
+                Spacer()
+                if selected == value { Image(systemName: "checkmark").foregroundStyle(.tint) }
+            }.contentShape(Rectangle())
+        }
+        .accessibilityAddTraits(selected == value ? .isSelected : [])
+    }
+
     private func save() {
         saving = true; error = nil
         Task {
             defer { saving = false }
             do {
                 try await store.send("PUT", path, body: preferences.body)
+                SubtitlePreferenceCache.save(preferences, store: store, pending: false)
                 dismiss()
             } catch { self.error = error.localizedDescription }
         }
