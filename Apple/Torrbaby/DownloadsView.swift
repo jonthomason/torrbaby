@@ -11,10 +11,10 @@ struct DownloadsView: View {
     @State private var settings = false
     @State private var preparing = false
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 12) {
+        List {
+            SwiftUI.Section {
                 HStack {
-                    Label("\(bytes(queue.used)) / \(bytes(queue.policy.limitBytes))", systemImage: "internaldrive")
+                    Label("\(bytes(queue.used)) used · \(bytes(queue.policy.limitBytes)) limit", systemImage: "internaldrive")
                         .font(.subheadline.monospacedDigit()).foregroundStyle(Theme.muted)
                     Spacer()
                     Button { settings = true } label: { Image(systemName: "slider.horizontal.3") }.help("Download storage")
@@ -25,10 +25,10 @@ struct DownloadsView: View {
                 let visible = queue.items.filter { $0.state != .removed }
                 if visible.isEmpty { ContentUnavailableView("No downloads", systemImage: "arrow.down.circle") }
                 ForEach(visible) { item in
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 8) {
                       HStack(spacing: 16) {
                         DownloadPoster(url: queue.artworkURL(item.id), isTV: item.season != nil)
-                            .frame(width: 60, height: 90).clipShape(RoundedRectangle(cornerRadius: 8))
+                            .frame(width: 40, height: 60).clipShape(RoundedRectangle(cornerRadius: 8))
                         VStack(alignment: .leading, spacing: 6) {
                             Text(item.title).font(.headline).lineLimit(2)
                             if let season = item.season, let episode = item.episode {
@@ -52,6 +52,9 @@ struct DownloadsView: View {
                         } else {
                             Button { queue.resume(item.id) } label: { Image(systemName: "arrow.down.circle").font(.title2) }.help("Resume download")
                         }
+                        #if os(macOS)
+                        Button(role: .destructive) { queue.remove(item.id) } label: { Image(systemName: "trash") }.help("Delete download")
+                        #endif
                         Menu {
                             Toggle("Keep downloaded", isOn: Binding(get: { item.pinned }, set: { queue.pin(item.id, keep: $0) }))
                             Button("Remove local download", role: .destructive) { queue.remove(item.id) }
@@ -60,10 +63,14 @@ struct DownloadsView: View {
                       if item.state != .ready {
                           TorrentProgressGauge(value: item.size > 0 ? Double(queue.received[item.id] ?? item.received) / Double(item.size) : 0)
                       }
-                    }.padding(18).background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
+                    }.padding(.vertical, 6)
+                    .listRowBackground(Theme.panel)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button("Delete", role: .destructive) { queue.remove(item.id) }
+                    }
                 }
-            }.padding(24)
-        }.background(Theme.canvas)
+            }
+        }.listStyle(.plain).scrollContentBackground(.hidden).background(Theme.canvas)
         .sheet(isPresented: $settings) { DownloadSettingsView() }
         #if os(iOS)
         .background(MobilePlayerPresentation(playback: $playback, store: store).frame(width: 0, height: 0))
@@ -141,6 +148,61 @@ struct DownloadSettingsView: View {
         #if os(macOS)
         .frame(width: 460, height: 300)
         #endif
+    }
+}
+
+struct DownloadAssetControl: View {
+    @EnvironmentObject var store: Store
+    @ObservedObject private var queue = DownloadQueue.shared
+    let asset: LibraryAsset
+    let title: LibraryTitle
+    @State private var adding = false
+    @State private var confirmDelete = false
+    private var item: DownloadStorage.Item? {
+        queue.items.first { $0.assetID == asset.id && $0.server == store.server && $0.state != .removed }
+    }
+    var body: some View {
+        Group {
+            if let item {
+                if item.state == .ready {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label("Downloaded", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.mint)
+                            Text(bytes(item.size)).font(.caption).foregroundStyle(Theme.muted)
+                        }
+                        Button { confirmDelete = true } label: { Image(systemName: "trash") }
+                            .accessibilityLabel("Delete download").buttonStyle(.bordered)
+                    }
+                    .confirmationDialog("Delete this download?", isPresented: $confirmDelete, titleVisibility: .visible) {
+                        Button("Delete download", role: .destructive) { queue.remove(item.id) }
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack {
+                            Text(item.state == .transferring ? "Downloading" : item.state.rawValue.capitalized)
+                            Spacer(minLength: 4)
+                            Button {
+                                if item.state == .transferring || item.state == .queued { queue.pause(item.id) }
+                                else { queue.resume(item.id) }
+                            } label: { Image(systemName: item.state == .transferring || item.state == .queued ? "pause.fill" : "arrow.down") }
+                                .accessibilityLabel(item.state == .transferring || item.state == .queued ? "Pause download" : "Resume download")
+                        }.font(.caption)
+                        TorrentProgressGauge(value: item.size > 0 ? Double(queue.received[item.id] ?? item.received) / Double(item.size) : 0)
+                        Text("\(bytes(queue.received[item.id] ?? item.received)) / \(bytes(item.size))")
+                            .font(.caption2.monospacedDigit()).foregroundStyle(Theme.muted)
+                        if let error = item.error { Text(error).font(.caption2).foregroundStyle(.orange).lineLimit(2) }
+                    }.frame(minWidth: 130, maxWidth: 280)
+                }
+            } else {
+                Button {
+                    adding = true
+                    Task { await queue.enqueue(asset, title: title); adding = false }
+                } label: {
+                    Label(adding ? "Preparing…" : "Download", systemImage: "arrow.down.circle")
+                        .font(.headline).padding(8)
+                }.buttonStyle(.bordered).disabled(adding || !store.connected)
+            }
+        }
     }
 }
 

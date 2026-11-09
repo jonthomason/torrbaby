@@ -202,9 +202,14 @@ struct LibraryDetail: View {
                     Text(title.title).font(.largeTitle.bold())
                     Text(([title.year ?? "", title.contentRating ?? ""] + title.genres).filter { !$0.isEmpty }.joined(separator: " · ")).foregroundStyle(Theme.muted)
                     if let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
-                        Button { play(asset, title: title.title) } label: {
-                            Label(asset.position > 0 && !asset.watched ? "Resume" : "Play", systemImage: "play.fill").font(.headline).padding(8)
-                        }.buttonStyle(.borderedProminent).disabled(loading)
+                        HStack(alignment: .center, spacing: 16) {
+                            Button { play(asset, title: title.title) } label: {
+                                Label(asset.position > 0 && !asset.watched ? "Resume" : "Play", systemImage: "play.fill").font(.headline).padding(8)
+                            }.buttonStyle(.borderedProminent).disabled(loading)
+                            #if !os(tvOS)
+                            DownloadAssetControl(asset: asset, title: title)
+                            #endif
+                        }
                     }
                     Text(title.summary).font(.body).lineSpacing(5).frame(maxWidth: 900, alignment: .leading)
                     if title.kind == "tv" {
