@@ -450,3 +450,45 @@ possible parent titles remain unassigned. Missing metadata alone is not evidence
 that a file is an extra. Parent links are stored in SQLite; extras retain their own
 playback history and appear under Special features, outside the main Play/Resume
 selection. No files move merely to create this grouping.
+
+### Link a device with a QR code
+
+On any already-linked Mac, iPhone or iPad, open **Settings → Devices → Link a device**.
+On the new iPhone/iPad, choose **Scan connection code** on the connection screen,
+scan the QR, check the server address and tap **Connect**. Both devices must be able
+to reach the existing private server address (including Tailscale where used).
+Diamond remains headless; the linked app displays the code.
+
+A grant expires after five minutes and can be redeemed only once. The new device
+receives an independent credential saved in Keychain; the QR never contains the
+server's master token. Settings can revoke paired device access independently.
+Existing manually configured devices still use the shared token and cannot be
+revoked individually until paired. Pairing grants and device credentials are
+stored as SHA-256 digests in the server database. All paired devices currently
+have full personal-server control, including the ability to link another device.
+Revocation blocks new API requests; previously issued playback links retain their
+existing six-hour expiry. It does not erase downloaded files on a remote device.
+
+API: authenticated `POST /v1/pairings`, `GET /v1/pairings/{id}` and
+`DELETE /v1/pairings/{id}`; `POST /v1/pairings/redeem` accepts the one-use `code`,
+`name` and `platform` without an existing bearer token; authenticated
+`DELETE /v1/device-credentials/{client_id}` revokes a paired credential.
+
+### Offline media downloads — requested, not implemented yet
+
+Support movies, episodes and season queues on iPhone, iPad and Mac, with native
+Apple playback entirely offline. Persist metadata, artwork, subtitles and local
+progress. Diamond should supply resumable transfers and compatible media versions;
+current six-hour playback URLs and server-created playback sessions are not a
+sufficient offline-download protocol.
+
+Storage controls must include a per-device cap, minimum free-space reserve,
+accounting for partial/temporary files, pause/resume/cancel and explicit removal.
+Default to deleting the local copy after actual playback completion, never merely
+on pause or player dismissal. Persist finished/watched progress before deletion;
+keep an offline sync record afterward. A per-title Keep downloaded override pins
+it. Server originals and Transmission files must never be removed by local cleanup.
+For episodes, save progress, release/delete the completed local copy and play the
+next episode: use a local copy first, otherwise stream when Diamond is reachable.
+Stop with an explanation when the next episode is unavailable; do not skip gaps.
+This work follows QR device linking.

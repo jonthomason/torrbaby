@@ -99,6 +99,7 @@ struct SettingsView: View {
     @State private var magnetStatus: String?
     @State private var tmdbToken = ""
     @State private var tmdbSaved = false
+    @State private var showPairing = false
     var body: some View {
         Form {
             SwiftUI.Section("Connection") {
@@ -138,8 +139,18 @@ struct SettingsView: View {
                 Text("This product uses the TMDB API but is not endorsed or certified by TMDB.").font(.caption2).foregroundStyle(.secondary)
             }
             SwiftUI.Section("Devices") {
+                Button { showPairing = true } label: { Label("Link a device", systemImage: "qrcode") }
+                    .disabled(!store.connected)
+                    .sheet(isPresented: $showPairing) { PairingCodeView() }
                 ForEach(store.clients) { client in
-                    DeviceNameRow(client: client, isCurrent: client.id == store.clientId)
+                    HStack {
+                        DeviceNameRow(client: client, isCurrent: client.id == store.clientId)
+                        if client.id != store.clientId && client.pairedCredential == 1 {
+                            Button("Revoke access", role: .destructive) {
+                                store.perform { try await store.send("DELETE", "/v1/device-credentials/" + client.id) }
+                            }.font(.caption)
+                        }
+                    }
                 }
             }
             SeedingSettings()
@@ -229,6 +240,9 @@ struct ConnectionView: View {
     @State private var address = ""
     @State private var token = ""
     @State private var importProfile = false
+    #if os(iOS)
+    @State private var showScanner = false
+    #endif
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 24) {
@@ -237,6 +251,13 @@ struct ConnectionView: View {
                     Text("Meet your server.").font(.system(size: 30, weight: .bold, design: .rounded))
                     Text("Connect to Torrbaby on your private network. Your downloads stay right where they belong.").foregroundStyle(Theme.muted)
                 }
+                #if os(iOS)
+                Button { showScanner = true } label: { Label("Scan connection code", systemImage: "qrcode.viewfinder").font(.headline) }
+                    .buttonStyle(.borderedProminent)
+                    .sheet(isPresented: $showScanner) {
+                        PairingScannerView { dismiss() }
+                    }
+                #endif
                 VStack(alignment: .leading, spacing: 14) {
                     Text("SERVER ADDRESS").font(.caption2.weight(.semibold)).tracking(1.5).foregroundStyle(Theme.muted)
                     TextField("http://your-server:8765", text: $address).textFieldStyle(.roundedBorder)

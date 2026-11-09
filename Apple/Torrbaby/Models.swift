@@ -125,6 +125,7 @@ struct NameCandidate: Codable, Identifiable {
     var id: String { (sourceUrl ?? title) + year }
 }
 struct ClientDevice: Codable, Identifiable {
+    let pairedCredential: Int?
     let id: String
     let name: String
     let platform: String

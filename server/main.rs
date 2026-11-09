@@ -4,6 +4,7 @@ mod catalog;
 mod config;
 mod metadata;
 mod organizer;
+mod pairing;
 mod scanner;
 mod storage;
 mod telemetry;

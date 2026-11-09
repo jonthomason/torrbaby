@@ -239,7 +239,12 @@ async fn dispatch(
     let mut actual = <Hmac<Sha256> as hmac::KeyInit>::new_from_slice(s.token.as_bytes())
         .expect("HMAC accepts any key size");
     actual.update(supplied.as_bytes());
-    if actual.verify_slice(&tag).is_err() {
+    let redeem = method == Method::POST && uri.path() == "/v1/pairings/redeem";
+    let device_authorized =
+        s.db.lock()
+            .map(|db| crate::pairing::authorized(&db, supplied))
+            .unwrap_or(false);
+    if !redeem && actual.verify_slice(&tag).is_err() && !device_authorized {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"Unauthorized"})),
@@ -283,6 +288,15 @@ fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
 }
 
 async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> Result<Value> {
+    if path == "/v1/pairings"
+        || path.starts_with("/v1/pairings/")
+        || path.starts_with("/v1/device-credentials/")
+    {
+        let mut db =
+            s.db.lock()
+                .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
+        return crate::pairing::handle(&mut db, method.as_str(), path, &body);
+    }
     if method == Method::POST && path == "/v1/reconcile" {
         if s.preview {
             bail!("Automatic organization is disabled in preview mode");
@@ -577,7 +591,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
                 "last_poll":state["last_poll"],"last_error":if s.preview { json!("Migration preview: organizer not enabled") } else {state["last_error"].clone()},"pending_scans":if state["library_scan"]["scanning"] == true {1} else {0},"scan_error":state["library_scan"]["error"],"jobs":state["jobs"]}))
         }
         ("GET","/v1/events") => Ok(db.state()?["events"].take()),
-        ("GET","/v1/clients") => Ok(json!(db.rows("SELECT * FROM clients ORDER BY last_seen DESC",[])?)),
+        ("GET","/v1/clients") => Ok(json!(db.rows("SELECT clients.*, EXISTS(SELECT 1 FROM device_credentials WHERE client_id=clients.id) AS paired_credential FROM clients ORDER BY last_seen DESC",[])?)),
         ("POST","/v1/clients") => db.register(text(&body,"client_id")?,text(&body,"name")?,text(&body,"platform")?),
         ("GET","/v1/playback") => Ok(json!(db.history()?)),
         ("POST","/v1/playback/progress") => db.progress(text(&body,"session_id")?,body["sequence"].as_i64().context("Invalid sequence")?,body["position"].as_f64().context("Invalid position")?,body["duration"].as_f64().context("Invalid duration")?, match body.get("ended") {None => false,Some(v)=>v.as_bool().context("ended must be boolean")?}),

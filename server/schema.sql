@@ -13,4 +13,6 @@ PRAGMA foreign_keys=ON;
         CREATE TABLE IF NOT EXISTS torrent_rates (hash TEXT NOT NULL, time INTEGER NOT NULL, download REAL NOT NULL, upload REAL NOT NULL, samples INTEGER NOT NULL, PRIMARY KEY(hash,time));
         CREATE INDEX IF NOT EXISTS torrent_rates_time ON torrent_rates(time);
         CREATE TABLE IF NOT EXISTS eta_state (hash TEXT PRIMARY KEY, started REAL NOT NULL, updated REAL NOT NULL, activity REAL NOT NULL, rate REAL NOT NULL);
-        PRAGMA user_version=5;
+        CREATE TABLE IF NOT EXISTS pairing_grants (id TEXT PRIMARY KEY, digest TEXT NOT NULL UNIQUE, expires REAL NOT NULL, client_id TEXT);
+        CREATE TABLE IF NOT EXISTS device_credentials (client_id TEXT PRIMARY KEY REFERENCES clients(id), digest TEXT NOT NULL UNIQUE);
+        PRAGMA user_version=6;

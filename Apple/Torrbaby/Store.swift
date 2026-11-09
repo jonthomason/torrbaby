@@ -59,7 +59,7 @@ final class Store: ObservableObject {
     private var lastHistoryFetch = Date.distantPast
     @Published var clients: [ClientDevice] = []
     @Published var history: [PlaybackHistory] = []
-    let clientId: String = {
+    var clientId: String = {
         let existing = Credentials.read(account: "client-id")
         if UUID(uuidString: existing) != nil { return existing }
         let id = UUID().uuidString.lowercased()
