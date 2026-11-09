@@ -203,7 +203,6 @@ private struct TVMediaDetail: View {
     @State private var loading = false
     @State private var preparation = ""
     @State private var playbackTask: Task<Void, Never>?
-    @State private var showSubtitlePreferences = false
     private var title: LibraryTitle? { store.library?.titles.first { $0.id == titleID } }
     var body: some View {
         ScrollView {
@@ -233,8 +232,6 @@ private struct TVMediaDetail: View {
                         if let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
                             MediaLanguagesView(info: asset.mediaInfo)
                         }
-                        Button("Subtitles") { showSubtitlePreferences = true }
-                            .sheet(isPresented: $showSubtitlePreferences) { SubtitlePreferencesView(titleID: title.id) }
                         if !title.summary.isEmpty {
                             Text(title.summary).font(.system(size: 27)).lineSpacing(7).frame(maxWidth: 1300, alignment: .leading)
                         }

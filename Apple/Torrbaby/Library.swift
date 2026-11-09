@@ -119,7 +119,7 @@ struct MediaLanguagesView: View {
                 ForEach(info.prepared.filter { $0.generated && $0.state == "ready" }, id: \.id) { track in
                     HStack(spacing: 8) {
                         Label(name(track.language), systemImage: "captions.bubble.fill")
-                        Text("Translated").font(.caption.bold()).padding(.horizontal, 8).padding(.vertical, 3)
+                        Text("Generated").font(.caption.bold()).padding(.horizontal, 8).padding(.vertical, 3)
                             .background(.purple.opacity(0.2), in: Capsule())
                     }.foregroundStyle(.purple)
                 }
@@ -307,7 +307,6 @@ struct LibraryDetail: View {
     @State private var loading = false
     @State private var preparation = ""
     @State private var playbackTask: Task<Void, Never>?
-    @State private var showSubtitles = false
     var title: LibraryTitle? { store.library?.titles.first { $0.id == titleID } }
     var body: some View {
         ScrollView {
@@ -337,8 +336,6 @@ struct LibraryDetail: View {
                     if let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
                         MediaLanguagesView(info: asset.mediaInfo)
                     }
-                    Button { showSubtitles = true } label: { Label("Subtitles", systemImage: "captions.bubble") }
-                        .sheet(isPresented: $showSubtitles) { SubtitlePreferencesView(titleID: title.id) }
                     Text(title.summary).font(.body).lineSpacing(5).frame(maxWidth: 900, alignment: .leading)
                     if title.kind == "tv" {
                         let seasons = Array(Set(title.assets.compactMap(\.season))).sorted()

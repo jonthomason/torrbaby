@@ -187,6 +187,7 @@ final class PlaybackModel: ObservableObject {
     }
     func stop() {
         nextEpisodeTask?.cancel(); nextEpisodeTask = nil
+        subtitleController?.stop(); subtitleController = nil
         player.pause()
         report(ended: true)
         finished = true
@@ -433,13 +434,11 @@ final class SubtitlePlaybackController {
 struct SubtitlePreferencesView: View {
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) private var dismiss
-    var titleID: String? = nil
     @State private var preferences = SubtitlePreferences()
     @State private var loaded = false
     @State private var saving = false
-    @State private var overridden = false
     @State private var error: String?
-    private var path: String { titleID.map { "/v1/library/titles/\($0)/subtitle-preferences" } ?? "/v1/subtitle-preferences" }
+    private let path = "/v1/subtitle-preferences"
     var body: some View {
         NavigationStack {
             Form {
@@ -467,30 +466,27 @@ struct SubtitlePreferencesView: View {
                         ForEach(Array(stride(from: 0, through: 100, by: 10)), id: \.self) { Text("\($0)%").tag($0) }
                     }
                 }.disabled(!loaded || saving)
-                if titleID != nil {
-                    Button("Use defaults") { save(reset: true) }.disabled(!loaded || !overridden || saving)
-                }
-            }.navigationTitle(titleID == nil ? "Default subtitles" : "Subtitles")
+            }.navigationTitle("Default subtitles")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Save") { save(reset: false) }.disabled(!loaded || saving) }
+                ToolbarItem(placement: .confirmationAction) { Button("Save") { save() }.disabled(!loaded || saving) }
             }
         }.task {
             do {
                 let response: SubtitlePreferenceResponse = try await store.request("GET", path)
-                preferences = response.effective; overridden = response.overridden; loaded = true
+                preferences = response.defaults; loaded = true
             } catch { self.error = error.localizedDescription }
         }
         #if os(macOS)
         .frame(width: 500, height: 470)
         #endif
     }
-    private func save(reset: Bool) {
+    private func save() {
         saving = true; error = nil
         Task {
             defer { saving = false }
             do {
-                try await store.send(reset ? "DELETE" : "PUT", path, body: reset ? [:] : preferences.body)
+                try await store.send("PUT", path, body: preferences.body)
                 dismiss()
             } catch { self.error = error.localizedDescription }
         }
