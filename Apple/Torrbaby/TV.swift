@@ -145,20 +145,26 @@ private struct TVMediaDetail: View {
                             Text(title.summary).font(.system(size: 27)).lineSpacing(7).frame(maxWidth: 1300, alignment: .leading)
                         }
                         let seasons = Array(Set(title.assets.filter { $0.role != "extra" }.compactMap(\.season))).sorted()
+                        let selectedSeason = season ?? title.resume?.season ?? title.playable.first(where: { !$0.watched && ($0.season ?? 0) > 0 })?.season ?? seasons.first(where: { $0 > 0 }) ?? seasons.first
                         if title.kind == "tv" {
                             ScrollView(.horizontal) {
                                 HStack(spacing: 25) {
                                     ForEach(seasons, id: \.self) { number in
                                         Button(number == 0 ? "Specials" : "Season \(number)") { season = number }
-                                            .tint((season ?? seasons.first) == number ? Theme.mint : .gray)
+                                            .tint(selectedSeason == number ? Theme.mint : .gray)
                                     }
                                 }.padding(15)
                             }.scrollClipDisabled().focusSection()
                         }
-                        let assets = title.assets.filter { $0.role != "extra" && (title.kind != "tv" || $0.season == (season ?? seasons.first)) }
+                        let assets = title.assets.filter { $0.role != "extra" && (title.kind != "tv" || $0.season == selectedSeason) }
                             .sorted { ($0.episode ?? 0, $0.name ?? "") < ($1.episode ?? 0, $1.name ?? "") }
                         if title.kind == "tv" || assets.count > 1 {
                             ForEach(assets) { asset in assetButton(asset, title: title) }
+                        }
+                        let unnumbered = title.assets.filter { $0.role != "extra" && $0.season == nil }
+                        if title.kind == "tv" && selectedSeason != nil && !unnumbered.isEmpty {
+                            Text("Other episodes").font(.title2.bold())
+                            ForEach(unnumbered) { asset in assetButton(asset, title: title) }
                         }
                         let extras = title.assets.filter { $0.role == "extra" }
                         if !extras.isEmpty {
@@ -180,11 +186,16 @@ private struct TVMediaDetail: View {
     private func assetButton(_ asset: LibraryAsset, title: LibraryTitle) -> some View {
         Button { play(asset, title: title) } label: {
             HStack(spacing: 28) {
+                if asset.thumbnail != nil {
+                    LibraryArtwork(id: asset.id, variant: "episode")
+                        .frame(width: 250, height: 140).clipShape(RoundedRectangle(cornerRadius: 10))
+                }
                 Image(systemName: asset.watched ? "checkmark.circle.fill" : "play.circle.fill").font(.largeTitle)
                 VStack(alignment: .leading, spacing: 10) {
                     if let episode = asset.episode { Text("Episode \(episode)").font(.caption) }
                     Text(asset.name ?? title.title).font(.headline).lineLimit(2)
                     if !asset.summary.isEmpty { Text(asset.summary).font(.caption).lineLimit(2) }
+                    if !asset.complete { Text("Downloading").font(.caption).foregroundStyle(Theme.muted) }
                     if asset.position > 0 && !asset.watched && asset.duration > 0 {
                         ProgressView(value: min(1, asset.position / asset.duration)).tint(Theme.mint)
                     }
@@ -204,7 +215,7 @@ private struct TVMediaDetail: View {
                 try await store.registerClient()
                 let link: PlaybackLink = try await store.request("POST", "/v1/library/assets/\(asset.id)/play", body: ["client_id": store.clientId])
                 playback = Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0,
-                    url: try store.endpoint(link.path), name: title.title, libraryAssetID: asset.id, libraryTitleID: title.id)
+                    url: try store.endpoint(link.path), name: asset.episode == nil ? title.title : title.title + " · " + (asset.name ?? "Episode \(asset.episode!)"), libraryAssetID: asset.id, libraryTitleID: title.id)
             } catch { store.actionError = error.localizedDescription }
         }
     }

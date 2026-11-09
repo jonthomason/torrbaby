@@ -577,3 +577,9 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
 - TVLibraryView ignores horizontal safe-area for genuine edge-to-edge hero artwork; hero uses a restrained mint underline for remote focus rather than scaling/rounding the whole image card.
 - TVMediaDetail replaces the shared mobile detail on tvOS: full-bleed backdrop, large title/rating/genre, Play/Resume, season controls, episode rows and extras, backdrop wash. Uses existing native PlayerScreen and server playback/progress APIs; no downloads.
 - tvOS simulator build passed. Live UI verification with Device Hub remote Down/Select/Back confirmed hero focus, opening movie detail, and returning to Home. No playback started during this visual check; physical Apple TV acceptance and episode/season navigation still pending.
+
+## tvOS episode browsing checkpoint
+
+- Episode list defaults to the in-progress season, then an unwatched regular season, rather than always the first/specials season. Unnumbered episodes remain available separately when numbered seasons exist.
+- Episode rows fetch stills via existing authenticated asset/episode artwork endpoint; incomplete items show Downloading. Playback title includes episode name.
+- tvOS simulator build passed. Device Hub remote navigation verified TV Shows tab → Paradise detail → season control → Episode 1 focus; actual episode stills loaded for Episodes 1/2. Did not start playback or alter watch history. Multi-season switching and resume selection still require runtime acceptance.
