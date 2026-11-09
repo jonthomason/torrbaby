@@ -295,7 +295,8 @@ impl Manager {
                 self.save(&job)?;
                 let helper = std::env::current_exe()?.with_file_name("torrbaby-subtitle-translator");
                 while job.completed_cues < cues.len() {
-                    let end=(job.completed_cues+8).min(cues.len());
+                    let end=job.completed_cues+crate::subtitles::translation_batch_len(&cues[job.completed_cues..]);
+                    ensure!(end > job.completed_cues, "Invalid translation batch");
                     crate::subtitles::translate_cues(&helper,&source,&target,&mut cues[job.completed_cues..end]).await?;
                     job.completed_cues=end;
                     let progress=serde_json::to_vec(&ProgressRef {completed:end,cues:&cues})?;

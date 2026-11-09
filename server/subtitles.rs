@@ -255,14 +255,27 @@ pub fn webvtt(cues: &[TimedCue]) -> String {
     output
 }
 
+/// Amortize native session startup while retaining bounded JSON expansion.
+pub fn translation_batch_len(cues: &[TimedCue]) -> usize {
+    let mut bytes = 0;
+    cues.iter().take(32).take_while(|cue| {
+        bytes += cue.text.len();
+        bytes <= 128 * 1024
+    }).count()
+}
+
 pub async fn translate_cues(
     helper: &Path,
     source: &str,
     target: &str,
     cues: &mut [TimedCue],
 ) -> Result<()> {
-    // Small batches leave room for JSON escaping and framework output expansion.
-    for batch in cues.chunks_mut(8) {
+    let mut remaining = cues;
+    while !remaining.is_empty() {
+        let count = translation_batch_len(remaining);
+        ensure!(count > 0, "Subtitle cue exceeds translation batch limit");
+        let (batch, rest) = remaining.split_at_mut(count);
+        remaining = rest;
         let request = TranslationRequest {
             source: source.into(),
             target: target.into(),
