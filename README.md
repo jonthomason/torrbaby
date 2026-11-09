@@ -288,7 +288,7 @@ system default-handler change. Registering the app alone does not intentionally
 replace an existing default. Magnet links open the Add Torrent review screen;
 they are not automatically downloaded. The same URL handler is present on iOS.
 
-### Native playback prototype
+### Native playback
 
 `POST /v1/torrents/{hash}/play` with `{"file_index": 0}` returns a relative `path`
 and expiry. Resolve it against the server URL and give it to Apple's player.
@@ -297,12 +297,9 @@ not include the management token. `GET` and `HEAD` support single byte ranges,
 including suffix ranges, with 206/416 responses. Expired or altered URLs fail.
 URLs are not logged with their query strings. Treat playback URLs as private.
 
-When macOS blocks direct volume reads, the daemon can fall back to Plex's
-**original-file** `/library/parts/…` endpoint after matching the exact filesystem
-path in Plex's library. It validates the returned byte range and size. This does
-not use Plex's transcoding or playback UI, and Plex credentials stay server-side.
-The fallback requires the file to be indexed in Plex. Set
-`plex_stream_fallback: false` in server configuration to disable it.
+The Rust server reads media directly from the filesystem. If macOS blocks volume
+access, grant Torrbaby Server access to the media volume. Playback does not fall
+back to Plex; Plex credentials and services are not required.
 
 On macOS the player opens in its own movable, resizable window with standard close controls and Command-W. The player has no separate title/Done frame. On iOS/iPadOS, titles are supplied as native player metadata. macOS AVPlayerView
 does not expose the same title overlay, so no custom title overlay is added. Apple's controls handle playback, seeking, fullscreen, audio/subtitles
@@ -424,7 +421,7 @@ API: `GET /v1/metadata`, `GET /v1/providers`, `POST /v1/providers/tmdb` with `to
 `POST /v1/torrents/{hash}/metadata-refresh`, `POST /v1/torrents/{hash}/metadata-select`
 with candidate index, and authenticated `GET /v1/torrents/{hash}/artwork`.
 
-### Apple TV prototype
+### Apple TV app
 
 The shared project also builds for tvOS 18+, with bundle ID `org.torrbaby.tv`.
 Its first screen is a remote-friendly library and file chooser; playback uses

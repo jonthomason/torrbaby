@@ -206,7 +206,7 @@ struct PlayerScreen: View {
                 ContentUnavailableView {
                     Label("This file couldn’t play", systemImage: "play.slash")
                 } description: {
-                    Text(error + "\n\nThis prototype plays the original file with Apple’s player. It does not convert unsupported formats.")
+                    Text(error)
                 } actions: {
                     Button("Close") { dismiss() }
                 }
