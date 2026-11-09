@@ -627,3 +627,9 @@ User reports iPad left/right correctly skip 15 seconds but Space does not play/p
 - Settings begins with installed bundle version/build on Mac, iPhone, iPad and TV; no hard-coded release label. TV connection screen also shows it. Mac live Cmd-comma verified Version 0.2.0 · Build 59 at top. Android port must follow same requirement (concurrent Android session owns Android/; untouched).
 - Release59 Mac/iOS builds and tvOS simulator build passed. Signed Mac installed/relaunched; TV simulator updated/relaunched. Mac-only Miyu Install HTTPS current.json verified build59. IPA SHA256 f29911ab7247e1138a2c8675cba6f43066d4cd7dc262e83989942db2959039fb. Physical mobile update/visual acceptance pending.
 - Native original/translated subtitle delivery remains the next playback priority; HLS experiment above is not deployed. Persistent full project goal remains incomplete.
+
+## Supervised HLS packaging checkpoint
+
+- Added Rust package-media CLI supervising AVFoundation helper: one worker per process, bounded stdout, CPU600/wall610, source revision check, new output only, failure cleanup. Helper configurable 1MiB–32GiB output budget and 1GiB free reserve per segment. Build script now bundles/signs helper on next server build; not deployed or connected to playback yet.
+- cargo build --locked and Swift helper compile passed. Generated fixture packaged; existing output preserved on rejection; invalid media failed and cleaned output. No formal suite added. Cancellation kills worker but interrupted output recovery remains a prerequisite for persistent cache integration.
+- Latest user priority: prominent Download beside Play/Resume; replace with progress while active, then Downloaded/size/delete (detail confirmation). Downloads page compact sizes and swipe-delete without extra confirmation. Work next in Library/Downloads UI; preserve Android session files.

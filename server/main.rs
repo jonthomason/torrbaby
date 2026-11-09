@@ -3,6 +3,7 @@ mod api;
 mod catalog;
 mod config;
 mod matroska;
+mod media_packaging;
 mod metadata;
 mod offline;
 mod organizer;
@@ -29,6 +30,17 @@ struct Arguments {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Package compatible media as HLS for diagnostics (not yet client playback).
+    PackageMedia {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        helper: Option<PathBuf>,
+        #[arg(long, default_value_t = 536_870_912)]
+        max_bytes: u64,
+    },
     /// List embedded Matroska subtitle tracks, or extract one as WebVTT.
     MatroskaSubtitles {
         #[arg(long)]
@@ -128,6 +140,17 @@ fn check_folder(path: &Path) -> io::Result<(usize, bool)> {
 #[tokio::main]
 async fn main() -> Result<()> {
     match Arguments::parse().command {
+        Command::PackageMedia {
+            input,
+            output,
+            helper,
+            max_bytes,
+        } => {
+            let helper = helper
+                .unwrap_or(std::env::current_exe()?.with_file_name("torrbaby-media-segmenter"));
+            media_packaging::package(&input, &output, &helper, max_bytes).await?;
+            println!("Media packaging complete");
+        }
         Command::MatroskaSubtitles {
             input,
             track,

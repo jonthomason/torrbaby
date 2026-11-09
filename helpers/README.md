@@ -155,13 +155,14 @@ yet make them selectable in AVPlayer.
 
 ## Native HLS packaging experiment
 
-`MediaSegmenter.swift` is a development helper, not bundled/deployed yet. It uses
+`MediaSegmenter.swift` is a supervised diagnostic helper, bundled by build_server.sh but not yet connected to client playback. It uses
 AVFoundation passthrough samples (no re-encoding) to emit fragmented MP4 init/media
 segments and a VOD playlist from compatible local media:
 
 ```sh
 swiftc -parse-as-library helpers/MediaSegmenter.swift -o /tmp/torrbaby-media-segmenter
-/tmp/torrbaby-media-segmenter INPUT EMPTY_OUTPUT_DIRECTORY
+target/debug/torrbaby package-media --input INPUT --output NEW_OUTPUT_DIRECTORY \
+  --helper /tmp/torrbaby-media-segmenter --max-bytes 536870912
 ```
 
 Prototype limits: 8 audio/video tracks, 300 elapsed seconds during packaging,
@@ -176,3 +177,13 @@ readyToPlay and its native legible media-selection group contained `en` and
 `zh-Hans`; selecting either succeeded. This verifies native track discovery/selection,
 not rendered cue accuracy, production media compatibility, or deployed app support.
 The temporary fixture server is diagnostic tooling, not a Python production service.
+
+The Rust supervisor allows one packaging worker per process, imposes a 600-second
+CPU / 610-second wall limit, bounds helper stdout, checks the source revision,
+and removes its newly created output on failure. Existing output directories
+are rejected. Cancellation kills the child; interrupted directories still need
+cache recovery before HTTP integration. The helper reserves 1 GiB free space
+before each segment and obeys a configurable output budget (1 MiB–32 GiB,
+512 MiB default). This is passthrough only: unsupported containers/codecs fail.
+No memory sandbox is claimed. Playback cache management, authenticated HLS
+routes and subtitle renditions are still pending; the app player is unchanged.

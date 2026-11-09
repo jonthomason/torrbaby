@@ -14,7 +14,8 @@ final class SegmentSink: NSObject, AVAssetWriterDelegate {
     private var failure: Error?
     private var segments: [(String, Double)] = []
     private var bytes = 0
-    init(_ directory: URL) { self.directory = directory }
+    private let maxBytes: Int
+    init(_ directory: URL, maxBytes: Int) { self.directory = directory; self.maxBytes = maxBytes }
     var error: Error? { lock.lock(); defer { lock.unlock() }; return failure }
     func assetWriter(_ writer: AVAssetWriter, didOutputSegmentData data: Data,
                      segmentType: AVAssetSegmentType, segmentReport: AVAssetSegmentReport?) {
@@ -22,7 +23,7 @@ final class SegmentSink: NSObject, AVAssetWriterDelegate {
         guard failure == nil else { return }
         do {
             bytes += data.count
-            guard bytes <= 512 * 1024 * 1024 else { throw PackagingError(message: "Packaging cache limit exceeded") }
+            guard bytes <= maxBytes else { throw PackagingError(message: "Packaging cache limit exceeded") }
             let name: String
             if segmentType == .initialization {
                 name = "init.mp4"
@@ -35,6 +36,8 @@ final class SegmentSink: NSObject, AVAssetWriterDelegate {
                 name = "segment-\(segments.count).m4s"
                 segments.append((name, report.duration.seconds))
             }
+            let free = try directory.resourceValues(forKeys: [.volumeAvailableCapacityKey]).volumeAvailableCapacity ?? 0
+            guard free > data.count + 1_073_741_824 else { throw PackagingError(message: "Insufficient free disk space") }
             try data.write(to: directory.appendingPathComponent(name), options: .atomic)
         } catch { failure = error }
     }
@@ -55,7 +58,10 @@ final class SegmentSink: NSObject, AVAssetWriterDelegate {
 @main struct MediaSegmenter {
     static func main() async {
         do {
-            guard CommandLine.arguments.count == 3 else { throw PackagingError(message: "Usage: torrbaby-media-segmenter INPUT OUTPUT_DIRECTORY") }
+            guard CommandLine.arguments.count == 4 else { throw PackagingError(message: "Usage: torrbaby-media-segmenter INPUT OUTPUT_DIRECTORY MAX_BYTES") }
+            guard let maxBytes = Int(CommandLine.arguments[3]), (1_048_576...34_359_738_368).contains(maxBytes) else {
+                throw PackagingError(message: "Invalid packaging budget")
+            }
             let input = URL(fileURLWithPath: CommandLine.arguments[1])
             let output = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
             guard input.isFileURL, FileManager.default.fileExists(atPath: input.path) else { throw PackagingError(message: "Input is unavailable") }
@@ -73,7 +79,7 @@ final class SegmentSink: NSObject, AVAssetWriterDelegate {
             writer.outputFileTypeProfile = .mpeg4AppleHLS
             writer.preferredOutputSegmentInterval = CMTime(seconds: 6, preferredTimescale: 600)
             writer.initialSegmentStartTime = .zero
-            let sink = SegmentSink(output)
+            let sink = SegmentSink(output, maxBytes: maxBytes)
             writer.delegate = sink
             var pairs: [(AVAssetReaderTrackOutput, AVAssetWriterInput)] = []
             for track in tracks {
@@ -91,7 +97,7 @@ final class SegmentSink: NSObject, AVAssetWriterDelegate {
             writer.startSession(atSourceTime: .zero)
             guard reader.startReading() else { throw reader.error ?? PackagingError(message: "Cannot read media") }
             var ended = Set<Int>()
-            let deadline = Date().addingTimeInterval(300)
+            let deadline = Date().addingTimeInterval(600)
             while ended.count != pairs.count {
                 if let error = sink.error { throw error }
                 guard Date() < deadline else { throw PackagingError(message: "Packaging timed out") }
