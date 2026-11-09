@@ -660,3 +660,14 @@ User reports iPad left/right correctly skip 15 seconds but Space does not play/p
 - Swift helper and cargo build passed; Rust package-media validated generated fixture with new layout. Real MobLand episode (1.33GB) packaged on Diamond with diagnostic helper to /tmp. Loopback-only temporary HTTP18897 + SSH tunnel: native AVPlayer playable=true, ready, 1 audio option, duration3288.895, advanced playback. Muted probe, no rendered A/V sync assessment. No original media or watch history changed.
 - Diagnostic remote HTTP PID56441 stopped explicitly after SSH termination left it running. Tunnel ended. Generated remote package (~1.2GB) and diagnostic segment directories removed. No production Python service added; production helper still previous layout until next server build/deploy.
 - Ignored evidence scripts inspect-media-formats.swift, inspect-real-hls.swift, video-only-packager.swift/audio-only-packager.swift under local-state/checkpoints/2026-11-09. Next necessary work: authenticated HLS job/cache/session routes and subtitle renditions; MP4 tx3g extraction; MKV remux. Existing apps61 and server schema8 remain live unchanged this turn.
+
+## User profiles backlog (explicit latest request)
+
+- User wants individual users with separate history/watch positions after other planned work. Plan in docs/user-profiles.md. Migrate current shared state into default profile; device identity is not user identity. Offline events must capture profile at viewing time and retain it through deletion/reconnection. No implementation yet; do not silently treat current household history as per-user.
+
+## Build63 / offline airplane handoff
+
+- Removed duplicate media-detail toolbar download menu; prominent Download by Play/Resume remains. Mac live AX confirms one Download and no toolbar download control. Existing DownloadTitleMenu is now unused; restore season/multi-file batch selection alongside episode controls later (not as duplicate toolbar icon).
+- New downloads seed local progress from catalog. Each successful server refresh imports newer positions into local downloads, including never-opened episodes; sync uploads happen before library/history reads so reconnection displays reconciled state promptly. Existing timestamp checks protect newer offline progress.
+- Focused generated three-episode storage scenario passed: two completed episodes deleted (one auto, one explicit), third at47/100, app restart, independent pending events retained, acknowledgments persist, stale imports cannot rewind. Rust HTTP smoke passed three-episode watched/resume reconciliation, idempotent retry, stale rejection and active playback deferral. Physical airplane-mode acceptance not yet exercised.
+- Mac/iOS63 built. Mac installed/relaunched, mobile published on Mac Miyu Install. IPA ab851490b97577660ab7a215bd8a26ea2b4b68c480f3effbd3219e259c5aaa13. Build62 was superseded before distribution. TV remains61 (no download feature).

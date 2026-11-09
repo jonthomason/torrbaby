@@ -80,6 +80,8 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
                                     title: title.title, name: asset.name ?? info.name,
                                     season: asset.season, episode: asset.episode, revision: info.etag,
                                     size: info.size, fileExtension: URL(fileURLWithPath: info.name).pathExtension)
+            try storage.importProgress(item.id, position: asset.position, duration: asset.duration,
+                                       watched: asset.watched, recordedAt: Date(timeIntervalSince1970: asset.lastPlayed))
             reload(); pump()
             await cachePoster(for: item)
         } catch { self.error = error.localizedDescription }
@@ -238,6 +240,21 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             Task { await syncProgress() }
             return true
         } catch { self.error = error.localizedDescription; return false }
+    }
+    /// Refresh downloaded copies before the device leaves the network, including
+    /// episodes never opened locally. Timestamp checks preserve newer offline work.
+    func importSharedProgress() {
+        guard let store, let storage, let library = store.library else { return }
+        let assets = library.titles.flatMap(\.assets)
+        let byID = Dictionary(assets.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        do {
+            for item in storage.items where item.server == store.server && item.state != .removed && item.state != .removing {
+                guard let asset = byID[item.assetID] else { continue }
+                try storage.importProgress(item.id, position: asset.position, duration: asset.duration,
+                                           watched: asset.watched, recordedAt: Date(timeIntervalSince1970: asset.lastPlayed))
+            }
+            reload()
+        } catch { self.error = error.localizedDescription }
     }
     func syncProgress() async {
         guard !syncingProgress, let store, store.configured, store.connected, let storage else { return }

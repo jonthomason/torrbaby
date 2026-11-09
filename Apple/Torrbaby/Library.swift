@@ -257,9 +257,6 @@ struct LibraryDetail: View {
                 }.padding(24)
             }
         }.background(Theme.canvas).navigationTitle(title?.title ?? "Library")
-        #if !os(tvOS)
-        .toolbar { if let title { DownloadTitleMenu(title: title) } }
-        #endif
         #if os(iOS)
         .background(MobilePlayerPresentation(playback: $playback, store: store).frame(width: 0, height: 0))
         #elseif os(tvOS)

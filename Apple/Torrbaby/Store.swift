@@ -231,6 +231,10 @@ final class Store: ObservableObject {
             let newEvents: [AuditEvent] = try await request("GET", "/v1/events")
             try await registerClient()
             clients = try await request("GET", "/v1/clients")
+            await flushProgress()
+            #if !os(tvOS)
+            await DownloadQueue.shared.syncProgress()
+            #endif
             history = try await request("GET", "/v1/playback")
             do {
                 library = try await request("GET", "/v1/library")
@@ -241,9 +245,8 @@ final class Store: ObservableObject {
                 metadata = try await request("GET", "/v1/metadata")
                 lastHistoryFetch = Date()
             }
-            await flushProgress()
             #if !os(tvOS)
-            await DownloadQueue.shared.syncProgress()
+            DownloadQueue.shared.importSharedProgress()
             #endif
             status = newStatus
             torrents = newTorrents.sorted { $0.addedDate > $1.addedDate }
