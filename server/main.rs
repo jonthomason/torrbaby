@@ -2,6 +2,7 @@
 mod api;
 mod catalog;
 mod config;
+mod hls;
 mod matroska;
 mod media_packaging;
 mod metadata;

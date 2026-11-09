@@ -46,3 +46,20 @@ size/text opacity, 0% background opacity. Reset removes the entire override.
 Changing a default does not change existing title overrides. Clients must apply
 these through native player selection/styling and refresh when starting playback;
 this API alone does not create a playable translated track.
+
+### HLS preparation (development; not deployed yet)
+
+`POST /v1/library/assets/{id}/hls` with `{"subtitle_jobs":["ready-job-id",...]}`
+prepares media plus up to eight ready subtitle jobs belonging to that asset.
+`GET /v1/hls-jobs/{id}` reports preparing/ready/failed and expiry. Both require
+Bearer authentication. When ready, pass `hls_job` with `client_id` to the existing
+asset `/play` endpoint. It returns a signed `/v1/hls/{job}/media.m3u8` URL and the
+normal shared-progress session. All child playlists/segments carry the same scoped,
+six-hour signature; each read rechecks the managed asset and source revision.
+
+One packaging task at a time, 32GiB total reservations, maximum64 retained jobs,
+six-hour leases. Cache is disposable on daemon restart (active HLS clients must
+prepare again); direct playback remains unchanged unless hls_job is supplied.
+Expired cache cleanup currently runs on preparation; idle periodic cleanup and
+configurable quotas remain follow-up work. Media packaging still supports only
+AVFoundation-readable containers; MKV remux and MP4 subtitle extraction pending.
