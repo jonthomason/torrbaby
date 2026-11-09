@@ -659,6 +659,17 @@ fn score(item: &mut Item, query: &Query) {
     if overlap == wanted.len() {
         item.match_notes.push("Title words match".into());
     }
+    // Prefer the requested title over a sequel or collection even when an
+    // indexer mislabels its year (e.g. "The Matrix Reloaded (1999)").
+    static TITLE_END: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)\b(?:(?:19|20)\d{2}|S\d{1,2}(?:E\d+)?|Seasons?\s+\d|2160p|1080p|720p)\b")
+            .unwrap()
+    });
+    if let Some(marker) = TITLE_END.find(&item.name) {
+        let title_words = words(&item.name[..marker.start()]);
+        let extra = title_words.difference(&wanted).count();
+        score -= (extra * 8).min(24) as i32;
+    }
     for (label, want, got, end) in [
         ("Year", query.year, item.hints.year, None),
         (
@@ -737,6 +748,10 @@ mod tests {
         assert!(pack.match_score > wrong.match_score);
         assert!(word_pack.match_score > wrong.match_score);
         assert_eq!(hints("Example S02E03-E05").episode_end, Some(5));
+        let mut sequel = right.clone();
+        sequel.name = "Example Show Returns S02E03 1080p".into();
+        score(&mut sequel, &q);
+        assert!(right.match_score > sequel.match_score);
         assert_eq!(right.hints.episode, Some(3));
         assert_eq!(right.hints.audio, vec!["DDP5.1"]);
         let url = reqwest::Url::parse(&right.magnet).unwrap();

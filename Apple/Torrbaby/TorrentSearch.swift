@@ -88,7 +88,13 @@ struct TorrentSearchView: View {
                 Text("The Pirate Bay").tag("tpb")
                 Text("Torrent CSV").tag("csv")
                 Text("Nyaa").tag("nyaa")
-            }.pickerStyle(.segmented).padding(.horizontal).padding(.bottom)
+            }
+            #if os(iOS)
+            .pickerStyle(.menu)
+            #else
+            .pickerStyle(.segmented)
+            #endif
+            .padding(.horizontal).padding(.bottom)
             if year != nil || season != nil || episode != nil {
                 HStack {
                     Text([year.map { "Year \($0)" }, season.map { "Season \($0)" }, episode.map { "Episode \($0)" }].compactMap { $0 }.joined(separator: " · ")).foregroundStyle(.secondary)

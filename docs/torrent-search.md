@@ -78,3 +78,34 @@ installer process needs restarting. The goal is blocked on client UI access,
 not complete. Resume by checking an accessible desktop, then verify search,
 open details, paused addition and return navigation on Mac/mobile/TV clients.
 Android 21 is on OTA; TCL currently has confirmed build 20.
+
+## Unlocked desktop acceptance — Apple 85
+
+Desktop access recovered after the user unlocked the Mac. Verified through CUA:
+- Mac 84: Sintel keyword search, results from both indexes, release description
+  with English/audio information, seven files, Back preserves search results.
+- Signed iPhone simulator 84: library Find releases passes title/year; independent
+  Sintel keyword search, details, Add paused, and the Torrent added toast.
+  Diamond confirmed status 0 and zero downloaded bytes; test torrent removed
+  without deleting files.
+- tvOS 84 simulator: remote navigation to Find torrents, native text keyboard,
+  title-context Homeland search, live results and CSV release details.
+- iPad simulator 85: title-context Matrix search, corrected ordering, full source
+  names in menu (Recommended, The Pirate Bay, Torrent CSV, Nyaa).
+
+The unsigned simulator test build initially could not persist Keychain credentials;
+rebuilt with DEVELOPMENT_TEAM and normal simulator signing, bootstrapped using the
+existing DEBUG-only one-use local file, then installed/verified the Release build.
+No credentials were printed or embedded in released apps.
+
+Apple 85 replaces the cramped iOS segmented sources with a menu. Matching now
+penalizes extra title words before year/season markers; live Matrix results place
+original-film releases ahead of the mislabeled Reloaded result. Targeted tests pass.
+Daemon deployed with backup rust-20261109-213329; resumed subtitle job. Live search,
+cache, seven-file detail and paused add/remove all passed again. Apple OTA85 HTTPS
+checksum verified; Mac85 installed/launched; tvOS85 and signed mobile85 simulators
+installed. Android remains OTA21, TCL confirmed20.
+
+Outstanding: user TCL search/details check requested asynchronously. CUA rejects
+its standalone emulator binary as an invalid app, so Android's actual search UI
+has not been visually accepted. Goal is not complete yet.
