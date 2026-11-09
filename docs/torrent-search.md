@@ -29,3 +29,19 @@ Pending: visual interaction checks on all clients, publishing search-enabled
 client builds, expose additional source language metadata where meaningful,
 and verify release/detail/add flow through client UI. Mobile OTA remains stable
 build 83 until the search-enabled release is ready.
+
+## Search release, 2026-11-09
+
+Apple build 84 and Android build 20 published to Miyu Install; both downloaded
+artifacts matched their SHA-256 checksums over HTTPS. Mac 84 installed in
+`~/Applications/Torrbaby/Torrbaby.app`; tvOS 84 installed on the existing simulator.
+Android 20 sent to TCL at 192.168.1.201; native installer confirmation still
+needs verification (`local-state/tcl-build20-install.log`).
+
+Source languages now appear when the listing supplies nonempty language strings;
+missing/unknown fields are omitted. File-derived tags appear on Apple details.
+The default source option is named Recommended (TPB + CSV); Nyaa is opt-in.
+
+Visual acceptance remains open: CUA returned `cgWindowNotFound` for both Torrbaby
+and Finder, even though the installed Mac process was running and its main thread
+sample was idle in the AppKit event loop. Do not treat build success as UI proof.

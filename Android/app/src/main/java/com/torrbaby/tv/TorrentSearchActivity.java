@@ -23,7 +23,7 @@ public final class TorrentSearchActivity extends Activity {
   private int source, generation;
   private boolean inDetail;
   private final Set<String> added = new HashSet<>();
-  private static final String[] SOURCE_NAMES = {"All sources", "The Pirate Bay", "Nyaa", "Torrent CSV"};
+  private static final String[] SOURCE_NAMES = {"Recommended", "The Pirate Bay", "Nyaa", "Torrent CSV"};
 
   public void onCreate(Bundle state) {
     super.onCreate(state);
@@ -115,14 +115,26 @@ public final class TorrentSearchActivity extends Activity {
     root.addView(files,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);add.requestFocus();
     JSONArray sources=item.optJSONArray("sources");JSONObject chosen=null;
     if(sources!=null)for(int i=0;i<sources.length();i++)if(sources.optJSONObject(i).optString("provider").equals("tpb")){chosen=sources.optJSONObject(i);break;}
+    if(chosen==null && sources!=null)for(int i=0;i<sources.length();i++)if(sources.optJSONObject(i).optString("provider").equals("nyaa")){chosen=sources.optJSONObject(i);break;}
     if(chosen==null && sources!=null)chosen=sources.optJSONObject(0);
     if(chosen==null){note.setText("Source details unavailable.");return;}
     JSONObject source=chosen;
     io.execute(() -> {try{
       JSONObject response=api.request("POST","/v1/search/torrents/detail",new JSONObject().put("provider",source.optString("provider")).put("id",source.optString("id")));
       JSONArray entries=response.optJSONArray("files");List<String> names=new ArrayList<>();if(entries!=null)for(int i=0;i<entries.length();i++){JSONObject f=entries.optJSONObject(i);names.add(f.optString("name")+(f.isNull("size_bytes")?"":"\n"+android.text.format.Formatter.formatFileSize(this,f.optLong("size_bytes"))));}
-      runOnUiThread(()->{if(isDestroyed()||request!=generation)return;description.setText(response.optString("description"));note.setText(entries==null?"File list unavailable":names.size()+" files");files.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,names){public View getView(int p,View old,ViewGroup parent){TextView row=(TextView)super.getView(p,old,parent);row.setTextColor(Ui.TEXT);row.setTextSize(14);return row;}});});
+      runOnUiThread(()->{if(isDestroyed()||request!=generation)return;description.setText(sourceLanguages(response)+response.optString("description"));note.setText(entries==null?"File list unavailable":names.size()+" files");files.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,names){public View getView(int p,View old,ViewGroup parent){TextView row=(TextView)super.getView(p,old,parent);row.setTextColor(Ui.TEXT);row.setTextSize(14);return row;}});});
     }catch(Exception error){runOnUiThread(()->{if(!isDestroyed()&&request==generation)note.setText("Couldn’t load source details. You can still add this torrent.");});}});
+  }
+  private static String sourceLanguages(JSONObject response) {
+    StringBuilder text=new StringBuilder();
+    String[] keys={"audio_language","subtitle_language"}, labels={"Audio","Subtitles"};
+    for(int i=0;i<keys.length;i++) {
+      Object raw=response.opt(keys[i]); if(!(raw instanceof String))continue;
+      String value=((String)raw).trim();
+      if(value.isEmpty() || value.equalsIgnoreCase("unknown") || value.equalsIgnoreCase("und") || value.equals("0"))continue;
+      text.append(labels[i]).append(" · ").append(value).append("\n");
+    }
+    if(text.length()>0)text.append("\n"); return text.toString();
   }
   private void add(JSONObject item, boolean paused, Button button) {
     button.setEnabled(false);button.setText("Adding…");

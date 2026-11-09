@@ -41,6 +41,23 @@ private struct TorrentSearchDetails: Decodable {
     struct File: Decodable { let name: String; let sizeBytes: UInt64?; let hints: TorrentReleaseHints }
     let description: String
     let files: [File]?
+    let audioLanguage: String?
+    let subtitleLanguage: String?
+    enum CodingKeys: String, CodingKey { case description, files, audioLanguage, subtitleLanguage }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        description = try values.decode(String.self, forKey: .description)
+        files = try values.decodeIfPresent([File].self, forKey: .files)
+        audioLanguage = try? values.decode(String.self, forKey: .audioLanguage)
+        subtitleLanguage = try? values.decode(String.self, forKey: .subtitleLanguage)
+    }
+    var languages: [String] {
+        [("Audio", audioLanguage), ("Subtitles", subtitleLanguage)].compactMap { label, value in
+            guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !value.isEmpty, !["unknown", "und", "0"].contains(value.lowercased()) else { return nil }
+            return "\(label) · \(value)"
+        }
+    }
 }
 
 struct TorrentSearchView: View {
@@ -67,7 +84,7 @@ struct TorrentSearchView: View {
                     .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || searching)
             }.padding()
             Picker("Sources", selection: $source) {
-                Text("All sources").tag("all")
+                Text("Recommended").tag("all")
                 Text("The Pirate Bay").tag("tpb")
                 Text("Torrent CSV").tag("csv")
                 Text("Nyaa").tag("nyaa")
@@ -166,12 +183,18 @@ private struct TorrentSearchDetail: View {
             if loading { ProgressView("Loading details…") }
             if let detailError { Text(detailError).foregroundStyle(.secondary) }
             if let detail {
+                if !detail.languages.isEmpty {
+                    SwiftUI.Section("Source languages") {
+                        ForEach(detail.languages, id: \.self) { Text($0) }
+                    }
+                }
                 if !detail.description.isEmpty { SwiftUI.Section("Source description") { Text(detail.description).searchSelectable } }
                 if let files = detail.files {
                     SwiftUI.Section("Files · \(files.count)") {
                         ForEach(Array(files.enumerated()), id: \.offset) { _, file in
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(file.name).lineLimit(3)
+                                if !file.hints.summary.isEmpty { Text(file.hints.summary).font(.caption).foregroundStyle(.secondary) }
                                 if let size = file.sizeBytes { Text(ByteCountFormatter.string(fromByteCount: Int64(clamping: size), countStyle: .file)).font(.caption).foregroundStyle(.secondary) }
                             }
                         }
