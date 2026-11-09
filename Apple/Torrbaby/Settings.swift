@@ -245,19 +245,34 @@ struct ConnectionView: View {
     #endif
     var body: some View {
         NavigationStack {
+            #if os(iOS)
+            VStack(spacing: 24) {
+                Spacer()
+                Image("TorrbabyLogo").resizable().frame(width: 80, height: 80)
+                    .clipShape(RoundedRectangle(cornerRadius: 18)).accessibilityHidden(true)
+                VStack(spacing: 12) {
+                    Text("Welcome to Torrbaby").font(.system(size: 28, weight: .bold, design: .rounded))
+                    Text("On a connected device, open Settings and choose Link a device.")
+                        .foregroundStyle(Theme.muted).frame(maxWidth: 320)
+                }.multilineTextAlignment(.center)
+                Button { showScanner = true } label: {
+                    Label("Scan connection code", systemImage: "qrcode.viewfinder")
+                        .font(.headline).padding(.horizontal, 12).padding(.vertical, 10)
+                }
+                .buttonStyle(.borderedProminent).foregroundStyle(Theme.canvas)
+                .sheet(isPresented: $showScanner) { PairingScannerView { dismiss() } }
+                Spacer()
+                Spacer().frame(height: 40)
+            }.padding(30).frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.canvas)
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+            #else
             VStack(alignment: .leading, spacing: 24) {
                 Image(systemName: "arrow.down.forward.and.arrow.up.backward.circle.fill").font(.system(size: 55)).foregroundStyle(Theme.mint)
                 VStack(alignment: .leading, spacing: 9) {
                     Text("Meet your server.").font(.system(size: 30, weight: .bold, design: .rounded))
                     Text("Connect to Torrbaby on your private network. Your downloads stay right where they belong.").foregroundStyle(Theme.muted)
                 }
-                #if os(iOS)
-                Button { showScanner = true } label: { Label("Scan connection code", systemImage: "qrcode.viewfinder").font(.headline) }
-                    .buttonStyle(.borderedProminent)
-                    .sheet(isPresented: $showScanner) {
-                        PairingScannerView { dismiss() }
-                    }
-                #endif
                 VStack(alignment: .leading, spacing: 14) {
                     Text("SERVER ADDRESS").font(.caption2.weight(.semibold)).tracking(1.5).foregroundStyle(Theme.muted)
                     TextField("http://your-server:8765", text: $address).textFieldStyle(.roundedBorder)
@@ -295,6 +310,7 @@ struct ConnectionView: View {
                     address = server; token = secret
                 } catch { store.connectionError = error.localizedDescription }
             }
+            #endif
         }
         #if os(macOS)
         .frame(width: 520, height: 580)
