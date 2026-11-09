@@ -116,3 +116,29 @@ ready jobs, one running, no preparation_version=3 failures; 38 old failures awai
 normal retry. Translation verified advancing from 32 to 256 of 486 cues after
 helper recovery. Broader codec coverage and physical-device soak testing remain
 follow-up work, not a claim of universal Matroska compatibility.
+
+## Build 92 follow-up (2026-11-10)
+
+- Refreshed subtitle inventory for 222 missing-translation titles (202 MKV, 20
+  other containers), preserving 190 translated titles and the running job.
+  scripts/requeue_subtitles.py defaults to dry run; --apply backs up SQLite,
+  keeps artifacts and active work, and clears scan/retry state for missing work.
+- Outlander S1's 16 completed episodes contain only VobSub image captions. No OCR
+  is enabled. The iPad91 English choice was investigated using the actual S01E01
+  virtual stream: AVFoundation reports "English (US) Transcribed (en-US)" while
+  the virtual job contains no captions. This is Apple's automatic transcription,
+  not a Torrbaby-generated or source embedded text subtitle.
+  Reference: https://support.apple.com/en-by/guide/ipad/ipad9a246b38/ipados
+- Apple92 removes track-number/codec fallbacks as language names, includes ready
+  extracted text languages, and excludes extraction-unsupported original tracks
+  from its subtitle list. Android language-name fallback removed in source;
+  no Android build shipped in this follow-up.
+- Deployed completion filters for library main assets and extras; scanner now
+  requires the entire torrent package to finish with matching file sizes.
+  Fresh live library scan: 230 titles, zero incomplete assets, Friends absent.
+  Original incomplete data remains tracked for metadata and torrent management.
+- Apple92 iOS/macOS builds passed; OTA92 published and HTTPS metadata fetched.
+  Mac92 installed and opened. Only isolated completion changes were taken from
+  the parallel profile/lifecycle work; that broader work remains unshipped.
+- Complete server bundle verified (all Swift helpers); restart preserved and
+  re-admitted its pending subtitle job. Backup: rust-20261110-071637.
