@@ -776,3 +776,10 @@ User reports iPad left/right correctly skip 15 seconds but Space does not play/p
 - Mac/iOS/tvOS simulator72 builds passed. Mac72 installed and launched via CUA; title details for Fellowship of the Ring verified English Audio, English Subtitles, Simplified Chinese Translated. Matrix inventory pending (server-confirmed), correctly displays Checking languages.
 - Mobile72 published and HTTPS current.json verified; IPA SHA74475d785d59203c0bcc8cde3faa5a9db787a5576fd4f29055450a45c9f5722e. TVsim72 installed, not newly launched this turn. Android untouched/untracked.
 - Latest daemon status72inventoried/3translated/1failed; currentnull at poll. Investigate failed job next; no dialogue printed. Goal remains active.
+
+## Background extraction repair / signed daemon 17:51
+
+- Investigated real failed asset asset-1174ff188602420abe1f2ee8d07997ae. Extraction CLI exposed Invalid subtitle text; bounded diagnostic sample showed all144 sampled cues NUL-terminated, zero interior-NUL cues.
+- Matroska extractor now strips only trailing NUL padding before plain-text/ASS parsing; rejects interior NUL, skips padding-only cues. Inspector adds text termination counts without dialogue. Focused owned fixtures passed single/multiple trailing terminators and empty/interior cases. Real entire title extracted1515 nonempty ordered cues, no NULs.
+- Signed production Rust deployed with backup rust-20261109-175111. Includes previously committed development remux CLI but normal playback paths unchanged. License notices generated. Live status after restart:84scanned/4translated/1failed, another translation active24/758. Failed title retains normal one-hour retry schedule; do not claim its translation has finished. Signed deployed extractor verified1515cues.
+- No Apple rebuild necessary; Mac/mobile remain72. Goal active; next major task Dolby/remux integration and captions, remaining profiles/offline/TV scope unchanged. Android untouched.

@@ -56,3 +56,7 @@ the first saved batch was not translated twice. Source files remain unchanged.
 waiting_for_idle, and current asset/language/completed_cues/total_cues. Apple
 Settings now shows this progress and an automatic-preparation toggle on Mac, iOS
 and tvOS. Disabling admission lets the current job finish.
+
+Matroska UTF-8/ASS extraction tolerates trailing NUL padding from muxers. Interior
+NUL characters remain invalid, and empty padding-only cues are skipped. A real
+previously failing title extracted all 1,515 cues after this correction.

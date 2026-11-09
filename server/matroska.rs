@@ -38,6 +38,7 @@ pub fn inspect(path: &Path, frame_limit: usize) -> Result<Value> {
         frames: usize, bytes: u64, first_pts_ns: Option<u64>, last_pts_ns: Option<u64>,
         min_pts_ns: Option<u64>, max_pts_ns: Option<u64>, reordered: usize,
         explicit_duration: usize, keyframes: usize,
+        nul_terminated_text_frames: usize, interior_nul_text_frames: usize,
     }
     let mut timing: BTreeMap<u64,Timing> = BTreeMap::new();
     let mut presentation_times: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
@@ -58,6 +59,11 @@ pub fn inspect(path: &Path, frame_limit: usize) -> Result<Value> {
         stats.max_pts_ns = Some(stats.max_pts_ns.map_or(pts, |p|p.max(pts)));
         stats.explicit_duration += usize::from(frame.duration.is_some());
         stats.keyframes += usize::from(frame.is_keyframe == Some(true));
+        if file.tracks().iter().any(|t|t.track_number().get()==frame.track && t.codec_id().starts_with("S_TEXT/")) {
+            let end=frame.data.iter().rposition(|b|*b!=0).map_or(0,|i|i+1);
+            stats.nul_terminated_text_frames+=usize::from(end<frame.data.len());
+            stats.interior_nul_text_frames+=usize::from(frame.data[..end].contains(&0));
+        }
     }
     // Presentation-order cadence is separate from packet/decode order. Reporting
     // adjacent packet PTS differences would mistake B-frame reordering for gaps.
@@ -132,7 +138,10 @@ pub fn extract(path: &Path, track: u64) -> Result<Vec<TimedCue>> {
             continue;
         }
         ensure!(frame.data.len() <= 16_384, "Subtitle cue too large");
-        let text = std::str::from_utf8(&frame.data).context("Invalid UTF-8 subtitle text")?;
+        // Some muxers retain C-string terminators in UTF-8/ASS packets.
+        // Strip only trailing padding; an interior NUL remains invalid.
+        let text = std::str::from_utf8(&frame.data).context("Invalid UTF-8 subtitle text")?
+            .trim_end_matches('\0');
         if text.trim().is_empty() {
             continue;
         }
