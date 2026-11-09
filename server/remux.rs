@@ -14,12 +14,23 @@ use std::{
 struct LimitedFile {
     file: File,
     limit: u64,
+    mapping: Option<std::sync::Arc<std::sync::Mutex<crate::virtual_mkv::Recording>>>,
 }
 impl Write for LimitedFile {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         let end = self.file.stream_position()?.checked_add(bytes.len() as u64);
         if end.is_none_or(|end| end > self.limit) {
             return Err(std::io::Error::other("Remux storage limit reached"));
+        }
+        if let Some(mapping) = &self.mapping {
+            let mut record = mapping.lock().map_err(|_| std::io::Error::other("Mapping lock failed"))?;
+            if let Some((source, expected)) = record.pending.take() {
+                if bytes != expected { return Err(std::io::Error::other("Muxer changed a media packet")); }
+                let at = self.file.stream_position()?;
+                record.extents.push([at, source, bytes.len() as u64]);
+                self.file.seek(SeekFrom::Current(bytes.len() as i64))?;
+                return Ok(bytes.len());
+            }
         }
         self.file.write(bytes)
     }
@@ -47,6 +58,11 @@ struct Track {
 }
 
 pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Value> {
+    run_internal(input, output, max_bytes, None)
+}
+
+pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
+    mapping: Option<std::sync::Arc<std::sync::Mutex<crate::virtual_mkv::Recording>>>) -> Result<serde_json::Value> {
     ensure!(
         (1_048_576..=34_359_738_368).contains(&max_bytes),
         "Remux budget must be 1 MiB to 32 GiB"
@@ -119,9 +135,11 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
         } else {
             let a = t.audio().context("Missing audio parameters")?;
             let asc = &params.extradata;
-            // Initial support is ordinary AAC-LC with 1024 samples/access unit.
+            // Ordinary AAC-LC with 1024 samples/access unit, optionally followed
+            // by sync extension 0x2b7 / AOT 5 with sbrPresentFlag=0.
+            // Preserve the full configuration; do not accept arbitrary extensions.
             ensure!(
-                asc.len() == 2 && asc[0] >> 3 == 2 && asc[1] & 7 == 0,
+                (asc.len() == 2 || (asc.len() == 5 && asc[2..] == [0x56, 0xe5, 0x00])) && asc[0] >> 3 == 2 && asc[1] & 7 == 0,
                 "AAC configuration needs additional support"
             );
             let rates = [
@@ -249,6 +267,7 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
             Box::new(LimitedFile {
                 file: out,
                 limit: max_bytes,
+                mapping: mapping.clone(),
             }),
             &streams,
             options,
@@ -317,7 +336,15 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
                 packet.duration = Some(t.audio_samples as i64);
             }
             packet.flags.keyframe = !t.video || frame.is_keyframe == Some(true);
+            if let Some(mapping) = &mapping {
+                let mut record = mapping.lock().map_err(|_| anyhow::anyhow!("Mapping lock failed"))?;
+                ensure!(record.pending.is_none(), "Unconsumed media packet");
+                record.pending = Some((frame.source_offset, packet.data.clone()));
+            }
             mux.write_packet(&packet)?;
+            if let Some(mapping) = &mapping {
+                ensure!(mapping.lock().map_err(|_| anyhow::anyhow!("Mapping lock failed"))?.pending.is_none(), "Unmapped media packet");
+            }
             t.count += 1;
         }
         for t in tracks.values_mut() {

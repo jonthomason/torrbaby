@@ -1,6 +1,25 @@
 """Disposable loopback-only virtual MP4 proof; no production integration."""
-import argparse, struct, os, time
+import argparse, struct, os, time, urllib.request, io
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+# Optional read-only HTTP backing for real-catalog experiments. Never logs URLs.
+REMOTE = {}
+REMOTE_BYTES = 0
+class RemoteFile:
+ def __init__(self,url):self.url=url;self.pos=0;self.cache=b'';self.cache_start=0
+ def __enter__(self):return self
+ def __exit__(self,*args):pass
+ def tell(self):return self.pos
+ def seek(self,pos):self.pos=pos
+ def read(self,n):
+  global REMOTE_BYTES
+  if not (self.cache_start<=self.pos and self.pos+n<=self.cache_start+len(self.cache)):
+   size=REMOTE[self.url];end=min(size,self.pos+max(n,1024*1024))
+   r=urllib.request.urlopen(urllib.request.Request(self.url,headers={'Range':f'bytes={self.pos}-{end-1}'}),timeout=15)
+   assert r.status==206, 'Backing server must support ranges'
+   self.cache_start=self.pos;self.cache=r.read();REMOTE_BYTES+=len(self.cache)
+  at=self.pos-self.cache_start;data=self.cache[at:at+n];self.pos+=len(data);return data
+def media_open(path):return RemoteFile(path) if path in REMOTE else open(path,'rb')
+def media_size(path):return REMOTE[path] if path in REMOTE else os.path.getsize(path)
 U32=lambda b:struct.unpack('>I',b)[0]
 U64=lambda b:struct.unpack('>Q',b)[0]
 def box(kind,body):return struct.pack('>I4s',len(body)+8,kind)+body
@@ -13,8 +32,8 @@ def children(data):
  assert p==len(data)
 def top(path):
  out=[]
- with open(path,'rb') as f:
-  size=os.fstat(f.fileno()).st_size
+ with media_open(path) as f:
+  size=media_size(path)
   while f.tell()<size:
    p=f.tell();h=f.read(8);n=U32(h[:4]);header=8
    if n==1:n=U64(f.read(8));header=16
@@ -27,7 +46,7 @@ def moov(path):
  boxes=top(path);assert not any(k==b'moof' for k,*_ in boxes),'Fragmented source out of scope'
  found=[(p,n,h) for k,p,n,h in boxes if k==b'moov'];assert len(found)==1
  p,n,h=found[0];assert h==8 and n<32*1024*1024
- with open(path,'rb') as f:f.seek(p+h);data=f.read(n-h)
+ with media_open(path) as f:f.seek(p+h);data=f.read(n-h)
  return p,n,data
 
 def scale(m):
@@ -58,7 +77,7 @@ def patch(data,offset,newid,oldscale,newscale,alt,dimensions):
 class Virtual:
  def __init__(self,video,subtitles):
   begin=time.monotonic();vp,vn,vm=moov(video);sp,sn,sm=moov(subtitles)
-  vsize=os.path.getsize(video);ssize=os.path.getsize(subtitles)
+  vsize=media_size(video);ssize=media_size(subtitles)
   ids=[trackid(t) for k,t in children(vm) if k==b'trak'];nextid=max(ids)+1
   assert not any(k==b'mvex' for k,_ in children(vm))
   dimensions=next(b[-8:] for k,t in children(vm) if k==b'trak' for z,b in children(t) if z==b'tkhd')
@@ -82,14 +101,21 @@ class Virtual:
     at=offset+a-pos;remaining=b-a
     if isinstance(source,bytes):yield source[at:at+remaining]
     else:
-     with open(source,'rb') as f:
+     with media_open(source) as f:
       f.seek(at)
       while remaining:
        data=f.read(min(remaining,65536));assert data;remaining-=len(data);yield data
    pos+=length
 
 if __name__=='__main__':
- p=argparse.ArgumentParser();p.add_argument('video');p.add_argument('subtitles');p.add_argument('--port',type=int,default=18769);a=p.parse_args();v=Virtual(a.video,a.subtitles)
+ p=argparse.ArgumentParser();p.add_argument('video');p.add_argument('subtitles');p.add_argument('--port',type=int,default=18769);p.add_argument('--remote',action='store_true');a=p.parse_args()
+ if a.remote:
+  # video argument is a private local file containing a signed playback URL.
+  a.video=open(a.video).read().strip()
+  r=urllib.request.urlopen(urllib.request.Request(a.video,headers={'Range':'bytes=0-0'}),timeout=15)
+  assert r.status==206
+  REMOTE[a.video]=int(r.headers['Content-Range'].split('/')[-1]);r.close()
+ v=Virtual(a.video,a.subtitles)
  class Handler(BaseHTTPRequestHandler):
   def do_HEAD(self):self.send(False)
   def do_GET(self):self.send(True)
@@ -110,5 +136,5 @@ if __name__=='__main__':
     try:
      for data in v.read(start,end):self.wfile.write(data);v.sent+=len(data)
     except (BrokenPipeError,ConnectionResetError):pass
-   print(f'range={start}-{end} bytes_sent_total={v.sent}',flush=True)
+   print(f'range={start}-{end} bytes_sent_total={v.sent} backing_bytes={REMOTE_BYTES}',flush=True)
  ThreadingHTTPServer(('127.0.0.1',a.port),Handler).serve_forever()

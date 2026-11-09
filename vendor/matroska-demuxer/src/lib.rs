@@ -73,6 +73,8 @@ pub struct Frame {
     pub timestamp: u64,
     /// The data of the frame.
     pub data: Vec<u8>,
+    /// Absolute source offset of the unmodified frame payload.
+    pub source_offset: u64,
     /// Set when the codec should decode this frame but not display it.
     pub is_invisible: bool,
     /// Block marked this frame as a keyframe.
@@ -1667,6 +1669,7 @@ impl<R: Read + Seek> MatroskaFile<R> {
             }
             let size: usize = queued_frame.size.try_into()?;
             frame.data.resize(size, 0_u8);
+            frame.source_offset = self.file.stream_position()?;
             self.file.read_exact(frame.data.as_mut_slice())?;
 
             Ok(true)

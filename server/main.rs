@@ -14,6 +14,7 @@ mod offline;
 mod organizer;
 mod pairing;
 mod remux;
+mod virtual_mkv;
 mod scanner;
 mod storage;
 mod subtitle_jobs;
@@ -50,6 +51,17 @@ enum Command {
         episode: Option<u16>,
         #[arg(long = "source")]
         sources: Vec<String>,
+    },
+    /// Index MKV packets as a virtual MP4 without copying media payloads.
+    IndexMatroska {
+        #[arg(long)] input: PathBuf,
+        #[arg(long)] output: PathBuf,
+    },
+    /// Serve an existing virtual MKV index on loopback for playback checks.
+    ServeIndexedMatroska {
+        #[arg(long)] input: PathBuf,
+        #[arg(long)] index: PathBuf,
+        #[arg(long, default_value_t = 18770)] port: u16,
     },
     /// Development-only Matroska to MP4 passthrough; not production playback.
     RemuxMatroska {
@@ -206,6 +218,12 @@ async fn main() -> Result<()> {
                 })
                 .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::IndexMatroska { input, output } => {
+            println!("{}", virtual_mkv::build(&input, &output)?);
+        }
+        Command::ServeIndexedMatroska { input, index, port } => {
+            virtual_mkv::serve(&input, &index, port).await?;
         }
         Command::RemuxMatroska {
             input,

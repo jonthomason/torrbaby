@@ -86,3 +86,53 @@ org.torrbaby.virtual-mp4-experiment. iPad simulator:
 4E2EEF4D-440B-44AB-B4E3-58C9963DEE46. The app permits HTTP solely for its loopback
 experiment and has background audio enabled for PiP. Generated app stays under
 ignored local-state/virtual-mp4. Stop the app and server after use.
+
+## Full-catalog follow-up, 2026-11-10
+
+This playback work is the top priority. Apple MKV support was missing and should
+have been disclosed clearly; do not claim it shipped based on these diagnostics.
+
+Full Matrix MP4 over a signed source range URL (kept in ignored local state):
+- 1,992,052,865 original bytes, 179,316 subtitle bytes, 4,102,953 new moov bytes.
+- Setup 0.087s; desktop ready 0.353s; iPad simulator ready 0.52s.
+- English/Chinese/Off and far forward/back/end seeks passed on desktop.
+- Full-movie PiP has not yet been visually verified; fixture PiP passed above.
+
+Rust MKV experiment now uses the existing passthrough remuxer as an index builder.
+It records each demuxed packet's original source offset, intercepts payload writes,
+and persists only packed MP4 metadata plus an extent map. A Rust loopback range
+server reads these metadata bytes and original MKV packets. No media payload is
+retained in a second movie. Construction currently uses a temporary sparse file:
+filesystem allocation may exceed its useful bytes; remove this dependency before
+production. Tiny fixtures demonstrated that allocation is filesystem-dependent.
+
+Real Philosopher's Stone on Diamond:
+- Original MKV: 2,845,962,568 bytes; HEVC 1920x800 + 6-channel AAC-LC.
+- Index: 675,095 packets in 18.106s; JSON map 18,967,847 bytes;
+  packed metadata allocation 9,322,496 bytes. Virtual MP4 2,850,292,380 bytes.
+- Accepted its exact AAC-LC no-SBR sync extension; no arbitrary AAC broadening.
+- Native macOS AVPlayer ready in 0.590s through an SSH tunnel to the isolated
+  Diamond Rust loopback server. Duration 9,530.562s.
+- Exact seeks to 0,60,4765.281,9520.562,15 succeeded and playback advanced.
+- Native image decoding returned 640x266 frames near 60,4765,9500 seconds.
+- This does not yet validate full audiovisual sync, every frame, physical iPad,
+  captions on MKV, PiP on this movie, or all catalog codecs.
+- Existing daemon was not restarted; original files untouched; probes muted.
+- Owned AC3 fixture: all virtual bytes match reconstructed MP4 and 30 random
+  HTTP ranges match. Packed metadata+map about 50KB for 615KB virtual movie.
+
+Diagnostic commands (new destination directory required):
+```
+torrbaby index-matroska --input movie.mkv --output new-index-directory
+torrbaby serve-indexed-matroska --input movie.mkv --index new-index-directory
+```
+The diagnostic listener binds loopback only. Do not expose it as production:
+production needs authenticated signed URLs, source revision/inode pinning across
+races and mutation, bounded scheduling, durable atomic index publication,
+cleanup/invalidation, admission checks, and client integration. Existing MKV
+subtitle tracks are not yet included by this index builder.
+
+Next: eliminate sparse construction allocation; integrate background indexing
+and authenticated virtual ranges; attach original/generated text subtitles;
+validate full movies and native iPad/PiP before switching app playback. Unsupported
+codecs need explicit fallback/error, never a claim that every MKV is supported.
