@@ -283,3 +283,17 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
    merging/releasing Downloads. Keep original full media-server scope intact.
 6. Update this handoff as work progresses. Do not mark the persistent goal complete
    until the full requirements are actually verified.
+
+## Follow-up: bounded translation helper implemented
+
+- `helpers/SubtitleTranslator.swift` now implements the JSON stdin/stdout bridge;
+  `helpers/README.md` documents limits, failure codes and integration contract.
+- Compiled and Developer ID signed, copied only to
+  `/tmp/torrbaby-subtitle-translator` on Diamond (no production restart/deploy).
+- Live SSH checks passed: two English cues translated into Simplified Chinese in
+  requested ID/order; a Chinese cue translated to English; duplicate IDs rejected
+  with `invalid_request` and exit 1. No extra model installation was needed.
+- Input is bounded at 1 MiB and 128 cues; only en/zh-Hans supported. No cue logging.
+- Not bundled or wired into Rust yet. Next: server-owned text extraction,
+  normalization, process timeout/cancellation, translation cache and native-player
+  selectable subtitle delivery. This does not mean captions are already available.
