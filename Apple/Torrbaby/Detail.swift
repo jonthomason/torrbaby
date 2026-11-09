@@ -130,8 +130,6 @@ struct RemoveTorrentView: View {
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) var dismiss
     let torrent: Torrent
-    @State private var deleteData = false
-    @State private var confirmation = false
     var body: some View {
         NavigationStack {
             Form {
@@ -141,37 +139,34 @@ struct RemoveTorrentView: View {
                 }
                 SwiftUI.Section {
                     Button("Remove torrent, keep files") {
-                        deleteData = false
-                        confirmation = true
+                        remove(deleteData: false)
                     }
                     Text("Stop tracking the torrent in Transmission. Keep all downloaded files on Diamond.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 SwiftUI.Section {
                     Button("Remove torrent and delete files", role: .destructive) {
-                        deleteData = true
-                        confirmation = true
+                        remove(deleteData: true)
                     }
                     Text("Permanently delete this torrent’s downloaded files, including partial downloads.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }.formStyle(.grouped)
+            .disabled(store.busy || !store.connected)
             .navigationTitle("Remove torrent")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-            }
-            .confirmationDialog(deleteData ? "Permanently delete these files?" : "Remove this torrent and keep its files?", isPresented: $confirmation, titleVisibility: .visible) {
-                Button(deleteData ? "Delete torrent and files" : "Remove torrent, keep files", role: .destructive) {
-                    store.perform {
-                        try await store.send("POST", "/v1/torrents/\(torrent.id)/remove", body: ["delete_data": deleteData, "confirm_hash": torrent.id])
-                        dismiss()
-                    }
-                }
             }
         }.presentationDetents([.medium, .large])
         #if os(macOS)
         .frame(width: 560, height: 420)
         #endif
+    }
+    private func remove(deleteData: Bool) {
+        store.perform {
+            try await store.send("POST", "/v1/torrents/\(torrent.id)/remove", body: ["delete_data": deleteData, "confirm_hash": torrent.id])
+            dismiss()
+        }
     }
 }
 
