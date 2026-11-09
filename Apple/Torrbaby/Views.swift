@@ -3,7 +3,7 @@ import SwiftUI
 import Charts
 
 enum Section: String, CaseIterable, Identifiable {
-    case findTorrents = "Find torrents", downloads = "Downloads", library = "Home", movies = "Movies", shows = "TV Shows", active = "Downloading", seeding = "Seeding", complete = "Complete", subtitles = "Subtitles", attention = "Not progressing", automation = "Automation", settings = "Settings"
+    case findTorrents = "Find", downloads = "Downloads", library = "Home", movies = "Movies", shows = "TV Shows", active = "Downloading", seeding = "Seeding", complete = "Complete", subtitles = "Subtitles", attention = "Not progressing", automation = "Automation", settings = "Settings"
     var id: String { rawValue }
     var icon: String {
         switch self {
@@ -164,12 +164,12 @@ struct RootView: View {
                 }.padding(.horizontal, 18).padding(.top, 24)
                 List(selection: Binding(get: { location.section }, set: { navigate(Location(section: $0)) })) {
                     SwiftUI.Section("Library") {
-                        ForEach([Section.library, .movies, .shows, .downloads]) { section in
+                        ForEach([Section.library, .findTorrents, .movies, .shows, .downloads]) { section in
                             Label(section.rawValue, systemImage: section.icon).padding(.vertical, 5).tag(section)
                         }
                     }
                     SwiftUI.Section("Torrents") {
-                        ForEach([Section.findTorrents, .active, .seeding, .complete, .subtitles, .attention]) { section in
+                        ForEach([Section.active, .seeding, .complete, .subtitles, .attention]) { section in
                             Label(section.rawValue, systemImage: section.icon).padding(.vertical, 5).tag(section)
                         }
                     }

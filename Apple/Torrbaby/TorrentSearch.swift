@@ -30,6 +30,37 @@ struct TorrentSearchItem: Decodable, Identifiable {
     let matchScore: Int
     let matchNotes: [String]
     var id: String { infoHash }
+    var title: String {
+        let cleaned = name.replacingOccurrences(of: #"^(?:www\.)?[^ ]+\.(?:org|com|net)\s*[-–]*\s+"#, with: "", options: .regularExpression)
+        let marker = cleaned.range(of: #"(?i)\b(?:(?:19|20)\d{2}|S\d{1,2}(?:E\d+)?|Seasons?\s+\d|2160p|1080[pi]|720p|480p|WEB[ ._-]?DL|BluRay|BRRip|x26[45]|HEVC)\b"#, options: .regularExpression, range: cleaned.isEmpty ? nil : cleaned.index(after: cleaned.startIndex)..<cleaned.endIndex)
+        let prefix = marker.map { String(cleaned[..<$0.lowerBound]) } ?? cleaned
+        let readable = prefix.replacingOccurrences(of: "[._]+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "([{-–")))
+        return readable.isEmpty ? name : readable
+    }
+    var edition: String {
+        [hints.year.map(String.init), hints.season.map { season in
+            hints.episode.map { String(format: "S%02d E%02d", season, $0) } ?? "Season \(season)"
+        }].compactMap { $0 }.joined(separator: " · ")
+    }
+    var quality: String { [hints.resolution, hints.releaseSource, hints.videoCodec].compactMap { $0 }.joined(separator: " · ") }
+    var languages: String {
+        hints.languages.map { tag in
+            switch tag.uppercased() {
+            case "ENG": return "English"
+            case "CHS": return "Chinese (Simplified)"
+            case "CHT": return "Chinese (Traditional)"
+            case "JPN": return "Japanese"
+            case "MULTI": return "Multiple languages"
+            case "DUAL AUDIO", "DUAL-AUDIO", "DUAL_AUDIO": return "Dual audio"
+            default: return tag
+            }
+        }.joined(separator: " · ")
+    }
+    var availability: String {
+        guard let seeders else { return "Availability not listed" }
+        return seeders == 0 ? "No reported seeds" : "\(seeders.formatted()) \(seeders == 1 ? "seed" : "seeds")"
+    }
     var size: String { sizeBytes.map { ByteCountFormatter.string(fromByteCount: Int64(clamping: $0), countStyle: .file) } ?? sizeLabel ?? "" }
 }
 private struct TorrentSearchResponse: Decodable {
@@ -75,66 +106,100 @@ struct TorrentSearchView: View {
     @State private var error: String?
     @State private var searching = false
     @State private var work: Task<Void, Never>?
+    @State private var selectedID: String?
+    private var selectedItem: TorrentSearchItem? { response?.items.first { $0.id == selectedID } }
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                TextField("Search torrents", text: $query).onSubmit(search)
-                    .autocorrectionDisabled()
-                Button(action: search) { Label("Search", systemImage: "magnifyingglass") }
-                    .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || searching)
-            }.padding()
-            Picker("Sources", selection: $source) {
-                Text("Recommended").tag("all")
-                Text("The Pirate Bay").tag("tpb")
-                Text("Torrent CSV").tag("csv")
-                Text("Nyaa").tag("nyaa")
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                searchHeader
+                if let response {
+                    if response.items.isEmpty && !searching {
+                        ContentUnavailableView("No releases found", systemImage: "magnifyingglass", description: Text("Try a shorter title or another source."))
+                    } else if usesColumns(geometry.size.width) {
+                        HStack(spacing: 0) {
+                            results(response.items, inline: true)
+                                .frame(width: min(440, max(280, geometry.size.width * 0.43)))
+                            Divider()
+                            if let selectedItem {
+                                TorrentSearchDetail(item: selectedItem, embedded: true).id(selectedItem.id)
+                            } else {
+                                ContentUnavailableView("Choose a release", systemImage: "text.magnifyingglass")
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            }
+                        }
+                    } else {
+                        results(response.items, inline: false)
+                    }
+                } else {
+                    ContentUnavailableView("Find your next watch", systemImage: "magnifyingglass", description: Text("Search movies and TV shows."))
+                }
             }
-            #if os(iOS)
-            .pickerStyle(.menu)
-            #else
-            .pickerStyle(.segmented)
-            #endif
-            .padding(.horizontal).padding(.bottom)
+        }
+        .navigationTitle("Find")
+        .onDisappear { work?.cancel(); searching = false }
+        .task { if !query.isEmpty && response == nil { search() } }
+    }
+    private func usesColumns(_ width: CGFloat) -> Bool {
+        #if os(tvOS)
+        return false
+        #elseif os(iOS)
+        return UIDevice.current.userInterfaceIdiom == .pad && width >= 640
+        #else
+        return width >= 640
+        #endif
+    }
+    private var searchHeader: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: "magnifyingglass").foregroundStyle(Theme.mint)
+                TextField("Movie, show, or release", text: $query).onSubmit(search).autocorrectionDisabled()
+                    .textFieldStyle(.plain)
+                Button(action: search) { Text(searching ? "Searching…" : "Search") }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || searching)
+            }.padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
+            HStack {
+                Picker("Sources", selection: $source) {
+                    Text("Recommended").tag("all")
+                    Text("The Pirate Bay").tag("tpb")
+                    Text("Torrent CSV").tag("csv")
+                    Text("Nyaa").tag("nyaa")
+                }
+                #if os(tvOS)
+                .pickerStyle(.segmented)
+                #else
+                .pickerStyle(.menu).fixedSize()
+                #endif
+                Spacer()
+                if let response { Text("\(response.items.count) releases").font(.caption).foregroundStyle(.secondary) }
+                if searching { ProgressView().controlSize(.small) }
+            }
             if year != nil || season != nil || episode != nil {
                 HStack {
-                    Text([year.map { "Year \($0)" }, season.map { "Season \($0)" }, episode.map { "Episode \($0)" }].compactMap { $0 }.joined(separator: " · ")).foregroundStyle(.secondary)
-                    Button("Clear filters") { year = nil; season = nil; episode = nil }
-                }.font(.caption).padding(.bottom)
+                    Text([year.map { "\($0)" }, season.map { "Season \($0)" }, episode.map { "Episode \($0)" }].compactMap { $0 }.joined(separator: " · "))
+                    Button("Clear filters") { year = nil; season = nil; episode = nil; search() }
+                }.font(.caption).foregroundStyle(.secondary)
             }
-            if searching { ProgressView().padding() }
-            if let error { Text(error).foregroundStyle(.orange).padding() }
+            if let error { Text(error).font(.caption).foregroundStyle(.orange) }
             if let response {
                 ForEach(response.providers.filter { $0.error != nil }, id: \.provider) { provider in
                     Text("\(provider.provider == "tpb" ? "The Pirate Bay" : provider.provider == "csv" ? "Torrent CSV" : "Nyaa"): \(provider.error ?? "")")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                List(response.items) { item in
-                    NavigationLink {
-                        TorrentSearchDetail(item: item)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(item.name).font(.headline).lineLimit(3)
-                            HStack {
-                                Text(item.size)
-                                if let seeders = item.seeders { Label("\(seeders)", systemImage: "arrow.up.circle").foregroundStyle(.green) }
-                                if let peers = item.leechers { Label("\(peers)", systemImage: "arrow.down.circle").foregroundStyle(.secondary) }
-                                Spacer()
-                                Text(item.sources.map(\.label).joined(separator: " · ")).foregroundStyle(.secondary)
-                            }.font(.caption).monospacedDigit()
-                            if !item.hints.summary.isEmpty { Text(item.hints.summary).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
-                        }.padding(.vertical, 8)
-                    }
-                }
-                if response.items.isEmpty && !searching {
-                    ContentUnavailableView("No results", systemImage: "magnifyingglass", description: Text("Try a shorter title or another source."))
-                }
-            } else if !searching {
-                ContentUnavailableView("Find a torrent", systemImage: "magnifyingglass")
             }
-        }
-        .navigationTitle("Find torrents")
-        .onDisappear { work?.cancel(); searching = false }
-        .task { if !query.isEmpty && response == nil { search() } }
+        }.padding(16)
+    }
+    private func results(_ items: [TorrentSearchItem], inline: Bool) -> some View {
+        List(items) { item in
+            if inline {
+                Button { selectedID = item.id } label: { TorrentSearchRow(item: item) }
+                    .buttonStyle(.plain)
+                    .listRowBackground(selectedID == item.id ? Theme.mint.opacity(0.13) : Color.clear)
+                    .accessibilityAddTraits(selectedID == item.id ? .isSelected : [])
+            } else {
+                NavigationLink { TorrentSearchDetail(item: item).id(item.id) } label: { TorrentSearchRow(item: item) }
+            }
+        }.listStyle(.plain).disabled(searching)
     }
     private func search() {
         guard query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 else { return }
@@ -145,6 +210,7 @@ struct TorrentSearchView: View {
             do {
                 let value: TorrentSearchResponse = try await store.request("POST", "/v1/search/torrents", body: body, timeout: 20)
                 guard !Task.isCancelled else { return }; response = value
+                if !value.items.contains(where: { $0.id == selectedID }) { selectedID = value.items.first?.id }
             } catch {
                 guard !Task.isCancelled else { return }; self.error = error.localizedDescription
             }
@@ -153,9 +219,33 @@ struct TorrentSearchView: View {
     }
 }
 
+private struct TorrentSearchRow: View {
+    let item: TorrentSearchItem
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(item.title).font(.headline).foregroundStyle(.primary).lineLimit(2)
+            if !item.edition.isEmpty { Text(item.edition).font(.subheadline).foregroundStyle(.secondary) }
+            HStack(alignment: .firstTextBaseline) {
+                Text(item.quality).lineLimit(2)
+                Spacer(minLength: 8)
+                Text(item.size).monospacedDigit().fixedSize()
+            }.font(.caption).foregroundStyle(.secondary)
+            Label(item.languages.isEmpty ? "Languages not listed" : item.languages, systemImage: "globe")
+                .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            HStack {
+                Label(item.availability, systemImage: "arrow.up.circle.fill")
+                    .foregroundStyle(item.seeders == 0 ? Color.orange : Theme.mint)
+                Spacer()
+                if let peers = item.leechers { Text("\(peers.formatted()) \(peers == 1 ? "peer" : "peers")").foregroundStyle(.secondary) }
+            }.font(.caption).monospacedDigit()
+        }.padding(.vertical, 10).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+    }
+}
+
 private struct TorrentSearchDetail: View {
     @EnvironmentObject var store: Store
     let item: TorrentSearchItem
+    var embedded = false
     @State private var detail: TorrentSearchDetails?
     @State private var loading = false
     @State private var adding = false
@@ -166,12 +256,15 @@ private struct TorrentSearchDetail: View {
     var body: some View {
         List {
             SwiftUI.Section {
-                Text(item.name).font(.title2.bold()).searchSelectable
-                Text(item.size).foregroundStyle(.secondary)
+                Text(item.title).font(.title2.bold()).searchSelectable
+                if !item.edition.isEmpty { Text(item.edition).foregroundStyle(.secondary) }
+                Text([item.quality, item.size].filter { !$0.isEmpty }.joined(separator: " · ")).font(.subheadline).foregroundStyle(.secondary)
+                Label(item.availability, systemImage: "arrow.up.circle.fill").font(.caption).foregroundStyle(Theme.mint)
+                Text(item.name).font(.caption).foregroundStyle(.secondary).searchSelectable
                 Toggle("Add paused", isOn: $paused).disabled(adding || added)
                 Button { Task { await add() } } label: {
                     Label(added ? "Added to Transmission" : adding ? "Adding…" : "Add torrent", systemImage: added ? "checkmark.circle.fill" : "plus.circle.fill")
-                }.disabled(adding || added)
+                }.buttonStyle(.borderedProminent).disabled(adding || added)
                 if let message { Text(message).foregroundStyle(.secondary) }
             }
             if !item.hints.summary.isEmpty {
@@ -194,7 +287,13 @@ private struct TorrentSearchDetail: View {
                         ForEach(detail.languages, id: \.self) { Text($0) }
                     }
                 }
-                if !detail.description.isEmpty { SwiftUI.Section("Source description") { Text(detail.description).searchSelectable } }
+                if !detail.description.isEmpty {
+                    #if os(tvOS)
+                    SwiftUI.Section("Description") { Text(detail.description).font(.callout) }
+                    #else
+                    SwiftUI.Section { DisclosureGroup("Description") { Text(detail.description).font(.callout).searchSelectable } }
+                    #endif
+                }
                 if let files = detail.files {
                     SwiftUI.Section("Files · \(files.count)") {
                         ForEach(Array(files.enumerated()), id: \.offset) { _, file in
@@ -207,7 +306,7 @@ private struct TorrentSearchDetail: View {
                     }
                 }
             }
-        }.navigationTitle("Torrent details")
+        }.searchDetailTitle(embedded: embedded)
         .task {
             guard let source = item.sources.first(where: { $0.provider == "tpb" }) ?? item.sources.first(where: { $0.provider == "nyaa" }) ?? item.sources.first else { return }
             loading = true; defer { loading = false }
@@ -229,6 +328,9 @@ private struct TorrentSearchDetail: View {
 }
 
 private extension View {
+    @ViewBuilder func searchDetailTitle(embedded: Bool) -> some View {
+        if embedded { self } else { self.navigationTitle("Release") }
+    }
     @ViewBuilder var searchSelectable: some View {
         #if os(tvOS)
         self

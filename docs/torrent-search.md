@@ -121,3 +121,25 @@ Diamond; the default TPB + Torrent CSV sources are operational. Index descriptio
 and release tags are source claims, not independently probed media tracks.
 
 Unrelated Android subtitle/playback edits present at closure were left untouched.
+
+## Find redesign — Apple build 88
+
+- Find is directly below Home in the main Library navigation. Title pages retain
+  a more visible Find releases action.
+- Results separate readable title, year/episode, quality/codec/source, size,
+  language tags, and reported seeds/peers. Missing languages say Languages not
+  listed; zero seeds says No reported seeds. These remain index/name claims.
+- Mac and iPad show results beside details when at least 640 points are available;
+  narrower iPad windows and iPhone use pushed details. Selection survives resizing
+  and refresh when its hash remains in the results; a new search selects its first
+  result. Searching disables stale result interactions.
+- Details retain the complete release name. Description is collapsible on Mac/iOS,
+  making files and the add action easier to reach. tvOS retains a plain description.
+- macOS, iOS device/simulator, and tvOS simulator builds pass. A lightweight title
+  cleanup check covered Sintel, Matrix, Homeland, 1917 and 2001: A Space Odyssey.
+- Mobile OTA88 published and downloaded IPA SHA-256 verified over HTTPS. Mac88
+  installed, iPhone/iPad release simulators updated. Native visual inspection is
+  pending: CUA currently returns cgWindowNotFound for both Torrbaby and Device Hub;
+  the user was asked to unlock the Mac.
+- Existing concurrent subtitle/player/server edits were preserved and not included
+  in this change's commit. Builds used the shared current workspace.
