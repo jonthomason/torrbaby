@@ -276,3 +276,120 @@ pub async fn translate_cues(
     }
     Ok(())
 }
+
+#[derive(Serialize)]
+pub struct Sidecar {
+    pub id: String,
+    pub name: String,
+    pub language: Option<String>,
+    pub forced: bool,
+    pub hearing_impaired: bool,
+}
+
+/// Only exact video stems or stem.language/flags suffixes in the same directory.
+/// Never guess that arbitrary subtitles in a season folder belong to one episode.
+pub fn discover(media: &Path) -> Result<Vec<Sidecar>> {
+    use sha2::Digest;
+    let parent = media.parent().context("Missing media directory")?;
+    let stem = media
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .context("Invalid media filename")?;
+    let mut tracks = Vec::new();
+    for (count, entry) in std::fs::read_dir(parent)?.enumerate() {
+        ensure!(
+            count < 20_000,
+            "Media directory too large for subtitle discovery"
+        );
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if !path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("srt"))
+        {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let Some(candidate) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let suffix = if candidate == stem {
+            ""
+        } else if let Some(suffix) = candidate.strip_prefix(&format!("{stem}.")) {
+            suffix
+        } else {
+            continue;
+        };
+        let mut language = None;
+        let mut forced = false;
+        let mut hearing_impaired = false;
+        let mut recognized = true;
+        for label in suffix.split('.').filter(|s| !s.is_empty()) {
+            match label.to_ascii_lowercase().as_str() {
+                "en" | "eng" | "english" if language.is_none() => language = Some("en".to_string()),
+                "zh" | "zho" | "chi" | "chinese" if language.is_none() => {
+                    language = Some("zh".to_string())
+                }
+                "zh-hans" | "chs" | "sc" if language.is_none() => {
+                    language = Some("zh-Hans".to_string())
+                }
+                "zh-hant" | "cht" | "tc" if language.is_none() => {
+                    language = Some("zh-Hant".to_string())
+                }
+                "forced" => forced = true,
+                "sdh" | "cc" | "hi" => hearing_impaired = true,
+                // Language codes are useful even before translation supports them.
+                code if language.is_none()
+                    && (code.len() == 2 || code.len() == 3)
+                    && code.bytes().all(|b| b.is_ascii_lowercase()) =>
+                {
+                    language = Some(code.to_string())
+                }
+                _ => recognized = false,
+            }
+        }
+        if !recognized || entry.metadata()?.len() > 8_388_608 {
+            continue;
+        }
+        let id: String = sha2::Sha256::digest(name.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        tracks.push(Sidecar {
+            id,
+            name: name.to_string(),
+            language,
+            forced,
+            hearing_impaired,
+        });
+        ensure!(tracks.len() <= 128, "Too many subtitle tracks");
+    }
+    tracks.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(tracks)
+}
+
+pub fn read_sidecar(media: &Path, id: &str) -> Result<String> {
+    use std::io::Read;
+    ensure!(
+        id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit()),
+        "Invalid subtitle ID"
+    );
+    let track = discover(media)?
+        .into_iter()
+        .find(|track| track.id == id)
+        .context("Subtitle track not found")?;
+    let path = crate::api::checked_path(media.parent().context("Missing directory")?, &track.name)?;
+    let file = std::fs::File::open(path)?;
+    ensure!(file.metadata()?.is_file(), "Subtitle is not a regular file");
+    let mut bytes = Vec::new();
+    file.take(8_388_609).read_to_end(&mut bytes)?;
+    ensure!(bytes.len() <= 8_388_608, "Subtitle file too large");
+    Ok(webvtt(&parse_srt(
+        std::str::from_utf8(&bytes).context("Subtitles must be UTF-8")?,
+    )?))
+}

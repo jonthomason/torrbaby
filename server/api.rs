@@ -258,6 +258,44 @@ async fn dispatch(
         )
             .into_response();
     }
+    if let Some((id, track)) = uri
+        .path()
+        .strip_prefix("/v1/library/assets/")
+        .and_then(|p| p.split_once("/subtitles/"))
+    {
+        let result = async {
+            if method != Method::GET || !id.starts_with("asset-") || id.contains('/') {
+                bail!("Invalid subtitle request");
+            }
+            let track = track
+                .strip_suffix(".vtt")
+                .context("Invalid subtitle format")?
+                .to_string();
+            let media = media_file(&s, id, 0).await?;
+            let content =
+                tokio::task::spawn_blocking(move || crate::subtitles::read_sidecar(&media, &track))
+                    .await??;
+            Ok::<_, anyhow::Error>(
+                (
+                    [
+                        ("Content-Type", "text/vtt; charset=utf-8"),
+                        ("Cache-Control", "no-store"),
+                    ],
+                    content,
+                )
+                    .into_response(),
+            )
+        }
+        .await;
+        return match result {
+            Ok(response) => response,
+            Err(error) => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error":error.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     if let Some(id) = uri
         .path()
         .strip_prefix("/v1/library/assets/")
@@ -313,6 +351,33 @@ fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
 }
 
 async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> Result<Value> {
+    if method == Method::GET {
+        if let Some(id) = path
+            .strip_prefix("/v1/library/assets/")
+            .and_then(|p| p.strip_suffix("/subtitles"))
+        {
+            if !id.starts_with("asset-") || id.contains('/') {
+                bail!("Invalid asset ID");
+            }
+            let media = media_file(s, id, 0).await?;
+            let tracks =
+                tokio::task::spawn_blocking(move || crate::subtitles::discover(&media)).await??;
+            let tracks: Vec<_> = tracks
+                .into_iter()
+                .map(|track| {
+                    let mut value =
+                        serde_json::to_value(&track).expect("Subtitle track serializes");
+                    value["path"] = json!(format!(
+                        "/v1/library/assets/{id}/subtitles/{}.vtt",
+                        track.id
+                    ));
+                    value["format"] = json!("webvtt");
+                    value
+                })
+                .collect();
+            return Ok(json!({"tracks":tracks,"embedded_tracks_scanned":false}));
+        }
+    }
     if method == Method::GET {
         if let Some(id) = path
             .strip_prefix("/v1/library/assets/")

@@ -54,3 +54,20 @@ embedded container tracks and OCR are not handled by this command.
 WebVTT serialization follows the timestamp and cue-block structure in the
 [W3C WebVTT specification](https://www.w3.org/TR/webvtt1/). This is a preparation
 command, not yet a playable HLS subtitle rendition or a player configuration.
+
+## Authenticated sidecar API
+
+- `GET /v1/library/assets/{asset-id}/subtitles`: returns `tracks` with opaque ID,
+  filename, inferred language (nullable), forced/SDH flags and relative VTT path.
+  `embedded_tracks_scanned: false` makes the current discovery scope explicit.
+- `GET /v1/library/assets/{asset-id}/subtitles/{track-id}.vtt`: revalidates the
+  completed media asset and discovers the sidecar again, then returns normalized
+  UTF-8 `text/vtt`. Both routes require the normal Bearer credential.
+
+Discovery is restricted to regular SRT files beside a completed media asset with
+an exact matching video stem, optionally followed by dot-separated language and
+forced/SDH labels. No arbitrary path can be supplied. Symlinks and unrelated
+names are excluded. Language tags are filename hints, not content detection;
+`zh` does not imply Simplified Chinese. These routes currently serve original
+language only; translation jobs/cache and signed native-player delivery remain
+separate pending work. Directory scanning and parsing run off the async executor.

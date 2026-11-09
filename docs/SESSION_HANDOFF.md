@@ -332,3 +332,19 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
   two overlapping cues translated through Rust -> SSH helper on Diamond and kept
   exact timing lines. Invalid minute values rejected with no stdout. The fixture
   used synthetic dialogue only; no library files changed. Production unchanged.
+
+## Follow-up: authenticated subtitle discovery and WebVTT API
+
+- Added GET `/v1/library/assets/{id}/subtitles` and GET the returned `.vtt` paths.
+  Both require normal API authentication and completed/managed media validation.
+- Exact-stem SRT sidecars only, with optional language/forced/SDH filename labels.
+  Unrelated episode/movie names and symlinks excluded; list does not expose disk
+  paths. Directory/track/file/cue limits apply. Blocking work uses spawn_blocking.
+- Original-language WebVTT only. Response explicitly says embedded tracks have not
+  been scanned. No translated rendition job/cache or native-player wiring yet.
+- `cargo build --locked` and diff checks passed. Local HTTP fixture verified auth,
+  exact stem matching, language/SDH flags, no disk-path leak, normalized timings and
+  escaped text, unknown ID rejection, symlink replacement rejection, and no
+  playback-session side effects. Scratch fixture saved to
+  `local-state/checkpoints/2026-11-09/torrbaby-subtitle-smoke.py`.
+- No production deployment or app release for this work.
