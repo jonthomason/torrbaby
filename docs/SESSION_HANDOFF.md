@@ -703,3 +703,11 @@ User reports iPad left/right correctly skip 15 seconds but Space does not play/p
 - Signed Rust deployed Diamond; database/app backup rust-20261109-164428 and separate config-before-lan timestamp backup. Enabled 192.168.1.44 listener, trusted192.168.1.0/24, advertisement. Existing100.80.147.115 listener remains. No router/firewall changes.
 - Focused ignored lan-smoke.py passed trusted bootstrap, issued credential authentication, untrusted/spoofed-header rejection, rate limit. Live Bonjour resolves diamond.local.:8765; both endpoints reject unauthenticated APIs401; Tailnet bootstrap+spoofedLANheader403. PhysicalTV/slate-seven connectivity remains unverified. Config can roll back from config-before-lan backup and launchagent restart.
 - Next: fresh TV simulator onboarding visual acceptance, physicalTV cross-router access when paired, Android discovery catchup/source audit, profiles and remaining subtitle/container work. Android remains untracked and untouched. Goal remains incomplete.
+
+
+## TV simulator67 / automatic onboarding acceptance
+
+- Previous turn made progress delivering66 and deploying LAN discovery. Actual simulator inspection found discovery succeeded but Keychain save failed in unsigned build. Diagnostic log emits error domain/code only. Rebuilt67 with normal Xcode signing and team: auto-registration reached live library without entering address/token/code. CUA verified hero/tabs/Continue watching and successful reconnect after terminate/relaunch.
+- Added build_apple.sh tvos-simulator mode with team required and signing retained. Release simulator67 passed; Debug67 installed/running. Mac/mobile remain66; physicalTV/slate-seven unverified.
+- Diagnostic curl created one Discovery probe device; failed unsigned attempts may leave extra TV credentials. Temporary response file removed without exposing secrets. No broad device cleanup.
+- Next: TV autoplay (currently excluded), proper TV icon, physical subtitle acceptance; Android audit/catchup, profiles, MKV remux and offline captions remain. Goal incomplete.

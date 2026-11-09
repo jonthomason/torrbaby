@@ -15,15 +15,19 @@ if [[ "$PLATFORM" == ios || "$PLATFORM" == tvos ]]; then
     if [[ -n "${ASC_KEY_PATH:-}" ]]; then
         ARGS+=(-authenticationKeyPath "$ASC_KEY_PATH" -authenticationKeyID "${ASC_KEY_ID:?}" -authenticationKeyIssuerID "${ASC_ISSUER_ID:?}")
     fi
+elif [[ "$PLATFORM" == tvos-simulator ]]; then
+    ARGS+=(-destination 'generic/platform=tvOS Simulator' "DEVELOPMENT_TEAM=${DEVELOPMENT_TEAM:?Set DEVELOPMENT_TEAM to your Apple Developer team ID}")
 elif [[ "$PLATFORM" == macos ]]; then
     ARGS+=(-destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO)
 else
-    echo 'Usage: build_apple.sh ios|macos|tvos' >&2; exit 2
+    echo 'Usage: build_apple.sh ios|macos|tvos|tvos-simulator' >&2; exit 2
 fi
 xcodebuild "${ARGS[@]}" build > "$OUTPUT/$PLATFORM-build.log" 2>&1 || { tail -30 "$OUTPUT/$PLATFORM-build.log"; exit 1; }
 if [[ "$PLATFORM" == macos ]]; then
     APP="$OUTPUT/macos/Build/Products/Release/Torrbaby.app"
     codesign --force --deep --options runtime --sign "${MAC_SIGNING_IDENTITY:--}" "$APP"
+elif [[ "$PLATFORM" == tvos-simulator ]]; then
+    APP="$OUTPUT/tvos-simulator/Build/Products/Release-appletvsimulator/Torrbaby.app"
 elif [[ "$PLATFORM" == tvos ]]; then
     APP="$OUTPUT/tvos/Build/Products/Release-appletvos/Torrbaby.app"
 else

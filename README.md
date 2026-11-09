@@ -510,3 +510,10 @@ its intent before touching UUID-owned files, retains progress for sync, and reco
 interrupted removal on restart. Delete-after-playback requires actual end-of-file;
 a 95% watched marker alone never deletes media. The foundation is not yet wired to
 client transfer queues or playback and does not expose a Downloads UI yet.
+
+### TV simulator
+
+Build with `DEVELOPMENT_TEAM=YOUR_TEAM bash scripts/build_apple.sh tvos-simulator`.
+Keep Xcode simulator signing enabled: unsigned simulator builds cannot save their
+connection credential to Keychain. Unconfigured TVs discover `_torrbaby._tcp`
+and register automatically on a trusted LAN. An address-only fallback is available.

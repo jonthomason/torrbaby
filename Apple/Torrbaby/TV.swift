@@ -1,5 +1,6 @@
 #if os(tvOS)
 import SwiftUI
+import OSLog
 
 @MainActor
 private final class TVDiscovery: NSObject, ObservableObject, @preconcurrency NetServiceBrowserDelegate, @preconcurrency NetServiceDelegate {
@@ -73,7 +74,11 @@ private struct TVConnectionView: View {
             store.clientId = registration.client_id; store.server = base; store.token = registration.token
             await store.connect()
             if store.connected { done() } else { error = "Couldn’t open this library. Try again." }
-        } catch { self.error = "Couldn’t connect. Check that your TV and server are on the same network." }
+        } catch {
+            let failure = error as NSError
+            Logger(subsystem: "org.torrbaby.tv", category: "connection").error("LAN connection failed: domain=\(failure.domain, privacy: .public) code=\(failure.code)")
+            self.error = "Couldn’t connect. Check that your TV and server are on the same network."
+        }
     }
 }
 
