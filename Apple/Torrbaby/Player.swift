@@ -105,7 +105,7 @@ final class PlaybackModel: ObservableObject {
                         guard !self.finished else { return }
                         self.load(next)
                     } else if !self.finished {
-                        self.endMessage = episode ? "Next episode unavailable" : "Playback finished"
+                        self.endMessage = episode ? queue.autoplayStopMessage(after: self.playback) : "Playback finished"
                     }
                 }
                 #endif
@@ -136,7 +136,7 @@ final class PlaybackModel: ObservableObject {
         resumed = false
         player.replaceCurrentItem(with: nil)
         guard let next = title.nextEpisode(after: assetID), next.complete else {
-            endMessage = "Next episode unavailable"
+            endMessage = title.autoplayStopMessage(after: assetID)
             return
         }
         preparingNext = true
@@ -152,7 +152,7 @@ final class PlaybackModel: ObservableObject {
                           url: try store.endpoint(link.path), name: next.name ?? title.title,
                           libraryAssetID: next.id, libraryTitleID: titleID))
         } catch {
-            if !finished, !Task.isCancelled { endMessage = "Next episode unavailable" }
+            if !finished, !Task.isCancelled { endMessage = "Couldn’t start \(EpisodeNumber(season: next.season ?? 0, episode: next.episode ?? 0).label)" }
         }
     }
     #endif

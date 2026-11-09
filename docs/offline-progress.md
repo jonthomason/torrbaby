@@ -47,3 +47,21 @@ Validation: temporary HTTP fixture covers authentication, retry deduplication,
 newer/stale ordering, active playback deferral/retry, completion, future time rejection
 and schema version. Local storage fixture covers progress surviving file deletion
 and restart, stale acknowledgments, and durable acknowledgment of the latest event.
+
+## Episode order and gaps
+
+Apple clients use the same numbered-episode ordering for streaming and downloads.
+The next episode must be adjacent; a known later episode never justifies skipping
+an absent one. Season transitions require a known next-season episode 1 and no
+later current-season entries. Extras and unnumbered files are excluded.
+
+Downloads retain the known series episode order in their manifest, refreshed with
+the library, including entries not downloaded locally. This survives local file
+deletion and restart. Older manifests remain readable; until a library refresh,
+old downloads without a catalog snapshot only advance within the same season.
+The catalog is knowledge of this library, not proof that every produced episode
+exists: unknown series endings cannot be inferred from missing metadata.
+
+At a gap the player stops and names the missing episode/range (or whole season).
+Known unfinished torrents show a downloading message; offline unavailable copies
+show which episode to download. Neither case silently jumps to a later file.

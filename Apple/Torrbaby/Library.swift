@@ -8,6 +8,38 @@ struct MediaLibrary: Decodable {
     let scanning: Bool
     let error: String?
 }
+struct EpisodeNumber: Codable, Hashable {
+    let season: Int
+    let episode: Int
+    var label: String { String(format: "S%02dE%02d", season, episode) }
+    func missingMessage(in known: [EpisodeNumber]) -> String? {
+        guard episode >= 0, episode < Int.max, season >= 0, season < Int.max else { return nil }
+        let later = known.filter { $0.season == season && $0.episode > episode }.map(\.episode).min()
+        let missingSeason: Int
+        let first: Int
+        let end: Int
+        if let later, later > episode + 1 {
+            missingSeason = season; first = episode + 1; end = later - 1
+        } else if later == nil, season > 0,
+                  let next = known.filter({ $0.season == season + 1 }).map(\.episode).min(), next > 1 {
+            missingSeason = season + 1; first = 1; end = next - 1
+        } else if later == nil, season > 0,
+                  let following = known.filter({ $0.season > season }).map(\.season).min(), following > season + 1 {
+            return following == season + 2 ? "Missing Season \(season + 1)" : "Missing Seasons \(season + 1)–\(following - 1)"
+        } else { return nil }
+        let start = EpisodeNumber(season: missingSeason, episode: first).label
+        return first == end ? "Missing \(start)" : "Missing \(start)–E\(String(format: "%02d", end))"
+    }
+    func next(in known: [EpisodeNumber], allowSeasonChange: Bool = true) -> EpisodeNumber? {
+        guard season >= 0, season < Int.max, episode >= 0, episode < Int.max else { return nil }
+        let adjacent = EpisodeNumber(season: season, episode: episode + 1)
+        if known.contains(adjacent) { return adjacent }
+        guard allowSeasonChange, season > 0,
+              !known.contains(where: { $0.season == season && $0.episode > episode }) else { return nil }
+        let nextSeason = EpisodeNumber(season: season + 1, episode: 1)
+        return known.contains(nextSeason) ? nextSeason : nil
+    }
+}
 struct LibraryTitle: Decodable, Identifiable {
     let id: String
     let kind: String
@@ -23,17 +55,28 @@ struct LibraryTitle: Decodable, Identifiable {
     let assets: [LibraryAsset]
     var playable: [LibraryAsset] { assets.filter { $0.complete && $0.role != "extra" }.sorted { ($0.season ?? 0, $0.episode ?? 0, $0.name ?? "") < ($1.season ?? 0, $1.episode ?? 0, $1.name ?? "") } }
     var resume: LibraryAsset? { playable.filter { !$0.watched && $0.position > 0 }.max { $0.lastPlayed < $1.lastPlayed } }
-    /// Pick the next numbered episode before checking availability, so a download
-    /// in progress cannot silently make autoplay skip an episode.
+    var episodeOrder: [EpisodeNumber] {
+        assets.filter { $0.role != "extra" }.compactMap { asset in
+            guard let season = asset.season, let episode = asset.episode else { return nil }
+            return EpisodeNumber(season: season, episode: episode)
+        }
+    }
+    func autoplayStopMessage(after assetID: String) -> String {
+        guard let current = assets.first(where: { $0.id == assetID }), let season = current.season, let episode = current.episode else { return "Playback finished" }
+        let number = EpisodeNumber(season: season, episode: episode)
+        if let gap = number.missingMessage(in: episodeOrder) { return gap }
+        if let next = number.next(in: episodeOrder) {
+            return assets.contains { $0.season == next.season && $0.episode == next.episode && $0.complete && $0.role != "extra" }
+                ? "Couldn’t start \(next.label)" : "\(next.label) is still downloading"
+        }
+        return "No more episodes available"
+    }
     func nextEpisode(after assetID: String) -> LibraryAsset? {
         guard kind == "tv", let current = assets.first(where: { $0.id == assetID }),
-              current.role != "extra", let season = current.season, let episode = current.episode else { return nil }
-        return assets.filter {
-            guard $0.role != "extra", let nextSeason = $0.season, let nextEpisode = $0.episode else { return false }
-            return (nextSeason == season && nextEpisode == episode + 1)
-                || (nextSeason == season + 1 && nextEpisode == 1 && season > 0
-                    && !assets.contains { $0.role != "extra" && $0.season == season && ($0.episode ?? 0) > episode })
-        }.sorted { ($0.season ?? 0, $0.episode ?? 0, ($0.complete ? 0 : 1), $0.id) < ($1.season ?? 0, $1.episode ?? 0, ($1.complete ? 0 : 1), $1.id) }.first
+              current.role != "extra", let season = current.season, let episode = current.episode,
+              let next = EpisodeNumber(season: season, episode: episode).next(in: episodeOrder) else { return nil }
+        return assets.filter { $0.role != "extra" && $0.season == next.season && $0.episode == next.episode }
+            .sorted { ($0.complete ? 0 : 1, $0.id) < ($1.complete ? 0 : 1, $1.id) }.first
     }
 
 }

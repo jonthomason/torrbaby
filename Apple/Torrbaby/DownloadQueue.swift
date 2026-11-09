@@ -80,6 +80,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
                                     title: title.title, name: asset.name ?? info.name,
                                     season: asset.season, episode: asset.episode, revision: info.etag,
                                     size: info.size, fileExtension: URL(fileURLWithPath: info.name).pathExtension)
+            try storage.rememberEpisodeOrder(item.id, episodes: title.episodeOrder)
             try storage.importProgress(item.id, position: asset.position, duration: asset.duration,
                                        watched: asset.watched, recordedAt: Date(timeIntervalSince1970: asset.lastPlayed))
             reload(); pump()
@@ -210,19 +211,45 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         if let id = playback.localDownloadID { return items.first(where: { $0.id == id })?.episode != nil }
         return store?.library?.titles.first(where: { $0.id == playback.libraryTitleID })?.assets.first(where: { $0.id == playback.libraryAssetID })?.episode != nil
     }
+    func autoplayStopMessage(after playback: Playback) -> String {
+        let local = items.first { $0.id == playback.localDownloadID }
+        let server = local?.server ?? store?.server
+        let titleID = local?.titleID ?? playback.libraryTitleID
+        let title = store?.server == server ? store?.library?.titles.first { $0.id == titleID } : nil
+        let current = title?.assets.first { $0.id == playback.libraryAssetID }
+        guard let season = local?.season ?? current?.season, let episode = local?.episode ?? current?.episode else { return "Playback finished" }
+        let known = (title?.episodeOrder ?? local?.episodeOrder ?? []) + items.filter { $0.server == server && $0.titleID == titleID }.compactMap { item -> EpisodeNumber? in
+            guard let season = item.season, let episode = item.episode else { return nil }
+            return EpisodeNumber(season: season, episode: episode)
+        }
+        let number = EpisodeNumber(season: season, episode: episode)
+        if let gap = number.missingMessage(in: known) { return gap }
+        if let next = number.next(in: known) {
+            if store?.server != server || store?.connected != true { return "Download \(next.label) to continue" }
+            return title?.autoplayStopMessage(after: playback.libraryAssetID ?? "") ?? "Couldn’t start \(next.label)"
+        }
+        return "No more episodes available"
+    }
     func nextPlayback(after currentPlayback: Playback) async -> Playback? {
         let local = items.first { $0.id == currentPlayback.localDownloadID }
         let titleID = local?.titleID ?? currentPlayback.libraryTitleID
-        let title = store?.library?.titles.first { $0.id == titleID }
+        let server = local?.server ?? store?.server
+        let title = store?.server == server ? store?.library?.titles.first { $0.id == titleID } : nil
         let currentAsset = title?.assets.first { $0.id == currentPlayback.libraryAssetID }
         guard let season = local?.season ?? currentAsset?.season,
-              let episode = local?.episode ?? currentAsset?.episode,
-              let server = local?.server ?? store?.server else { return nil }
-        if let next = items.first(where: { $0.server == server && $0.titleID == titleID && $0.season == season && $0.episode == episode + 1 && $0.state == .ready }) {
+              let episode = local?.episode ?? currentAsset?.episode, let server else { return nil }
+        let localSeries = items.filter { $0.server == server && $0.titleID == titleID }
+        let catalogOrder = title?.episodeOrder ?? local?.episodeOrder
+        let known = (catalogOrder ?? []) + localSeries.compactMap { item -> EpisodeNumber? in
+            guard let season = item.season, let episode = item.episode else { return nil }
+            return EpisodeNumber(season: season, episode: episode)
+        }
+        guard let number = EpisodeNumber(season: season, episode: episode).next(in: known, allowSeasonChange: !(catalogOrder ?? []).isEmpty) else { return nil }
+        if let next = localSeries.first(where: { $0.season == number.season && $0.episode == number.episode && $0.state == .ready }) {
             return await preparePlayback(next.id)
         }
         guard let store, store.server == server, store.connected, let title,
-              let asset = title.assets.first(where: { $0.role != "extra" && $0.season == season && $0.episode == episode + 1 && $0.complete }) else { return nil }
+              let asset = title.assets.first(where: { $0.role != "extra" && $0.season == number.season && $0.episode == number.episode && $0.complete }) else { return nil }
         do {
             try await store.registerClient()
             let link = try await store.mediaPlaybackLink(asset: asset, titleID: title.id)
@@ -249,6 +276,9 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         let byID = Dictionary(assets.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         do {
             for item in storage.items where item.server == store.server && item.state != .removed && item.state != .removing {
+                if let title = library.titles.first(where: { $0.id == item.titleID }) {
+                    try storage.rememberEpisodeOrder(item.id, episodes: title.episodeOrder)
+                }
                 guard let asset = byID[item.assetID] else { continue }
                 try storage.importProgress(item.id, position: asset.position, duration: asset.duration,
                                            watched: asset.watched, recordedAt: Date(timeIntervalSince1970: asset.lastPlayed))

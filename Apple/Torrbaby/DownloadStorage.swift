@@ -45,6 +45,7 @@ final class DownloadStorage {
         let revision: String
         let size: Int64
         let fileExtension: String
+        var episodeOrder: [EpisodeNumber]?
         var state: State = .queued
         var received: Int64 = 0
         var pinned = false
@@ -135,6 +136,10 @@ final class DownloadStorage {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         try encoder.encode(next).write(to: manifestURL, options: [.atomic])
         manifest = next
+    }
+    func rememberEpisodeOrder(_ id: UUID, episodes: [EpisodeNumber]) throws {
+        guard !episodes.isEmpty, let item = items.first(where: { $0.id == id }), item.episodeOrder != episodes else { return }
+        try update(id) { $0.episodeOrder = episodes }
     }
     private func update(_ id: UUID, _ change: (inout Item) -> Void) throws {
         var next = manifest
