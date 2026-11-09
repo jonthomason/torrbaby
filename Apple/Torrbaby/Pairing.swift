@@ -89,33 +89,56 @@ struct PairingScannerView: View {
     @State private var scannerID = UUID()
     var body: some View {
         NavigationStack {
-            VStack(spacing: 20) {
+            Group {
                 if let payload {
-                    Image(systemName: "network").font(.largeTitle)
-                    Text("Connect to this server?").font(.title2.bold())
-                    Text(payload.server).font(.callout).textSelection(.enabled)
-                    Button(busy ? "Connecting…" : "Connect") { Task { await redeem(payload) } }
-                        .buttonStyle(.borderedProminent).disabled(busy)
-                    Button("Scan again") { self.payload = nil; error = nil; scannerID = UUID() }.disabled(busy)
+                    ScrollView {
+                        VStack(spacing: 18) {
+                            Image(systemName: "network").font(.largeTitle)
+                            Text("Connect to this server?").font(.title2.bold())
+                            Text(payload.server).font(.callout).textSelection(.enabled)
+                            Button(busy ? "Connecting…" : "Connect") { Task { await redeem(payload) } }
+                                .buttonStyle(.borderedProminent).disabled(busy)
+                            Button("Scan again") { self.payload = nil; error = nil; scannerID = UUID() }.disabled(busy)
+                            if let error { Text(error).foregroundStyle(.orange) }
+                        }.frame(maxWidth: .infinity).padding(24)
+                    }
                 } else {
-                    CameraScanner { value in
-                        do {
-                            let decoded = try JSONDecoder().decode(PairingPayload.self, from: Data(value.utf8))
-                            guard decoded.app == "torrbaby", decoded.version == 1, decoded.code.count == 64,
-                                  let url = URL(string: decoded.server), ["http", "https"].contains(url.scheme ?? ""),
-                                  url.host != nil, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else {
-                                throw APIError(message: "This isn’t a Torrbaby connection code.")
-                            }
-                            payload = decoded
-                        } catch { self.error = "This isn’t a valid Torrbaby connection code." }
-                    } failed: { error = $0 }.id(scannerID).frame(maxHeight: 420).clipShape(RoundedRectangle(cornerRadius: 16))
-                    Text("Scan the code shown in Settings → Link a device on an already connected app.")
-                    if error != nil { Button("Try again") { error = nil; scannerID = UUID() } }
+                    GeometryReader { geometry in
+                        let landscape = geometry.size.width > geometry.size.height
+                        let layout = landscape ? AnyLayout(HStackLayout(spacing: 20)) : AnyLayout(VStackLayout(spacing: 20))
+                        layout {
+                            camera.id(scannerID)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .clipShape(RoundedRectangle(cornerRadius: 16))
+                            VStack(spacing: 12) {
+                                Image(systemName: "qrcode.viewfinder").font(.system(size: 40)).foregroundStyle(Theme.mint)
+                                Text("Scan the QR code").font(.headline)
+                                if let error {
+                                    Text(error).font(.caption).foregroundStyle(.orange)
+                                    Button("Try again") { self.error = nil; scannerID = UUID() }
+                                }
+                            }.multilineTextAlignment(.center)
+                                .frame(maxWidth: landscape ? 190 : .infinity)
+                        }.padding(20)
+                    }
                 }
-                if let error { Text(error).foregroundStyle(.orange) }
-            }.padding(24).navigationTitle("Scan connection code")
+            }.navigationTitle("Scan connection code")
+                .navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(busy) } }
         }
+    }
+    private var camera: some View {
+        CameraScanner { value in
+            do {
+                let decoded = try JSONDecoder().decode(PairingPayload.self, from: Data(value.utf8))
+                guard decoded.app == "torrbaby", decoded.version == 1, decoded.code.count == 64,
+                      let url = URL(string: decoded.server), ["http", "https"].contains(url.scheme ?? ""),
+                      url.host != nil, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else {
+                    throw APIError(message: "This isn’t a Torrbaby connection code.")
+                }
+                payload = decoded
+            } catch { self.error = "This isn’t a valid Torrbaby connection code." }
+        } failed: { error = $0 }
     }
     private func redeem(_ payload: PairingPayload) async {
         busy = true; error = nil
@@ -155,18 +178,22 @@ private struct CameraScanner: UIViewControllerRepresentable {
         var scanned: (String) -> Void = { _ in }
         var failed: (String) -> Void = { _ in }
         var preview: AVCaptureVideoPreviewLayer?
+        var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
+        var rotationObservation: NSKeyValueObservation?
         var delivered = false
+        var dismissed = false
         override func viewDidLoad() {
             super.viewDidLoad()
             AVCaptureDevice.requestAccess(for: .video) { [weak self] allowed in
                 DispatchQueue.main.async {
-                    guard let self else { return }
+                    guard let self, !self.dismissed else { return }
                     if allowed { self.configure() }
                     else { self.failed("Allow Camera access in Settings to scan a connection code.") }
                 }
             }
         }
         func configure() {
+            guard !dismissed else { return }
             do {
                 guard let camera = AVCaptureDevice.default(for: .video) else { throw APIError(message: "No camera is available on this device.") }
                 let input = try AVCaptureDeviceInput(device: camera)
@@ -179,10 +206,29 @@ private struct CameraScanner: UIViewControllerRepresentable {
                 preview.videoGravity = .resizeAspectFill
                 view.layer.addSublayer(preview); self.preview = preview
                 preview.frame = view.bounds
+                let coordinator = AVCaptureDevice.RotationCoordinator(device: camera, previewLayer: preview)
+                rotationCoordinator = coordinator
+                rotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelPreview, options: [.initial, .new]) { [weak self] _, _ in
+                    DispatchQueue.main.async { self?.updateRotation() }
+                }
+                updateRotation()
                 queue.async { [capture] in capture.startRunning() }
             } catch { failed(error.localizedDescription) }
         }
-        override func viewDidLayoutSubviews() { super.viewDidLayoutSubviews(); preview?.frame = view.bounds }
+        private func updateRotation() {
+            guard !dismissed, let angle = rotationCoordinator?.videoRotationAngleForHorizonLevelPreview,
+                  let connection = preview?.connection,
+                  connection.isVideoRotationAngleSupported(angle) else { return }
+            connection.videoRotationAngle = angle
+        }
+        override func viewDidLayoutSubviews() {
+            super.viewDidLayoutSubviews()
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            preview?.frame = view.bounds
+            updateRotation()
+            CATransaction.commit()
+        }
         func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
             guard !delivered, let value = (metadataObjects.first as? AVMetadataMachineReadableCodeObject)?.stringValue else { return }
             delivered = true
@@ -196,6 +242,9 @@ private struct CameraScanner: UIViewControllerRepresentable {
     }
     func updateUIViewController(_ controller: Controller, context: Context) {}
     static func dismantleUIViewController(_ controller: Controller, coordinator: ()) {
+        controller.dismissed = true
+        controller.rotationObservation = nil
+        controller.rotationCoordinator = nil
         controller.queue.async { [capture = controller.capture] in capture.stopRunning() }
     }
 }
