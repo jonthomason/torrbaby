@@ -36,6 +36,7 @@ pub struct Service {
     pub(crate) subtitle_jobs: Arc<crate::subtitle_jobs::Manager>,
     hls: Arc<crate::hls::Manager>,
     lan_limiter: crate::lan::Limiter,
+    torrent_search: crate::torrent_search::Search,
 }
 
 // Keep unimplemented routes explicit during the port; never silently report success.
@@ -112,6 +113,7 @@ pub async fn serve(
         .context("Another Torrbaby server owns this database")?;
     let service = Arc::new(Service {
         lan_limiter: crate::lan::Limiter::default(),
+        torrent_search: crate::torrent_search::Search::new()?,
         token: config.token()?,
         rpc: Transmission::new(&config)?,
         db: Mutex::new(Database::open(&database, None)?),
@@ -494,13 +496,43 @@ fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
 }
 
 async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> Result<Value> {
+    if method == Method::POST && path == "/v1/search/torrents" {
+        return Ok(serde_json::to_value(
+            s.torrent_search
+                .search(serde_json::from_value(body)?)
+                .await?,
+        )?);
+    }
+    if method == Method::POST && path == "/v1/search/torrents/detail" {
+        return s
+            .torrent_search
+            .detail(text(&body, "provider")?, text(&body, "id")?)
+            .await;
+    }
+
     if method == Method::POST && path == "/v1/diagnostics/startup" {
-        anyhow::ensure!(body["platform"] == "android" && body["build"].as_u64().is_some(), "Invalid startup report");
-        let stages=body["stages"].as_array().context("Missing startup stages")?;
-        anyhow::ensure!(stages.len()<=40 && stages.iter().all(|stage|
-            stage["stage"].as_str().is_some_and(|name|name.len()<=64 && name.chars().all(|c|c.is_ascii_alphabetic() || c==' '))
-            && stage["elapsed_ms"].as_u64().is_some_and(|ms|ms<=3_600_000)), "Invalid startup stages");
-        s.event("client_startup",json!({"platform":"android","build":body["build"],"stages":stages}))?;
+        anyhow::ensure!(
+            body["platform"] == "android" && body["build"].as_u64().is_some(),
+            "Invalid startup report"
+        );
+        let stages = body["stages"]
+            .as_array()
+            .context("Missing startup stages")?;
+        anyhow::ensure!(
+            stages.len() <= 40
+                && stages.iter().all(|stage| stage["stage"]
+                    .as_str()
+                    .is_some_and(|name| name.len() <= 64
+                        && name.chars().all(|c| c.is_ascii_alphabetic() || c == ' '))
+                    && stage["elapsed_ms"]
+                        .as_u64()
+                        .is_some_and(|ms| ms <= 3_600_000)),
+            "Invalid startup stages"
+        );
+        s.event(
+            "client_startup",
+            json!({"platform":"android","build":body["build"],"stages":stages}),
+        )?;
         return Ok(json!({"accepted":true}));
     }
     if method == Method::GET {
@@ -559,8 +591,19 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             let input = media_file(s, id, 0).await?;
             let (input, track) = if let Some(sidecar) = body["sidecar"].as_str() {
                 let sidecar = sidecar.to_owned();
-                (tokio::task::spawn_blocking(move || crate::subtitles::sidecar_path(&input, &sidecar)).await??, 1)
-            } else { (input, body["track"].as_u64().context("Choose a subtitle track")?) };
+                (
+                    tokio::task::spawn_blocking(move || {
+                        crate::subtitles::sidecar_path(&input, &sidecar)
+                    })
+                    .await??,
+                    1,
+                )
+            } else {
+                (
+                    input,
+                    body["track"].as_u64().context("Choose a subtitle track")?,
+                )
+            };
             let source = body
                 .get("source")
                 .map(|value| {
@@ -597,15 +640,24 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
         }
     }
     if method == Method::POST {
-        if let Some(id) = path.strip_prefix("/v1/library/assets/")
-            .and_then(|p| p.strip_suffix("/subtitles/prioritize")) {
-            let db = s.db.lock().map_err(|_|anyhow::anyhow!("Database lock failed"))?;
+        if let Some(id) = path
+            .strip_prefix("/v1/library/assets/")
+            .and_then(|p| p.strip_suffix("/subtitles/prioritize"))
+        {
+            let db =
+                s.db.lock()
+                    .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
             return crate::media_inventory::prioritize(&db, id);
         }
     }
     if method == Method::GET {
-        if let Some(id) = path.strip_prefix("/v1/library/assets/").and_then(|p| p.strip_suffix("/media-info")) {
-            let db = s.db.lock().map_err(|_|anyhow::anyhow!("Database lock failed"))?;
+        if let Some(id) = path
+            .strip_prefix("/v1/library/assets/")
+            .and_then(|p| p.strip_suffix("/media-info"))
+        {
+            let db =
+                s.db.lock()
+                    .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
             db.asset(id)?;
             return crate::media_inventory::cached(&db, id);
         }
@@ -630,7 +682,9 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
                 tokio::task::spawn_blocking(move || crate::subtitles::discover(&sidecar_media))
                     .await??;
             {
-                let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+                let db =
+                    s.db.lock()
+                        .map_err(|_| anyhow::anyhow!("Database unavailable"))?;
                 crate::media_inventory::update_sidecar_languages(&db, id, &tracks)?;
             }
             let tracks: Vec<_> = tracks
@@ -737,10 +791,20 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             let patch = body.as_object().context("Expected settings object")?;
             if patch.is_empty()
                 || patch.keys().any(|k| {
-                    !["paused", "poll_seconds", "source", "movies", "tv", "background_subtitles"].contains(&k.as_str())
+                    ![
+                        "paused",
+                        "poll_seconds",
+                        "source",
+                        "movies",
+                        "tv",
+                        "background_subtitles",
+                    ]
+                    .contains(&k.as_str())
                 })
             {
-                bail!("Allowed settings: paused, poll_seconds, source, movies, tv, background_subtitles");
+                bail!(
+                    "Allowed settings: paused, poll_seconds, source, movies, tv, background_subtitles"
+                );
             }
             for (key, value) in patch {
                 config[key] = value.clone();
@@ -966,7 +1030,10 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             return Ok(json!(db.torrent_rates(hash)?));
         }
     }
-    if let Some(client) = path.strip_prefix("/v1/devices/").and_then(|p| p.strip_suffix("/subtitle-preferences")) {
+    if let Some(client) = path
+        .strip_prefix("/v1/devices/")
+        .and_then(|p| p.strip_suffix("/subtitle-preferences"))
+    {
         return match method.as_str() {
             "GET" => db.device_subtitle_preferences(client, None),
             "PUT" => db.device_subtitle_preferences(client, Some(body)),
@@ -1810,7 +1877,14 @@ impl Service {
             .map_err(|_| anyhow::anyhow!("Database lock failed"))?
             .state()?;
         let mut config = serde_json::to_value(&self.config)?;
-        for key in ["paused", "poll_seconds", "source", "movies", "tv", "background_subtitles"] {
+        for key in [
+            "paused",
+            "poll_seconds",
+            "source",
+            "movies",
+            "tv",
+            "background_subtitles",
+        ] {
             if let Some(value) = state["settings"].get(key) {
                 config[key] = value.clone();
             }

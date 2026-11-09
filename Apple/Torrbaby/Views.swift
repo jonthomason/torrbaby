@@ -3,10 +3,11 @@ import SwiftUI
 import Charts
 
 enum Section: String, CaseIterable, Identifiable {
-    case downloads = "Downloads", library = "Home", movies = "Movies", shows = "TV Shows", active = "Downloading", seeding = "Seeding", complete = "Complete", subtitles = "Subtitles", attention = "Not progressing", automation = "Automation", settings = "Settings"
+    case findTorrents = "Find torrents", downloads = "Downloads", library = "Home", movies = "Movies", shows = "TV Shows", active = "Downloading", seeding = "Seeding", complete = "Complete", subtitles = "Subtitles", attention = "Not progressing", automation = "Automation", settings = "Settings"
     var id: String { rawValue }
     var icon: String {
         switch self {
+        case .findTorrents: return "magnifyingglass"
         case .downloads: return "arrow.down.circle"
         case .movies: return "film"
         case .shows: return "tv"
@@ -168,7 +169,7 @@ struct RootView: View {
                         }
                     }
                     SwiftUI.Section("Torrents") {
-                        ForEach([Section.active, .seeding, .complete, .subtitles, .attention]) { section in
+                        ForEach([Section.findTorrents, .active, .seeding, .complete, .subtitles, .attention]) { section in
                             Label(section.rawValue, systemImage: section.icon).padding(.vertical, 5).tag(section)
                         }
                     }
@@ -193,6 +194,7 @@ struct RootView: View {
             NavigationStack(path: Binding(get: { location.path }, set: { navigate(Location(section: selection, path: $0)) })) {
                 Group {
                     if selection == .downloads { DownloadsView() }
+                    else if selection == .findTorrents { TorrentSearchView() }
                     else if selection == .subtitles { SubtitleQueueView() }
                     else if selection == .automation { AutomationView() }
                     else if selection == .settings { SettingsView(showConnect: $showConnect) }

@@ -474,6 +474,13 @@ public class MainActivity extends Activity {
       Ui.add(buttons, play, -2, 40);
       Ui.gap(buttons, 12);
       Ui.add(buttons, Ui.button(this, "More…", () -> assetOptions(t, asset)), -2, 40);
+      Ui.gap(buttons, 12);
+      Ui.add(buttons, Ui.button(this, "Find releases", () -> {
+        Intent intent = new Intent(this, TorrentSearchActivity.class).putExtra("query", t.title);
+        if (t.kind.equals("movie")) { try { intent.putExtra("year", Integer.parseInt(t.year)); } catch (Exception ignored) {} }
+        else if (season >= 0) intent.putExtra("season", season);
+        startActivity(intent);
+      }), -2, 40);
       Ui.add(info, buttons, -1, 40);
       play.requestFocus();
     } else {
@@ -784,6 +791,8 @@ public class MainActivity extends Activity {
     }
     View space = new View(this);
     controls.addView(space, new LinearLayout.LayoutParams(0, 1, 1));
+    Ui.add(controls, Ui.button(this, "Find torrents", () -> startActivity(new Intent(this, TorrentSearchActivity.class))), -2, 42);
+    Ui.gap(controls, 12);
     Ui.add(controls, Ui.button(this, "Manage", () -> torrentActions.manage()), -2, 42);
     Ui.gap(controls, 12);
     Ui.add(controls, Ui.button(this, "Refresh", () -> fetchTorrents()), -2, 42);

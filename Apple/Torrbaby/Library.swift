@@ -334,6 +334,9 @@ struct LibraryDetail: View {
                             #endif
                         }
                     }
+                    NavigationLink {
+                        TorrentSearchView(initialQuery: title.title, year: title.kind == "movie" ? Int(title.year ?? "") : nil, season: title.kind == "tv" && season >= 0 ? season : nil)
+                    } label: { Label("Find releases", systemImage: "magnifyingglass").font(.caption) }
                     if loading {
                         HStack {
                             ProgressView().controlSize(.small)

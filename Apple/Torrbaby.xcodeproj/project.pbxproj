@@ -163,6 +163,13 @@
 			<key>isa</key>
 			<string>PBXBuildFile</string>
 		</dict>
+		<key>2A537C4DBDC6EED3BAAE4556</key>
+		<dict>
+			<key>fileRef</key>
+			<string>DF58CFE57E7FDBF59314E784</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+		</dict>
 		<key>32CDE922981FCB722A7CEBF5</key>
 		<dict>
 			<key>isa</key>
@@ -227,6 +234,7 @@
 				<string>0991948DBEFEC33CC776D59D</string>
 				<string>1ECEF93D7B95A72C85B1364D</string>
 				<string>3343252C3DA956EE0F714F10</string>
+				<string>DF58CFE57E7FDBF59314E784</string>
 				<string>A9BCA438417D62B8BB39B2EE</string>
 				<string>3685E330EC5277A9DD5661C6</string>
 			</array>
@@ -542,6 +550,7 @@
 				<string>5CC0D972A739984FFFBD4091</string>
 				<string>49253D63F8B5038EF11A07DE</string>
 				<string>E9ACACC5C8F21FD48C7E6429</string>
+				<string>2A537C4DBDC6EED3BAAE4556</string>
 				<string>D7693334FE5864081CBB4379</string>
 			</array>
 			<key>isa</key>
@@ -589,6 +598,17 @@
 			<string>sourcecode.swift</string>
 			<key>path</key>
 			<string>Player.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
+		<key>DF58CFE57E7FDBF59314E784</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>TorrentSearch.swift</string>
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
 		</dict>

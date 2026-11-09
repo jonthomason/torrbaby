@@ -96,6 +96,7 @@ struct TVRootView: View {
                     TVLibraryView(kind: nil).tabItem { Label("Home", systemImage: "house") }
                     TVLibraryView(kind: "movie").tabItem { Label("Movies", systemImage: "film") }
                     TVLibraryView(kind: "tv").tabItem { Label("TV Shows", systemImage: "tv") }
+                    TorrentSearchView().tabItem { Label("Find torrents", systemImage: "magnifyingglass") }
                     TVTorrentView().tabItem { Label("Torrents", systemImage: "arrow.down.circle") }
                     TVSearchView().tabItem { Label("Search", systemImage: "magnifyingglass") }
                     VStack(spacing: 30) {
@@ -223,6 +224,7 @@ private struct TVMediaDetail: View {
                         }.padding(.horizontal, 90).padding(.bottom, 50).frame(maxWidth: 1350, alignment: .leading)
                     }.frame(height: 650)
                     VStack(alignment: .leading, spacing: 38) {
+                        NavigationLink { TorrentSearchView(initialQuery: title.title, year: title.kind == "movie" ? Int(title.year ?? "") : nil, season: title.kind == "tv" ? season : nil) } label: { Label("Find releases", systemImage: "magnifyingglass") }
                         if loading {
                             HStack {
                                 Text(preparation.isEmpty ? "Preparing playback…" : preparation)

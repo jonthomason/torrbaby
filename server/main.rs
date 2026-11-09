@@ -6,8 +6,8 @@ mod dolby;
 mod hls;
 mod lan;
 mod matroska;
-mod media_packaging;
 mod media_inventory;
+mod media_packaging;
 mod metadata;
 mod native_subtitles;
 mod offline;
@@ -20,6 +20,7 @@ mod subtitle_jobs;
 mod subtitle_preferences;
 mod subtitles;
 mod telemetry;
+mod torrent_search;
 mod transmission;
 mod video_metadata;
 use anyhow::Result;
@@ -38,11 +39,26 @@ struct Arguments {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Search torrent indexers without adding anything to Transmission.
+    SearchTorrents {
+        query: String,
+        #[arg(long)]
+        year: Option<u16>,
+        #[arg(long)]
+        season: Option<u16>,
+        #[arg(long)]
+        episode: Option<u16>,
+        #[arg(long = "source")]
+        sources: Vec<String>,
+    },
     /// Development-only Matroska to MP4 passthrough; not production playback.
     RemuxMatroska {
-        #[arg(long)] input: PathBuf,
-        #[arg(long)] output: PathBuf,
-        #[arg(long, default_value_t = 536_870_912)] max_bytes: u64,
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long, default_value_t = 536_870_912)]
+        max_bytes: u64,
     },
     /// Package compatible media as HLS for diagnostics (not yet client playback).
     PackageMedia {
@@ -172,11 +188,37 @@ async fn main() -> Result<()> {
             media_packaging::package(&input, &output, &helper, max_bytes).await?;
             println!("Media packaging complete");
         }
-        Command::RemuxMatroska { input, output, max_bytes } => {
+        Command::SearchTorrents {
+            query,
+            year,
+            season,
+            episode,
+            sources,
+        } => {
+            let search = torrent_search::Search::new()?;
+            let result = search
+                .search(torrent_search::Query {
+                    query,
+                    year,
+                    season,
+                    episode,
+                    sources,
+                })
+                .await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::RemuxMatroska {
+            input,
+            output,
+            max_bytes,
+        } => {
             println!("{}", remux::run(&input, &output, max_bytes)?);
         }
         Command::InspectMatroska { input, frames } => {
-            println!("{}", serde_json::to_string_pretty(&matroska::inspect(&input, frames)?)?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&matroska::inspect(&input, frames)?)?
+            );
         }
         Command::MatroskaSubtitles {
             input,
