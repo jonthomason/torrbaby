@@ -199,6 +199,7 @@
 				<string>FBE0B9919A6FBE5EDE525267</string>
 				<string>44236D4B917299E3A921FE21</string>
 				<string>452DD7801481B6DCBE203458</string>
+				<string>68942EF6B5944194B714E5FF</string>
 				<string>8BF4A28E43F6CF370D3EE1C2</string>
 				<string>CBD319AE60AD6032681B4904</string>
 				<string>D9971AA8CEDEB53072ACC646</string>
@@ -337,6 +338,13 @@
 			<key>isa</key>
 			<string>PBXBuildFile</string>
 		</dict>
+		<key>64C8BF146D89DEF8C229D0E0</key>
+		<dict>
+			<key>fileRef</key>
+			<string>68942EF6B5944194B714E5FF</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+		</dict>
 		<key>651ECA092BE81738918D8CDB</key>
 		<dict>
 			<key>buildConfigurations</key>
@@ -350,6 +358,17 @@
 			<string>Release</string>
 			<key>isa</key>
 			<string>XCConfigurationList</string>
+		</dict>
+		<key>68942EF6B5944194B714E5FF</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>MobilePlayerPresentation.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
 		</dict>
 		<key>6EA70B4B366A3E62187E0B8F</key>
 		<dict>
@@ -482,6 +501,7 @@
 				<string>4A65F154EF0D30B3C788EBB8</string>
 				<string>86CB94279876336AF04E019D</string>
 				<string>801803212947630192DC4AE3</string>
+				<string>64C8BF146D89DEF8C229D0E0</string>
 				<string>D1B1E93CC8825EE71A6BC9AF</string>
 				<string>44C878CAF4153C18E9BD5988</string>
 				<string>6EA70B4B366A3E62187E0B8F</string>

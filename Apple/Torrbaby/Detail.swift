@@ -86,7 +86,7 @@ struct TorrentDetail: View {
         }
         .navigationTitle("Torrent details")
         #if os(iOS)
-        .sheet(item: $playback) { PlayerScreen(playback: $0, store: store) }
+        .background(MobilePlayerPresentation(playback: $playback, store: store).frame(width: 0, height: 0))
         #endif
     }
     @ViewBuilder func transferStats(_ t: Torrent) -> some View {

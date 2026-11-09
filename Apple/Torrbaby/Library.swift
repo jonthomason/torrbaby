@@ -240,7 +240,7 @@ struct LibraryDetail: View {
             }
         }.background(Theme.canvas).navigationTitle(title?.title ?? "Library")
         #if os(iOS)
-        .sheet(item: $playback) { PlayerScreen(playback: $0, store: store) }
+        .background(MobilePlayerPresentation(playback: $playback, store: store).frame(width: 0, height: 0))
         #elseif os(tvOS)
         .fullScreenCover(item: $playback) { PlayerScreen(playback: $0, store: store).onExitCommand { playback = nil } }
         #endif
