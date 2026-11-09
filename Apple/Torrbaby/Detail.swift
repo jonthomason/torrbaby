@@ -5,6 +5,7 @@ struct TorrentDetail: View {
     let hash: String
     @State private var showRemove = false
     @State private var showRename = false
+    @Environment(\.openWindow) private var openWindow
     @State private var playback: Playback?
     @State private var loadingPlayback = false
     var torrent: Torrent? { store.torrents.first { $0.id == hash } }
@@ -81,7 +82,9 @@ struct TorrentDetail: View {
             }
         }
         .navigationTitle("Torrent details")
+        #if os(iOS)
         .sheet(item: $playback) { PlayerScreen(playback: $0, store: store) }
+        #endif
     }
     @ViewBuilder func transferStats(_ t: Torrent) -> some View {
         Label(rate(t.rateDownload), systemImage: "arrow.down").foregroundStyle(Theme.mint)
@@ -110,7 +113,12 @@ struct TorrentDetail: View {
                 await store.flushProgress()
                 try await store.registerClient()
                 let link: PlaybackLink = try await store.request("POST", "/v1/torrents/\(t.id)/play", body: ["file_index": index, "client_id": store.clientId])
-                playback = Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0, url: try store.endpoint(link.path), name: t.displayName)
+                let selection = Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0, url: try store.endpoint(link.path), name: t.displayName)
+                #if os(macOS)
+                openWindow(value: selection)
+                #else
+                playback = selection
+                #endif
             } catch { store.actionError = error.localizedDescription }
         }
     }
@@ -130,17 +138,25 @@ struct RemoveTorrentView: View {
                     Text("Removing stops this torrent and removes it from Transmission.").foregroundStyle(.secondary)
                 }
                 SwiftUI.Section {
-                    Toggle("Also delete downloaded files", isOn: $deleteData)
-                    Text(deleteData ? "The files will be permanently deleted from your server and disappear from your library." : "Downloaded files stay on your server. They can still be used by Plex.")
-                        .font(.callout).foregroundStyle(deleteData ? .orange : .secondary)
+                    Button("Remove torrent, keep files") {
+                        deleteData = false
+                        confirmation = true
+                    }
+                    Text("Stop tracking the torrent in Transmission. Keep all downloaded files on Diamond.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                SwiftUI.Section {
+                    Button("Remove torrent and delete files", role: .destructive) {
+                        deleteData = true
+                        confirmation = true
+                    }
+                    Text("Permanently delete this torrent’s downloaded files, including partial downloads.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }.formStyle(.grouped)
             .navigationTitle("Remove torrent")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Remove", role: .destructive) { confirmation = true }.disabled(store.busy)
-                }
             }
             .confirmationDialog(deleteData ? "Permanently delete these files?" : "Remove this torrent and keep its files?", isPresented: $confirmation, titleVisibility: .visible) {
                 Button(deleteData ? "Delete torrent and files" : "Remove torrent, keep files", role: .destructive) {
@@ -152,7 +168,7 @@ struct RemoveTorrentView: View {
             }
         }.presentationDetents([.medium, .large])
         #if os(macOS)
-        .frame(width: 520, height: 350)
+        .frame(width: 560, height: 420)
         #endif
     }
 }

@@ -127,8 +127,8 @@ struct PlaybackLink: Codable {
     let name: String
     let expires: Double
 }
-struct Playback: Identifiable {
-    let id = UUID()
+struct Playback: Identifiable, Codable, Hashable {
+    var id = UUID()
     let sessionId: String?
     let resumePosition: Double
     let url: URL

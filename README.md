@@ -226,7 +226,7 @@ not use Plex's transcoding or playback UI, and Plex credentials stay server-side
 The fallback requires the file to be indexed in Plex. Set
 `plex_stream_fallback: false` in server configuration to disable it.
 
-The player has no separate title/Done frame. On iOS/iPadOS, titles are supplied as native player metadata. macOS AVPlayerView
+On macOS the player opens in its own movable, resizable window with standard close controls and Command-W. The player has no separate title/Done frame. On iOS/iPadOS, titles are supplied as native player metadata. macOS AVPlayerView
 does not expose the same title overlay, so no custom title overlay is added. Apple's controls handle playback, seeking, fullscreen, audio/subtitles
 and Picture in Picture as supported by the platform/file. Left/Right arrows skip
 15 seconds; Escape dismisses windowed playback on Mac (native fullscreen exits
@@ -310,3 +310,5 @@ App-controlled font, size, text opacity and background opacity should use Appleâ
 native renderer. Appleâ€™s `AVPlayerItem.textStyleRules` applies only to WebVTT, so
 these controls cannot restyle every existing embedded subtitle format directly.
 No subtitle extraction, translation or appearance controls are implemented yet.
+
+Bundle IDs are `org.torrbaby.ios` (iPhone and iPad) and `org.torrbaby.mac` (macOS). Both use the same shared Swift sources and display name.

@@ -139,7 +139,7 @@ struct SettingsView: View {
             }
             #endif
             SwiftUI.Section("About") {
-                Text("Torrbaby 0.1 · MIT License")
+                Text("Torrbaby 0.2 · MIT License")
                 Text("Made for a small, well-kept personal library.").font(.caption).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped)

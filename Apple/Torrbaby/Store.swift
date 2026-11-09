@@ -98,6 +98,13 @@ final class Store: ObservableObject {
     @Published var isConnecting = false
     private var refreshing = false
     init() {
+        #if os(macOS)
+        if server.isEmpty, let legacy = UserDefaults.standard.persistentDomain(forName: "org.torrbaby.app"), let address = legacy["server"] as? String {
+            server = address
+            UserDefaults.standard.set(address, forKey: "server")
+            if let compact = legacy["compactTorrentView"] as? Bool { UserDefaults.standard.set(compact, forKey: "compactTorrentView") }
+        }
+        #endif
         #if DEBUG
         // Optional one-use profile for local simulator/UI smoke tests. No secrets in builds.
         if let path = ProcessInfo.processInfo.environment["TORRBABY_BOOTSTRAP_FILE"],

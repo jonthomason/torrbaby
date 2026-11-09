@@ -90,11 +90,46 @@ final class PlaybackModel: ObservableObject {
 
 #if os(macOS)
 struct NativePlayer: NSViewRepresentable {
+    let title: String
     let player: AVPlayer
     let close: () -> Void
     class Coordinator {
         var monitor: Any?
-        func stop() { if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil }
+        var mouseMonitor: Any?
+        var hideWork: DispatchWorkItem?
+        weak var window: NSWindow?
+        func header(_ visible: Bool) {
+            guard let window, !window.styleMask.contains(.fullScreen) else { return }
+            window.titleVisibility = visible ? .visible : .hidden
+            for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+                window.standardWindowButton(button)?.isHidden = !visible
+            }
+        }
+        func configure(_ window: NSWindow, title: String) {
+            guard self.window !== window else { return }
+            self.window = window
+            window.title = title
+            window.titlebarAppearsTransparent = true
+            window.styleMask.insert(.fullSizeContentView)
+            window.acceptsMouseMovedEvents = true
+            header(true)
+            let work = DispatchWorkItem { [weak self] in self?.header(false) }
+            hideWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
+            mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown, .keyDown]) { [weak self] event in
+                guard let self, event.window === self.window, let window = self.window else { return event }
+                if event.type == .mouseMoved || event.type == .leftMouseDown {
+                    self.hideWork?.cancel()
+                    self.header(event.locationInWindow.y >= window.frame.height - 52)
+                }
+                return event
+            }
+        }
+        func stop() {
+            hideWork?.cancel()
+            if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil
+            if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }; mouseMonitor = nil
+        }
         deinit { stop() }
     }
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -104,6 +139,9 @@ struct NativePlayer: NSViewRepresentable {
         view.controlsStyle = .floating
         view.showsFullScreenToggleButton = true
         view.allowsPictureInPicturePlayback = true
+        DispatchQueue.main.async { [weak view, weak coordinator = context.coordinator] in
+            if let window = view?.window { coordinator?.configure(window, title: title) }
+        }
         context.coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak view, weak player] event in
             guard let view, let window = view.window, window.isKeyWindow, let player,
                   event.modifierFlags.intersection([.command, .option, .control]).isEmpty else { return event }
@@ -114,7 +152,10 @@ struct NativePlayer: NSViewRepresentable {
         }
         return view
     }
-    func updateNSView(_ view: AVPlayerView, context: Context) { view.player = player }
+    func updateNSView(_ view: AVPlayerView, context: Context) {
+        view.player = player
+        if let window = view.window { context.coordinator.configure(window, title: title) }
+    }
     static func dismantleNSView(_ view: AVPlayerView, coordinator: Coordinator) { coordinator.stop(); view.player = nil }
 }
 #else
@@ -170,13 +211,18 @@ struct PlayerScreen: View {
                     Button("Close") { dismiss() }
                 }
             } else {
+                #if os(macOS)
+                NativePlayer(title: playback.name, player: model.player, close: { dismiss() })
+                #else
                 NativePlayer(player: model.player, close: { dismiss() })
+                #endif
             }
         }
         .background(.black)
         .presentationBackground(.black)
         #if os(macOS)
-        .frame(minWidth: 800, minHeight: 450)
+        .frame(minWidth: 480, minHeight: 270)
+        .ignoresSafeArea()
         .onExitCommand { dismiss() }
         #else
         .ignoresSafeArea()

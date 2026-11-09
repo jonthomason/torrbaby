@@ -21,6 +21,17 @@ struct TorrbabyApp: App {
             }
         }
         #endif
+        #if os(macOS)
+        WindowGroup("Playback", for: Playback.self) { $playback in
+            if let playback {
+                PlayerScreen(playback: playback, store: store)
+                    .preferredColorScheme(.dark)
+            }
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 960, height: 540)
+        .windowResizability(.contentMinSize)
+        #endif
     }
 }
 

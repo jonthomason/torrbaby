@@ -105,9 +105,11 @@
 				<key>MACOSX_DEPLOYMENT_TARGET</key>
 				<string>15.0</string>
 				<key>MARKETING_VERSION</key>
-				<string>0.1.0</string>
+				<string>0.2.0</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
-				<string>org.torrbaby.app</string>
+				<string>org.torrbaby.ios</string>
+				<key>PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]</key>
+				<string>org.torrbaby.mac</string>
 				<key>PRODUCT_NAME</key>
 				<string>$(TARGET_NAME)</string>
 				<key>SDKROOT</key>
@@ -222,9 +224,11 @@
 				<key>MACOSX_DEPLOYMENT_TARGET</key>
 				<string>15.0</string>
 				<key>MARKETING_VERSION</key>
-				<string>0.1.0</string>
+				<string>0.2.0</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
-				<string>org.torrbaby.app</string>
+				<string>org.torrbaby.ios</string>
+				<key>PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]</key>
+				<string>org.torrbaby.mac</string>
 				<key>PRODUCT_NAME</key>
 				<string>$(TARGET_NAME)</string>
 				<key>SDKROOT</key>

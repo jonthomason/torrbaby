@@ -1,4 +1,5 @@
 import copy
+import io
 import json
 from pathlib import Path
 import shutil
@@ -297,7 +298,7 @@ class ProtocolTests(unittest.TestCase):
                 pass
             def read(self):
                 return b'{"jsonrpc":"2.0","result":{"ok":true},"id":1}'
-        error = urllib.error.HTTPError("http://localhost", 409, "conflict", {"X-Transmission-Session-Id": "session"}, None)
+        error = urllib.error.HTTPError("http://localhost", 409, "conflict", {"X-Transmission-Session-Id": "session"}, io.BytesIO())
         with patch("urllib.request.urlopen", side_effect=[error, Response()]) as mock:
             rpc = tb.RPC({"transmission_url": "http://localhost"})
             self.assertTrue(rpc.call("session_get")["ok"])
