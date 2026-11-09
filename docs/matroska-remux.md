@@ -1,6 +1,6 @@
 # Native Apple delivery for Matroska
 
-Status: investigation and timing diagnostics; no production MKV remux yet.
+Status: development CLI implemented and native AVC decoding verified; no production MKV remux yet.
 
 The existing HLS packager uses AVFoundation compressed passthrough. It cannot
 read our MKV sources. A Rust container conversion must precede that path or
@@ -36,8 +36,26 @@ Candidate oxideav-mp4 0.0.11 local source review:
 - Preserve HEVC/AVC configuration, language, aspect ratio, color/HDR metadata.
   DTS needs a separately verified native support or conversion policy.
 
-No new crate has been added yet. First acceptance should use owned reordered
+MIT oxideav-core 0.1.43 and oxideav-mp4 0.0.11 are now locked dependencies; notices generation passed. Further acceptance should use owned reordered
 AVC/HEVC fixtures and actual AVPlayer decoding/seeking, audio sync, Dolby output,
 and native generated-subtitle selection. Then test representative catalog files.
 Keep remux supervised with time/storage limits, revision checks and cleanup of
 owned output. Never publish a partial artifact as ready.
+
+## First implementation
+
+`remux-matroska --input SOURCE --output NEW_MP4 [--max-bytes N]` is a
+development command, not connected to playback APIs. It streams compressed AVC/
+HEVC and ordinary AAC-LC to MP4 with a 64-bit mdat. It validates all video PTS
+against a zero-origin fixed cadence, reconstructs decode timing and composition
+offsets, and rejects offsets/gaps/delays or unsupported codecs/configurations.
+Audio uses 1024-sample AAC units with timestamp validation. Storage, packet count
+and elapsed time are bounded; errors remove only the newly created output.
+Existing destinations are never replaced. Source revision is checked at finish.
+
+Owned 24-second AVC fixture with reordered frames: native AVAssetReader decoded
+576 output frames, byte-identical to original decoded frames in display order.
+Existing-output refusal passed. This is not proof of HEVC/HDR, audio sync or seek
+behavior. Dolby/DTS, metadata preservation, variable frame rate, nonzero offsets,
+full process supervision and HLS integration remain required. No production
+server deployment or compatibility claim is made for this development command.

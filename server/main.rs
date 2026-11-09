@@ -12,6 +12,7 @@ mod native_subtitles;
 mod offline;
 mod organizer;
 mod pairing;
+mod remux;
 mod scanner;
 mod storage;
 mod subtitle_jobs;
@@ -35,6 +36,12 @@ struct Arguments {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Development-only Matroska to MP4 passthrough; not production playback.
+    RemuxMatroska {
+        #[arg(long)] input: PathBuf,
+        #[arg(long)] output: PathBuf,
+        #[arg(long, default_value_t = 536_870_912)] max_bytes: u64,
+    },
     /// Package compatible media as HLS for diagnostics (not yet client playback).
     PackageMedia {
         #[arg(long)]
@@ -162,6 +169,9 @@ async fn main() -> Result<()> {
                 .unwrap_or(std::env::current_exe()?.with_file_name("torrbaby-media-segmenter"));
             media_packaging::package(&input, &output, &helper, max_bytes).await?;
             println!("Media packaging complete");
+        }
+        Command::RemuxMatroska { input, output, max_bytes } => {
+            println!("{}", remux::run(&input, &output, max_bytes)?);
         }
         Command::InspectMatroska { input, frames } => {
             println!("{}", serde_json::to_string_pretty(&matroska::inspect(&input, frames)?)?);
