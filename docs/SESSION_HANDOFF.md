@@ -589,3 +589,8 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
 - Shared TorrentSort in Models.swift implements per-list defaults/options in docs/interface.md for macOS/iOS/iPadOS/tvOS. Per-list AppStorage persistence; deterministic title/ID ties; dates newest first, size largest first. No Android edits: concurrent port should follow the documented contract.
 - Mac and signed iOS build56 passed; tvOS debug simulator build passed/reinstalled. Mac installed/running; mobile OTA56 published on Mac-only Miyu Install. IPA SHA256 800be1caf6c4a00b6c0b34c003d0fc02d5a9ce296dc215d90a48682e6a87edb9.
 - Mac live AX verified Downloading progress order 99/66/33/11/4 percent and Seeding ratio order .63/.20/.05 etc. Other ordering choices compiled but not all manually exercised yet.
+
+## Subtitle API checkpoint / Device Hub keyboard
+
+- Queued subtitle jobs and embedded track inspection now implemented/documented in helpers/README.md. cargo build --locked passed; temporary subtitle-jobs smoke passed including embedded discovery, authorization, deduplication, VTT timing, restart reuse, revision invalidation. Not deployed to Diamond; player subtitle selection still pending.
+- Device Hub troubleshooting: user was on simulated TV home screen, Capture Keyboard off. Opened Torrbaby using Right then Select on bottom remote; app loaded live library. Enabled toolbar Capture Keyboard; verified Down, Return (open detail), Escape (Back). Hold Escape releases keyboard capture per visible Device Hub hint. Left running on library with capture enabled. TV home icon remains placeholder and needs proper tvOS assets.

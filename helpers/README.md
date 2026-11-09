@@ -33,7 +33,7 @@ text only. A helper response alone does not make subtitles available in the app.
 
 From a built server bundle, pipe the request into `torrbaby translate-subtitles`.
 For development, specify `--helper /path/to/torrbaby-subtitle-translator`.
-No HTTP translation endpoint or player subtitle integration exists yet.
+Authenticated preparation jobs are described below. Native-player subtitle integration is still pending.
 
 ## Timed SRT preparation
 
@@ -59,7 +59,9 @@ command, not yet a playable HLS subtitle rendition or a player configuration.
 
 - `GET /v1/library/assets/{asset-id}/subtitles`: returns `tracks` with opaque ID,
   filename, inferred language (nullable), forced/SDH flags and relative VTT path.
-  `embedded_tracks_scanned: false` makes the current discovery scope explicit.
+  For MKV/WebM, also returns `embedded_tracks` with track numbers, language,
+  codec and extraction support. `embedded_tracks_scanned` and `embedded_error`
+  distinguish successful inspection from unsupported containers or failed inspection.
 - `GET /v1/library/assets/{asset-id}/subtitles/{track-id}.vtt`: revalidates the
   completed media asset and discovers the sidecar again, then returns normalized
   UTF-8 `text/vtt`. Both routes require the normal Bearer credential.
@@ -69,8 +71,8 @@ an exact matching video stem, optionally followed by dot-separated language and
 forced/SDH labels. No arbitrary path can be supplied. Symlinks and unrelated
 names are excluded. Language tags are filename hints, not content detection;
 `zh` does not imply Simplified Chinese. These routes currently serve original
-language only; translation jobs/cache and signed native-player delivery remain
-separate pending work. Directory scanning and parsing run off the async executor.
+language only; embedded translation jobs are available below. Signed native-player
+subtitle delivery remains pending. Directory scanning and parsing run off the async executor.
 
 ## Embedded Matroska text tracks (development CLI)
 
@@ -90,13 +92,13 @@ as text but not yet extracted. MP4 embedded subtitles remain separate work.
 Explicit cue duration is required; the extractor does not guess missing timing.
 Timestamp scale and codec delay are applied before emitting millisecond timings.
 
-This is a read-only development CLI, not yet called by the HTTP server. Extraction
+The HTTP preparation API also invokes this read-only worker. Extraction
 currently scans all frames (including audio/video), with a 180-second loop deadline,
 5 million frames, 100,000 cues and 8 MiB normalized text limits. The third-party
 parser can allocate frame/metadata buffers before those checks; these are not a
-complete memory/CPU sandbox. Automatic library jobs need subprocess resource
-limits, cancellation, revision-aware caching and concurrency limits before wiring
-this into the daemon. Player/HLS subtitle selection is still pending.
+complete memory sandbox. HTTP preparation uses subprocess time/output limits,
+revision-aware caching and bounded concurrency below. Player/HLS subtitle selection
+is still pending.
 
 ## Extraction + translation pipeline
 
@@ -120,3 +122,33 @@ macOS rejected the tested address-space and data-size limits (`ulimit -v/-d`)
 with Invalid argument. The worker is process isolation plus runtime/output
 limits, **not a hard memory sandbox**. Automatic API preparation/caching and
 native selectable rendition delivery still need implementation.
+
+
+## Queued embedded subtitle preparation API
+
+All routes require the existing Bearer credential and a completed, accessible
+library asset. No request accepts a filesystem path.
+
+1. `GET /v1/library/assets/{id}/subtitles` discovers sidecars and embedded MKV/WebM
+   tracks. Embedded inspection uses at most two child processes, 10 CPU seconds,
+   15 elapsed seconds and 1 MiB output each; busy/failing inspection is reported
+   separately so sidecar results remain usable. Bitmap subtitles are listed but
+   never extracted or OCRed.
+2. `POST /v1/library/assets/{id}/subtitles/prepare` with `{"track":3}` prepares
+   original text, or add `"source":"en","target":"zh-Hans"` for translation.
+   The reverse pair is supported too; omit both language fields for original text.
+3. Poll `GET /v1/subtitle-jobs/{job-id}` until `state` is `ready` or `failed`.
+   Ready responses contain an authenticated relative WebVTT `path`.
+4. `GET /v1/subtitle-jobs/{job-id}.vtt` returns the cached WebVTT artifact.
+
+Jobs are deduplicated by asset identity, file revision, track and language pair.
+Four pending jobs maximum, one running preparation, 20-minute overall timeout
+including queue time. The adjacent signed Translation helper runs on Diamond;
+installed language models are required. Cache files live in the private
+`subtitles` state directory, bounded to approximately 512 MiB and 256 records,
+with oldest inactive entries evicted first. This is not LRU. Prepared output is
+capped at 16 MiB. Ready artifacts survive daemon restart. Interrupted jobs can be
+resubmitted; changed media returns `stale`, missing artifacts `expired`.
+Status/artifact requests revalidate the managed library asset. No database schema
+change or Plex access is involved. This API produces subtitle files; it does not
+yet make them selectable in AVPlayer.

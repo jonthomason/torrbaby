@@ -33,6 +33,7 @@ pub struct Service {
     metadata: crate::metadata::Metadata,
     metadata_lock: tokio::sync::Mutex<()>,
     pub(crate) mutation_lock: tokio::sync::Mutex<()>,
+    subtitle_jobs: Arc<crate::subtitle_jobs::Manager>,
 }
 
 // Keep unimplemented routes explicit during the port; never silently report success.
@@ -96,6 +97,9 @@ pub async fn serve(
         )?,
         metadata_lock: tokio::sync::Mutex::new(()),
         mutation_lock: tokio::sync::Mutex::new(()),
+        subtitle_jobs: crate::subtitle_jobs::Manager::new(
+            database.parent().context("Missing data directory")?,
+        )?,
     });
     let sampling_service = service.clone();
     let cached_entities = service
@@ -258,10 +262,44 @@ async fn dispatch(
         )
             .into_response();
     }
+    if let Some(id) = uri
+        .path()
+        .strip_prefix("/v1/subtitle-jobs/")
+        .and_then(|p| p.strip_suffix(".vtt"))
+    {
+        let result = async {
+            if method != Method::GET {
+                bail!("Unsupported subtitle method");
+            }
+            let job = s.subtitle_jobs.status(id)?;
+            media_file(&s, text(&job, "asset_id")?, 0).await?;
+            let content = s.subtitle_jobs.artifact(id)?;
+            Ok::<_, anyhow::Error>(
+                (
+                    [
+                        ("Content-Type", "text/vtt; charset=utf-8"),
+                        ("Cache-Control", "no-store"),
+                    ],
+                    content,
+                )
+                    .into_response(),
+            )
+        }
+        .await;
+        return match result {
+            Ok(value) => value,
+            Err(error) => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error":error.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     if let Some((id, track)) = uri
         .path()
         .strip_prefix("/v1/library/assets/")
         .and_then(|p| p.split_once("/subtitles/"))
+        .filter(|(_, track)| track.ends_with(".vtt"))
     {
         let result = async {
             if method != Method::GET || !id.starts_with("asset-") || id.contains('/') {
@@ -352,6 +390,44 @@ fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
 
 async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> Result<Value> {
     if method == Method::GET {
+        if let Some(id) = path.strip_prefix("/v1/subtitle-jobs/") {
+            let status = s.subtitle_jobs.status(id)?;
+            media_file(s, text(&status, "asset_id")?, 0).await?;
+            return Ok(status);
+        }
+    }
+    if method == Method::POST {
+        if let Some(id) = path
+            .strip_prefix("/v1/library/assets/")
+            .and_then(|p| p.strip_suffix("/subtitles/prepare"))
+        {
+            if !id.starts_with("asset-") || id.contains('/') {
+                bail!("Invalid asset ID");
+            }
+            let input = media_file(s, id, 0).await?;
+            let track = body["track"].as_u64().context("Choose a subtitle track")?;
+            let source = body
+                .get("source")
+                .map(|value| {
+                    value
+                        .as_str()
+                        .context("Invalid source language")
+                        .map(str::to_owned)
+                })
+                .transpose()?;
+            let target = body
+                .get("target")
+                .map(|value| {
+                    value
+                        .as_str()
+                        .context("Invalid target language")
+                        .map(str::to_owned)
+                })
+                .transpose()?;
+            return s.subtitle_jobs.prepare(id, input, track, source, target);
+        }
+    }
+    if method == Method::GET {
         if let Some(id) = path
             .strip_prefix("/v1/library/assets/")
             .and_then(|p| p.strip_suffix("/progress"))
@@ -380,8 +456,9 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
                 bail!("Invalid asset ID");
             }
             let media = media_file(s, id, 0).await?;
+            let sidecar_media = media.clone();
             let tracks =
-                tokio::task::spawn_blocking(move || crate::subtitles::discover(&media)).await??;
+                tokio::task::spawn_blocking(move || crate::subtitles::discover(&sidecar_media)).await??;
             let tracks: Vec<_> = tracks
                 .into_iter()
                 .map(|track| {
@@ -395,7 +472,15 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
                     value
                 })
                 .collect();
-            return Ok(json!({"tracks":tracks,"embedded_tracks_scanned":false}));
+            let matroska = media.extension().is_some_and(|s| s.eq_ignore_ascii_case("mkv") || s.eq_ignore_ascii_case("webm"));
+            let (embedded, scanned, error) = if matroska {
+                match crate::matroska::tracks_worker(&media).await {
+                    Ok(value) => (value["tracks"].clone(), true, None),
+                    Err(error) => (json!([]), false, Some(error.to_string())),
+                }
+            } else { (json!([]), false, None) };
+            return Ok(json!({"tracks":tracks,"embedded_tracks":embedded,
+                "embedded_tracks_scanned":scanned,"embedded_error":error}));
         }
     }
     if method == Method::GET {

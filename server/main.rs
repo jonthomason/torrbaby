@@ -9,6 +9,7 @@ mod organizer;
 mod pairing;
 mod scanner;
 mod storage;
+mod subtitle_jobs;
 mod subtitles;
 mod telemetry;
 mod transmission;

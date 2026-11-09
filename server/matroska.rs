@@ -234,3 +234,63 @@ pub async fn extract_worker(path: &Path, track: u64) -> Result<Vec<TimedCue>> {
         }
     }
 }
+
+/// Inspect embedded tracks outside the HTTP process, with bounded concurrency,
+/// CPU time, wall time and output. Bitmap tracks are reported, never OCRed.
+pub async fn tracks_worker(path: &Path) -> Result<Value> {
+    use std::{process::Stdio, sync::LazyLock};
+    use tokio::io::AsyncReadExt;
+    static WORKERS: LazyLock<tokio::sync::Semaphore> =
+        LazyLock::new(|| tokio::sync::Semaphore::new(2));
+    let _permit = WORKERS
+        .try_acquire()
+        .context("Subtitle inspection is busy; try again shortly")?;
+    let mut child = tokio::process::Command::new("/bin/sh")
+        .args([
+            "-c",
+            "ulimit -c 0; ulimit -t 10 || exit 1; exec \"$@\"",
+            "torrbaby-subtitle-inspector",
+        ])
+        .arg(std::env::current_exe()?)
+        .args(["matroska-subtitles", "--input"])
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .context("Start subtitle inspection worker")?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("Subtitle inspector stdout unavailable")?;
+    let result = tokio::time::timeout(Duration::from_secs(15), async {
+        let mut bytes = Vec::new();
+        stdout.take(1_048_577).read_to_end(&mut bytes).await?;
+        ensure!(bytes.len() <= 1_048_576, "Subtitle inventory too large");
+        ensure!(child.wait().await?.success(), "Subtitle inspection failed");
+        let result: Value = serde_json::from_slice(&bytes)?;
+        let tracks = result["tracks"]
+            .as_array()
+            .context("Invalid subtitle inventory")?;
+        ensure!(
+            tracks.len() <= 256
+                && tracks
+                    .iter()
+                    .all(|t| t["track"].as_u64().is_some_and(|n| n > 0)),
+            "Invalid subtitle inventory"
+        );
+        Ok(result)
+    })
+    .await;
+    match result {
+        Ok(Ok(value)) => Ok(value),
+        failed => {
+            let _ = child.kill().await;
+            match failed {
+                Ok(Err(error)) => Err(error),
+                _ => anyhow::bail!("Subtitle inspection timed out"),
+            }
+        }
+    }
+}
