@@ -13,15 +13,13 @@ struct AutomationView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                Text("A quieter kind of housekeeping.").font(.system(size: 30, weight: .bold, design: .rounded))
-                Text("Complete downloads find their home. Seeding carries on.").foregroundStyle(Theme.muted)
                 if let status = store.status {
                     Card {
                         VStack(alignment: .leading, spacing: 18) {
                             HStack {
                                 Image(systemName: status.settings.paused ? "pause.circle.fill" : "sparkles").font(.title).foregroundStyle(Theme.mint)
                                 VStack(alignment: .leading, spacing: 5) {
-                                    Text(status.settings.paused ? "Taking a breather" : "Your organizer is running").font(.headline)
+                                    Text(status.settings.paused ? "Paused" : "Running").font(.headline)
                                     Text("Checks every \(Int(status.settings.pollSeconds)) seconds").font(.caption).foregroundStyle(Theme.muted)
                                 }
                                 Spacer()
@@ -42,7 +40,7 @@ struct AutomationView: View {
                     }
                     let issues = status.jobs.values.filter { $0.error != nil || $0.phase == "moving" || $0.phase == "blocked" }.sorted { $0.name < $1.name }
                     if !issues.isEmpty {
-                        Text("IN PROGRESS & NEEDS REVIEW").font(.caption.weight(.semibold)).tracking(1.4).foregroundStyle(Theme.muted)
+                        Text("Needs attention").font(.caption.weight(.semibold)).tracking(1.4).foregroundStyle(Theme.muted)
                         ForEach(issues) { job in
                             NavigationLink(value: job.hash) {
                                 Card {
@@ -55,9 +53,9 @@ struct AutomationView: View {
                         }
                     }
                 }
-                Text("RECENT ACTIVITY").font(.caption.weight(.semibold)).tracking(1.4).foregroundStyle(Theme.muted)
+                Text("Recent activity").font(.caption.weight(.semibold)).tracking(1.4).foregroundStyle(Theme.muted)
                 if store.events.isEmpty {
-                    Card { Text("All quiet. Completed downloads and organizer actions will appear here.").foregroundStyle(Theme.muted) }
+                    Card { Text("No recent activity").foregroundStyle(Theme.muted) }
                 }
                 LazyVStack(spacing: 0) {
                     ForEach(store.events.prefix(100)) { event in
@@ -213,7 +211,7 @@ struct SeedingSettings: View {
                     Toggle("Move to Complete at target ratio", isOn: $enabled)
                     TextField("Target upload/download ratio", value: $ratio, format: .number.precision(.fractionLength(1...2)))
                         .disabled(!enabled)
-                    Text("Stops seeding when the upload/download ratio reaches this target. Media files stay in your library. Applies to torrents using Transmission’s default ratio policy.")
+                    Text("Individual torrent limits take precedence.")
                         .font(.caption).foregroundStyle(.secondary)
                     Button(saved ? "Saved" : "Save seeding settings") {
                         store.perform {
@@ -292,7 +290,6 @@ struct ConnectionView: View {
                         #if os(iOS)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                         #endif
-                    Text("The token is saved in Keychain on this device. Use Tailscale or HTTPS when connecting remotely.").font(.caption).foregroundStyle(Theme.muted)
                     Button("Import connection file…") { importProfile = true }.font(.caption)
                 }
                 if let error = store.connectionError { Text(error).font(.caption).foregroundStyle(.orange) }
@@ -355,7 +352,6 @@ struct AddTorrentView: View {
                     Toggle("Add paused", isOn: $paused)
                 }
                 SwiftUI.Section {
-                    Text("Downloads start in the configured Downloads folder. Torrbaby will organize them when every file is complete.").font(.callout).foregroundStyle(.secondary)
                 }
             }.formStyle(.grouped).navigationTitle("Add a torrent")
             .toolbar {

@@ -18,19 +18,7 @@ enum Section: String, CaseIterable, Identifiable {
         case .settings: return "slider.horizontal.3"
         }
     }
-    var subtitle: String {
-        switch self {
-        case .movies: return "Movie night starts here."
-        case .shows: return "Your shows, season by season."
-        case .active: return "Incomplete downloads, including paused and stalled torrents."
-        case .complete: return "Finished downloads that are not currently seeding."
-        case .seeding: return "Downloaded. Organized. Giving back."
-        case .attention: return "Stalled downloads, idle peers and errors worth a look."
-        case .library: return "Your files, straight from your server."
-        case .automation: return "Quietly keeping your library in order."
-        case .settings: return "Make yourself at home."
-        }
-    }
+
 }
 
 private struct TorrentDraft: Identifiable {
@@ -84,7 +72,6 @@ struct RootView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 9)).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 1) {
                         Text("torrbaby").font(.system(size: 24, weight: .bold, design: .rounded))
-                        Text("Your home cinema").font(.caption2).foregroundStyle(Theme.muted)
                     }
                 }.padding(.horizontal, 18).padding(.top, 24)
                 List(selection: Binding(get: { location.section }, set: { navigate(Location(section: $0)) })) {
@@ -109,9 +96,8 @@ struct RootView: View {
                         Circle().fill(store.connected ? Theme.mint : .orange).frame(width: 6, height: 6)
                         Text(store.connected ? "Connected" : "Not connected").font(.caption.weight(.semibold))
                     }
-                    if let status = store.status {
-                        Text(status.settings.paused ? "Automation is paused" : "Sorting every \(Int(status.settings.pollSeconds)) seconds")
-                            .font(.caption2).foregroundStyle(Theme.muted)
+                    if store.status?.settings.paused == true {
+                        Label("Automation paused", systemImage: "pause.circle").font(.caption2).foregroundStyle(.orange)
                     }
                     Button("Connection settings") { showConnect = true }.font(.caption)
                 }.padding(20)
@@ -221,7 +207,6 @@ struct TorrentListView: View {
                 if !compact { VStack(alignment: .leading, spacing: 6) {
                     Text(section.rawValue)
                         .font(.system(size: 30, weight: .bold, design: .rounded))
-                    Text(section.subtitle).foregroundStyle(Theme.muted)
                 } }
                 if !compact { ViewThatFits(in: .horizontal) {
                     HStack(spacing: 12) { metrics }
@@ -239,7 +224,7 @@ struct TorrentListView: View {
                     if let date = store.lastUpdated { Text(date, style: .time).font(.caption).foregroundStyle(Theme.muted) }
                 }
                 if filtered.isEmpty {
-                    ContentUnavailableView(search.isEmpty ? "All clear" : "No matches", systemImage: search.isEmpty ? "checkmark.circle" : "magnifyingglass", description: Text(search.isEmpty ? "Torrents in this category will appear here." : "Try a different title."))
+                    ContentUnavailableView(search.isEmpty ? "All clear" : "No matches", systemImage: search.isEmpty ? "checkmark.circle" : "magnifyingglass", description: Text(search.isEmpty ? "" : "Try a different title."))
                         .padding(.vertical, 40)
                 } else {
                     LazyVStack(spacing: compact ? 4 : 10) {
@@ -500,7 +485,7 @@ struct TransferHistoryView: View {
             .chartLegend(position: .bottom, alignment: .leading)
             .frame(height: compact ? 100 : 170)
             if samples.count < 2 {
-                Text("History is collecting on Diamond, even when the app is closed.").font(.caption2).foregroundStyle(Theme.muted)
+                Text("Collecting history…").font(.caption2).foregroundStyle(Theme.muted)
             }
         }.padding(compact ? 12 : 18)
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))

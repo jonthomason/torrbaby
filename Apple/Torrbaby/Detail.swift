@@ -92,7 +92,7 @@ struct TorrentDetail: View {
     @ViewBuilder func transferStats(_ t: Torrent) -> some View {
         Label(rate(t.rateDownload), systemImage: "arrow.down").foregroundStyle(Theme.mint)
         Label(rate(t.rateUpload), systemImage: "arrow.up").foregroundStyle(.cyan)
-        Text("\(t.peersConnected) peers").foregroundStyle(Theme.muted)
+        Text("\(t.peersConnected) \(t.peersConnected == 1 ? "peer" : "peers")").foregroundStyle(Theme.muted)
         Text("Ratio \(max(0, t.uploadRatio), specifier: "%.2f")").foregroundStyle(Theme.muted)
         if !t.completed { Text(t.etaText).foregroundStyle(Theme.muted) }
         Text("\(bytes(t.downloaded)) / \(bytes(t.size))").foregroundStyle(Theme.muted)
@@ -190,7 +190,7 @@ struct RenameView: View {
                         ForEach(paths, id: \.self) { Text($0).tag($0) }
                     }
                     TextField("New name", text: $name)
-                    Text("Seeding is preserved. A folder rename keeps the filenames inside it. Keep file extensions and season/episode numbers.").font(.caption).foregroundStyle(.secondary)
+                    Text("Keep file extensions and episode numbers.").font(.caption).foregroundStyle(.secondary)
                 }
                 SwiftUI.Section("Find the proper title") {
                     Button {
@@ -201,7 +201,7 @@ struct RenameView: View {
                             catch { self.error = error.localizedDescription }
                         }
                     } label: { Label(searching ? "Looking up…" : "Search online", systemImage: "magnifyingglass") }.disabled(searching)
-                    Text("Sends the title to TVmaze or Apple’s movie catalog. Review the year and episode range before applying a suggestion.")
+                    Text("Check the year and episodes before applying.")
                         .font(.caption).foregroundStyle(.secondary)
                     if let error { Text(error).foregroundStyle(.orange) }
                     if let result {

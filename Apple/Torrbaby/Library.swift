@@ -109,7 +109,6 @@ struct LibraryBrowser: View {
                             .overlay(LinearGradient(colors: [.clear, .black.opacity(0.92)], startPoint: .top, endPoint: .bottom))
                             .overlay(alignment: .bottomLeading) {
                             VStack(alignment: .leading, spacing: 10) {
-                                Text("TONIGHT AT HOME").font(.caption.bold()).tracking(3)
                                 Text(featured.title).font(.system(size: 38, weight: .bold, design: .serif))
                                     .lineLimit(3).minimumScaleFactor(0.7).multilineTextAlignment(.leading)
                                 Text(([featured.year ?? ""] + featured.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · ")).font(.subheadline)
@@ -129,7 +128,7 @@ struct LibraryBrowser: View {
                 }.frame(maxWidth: 600)
                 if let error = store.libraryError ?? store.library?.error { Text(error).font(.callout).foregroundStyle(.orange) }
                 if titles.isEmpty {
-                    ContentUnavailableView("Your library", systemImage: "film.stack", description: Text(search.isEmpty ? "Movies and shows will appear as Diamond scans your media folders." : "No titles match your search."))
+                    ContentUnavailableView("Your library", systemImage: "film.stack", description: Text(search.isEmpty ? "No movies or shows yet." : "No titles match your search."))
                 } else if browsing && order == "Recently added" {
                     let continuing = titles.filter { $0.resume != nil }.sorted { ($0.resume?.lastPlayed ?? 0) > ($1.resume?.lastPlayed ?? 0) }
                     if !continuing.isEmpty { shelf("Continue watching", continuing) }
