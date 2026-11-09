@@ -280,9 +280,7 @@ struct TorrentRow: View {
     var color: Color { torrent.needsAttention ? .orange : torrent.completed ? .cyan : Theme.mint }
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
-            Image(systemName: torrent.completed ? "film.stack" : "arrow.down")
-                .font(.system(size: 20, weight: .medium)).foregroundStyle(color)
-                .frame(width: 46, height: 52).background(color.opacity(0.09), in: RoundedRectangle(cornerRadius: 12))
+            TorrentThumbnail(torrent: torrent).frame(width: 46, height: 64)
             VStack(alignment: .leading, spacing: 9) {
                 Text(torrent.displayName).font(.system(size: 15, weight: .semibold)).lineLimit(2).multilineTextAlignment(.leading)
                 HStack(spacing: 8) {
@@ -317,20 +315,23 @@ struct CompactTorrentRow: View {
     let showReason: Bool
     var body: some View {
         HStack(spacing: 12) {
-            Circle().fill(torrent.needsAttention ? .orange : torrent.completed ? .cyan : Theme.mint).frame(width: 6, height: 6)
+            TorrentThumbnail(torrent: torrent).frame(width: 32, height: 46)
             VStack(alignment: .leading, spacing: 4) {
-                Text(torrent.displayName).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                Text(torrent.displayName).font(.system(size: 13, weight: .medium)).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                 HStack(spacing: 6) {
-                    Text(torrent.stateName)
-                    Text("·")
-                    Text("\(bytes(torrent.downloaded))/\(bytes(torrent.size))")
-                    Text("· \(torrent.peersConnected) peers")
+                    Text(torrent.stateName).foregroundStyle(torrent.needsAttention ? .orange : torrent.completed ? .cyan : Theme.mint)
+                        .frame(width: 76, alignment: .leading)
+                    Text("\(bytes(torrent.downloaded)) / \(bytes(torrent.size))")
+                        .monospacedDigit().frame(width: 150, alignment: .trailing)
+                    Text(peerCount(torrent.peersConnected)).monospacedDigit()
+                        .frame(width: 65, alignment: .trailing)
                 }.font(.system(size: 10)).foregroundStyle(Theme.muted).lineLimit(1)
                 HStack(spacing: 10) {
-                    if !torrent.completed { Label(rate(torrent.rateDownload), systemImage: "arrow.down") }
-                    Label(rate(torrent.rateUpload), systemImage: "arrow.up")
+                    if !torrent.completed { TransferRate(value: torrent.rateDownload, upload: false) }
+                    TransferRate(value: torrent.rateUpload, upload: true)
                     Text("Ratio \(max(0, torrent.uploadRatio), specifier: "%.2f")")
-                    if !torrent.completed { Text(torrent.etaText) }
+                        .frame(width: 82, alignment: .trailing).foregroundStyle(.purple.opacity(0.9))
+                    if !torrent.completed { Text(torrent.etaText).frame(width: 160, alignment: .leading) }
                 }.font(.caption2.monospacedDigit()).foregroundStyle(Theme.muted)
                 if showReason, let reason = torrent.progressIssue { Text(reason).font(.caption2).foregroundStyle(.orange).lineLimit(2) }
             }
@@ -342,6 +343,39 @@ struct CompactTorrentRow: View {
         }.padding(.horizontal, 13).padding(.vertical, 10)
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 9))
             .accessibilityElement(children: .combine)
+    }
+}
+
+private func peerCount(_ count: Int) -> String { "\(count) " + (count == 1 ? "peer" : "peers") }
+
+private struct TransferRate: View {
+    let value: Int64
+    let upload: Bool
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: upload ? "arrow.up" : "arrow.down").frame(width: 12)
+            Text(value == 0 ? "0 KB/s" : rate(value))
+                .monospacedDigit().frame(width: 82, alignment: .trailing)
+        }.foregroundStyle(upload ? Color.cyan : Theme.mint)
+            .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+private struct TorrentThumbnail: View {
+    @EnvironmentObject var store: Store
+    let torrent: Torrent
+    private var thumbnail: String? { store.metadata.first { $0.hash == torrent.id }?.selected?.thumbnail }
+    var body: some View {
+        ZStack {
+            Theme.mint.opacity(0.10)
+            if let thumbnail {
+                LibraryArtwork(id: "torrent:" + torrent.id).id(thumbnail)
+            } else {
+                Image(systemName: torrent.completed ? "film" : "arrow.down")
+                    .foregroundStyle(torrent.needsAttention ? .orange : Theme.mint)
+            }
+        }.clipShape(RoundedRectangle(cornerRadius: 5))
+            .accessibilityHidden(true)
     }
 }
 
@@ -371,10 +405,10 @@ struct TorrentActivity: View {
     let torrent: Torrent
     var body: some View {
         if !torrent.completed {
-            Label(rate(torrent.rateDownload), systemImage: "arrow.down").foregroundStyle(Theme.mint)
+            TransferRate(value: torrent.rateDownload, upload: false)
         }
-        Label(rate(torrent.rateUpload), systemImage: "arrow.up").foregroundStyle(.cyan)
-        Text("\(torrent.peersConnected) peers · \(torrent.peersSendingToUs) sending")
+        TransferRate(value: torrent.rateUpload, upload: true)
+        Text("\(peerCount(torrent.peersConnected)) · \(torrent.peersSendingToUs) sending").frame(width: 160, alignment: .leading)
         if !torrent.completed { Text(torrent.etaText) }
         Text("Ratio \(max(0, torrent.uploadRatio), specifier: "%.2f")")
         if let uploaded = torrent.uploadedEver { Text("\(bytes(uploaded)) uploaded") }

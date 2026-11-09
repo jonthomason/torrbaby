@@ -1114,6 +1114,10 @@ async fn collect_metadata(s: &Service) -> Result<()> {
                             900.0
                         }
             }) {
+                // Warm the disk cache even for metadata collected before artwork prefetch existed.
+                if let Err(error) = artwork(s, &format!("torrent:{hash}"), "poster").await {
+                    tracing::debug!(%hash, %error, "Torrent artwork is not available yet");
+                }
                 continue;
             }
             let mut record = match s.metadata.search(text(&torrent, "name")?).await {
@@ -1125,6 +1129,9 @@ async fn collect_metadata(s: &Service) -> Result<()> {
             record["hash"] = json!(hash);
             record["updated_at"] = json!(now());
             save_torrent_metadata(s, &record)?;
+            if let Err(error) = artwork(s, &format!("torrent:{hash}"), "poster").await {
+                tracing::debug!(%hash, %error, "Torrent artwork is not available yet");
+            }
         }
     }
     let assets =
