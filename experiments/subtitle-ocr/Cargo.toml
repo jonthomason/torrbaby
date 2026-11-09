@@ -1,0 +1,11 @@
+[package]
+name = "torrbaby-subtitle-ocr-probe"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+[dependencies]
+anyhow = "1"
+serde_json = "1"
+matroska-demuxer = { path = "../../vendor/matroska-demuxer" }
+oxideav-sub-image = "=0.0.9"
+flate2 = "1"
