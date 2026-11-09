@@ -413,3 +413,27 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
   local-state/checkpoints/2026-11-09/torrbaby-storage-import-smoke.swift.
 - All still on WIP branch; no app installation/OTA or Diamond deployment. Physical
   disconnected/reconnected device acceptance remains pending.
+
+## Follow-up: download quota accounting
+
+- Storage now reports owned files plus tracked URLSession partial bytes outside its
+  folder, subtracting any tracked partial already counted inside the folder.
+  Admission reserves a resumed item's final size once instead of partial + full.
+  Other paused downloads remain accounted. Disk-free admission still reserves a
+  full restart plus metadata allowance conservatively.
+- Transfer callbacks refresh displayed usage and check quota/free space at most
+  once a second. Final adoption includes other partial downloads in quota checks.
+  Fresh requests clear stale transfer counts; restored background tasks supply
+  their current byte counts. Completion/error clears discarded byte counts.
+- Focused accounting smoke passed external partial totals, resume quota admission,
+  conservative disk reserve, owned-partial deduplication, and live byte overrides.
+  Existing storage smoke still passed. Saved fixture:
+  local-state/checkpoints/2026-11-09/torrbaby-storage-accounting-smoke.swift.
+- URLSession's unreported temporary allocations and cleanup remain OS-owned; known
+  byte totals are not a filesystem audit of its private cache. Runtime checks do
+  not execute while iOS suspends the app; admission reserves the expected final
+  size beforehand. Actual background download acceptance remains pending.
+- Mac and iOS Simulator builds passed. No release/deploy. Further queue review:
+  guard late completion from an older task when a replacement task exists for the
+  same download ID, without dropping background completions delivered before task
+  restoration. Continue the existing cancellation/finalization lifecycle review.

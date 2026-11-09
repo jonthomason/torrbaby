@@ -25,6 +25,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     private var finishing = 0
     private var backgroundEventsFinished = false
     private var syncingProgress = false
+    private var lastUsageRefresh = Date.distantPast
 
     init(root requestedRoot: URL? = nil, configuration: URLSessionConfiguration? = nil) {
         let root = requestedRoot ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -45,6 +46,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
                       let item = items.first(where: { $0.id == id }), item.state == .transferring,
                       let download = task as? URLSessionDownloadTask else { task.cancel(); continue }
                 tasks[id] = download
+                received[id] = max(0, download.countOfBytesReceived)
             }
             for item in items where item.state == .transferring && tasks[item.id] == nil {
                 try? storage?.pause(item.id, received: item.received, error: "Transfer interrupted. Tap resume.")
@@ -56,7 +58,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     private func reload() {
         guard let storage else { return }
         items = storage.items; policy = storage.policy
-        do { used = try storage.usedBytes() } catch { self.error = error.localizedDescription }
+        do { used = try storage.accountedBytes(received: received) } catch { self.error = error.localizedDescription }
     }
     func setPolicy(_ next: DownloadStorage.Policy) {
         do {
@@ -93,8 +95,11 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             if (try? Data(contentsOf: storage.resumeContextURL(item.id))) == context,
                let data = try? Data(contentsOf: storage.resumeURL(item.id)) {
                 task = session.downloadTask(withResumeData: data)
+                received[item.id] = item.received
             } else {
                 try? FileManager.default.removeItem(at: storage.resumeURL(item.id))
+                try storage.resetTransferBytes(item.id)
+                received[item.id] = 0
                 task = session.downloadTask(with: request)
             }
             try context.write(to: storage.resumeContextURL(item.id), options: .atomic)
@@ -240,8 +245,15 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         DispatchQueue.main.async {
             guard self.tasks[id] === downloadTask else { return }
             self.received[id] = totalBytesWritten
-            if let storage = self.storage, let free = try? storage.availableBytes(), free < self.policy.freeSpaceBytes {
-                self.pause(id)
+            guard Date().timeIntervalSince(self.lastUsageRefresh) >= 1 else { return }
+            self.lastUsageRefresh = Date()
+            self.reload()
+            if let storage = self.storage {
+                do {
+                    if try storage.availableBytes() < self.policy.freeSpaceBytes || self.used > self.policy.limitBytes {
+                        self.pause(id)
+                    }
+                } catch { self.error = error.localizedDescription; self.pause(id) }
             }
         }
     }
@@ -268,8 +280,10 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
                     throw APIError(message: response?.statusCode == 412 ? "The file changed. Remove this download and add it again." : "Download failed. Reconnect and try again.")
                 }
                 try self.storage?.adopt(id, temporary: file, revision: response.value(forHTTPHeaderField: "ETag") ?? "")
+                self.received.removeValue(forKey: id)
                 if let storage = self.storage { try? FileManager.default.removeItem(at: storage.resumeURL(id)) }
             } catch {
+                self.received[id] = 0
                 if let storage = self.storage { try? FileManager.default.removeItem(at: storage.resumeURL(id)) }
                 try? self.storage?.pause(id, received: 0, error: error.localizedDescription)
             }
@@ -284,7 +298,10 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             guard self.items.first(where: { $0.id == id })?.state == .transferring else { return }
             if let storage = self.storage {
                 if let resume { try? resume.write(to: storage.resumeURL(id), options: .atomic) }
-                else { try? FileManager.default.removeItem(at: storage.resumeURL(id)) }
+                else {
+                    try? FileManager.default.removeItem(at: storage.resumeURL(id))
+                    self.received[id] = 0
+                }
                 try? storage.pause(id, received: self.received[id] ?? 0, error: "Download interrupted. Tap resume.")
             }
             self.tasks.removeValue(forKey: id); self.reload(); self.pump()

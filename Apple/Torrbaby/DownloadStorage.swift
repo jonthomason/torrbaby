@@ -164,34 +164,52 @@ final class DownloadStorage {
         guard let free = info[.systemFreeSize] as? NSNumber else { throw StorageError(message: "Cannot check free storage.") }
         return free.int64Value
     }
-    /// Admission reserves the entire remaining file and a small metadata allowance.
-    /// Background session temporary bytes may be outside our directory, so account for them too.
+    /// Logical usage includes URLSession's partial bytes outside our owned folder.
+    /// A tracked partial already inside the folder must not be counted twice.
+    func accountedBytes(received: [UUID: Int64] = [:], excluding: UUID? = nil) throws -> Int64 {
+        var total = try usedBytes()
+        for item in items where item.id != excluding && [.queued, .transferring, .paused, .failed].contains(item.state) {
+            let known = min(item.size, max(0, received[item.id] ?? item.received))
+            let additional = max(0, known - ownedPartialBytes(item.id))
+            let (sum, overflow) = total.addingReportingOverflow(additional)
+            guard !overflow else { throw StorageError(message: "Download storage total is too large.") }
+            total = sum
+        }
+        return total
+    }
+    private func ownedPartialBytes(_ id: UUID) -> Int64 {
+        let attrs = try? fm.attributesOfItem(atPath: partialURL(id).path)
+        guard attrs?[.type] as? FileAttributeType == .typeRegular else { return 0 }
+        return (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+    }
+    /// Reserve final logical sizes once, rather than partial + full size for a resume.
+    /// Free-space admission remains conservative enough for a full-file restart.
     func canStart(_ id: UUID, freeBytes: Int64? = nil) throws -> Bool {
         guard let item = items.first(where: { $0.id == id }), [.queued, .paused, .failed].contains(item.state) else { return false }
         let free = try freeBytes ?? availableBytes()
-        let used = try usedBytes()
-        let overhead: Int64 = 1_000_000
-        var reservations: Int64 = 0
-        for active in items where active.state != .removed && active.state != .ready {
-            let amount = active.state == .transferring ? active.size : max(0, active.received)
-            let (sum, overflow) = reservations.addingReportingOverflow(amount)
-            guard !overflow else { return false }
-            reservations = sum
+        var projected = try accountedBytes(excluding: id)
+        var diskNeeded: Int64 = 1_000_000
+        for active in items where active.id != id && active.state == .transferring {
+            let remaining = max(0, active.size - active.received)
+            let (next, overflow) = projected.addingReportingOverflow(remaining)
+            let (disk, diskOverflow) = diskNeeded.addingReportingOverflow(remaining)
+            guard !overflow && !diskOverflow else { return false }
+            projected = next; diskNeeded = disk
         }
-        // Reserve the full file conservatively even if a partial exists. This covers
-        // resume-data storage and a temporary copy during finalization.
-        guard used <= policy.limitBytes, reservations <= policy.limitBytes - used,
-              item.size <= policy.limitBytes - used - reservations,
-              overhead <= policy.limitBytes - used - reservations - item.size,
-              free >= policy.freeSpaceBytes,
-              reservations <= free - policy.freeSpaceBytes,
-              item.size <= free - policy.freeSpaceBytes - reservations,
-              overhead <= free - policy.freeSpaceBytes - reservations - item.size else { return false }
-        return true
+        let additional = max(0, item.size - ownedPartialBytes(id))
+        let (withItem, overflow) = projected.addingReportingOverflow(additional)
+        let (withOverhead, overheadOverflow) = withItem.addingReportingOverflow(1_000_000)
+        let (disk, diskOverflow) = diskNeeded.addingReportingOverflow(item.size)
+        guard !overflow && !overheadOverflow && !diskOverflow else { return false }
+        return withOverhead <= policy.limitBytes && free >= policy.freeSpaceBytes
+            && disk <= free - policy.freeSpaceBytes
     }
     func markTransferring(_ id: UUID) throws {
         guard try canStart(id) else { throw StorageError(message: "Download paused: storage limit reached.") }
         try update(id) { $0.state = .transferring; $0.error = nil }
+    }
+    func resetTransferBytes(_ id: UUID) throws {
+        try update(id) { if $0.state == .transferring { $0.received = 0 } }
     }
     func pause(_ id: UUID, received: Int64, error: String? = nil) throws {
         try update(id) { item in
@@ -209,7 +227,7 @@ final class DownloadStorage {
         let attrs = try fm.attributesOfItem(atPath: temporary.path)
         guard attrs[.type] as? FileAttributeType == .typeRegular,
               (attrs[.size] as? NSNumber)?.int64Value == item.size else { throw StorageError(message: "The download is incomplete.") }
-        let used = try usedBytes()
+        let used = try accountedBytes(excluding: id)
         let localTemporary = temporary.standardizedFileURL.path.hasPrefix(root.path + "/")
         let additional = localTemporary ? 0 : item.size
         guard used <= policy.limitBytes, additional <= policy.limitBytes - used,
