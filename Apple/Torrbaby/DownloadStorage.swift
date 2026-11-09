@@ -33,6 +33,7 @@ final class DownloadStorage {
         var progressNeedsSync = false
         var progressEventID: UUID?
         var progressRecordedAt: Date?
+        var posterKey: String?
         var updated = Date()
         var error: String?
     }
@@ -70,12 +71,14 @@ final class DownloadStorage {
         try excluded.setResourceValues(attributes)
         try FileManager.default.createDirectory(at: self.root.appendingPathComponent("media"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: self.root.appendingPathComponent("partial"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: self.root.appendingPathComponent("artwork"), withIntermediateDirectories: true)
         for item in items where item.progressNeedsSync && item.progressEventID == nil {
             try update(item.id) { $0.progressEventID = UUID(); $0.progressRecordedAt = item.updated }
         }
         // A durable removal intent is safe to replay after interruption.
         for item in manifest.items where item.state == .removing { try finishRemoval(item.id) }
         try reconcileFiles()
+        try pruneArtwork()
     }
 
     /// Runs before reconnecting the background URLSession. Completed delegate
@@ -136,6 +139,33 @@ final class DownloadStorage {
     }
     func mediaURL(_ item: Item) -> URL {
         root.appendingPathComponent("media").appendingPathComponent(item.id.uuidString + "." + item.fileExtension)
+    }
+    func posterURL(_ key: String) -> URL? {
+        guard key.count == 64, key.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return nil }
+        return root.appendingPathComponent("artwork").appendingPathComponent(key + ".jpg")
+    }
+    func savePoster(_ id: UUID, key: String, data: Data) throws {
+        guard !data.isEmpty, data.count <= 524_288, let destination = posterURL(key),
+              let item = items.first(where: { $0.id == id }), item.state != .removed && item.state != .removing else { return }
+        let existed = fm.fileExists(atPath: destination.path)
+        if !existed {
+            let used = try accountedBytes()
+            let free = try availableBytes()
+            guard used <= policy.limitBytes, Int64(data.count) <= policy.limitBytes - used,
+                  free >= policy.freeSpaceBytes, Int64(data.count) <= free - policy.freeSpaceBytes else { return }
+            try data.write(to: destination, options: .atomic)
+        }
+        do { try update(id) { $0.posterKey = key } }
+        catch { if !existed { try? fm.removeItem(at: destination) }; throw error }
+    }
+    private func pruneArtwork() throws {
+        let retained = Set(items.filter { $0.state != .removed }.compactMap(\.posterKey))
+        let folder = root.appendingPathComponent("artwork")
+        for file in try fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) {
+            let key = file.deletingPathExtension().lastPathComponent
+            guard file.pathExtension == "jpg", posterURL(key) != nil, !retained.contains(key) else { continue }
+            try fm.removeItem(at: file)
+        }
     }
     func partialURL(_ id: UUID) -> URL {
         root.appendingPathComponent("partial").appendingPathComponent(id.uuidString + ".partial")
@@ -288,5 +318,6 @@ final class DownloadStorage {
         }
         // Retain watch progress until it has synced, independently of the media file.
         try update(id) { $0.state = .removed; $0.received = 0; $0.error = nil }
+        try pruneArtwork()
     }
 }

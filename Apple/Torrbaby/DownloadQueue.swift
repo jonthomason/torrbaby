@@ -1,6 +1,8 @@
 #if !os(tvOS)
 import Foundation
 import CryptoKit
+import ImageIO
+import UniformTypeIdentifiers
 import SwiftUI
 #if os(iOS)
 import UIKit
@@ -69,15 +71,47 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     }
     func enqueue(_ asset: LibraryAsset, title: LibraryTitle) async {
         guard let store, let storage else { return }
+        let server = store.server
         do {
             struct Info: Decodable { let name: String; let size: Int64; let etag: String }
             let info: Info = try await store.request("GET", "/v1/library/assets/\(asset.id)/download-info")
-            _ = try storage.enqueue(server: store.server, assetID: asset.id, titleID: title.id,
+            guard store.server == server else { return }
+            let item = try storage.enqueue(server: server, assetID: asset.id, titleID: title.id,
                                     title: title.title, name: asset.name ?? info.name,
                                     season: asset.season, episode: asset.episode, revision: info.etag,
                                     size: info.size, fileExtension: URL(fileURLWithPath: info.name).pathExtension)
             reload(); pump()
+            await cachePoster(for: item)
         } catch { self.error = error.localizedDescription }
+    }
+    func artworkURL(_ id: UUID) -> URL? {
+        guard let storage, let key = items.first(where: { $0.id == id })?.posterKey else { return nil }
+        return storage.posterURL(key)
+    }
+    private func cachePoster(for item: DownloadStorage.Item) async {
+        guard let store, let storage, store.server == item.server else { return }
+        let key = SHA256.hash(data: Data((item.server + "\n" + item.titleID).utf8)).map { String(format: "%02x", $0) }.joined()
+        do {
+            if let url = storage.posterURL(key), let data = try? Data(contentsOf: url) {
+                try storage.savePoster(item.id, key: key, data: data); reload(); return
+            }
+            struct Artwork: Decodable { let data: String? }
+            let artwork: Artwork = try await store.request("GET", "/v1/library/artwork/\(item.titleID)/poster")
+            guard let encoded = artwork.data, encoded.utf8.count <= 12_000_000,
+                  let bytes = Data(base64Encoded: encoded),
+                  let source = CGImageSourceCreateWithData(bytes as CFData, nil),
+                  let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 480,
+                    kCGImageSourceCreateThumbnailWithTransform: true
+                  ] as CFDictionary) else { return }
+            let output = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(output, UTType.jpeg.identifier as CFString, 1, nil) else { return }
+            CGImageDestinationAddImage(destination, thumbnail, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
+            guard CGImageDestinationFinalize(destination) else { return }
+            try storage.savePoster(item.id, key: key, data: output as Data)
+            reload()
+        } catch { /* Artwork is optional; the media transfer continues independently. */ }
     }
     private func pump() {
         guard restored, tasks.isEmpty, let store, store.configured, let storage else { return }

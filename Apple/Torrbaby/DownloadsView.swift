@@ -12,7 +12,7 @@ struct DownloadsView: View {
     @State private var preparing = false
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            LazyVStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Label("\(bytes(queue.used)) / \(bytes(queue.policy.limitBytes))", systemImage: "internaldrive")
                         .font(.subheadline.monospacedDigit()).foregroundStyle(Theme.muted)
@@ -26,15 +26,21 @@ struct DownloadsView: View {
                 if visible.isEmpty { ContentUnavailableView("No downloads", systemImage: "arrow.down.circle") }
                 ForEach(visible) { item in
                     HStack(spacing: 16) {
-                        Image(systemName: item.season == nil ? "film" : "tv").font(.title).foregroundStyle(Theme.mint)
-                            .frame(width: 42)
+                        DownloadPoster(url: queue.artworkURL(item.id), isTV: item.season != nil)
+                            .frame(width: 60, height: 90).clipShape(RoundedRectangle(cornerRadius: 8))
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(item.title).font(.headline)
-                            if item.name != item.title { Text(item.name).font(.caption).foregroundStyle(Theme.muted).lineLimit(2) }
+                            Text(item.title).font(.headline).lineLimit(2)
+                            if let season = item.season, let episode = item.episode {
+                                Text(String(format: "S%02d E%02d", season, episode)).font(.caption.monospacedDigit()).foregroundStyle(Theme.muted)
+                            } else if item.name != item.title {
+                                Text(item.name).font(.caption).foregroundStyle(Theme.muted).lineLimit(1)
+                            }
                             if item.state == .ready {
                                 Label(bytes(item.size), systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(Theme.mint)
                             } else {
                                 ProgressView(value: Double(queue.received[item.id] ?? item.received), total: Double(item.size))
+                                Text("\(bytes(queue.received[item.id] ?? item.received)) / \(bytes(item.size))")
+                                    .font(.caption.monospacedDigit()).foregroundStyle(Theme.muted)
                                 Text(item.error ?? item.state.rawValue.capitalized).font(.caption).foregroundStyle(Theme.muted)
                             }
                         }
@@ -71,6 +77,28 @@ struct DownloadsView: View {
             playback = item
             #endif
         }
+    }
+}
+
+private struct DownloadPoster: View {
+    let url: URL?
+    let isTV: Bool
+    @State private var data: Data?
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Theme.panel
+                if let data {
+                    #if os(macOS)
+                    if let image = NSImage(data: data) { Image(nsImage: image).resizable().scaledToFill() }
+                    #else
+                    if let image = UIImage(data: data) { Image(uiImage: image).resizable().scaledToFill() }
+                    #endif
+                } else {
+                    Image(systemName: isTV ? "tv" : "film").font(.title2).foregroundStyle(Theme.mint)
+                }
+            }.frame(width: geometry.size.width, height: geometry.size.height).clipped()
+        }.task(id: url) { data = url.flatMap { try? Data(contentsOf: $0) } }
     }
 }
 

@@ -465,3 +465,22 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
 - Local scratch queue fixture stopped (PID 97351 confirmed terminal).
 - Stable installed Mac37 and OTA42 unchanged. WIP app release still pending;
   deployment does not imply native subtitle selection or translation UI exists.
+
+## Follow-up: offline posters and download row labels
+
+- Enqueue now caches a downsampled JPEG poster (max 480 px, 512 KiB) locally;
+  episodes share a server/title-keyed file. Root quota/free reserve includes art.
+  Removing the final local item prunes its poster; startup removes orphan poster
+  files while respecting other items' references. Invalid path keys are rejected.
+- Downloads rows show cached artwork offline, concise season/episode labels,
+  truncated titles and explicit received/total bytes, with a lazy list container.
+- Enqueue captures/rechecks the server around download-info to avoid assigning
+  metadata to the wrong server if the connection changes during the request.
+- Storage accounting fixture still passed. Poster fixture verifies shared reuse,
+  key confinement, reference survival/restart, final-removal cleanup and oversize
+  rejection: local-state/checkpoints/2026-11-09/torrbaby-poster-storage-smoke.swift.
+- Artwork failures are optional; automatic retries for titles that had no poster
+  at enqueue are not implemented yet. Full offline library metadata/subtitle cache
+  and visual device acceptance remain pending. No new OTA/install yet.
+- Mac and iOS Simulator builds passed for poster/row changes. Production Rust
+  remains the verified schema-7 deployment; installed Mac37 and OTA42 unchanged.
