@@ -127,10 +127,12 @@ struct RootView: View {
         } message: { Text(store.actionError ?? "") }
         .task(id: phase) {
             if !store.configured { showConnect = true }
+            #if !os(macOS)
             while !Task.isCancelled {
                 if phase == .active { await store.refresh() }
                 try? await Task.sleep(for: .seconds(store.connectionError == nil ? 5 : 15))
             }
+            #endif
         }
     }
 }

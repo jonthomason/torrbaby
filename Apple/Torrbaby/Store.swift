@@ -126,6 +126,17 @@ final class Store: ObservableObject {
             try? FileManager.default.removeItem(atPath: path)
         }
         #endif
+        #if os(macOS)
+        // App-owned polling continues after the last library window is closed.
+        Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.refresh()
+                let delay = self?.connectionError == nil ? 5 : 15
+                try? await Task.sleep(for: .seconds(delay))
+                if self == nil { break }
+            }
+        }
+        #endif
     }
     var configured: Bool { !server.isEmpty && !token.isEmpty }
     var connected: Bool { status != nil && connectionError == nil }

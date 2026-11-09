@@ -3,8 +3,11 @@ import SwiftUI
 @main
 struct TorrbabyApp: App {
     @StateObject private var store = Store()
+    #if os(macOS)
+    @AppStorage("showMenuBarRates") private var showMenuBarRates = true
+    #endif
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: "main") {
             #if os(tvOS)
             TVRootView().environmentObject(store).tint(Theme.mint).preferredColorScheme(.dark)
             #else
@@ -26,6 +29,16 @@ struct TorrbabyApp: App {
         }
         #endif
         #if os(macOS)
+        MenuBarExtra(isInserted: $showMenuBarRates) {
+            TransferMenu(store: store)
+        } label: {
+            Text(store.connected
+                 ? "↓ \(rate(store.torrents.reduce(0) { $0 + $1.rateDownload }))  ↑ \(rate(store.torrents.reduce(0) { $0 + $1.rateUpload }))"
+                 : "tb · Offline")
+                .monospacedDigit()
+                .accessibilityLabel("Torrbaby transfer rates")
+        }
+        .menuBarExtraStyle(.menu)
         WindowGroup("Playback", for: Playback.self) { $playback in
             if let playback {
                 PlayerScreen(playback: playback, store: store)
@@ -54,3 +67,26 @@ struct Card<Content: View>: View {
             .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.055)))
     }
 }
+
+#if os(macOS)
+private struct TransferMenu: View {
+    @ObservedObject var store: Store
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Text("Torrbaby · " + (store.connected ? "Connected" : "Offline"))
+        if store.connected {
+            Text("Download: " + rate(store.torrents.reduce(0) { $0 + $1.rateDownload }))
+            Text("Upload: " + rate(store.torrents.reduce(0) { $0 + $1.rateUpload }))
+            Text("\(store.torrents.filter { !$0.completed }.count) downloading · \(store.torrents.filter { $0.status == 6 }.count) seeding")
+        }
+        Divider()
+        Button("Open Torrbaby") {
+            openWindow(id: "main")
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        Button("Refresh") { Task { await store.refresh() } }.disabled(!store.configured)
+        Divider()
+        Button("Quit Torrbaby") { NSApp.terminate(nil) }
+    }
+}
+#endif

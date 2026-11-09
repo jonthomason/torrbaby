@@ -88,6 +88,9 @@ struct SettingsView: View {
     @State private var tv = ""
     @State private var interval = 30.0
     @State private var saved = false
+    #if os(macOS)
+    @AppStorage("showMenuBarRates") private var showMenuBarRates = true
+    #endif
     @State private var magnetStatus: String?
     @State private var tmdbToken = ""
     @State private var tmdbSaved = false
@@ -98,6 +101,12 @@ struct SettingsView: View {
                 if let status = store.status { LabeledContent("Daemon", value: "Torrbaby \(status.version)") }
                 Button("Edit connection") { showConnect = true }
             }
+            #if os(macOS)
+            SwiftUI.Section("Menu bar") {
+                Toggle("Show download and upload rates", isOn: $showMenuBarRates)
+                Text("Rates keep updating while Torrbaby is running, even with its windows closed.").font(.caption).foregroundStyle(.secondary)
+            }
+            #endif
             SwiftUI.Section("Metadata") {
                 SecureField("TMDB API key or Read Access Token", text: $tmdbToken)
                 Button(tmdbSaved ? "Saved on Diamond" : "Save TMDB credential on Diamond") {
