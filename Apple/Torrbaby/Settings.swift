@@ -250,10 +250,19 @@ struct ConnectionView: View {
                 Spacer()
                 Image("TorrbabyLogo").resizable().frame(width: 80, height: 80)
                     .clipShape(RoundedRectangle(cornerRadius: 18)).accessibilityHidden(true)
-                VStack(spacing: 12) {
-                    Text("Welcome to Torrbaby").font(.system(size: 28, weight: .bold, design: .rounded))
-                    Text("On a connected device, open Settings and choose Link a device.")
-                        .foregroundStyle(Theme.muted).frame(maxWidth: 320)
+                HStack(spacing: 20) {
+                    ZStack {
+                        Image(systemName: "desktopcomputer").font(.system(size: 76, weight: .light))
+                        Image(systemName: "qrcode").font(.system(size: 27)).offset(y: -8)
+                    }
+                    Image(systemName: "arrow.right").font(.title3).foregroundStyle(Theme.muted)
+                    Image(systemName: "iphone.gen3.radiowaves.left.and.right")
+                        .font(.system(size: 58, weight: .light))
+                }.foregroundStyle(Theme.mint).padding(.vertical, 12).accessibilityHidden(true)
+                VStack(spacing: 8) {
+                    Text("Link a device").font(.system(size: 28, weight: .bold, design: .rounded))
+                    Text("On your connected device").font(.subheadline).foregroundStyle(Theme.muted)
+                    Label("Settings → Link a device", systemImage: "gearshape").font(.subheadline)
                 }.multilineTextAlignment(.center)
                 Button { showScanner = true } label: {
                     Label("Scan connection code", systemImage: "qrcode.viewfinder")
