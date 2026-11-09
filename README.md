@@ -312,3 +312,5 @@ these controls cannot restyle every existing embedded subtitle format directly.
 No subtitle extraction, translation or appearance controls are implemented yet.
 
 Bundle IDs are `org.torrbaby.ios` (iPhone and iPad) and `org.torrbaby.mac` (macOS). Both use the same shared Swift sources and display name.
+
+Transfer graphs offer 1h, 6h and 24h ranges, using server-wide Transmission rates. Diamond samples every 30 seconds even when organization is paused and retains 25 hours in SQLite. `GET /v1/rates` returns one-minute averages for the last 24 hours; history begins at deployment and is not reconstructed retroactively.

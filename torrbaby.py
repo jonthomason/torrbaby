@@ -365,10 +365,22 @@ class Service:
                 LOG.exception("Reconciliation failed")
 
     def run(self):
+        next_poll = next_sample = 0
         while not self.stop.is_set():
+            forced = self.wake.is_set()
             self.wake.clear()
-            self.tick()
-            self.wake.wait(self.config["poll_seconds"])
+            now = time.monotonic()
+            if now >= next_sample:
+                try:
+                    stats = self.rpc.call("session_stats")
+                    self.db.sample_rates(stats["download_speed"], stats["upload_speed"])
+                except Exception:
+                    LOG.exception("Transfer history sample failed")
+                next_sample = time.monotonic() + 30
+            if forced or now >= next_poll:
+                self.tick()
+                next_poll = time.monotonic() + self.config["poll_seconds"]
+            self.wake.wait(max(0, min(next_poll, next_sample) - time.monotonic()))
 
     def status(self):
         return {"version": VERSION, "uptime_seconds": int(time.time() - self.started),
@@ -655,6 +667,8 @@ class Handler(BaseHTTPRequestHandler):
                     result = s.update_settings(body)
                 elif method == "GET" and parts == ["v1", "events"]:
                     result = s.state["events"]
+                elif method == "GET" and parts == ["v1", "rates"]:
+                    result = s.db.rates()
                 elif method == "GET" and parts == ["v1", "clients"]:
                     result = s.db.clients()
                 elif method == "POST" and parts == ["v1", "clients"]:

@@ -28,7 +28,8 @@ class Database:
         CREATE TABLE IF NOT EXISTS media (id TEXT PRIMARY KEY, torrent_hash TEXT NOT NULL, file_index INTEGER NOT NULL, name TEXT NOT NULL, length INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS playback (media_id TEXT PRIMARY KEY REFERENCES media(id), position REAL NOT NULL DEFAULT 0, duration REAL NOT NULL DEFAULT 0, watched INTEGER NOT NULL DEFAULT 0, last_played REAL NOT NULL DEFAULT 0, client_id TEXT REFERENCES clients(id), active_session TEXT);
         CREATE TABLE IF NOT EXISTS playback_sessions (id TEXT PRIMARY KEY, media_id TEXT NOT NULL REFERENCES media(id), client_id TEXT NOT NULL REFERENCES clients(id), started REAL NOT NULL, sequence INTEGER NOT NULL DEFAULT -1, ended INTEGER NOT NULL DEFAULT 0);
-        PRAGMA user_version=1;
+        CREATE TABLE IF NOT EXISTS transfer_rates (time INTEGER PRIMARY KEY, download REAL NOT NULL, upload REAL NOT NULL);
+        PRAGMA user_version=2;
         ''')
         self.conn.commit()
         self.path.chmod(0o600)
@@ -132,3 +133,13 @@ class Database:
             # Explicit user intent invalidates previous in-flight progress reports.
             self.conn.execute("UPDATE playback SET watched=?,position=0,active_session=NULL WHERE media_id=?", (int(watched), media_id))
         return {"media_id": media_id, "watched": watched}
+
+    def sample_rates(self, download, upload, timestamp=None):
+        now = int(time.time() if timestamp is None else timestamp)
+        with self.lock, self.conn:
+            self.conn.execute("INSERT OR REPLACE INTO transfer_rates VALUES(?,?,?)", (now, max(0, download), max(0, upload)))
+            self.conn.execute("DELETE FROM transfer_rates WHERE time<?", (now - 25 * 3600,))
+
+    def rates(self):
+        with self.lock:
+            return [dict(r) for r in self.conn.execute("SELECT CAST(time/60 AS INTEGER)*60 AS time, AVG(download) AS download, AVG(upload) AS upload FROM transfer_rates WHERE time>=? GROUP BY CAST(time/60 AS INTEGER) ORDER BY time", (int(time.time()) - 86400,))]

@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 
 enum Section: String, CaseIterable, Identifiable {
     case overview = "All torrents", active = "Active torrents", downloading = "Downloading", seeding = "Seeding", attention = "Not progressing", library = "Ready to watch", automation = "Automation", settings = "Settings"
@@ -151,6 +152,7 @@ struct TorrentListView: View {
                         Label(rate(store.torrents.reduce(0) { $0 + $1.rateUpload }), systemImage: "arrow.up").foregroundStyle(.cyan)
                     }.font(.caption.monospacedDigit())
                 }
+                TransferHistoryView(compact: compact)
                 HStack {
                     Text("\(filtered.count) \(filtered.count == 1 ? "TORRENT" : "TORRENTS")").font(.caption.weight(.semibold)).tracking(1.6).foregroundStyle(Theme.muted)
                     Spacer()
@@ -268,5 +270,51 @@ struct CompactTorrentRow: View {
         }.padding(.horizontal, 13).padding(.vertical, 10)
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 9))
             .accessibilityElement(children: .combine)
+    }
+}
+
+
+struct TransferHistoryView: View {
+    @EnvironmentObject var store: Store
+    let compact: Bool
+    @AppStorage("transferHistoryHours") private var hours = 24
+    var samples: [TransferSample] {
+        let cutoff = Date().timeIntervalSince1970 - Double(hours * 3600)
+        return store.transferHistory.filter { $0.time >= cutoff }
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: compact ? 6 : 12) {
+            HStack {
+                Text("TRANSFER HISTORY").font(.caption2.weight(.semibold)).tracking(1)
+                Spacer()
+                Picker("Time range", selection: $hours) {
+                    Text("1h").tag(1)
+                    Text("6h").tag(6)
+                    Text("24h").tag(24)
+                }.pickerStyle(.segmented).frame(width: 150)
+            }.foregroundStyle(Theme.muted)
+            Chart(samples) { sample in
+                LineMark(x: .value("Time", sample.date), y: .value("Bytes/sec", sample.download))
+                    .foregroundStyle(by: .value("Transfer", "Download"))
+                LineMark(x: .value("Time", sample.date), y: .value("Bytes/sec", sample.upload))
+                    .foregroundStyle(by: .value("Transfer", "Upload"))
+            }
+            .chartForegroundStyleScale(["Download": Theme.mint, "Upload": Color.cyan])
+            .chartXScale(domain: Date().addingTimeInterval(-Double(hours * 3600))...Date())
+            .chartYScale(domain: .automatic(includesZero: true))
+            .chartYAxis {
+                AxisMarks(position: .leading, values: .automatic(desiredCount: compact ? 2 : 4)) { value in
+                    AxisGridLine().foregroundStyle(.white.opacity(0.08))
+                    AxisValueLabel { if let speed = value.as(Double.self) { Text(rate(Int64(speed))).font(.system(size: 9)) } }
+                }
+            }
+            .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) }
+            .chartLegend(position: .bottom, alignment: .leading)
+            .frame(height: compact ? 100 : 170)
+            if samples.count < 2 {
+                Text("History is collecting on Diamond, even when the app is closed.").font(.caption2).foregroundStyle(Theme.muted)
+            }
+        }.padding(compact ? 12 : 18)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
     }
 }

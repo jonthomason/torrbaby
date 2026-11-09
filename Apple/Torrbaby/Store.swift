@@ -32,6 +32,8 @@ enum Credentials {
 
 @MainActor
 final class Store: ObservableObject {
+    @Published var transferHistory: [TransferSample] = []
+    private var lastHistoryFetch = Date.distantPast
     @Published var clients: [ClientDevice] = []
     @Published var history: [PlaybackHistory] = []
     let clientId: String = {
@@ -182,6 +184,10 @@ final class Store: ObservableObject {
             try await registerClient()
             clients = try await request("GET", "/v1/clients")
             history = try await request("GET", "/v1/playback")
+            if Date().timeIntervalSince(lastHistoryFetch) >= 30 {
+                transferHistory = try await request("GET", "/v1/rates")
+                lastHistoryFetch = Date()
+            }
             await flushProgress()
             status = newStatus
             torrents = newTorrents.sorted { $0.addedDate > $1.addedDate }

@@ -137,3 +137,11 @@ struct Playback: Identifiable, Codable, Hashable {
 
 func bytes(_ count: Int64) -> String { ByteCountFormatter.string(fromByteCount: count, countStyle: .file) }
 func rate(_ count: Int64) -> String { bytes(count) + "/s" }
+
+struct TransferSample: Codable, Identifiable {
+    let time: Double
+    let download: Double
+    let upload: Double
+    var id: Double { time }
+    var date: Date { Date(timeIntervalSince1970: time) }
+}
