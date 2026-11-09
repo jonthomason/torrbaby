@@ -1,4 +1,4 @@
-//! Development-only Matroska passthrough. Not admitted to production playback yet.
+//! Matroska packet passthrough for persistent virtual MP4 indexes.
 use anyhow::{Context, Result, ensure};
 use matroska_demuxer::{Frame, MatroskaFile, TrackType};
 use oxideav_core::{CodecId, CodecParameters, Packet, StreamInfo, TimeBase};
@@ -87,6 +87,7 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
             "Encoded tracks need additional remux support"
         );
         let video = t.track_type() == TrackType::Video;
+        let mut audio_samples = 1024;
         let codec = match t.codec_id() {
             "V_MPEG4/ISO/AVC" => "h264",
             "V_MPEGH/ISO/HEVC" => "h265",
@@ -134,32 +135,15 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
             time_base = TimeBase::new(1, a.sampling_frequency() as i64);
         } else {
             let a = t.audio().context("Missing audio parameters")?;
-            let asc = &params.extradata;
-            // Ordinary AAC-LC with 1024 samples/access unit, optionally followed
-            // by sync extension 0x2b7 / AOT 5 with sbrPresentFlag=0.
-            // Preserve the full configuration; do not accept arbitrary extensions.
-            ensure!(
-                (asc.len() == 2 || (asc.len() == 5 && asc[2..] == [0x56, 0xe5, 0x00])) && asc[0] >> 3 == 2 && asc[1] & 7 == 0,
-                "AAC configuration needs additional support"
-            );
-            let rates = [
-                96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000,
-                7350,
-            ];
-            let rate = *rates
-                .get(((asc[0] & 7) << 1 | asc[1] >> 7) as usize)
-                .context("Invalid AAC sample rate")?;
-            let channels = (asc[1] >> 3) & 15;
-            ensure!(
-                (1..=6).contains(&channels)
-                    && a.sampling_frequency() == rate as f64
-                    && a.channels().get() == channels as u64,
-                "AAC layout mismatch"
-            );
-            params.sample_rate = Some(rate);
+            let (core_rate, output_rate, channels) = aac_configuration(&params.extradata)?;
+            ensure!(a.sampling_frequency() == core_rate as f64
+                && a.output_sampling_frequency().is_none_or(|r| r == output_rate as f64)
+                && a.channels().get() == channels as u64, "AAC layout mismatch");
+            params.sample_rate = Some(output_rate);
             params.channels = Some(channels.into());
+            audio_samples = 1024 * output_rate as u64 / core_rate as u64;
             duration_ns = 0;
-            time_base = TimeBase::new(1, rate as i64);
+            time_base = TimeBase::new(1, output_rate as i64);
         }
         let stream = StreamInfo {
             index: tracks.len() as u32,
@@ -179,7 +163,7 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
                 audio_samples: if matches!(codec, "ac3" | "eac3") {
                     1536
                 } else {
-                    1024
+                    audio_samples
                 },
                 origin_ns: None,
                 codec_delay_ns: t.codec_delay().unwrap_or(0),
@@ -292,6 +276,17 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
                 .timestamp
                 .checked_mul(scale)
                 .context("Timestamp overflow")?;
+            // Matroska timestamps identify the first frame of a lace. Preserve
+            // exact codec cadence for subsequent frames rather than treating
+            // their shared block timestamp as duplicated audio samples.
+            let lace_offset = if t.video {
+                frame.lace_index as u128 * t.duration_ns as u128
+            } else {
+                frame.lace_index as u128 * t.audio_samples as u128 * 1_000_000_000
+                    / t.stream.params.sample_rate.unwrap() as u128
+            };
+            let ns = ns.checked_add(u64::try_from(lace_offset)?)
+                .context("Laced timestamp overflow")?;
             let origin = *t.origin_ns.get_or_insert(ns);
             let start = origin as i128 - t.codec_delay_ns as i128;
             let mut packet = Packet::new(
@@ -727,4 +722,54 @@ fn rewrite_track_labels(data: &[u8], labels: &TrackLabels) -> Result<Vec<u8>> {
         out.extend(crate::video_metadata::atom(&kind, &body)?);
     }
     Ok(out)
+}
+
+// AAC-LC, including backward-compatible SBR signaling. Keep the full ASC
+// in esds so the native decoder sees the same configuration as the source.
+fn aac_configuration(data: &[u8]) -> Result<(u32, u32, u8)> {
+    struct Bits<'a> { bytes: &'a [u8], at: usize }
+    impl Bits<'_> {
+        fn read(&mut self, count: usize) -> Result<u32> {
+            ensure!(self.at + count <= self.bytes.len() * 8, "Truncated AAC configuration");
+            let mut value = 0;
+            for _ in 0..count { value = (value << 1) | ((self.bytes[self.at / 8] >> (7-self.at%8)) & 1) as u32; self.at += 1; }
+            Ok(value)
+        }
+        fn rate(&mut self) -> Result<u32> {
+            const RATES: [u32;13] = [96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8000,7350];
+            RATES.get(self.read(4)? as usize).copied().context("Unsupported AAC sample rate")
+        }
+    }
+    ensure!((2..=8).contains(&data.len()), "AAC configuration needs additional support");
+    let mut b = Bits {bytes: data, at: 0};
+    ensure!(b.read(5)? == 2, "AAC object type needs additional support");
+    let core = b.rate()?;
+    let channels = b.read(4)? as u8;
+    ensure!((1..=6).contains(&channels), "AAC channel layout needs additional support");
+    ensure!(b.read(3)? == 0, "AAC frame length or extension needs additional support");
+    let mut output = core;
+    if data.len()*8-b.at >= 16 {
+        ensure!(b.read(11)? == 0x2b7 && b.read(5)? == 5, "Unsupported AAC sync extension");
+        if b.read(1)? == 1 { output = b.rate()?; }
+        if data.len()*8-b.at >= 12 {
+            ensure!(b.read(11)? == 0x548 && b.read(1)? == 0, "AAC parametric stereo needs additional support");
+        }
+    }
+    ensure!(output == core || output == core*2, "Unsupported AAC SBR ratio");
+    while b.at < data.len()*8 { ensure!(b.read(1)? == 0, "Unsupported trailing AAC configuration"); }
+    Ok((core,output,channels))
+}
+
+#[cfg(test)]
+mod aac_tests {
+    #[test]
+    fn lc_and_sbr_keep_exact_packet_duration() {
+        use super::aac_configuration as parse;
+        assert_eq!(parse(&[0x11,0x90]).unwrap(), (48000,48000,2));
+        assert_eq!(parse(&[0x11,0x90,0x56,0xe5,0x00]).unwrap(), (48000,48000,2));
+        assert_eq!(parse(&[0x13,0x30,0x56,0xe5,0x9d,0x48,0x00]).unwrap(), (24000,48000,6));
+        assert!(parse(&[0x13,0x30,0x56,0xe5,0x98]).is_ok());
+        assert!(parse(&[0x13,0x30,0x56,0xe5]).is_err());
+        assert!(parse(&[0x13,0x30,0x56,0xe5,0x9d,0x48,0x80]).is_err());
+    }
 }

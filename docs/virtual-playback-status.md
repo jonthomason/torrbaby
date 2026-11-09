@@ -5,7 +5,7 @@ rewriting the entire movie. Client startup, seeking, and playback should have
 minimal visible performance impact. Use bounded Diamond concurrency and keep
 index construction/subtitle assembly off request-serving threads.
 
-Current implementation work (not yet deployed):
+Deployed implementation (Apple build 91, Diamond Rust daemon):
 - Persistent MKV packet indexes, packed metadata, original read-only payloads.
 - Source revision validation, authenticated virtual range URLs, single preparation
   worker, cached opened readers, 256KB stream chunks on blocking worker threads.
@@ -19,10 +19,9 @@ storage and responsive range serving; deploy server/client builds and record
 remaining codec restrictions. No destructive conversion or modification of seeding
 files. Keep the daemon headless. Preserve parallel profile/library work.
 
-Known remaining engineering work: eliminate temporary sparse-file allocation;
-avoid repeat MKV indexing for changes to available subtitles; pre-index completed
-catalog items in the background; verify full Apple client integration and physical
-device behavior. Do not claim general codec transcoding: unsupported encoded media
+Remaining engineering work: eliminate temporary sparse-file allocation; verify
+physical-device behavior across more codecs. Shared base indexes, background
+indexing, and full Apple client integration are implemented. Do not claim general codec transcoding: unsupported encoded media
 must fail clearly or take a separately supported fallback.
 
 ## Combined playback evidence
@@ -41,7 +40,7 @@ native PiP. No overlay subtitle renderer. Apple's subtitle handler must be `sbtl
   ready in 0.254s; English/Chinese/Off and forward/back/end seeks passed with no
   server involved in playback.
 - Isolated authenticated server preparation took 19.1s cold; warmed HEAD/range
-  requests 2–6ms. Altered virtual identity/signature denied. No daemon restart yet.
+  requests 2–6ms. Altered virtual identity/signature denied. Verified again in production after deployment.
 - Offline client now persists virtual job identity, size, MP4 extension and ETag;
   resumable downloads use the authenticated virtual download endpoint. Existing
   downloads with no virtual identity retain their original endpoint.
@@ -51,4 +50,40 @@ native PiP. No overlay subtitle renderer. Apple's subtitle handler must be `sbtl
   not yet used as an admission signal. No general transcoding was added.
 - Clean release snapshot is local-state/virtual-mp4/release-snapshot. This excludes
   parallel profile/lifecycle edits. Apple iOS/macOS91 builds compile. Simulator
-  debug build compiles; full app UI acceptance and OTA publication pending.
+  full-app download and offline playback passed with the server tunnel stopped.
+  macOS build 91 installed and launched; OTA 91 published and fetched successfully.
+
+## Release and laced audio follow-up
+
+- OTA: https://jons-m5-mbp.bengal-locrian.ts.net/ota/torrbaby/index.html (build 91).
+- Full offline Harry Potter file includes English/Chinese native subtitle tracks;
+  no network is required for its playback. Disposable full-file validation copy
+  was deleted; the simulator retains its user-visible downloaded item.
+- Production Harry Potter native startup: 0.516s. Warm authenticated ranges after
+  the lacing deployment: 2–12ms; preparation reused its index in 0.022s.
+- Discovered upstream Matroska lace frames all carry the block timestamp. Exposed
+  lace_index and added exact per-frame codec duration; retained strict audio gap
+  validation. Xiph/fixed/EBML lace checks pass.
+- Seinfeld The Betrayal indexes in 3.99s; native ready 0.344s, English/Chinese/Off
+  selection and forward/back/end seeks pass. Decoded video at beginning/middle/end.
+  The Gymnast, The Butter Shave, and PONIES Night Moves also index successfully.
+- Lacing fix deployed; old failed jobs retry once with preparation_version=3.
+  Existing successful indexes remain valid. Latest deployment backup path is in
+  Diamond's ~/Library/Application Support/Torrbaby/last-virtual-release-backup.txt.
+- Launchctl bootstrap briefly raced bootout; a second bootstrap succeeded. Live
+  authenticated playback checks passed. Saved subtitle work was re-admitted.
+- Outlander AAC-LC with SBR sync extension is supported and deployed. Original
+  ASC and audio bytes are preserved; output sample rate and per-packet sample
+  count reflect SBR. Native startup 0.293s; both audio tracks decoded to 48kHz PCM
+  at beginning/middle/end, with native caption selection and seeks passing.
+- Production Matrix MP4 with actual generated Chinese and English captions:
+  preparation 2.046s, native startup 0.364s; both languages, Off, and seeks pass.
+- Matroska audio mapping reference: https://www.matroska.org/technical/codec_specs.html
+  and output-frequency definition: https://www.matroska.org/technical/elements.html
+- Remaining unsupported cases include codecs outside AVC/HEVC + AAC/AC3/EAC3,
+  some AAC profiles/layouts, variable frame rate, and unusual track timing.
+  These are rejected explicitly rather than silently transcoded. Bitmap subtitles
+  are not extracted or OCRed. Source movie files remain untouched.
+
+Parallel profile/library-lifecycle work remains uncommitted in the shared worktree
+and is excluded from the clean release snapshot. Do not deploy the entire tree.

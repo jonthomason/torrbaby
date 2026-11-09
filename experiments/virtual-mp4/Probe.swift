@@ -4,7 +4,9 @@ import AVFoundation
     @MainActor static func main() async throws {
         let start = Date()
         let source: URL
-        if CommandLine.arguments.count > 1 { source = URL(fileURLWithPath: CommandLine.arguments[1]) }
+        if CommandLine.arguments.count > 2, CommandLine.arguments[1] == "--url-file" {
+            source = URL(string: try String(contentsOfFile: CommandLine.arguments[2], encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))!
+        } else if CommandLine.arguments.count > 1 { source = URL(fileURLWithPath: CommandLine.arguments[1]) }
         else { source = URL(string: "http://127.0.0.1:18769/movie.mp4")! }
         let asset = AVURLAsset(url: source)
         guard let group = try await asset.loadMediaSelectionGroup(for: .legible) else { fatalError("No subtitles") }

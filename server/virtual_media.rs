@@ -18,6 +18,8 @@ struct Job {
     state: String,
     error: Option<String>,
     #[serde(default)]
+    preparation_version: u32,
+    #[serde(default)]
     captions: Vec<crate::virtual_captions::Caption>,
 }
 pub struct Manager {
@@ -229,7 +231,7 @@ impl Manager {
             .lock()
             .map_err(|_| anyhow::anyhow!("Playback queue unavailable"))?;
         if let Ok(j) = self.job(&id) {
-            if j.state == "ready" || j.state == "failed" || pending.contains(&id) {
+            if j.state == "ready" || (j.state == "failed" && j.preparation_version >= 3) || pending.contains(&id) {
                 return self.status(&id);
             }
         }
@@ -241,6 +243,7 @@ impl Manager {
             revision,
             state: "queued".into(),
             error: None,
+            preparation_version: 3,
             captions,
         };
         self.save(&job)?;

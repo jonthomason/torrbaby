@@ -75,6 +75,8 @@ pub struct Frame {
     pub data: Vec<u8>,
     /// Absolute source offset of the unmodified frame payload.
     pub source_offset: u64,
+    /// Zero-based frame position in its block lace. Timestamp is the block timestamp.
+    pub lace_index: u64,
     /// Set when the codec should decode this frame but not display it.
     pub is_invisible: bool,
     /// Block marked this frame as a keyframe.
@@ -1654,6 +1656,7 @@ impl<R: Read + Seek> MatroskaFile<R> {
     fn try_pop_frame(&mut self, frame: &mut Frame) -> Result<bool> {
         if let Some(queued_frame) = self.queued_frames.pop_front() {
             frame.timestamp = queued_frame.timestamp;
+            frame.lace_index = queued_frame.lace_index;
             frame.track = queued_frame.track;
             frame.is_discardable = queued_frame.is_discardable;
             frame.is_invisible = queued_frame.is_invisible;

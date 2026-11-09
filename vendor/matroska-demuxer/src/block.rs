@@ -34,6 +34,7 @@ impl From<u8> for Lacing {
 pub(crate) struct LacedFrame {
     pub(crate) track: u64,
     pub(crate) timestamp: u64,
+    pub(crate) lace_index: u64,
     pub(crate) size: u64,
     pub(crate) is_invisible: bool,
     pub(crate) is_keyframe: Option<bool>,
@@ -58,6 +59,7 @@ pub(crate) fn parse_laced_frames<R: Read + Seek>(
     header_start: u64,
     is_simple_block: bool,
 ) -> Result<()> {
+    let first_frame = frames.len();
     let track = parse_variable_u64(r)?;
     let timestamp = parse_timestamp(r, cluster_timestamp)?;
 
@@ -89,6 +91,7 @@ pub(crate) fn parse_laced_frames<R: Read + Seek>(
         let frame = LacedFrame {
             track,
             timestamp,
+            lace_index: 0,
             size: data_size,
             is_invisible,
             is_keyframe,
@@ -121,6 +124,7 @@ pub(crate) fn parse_laced_frames<R: Read + Seek>(
                     frames.push_back(LacedFrame {
                         track,
                         timestamp,
+            lace_index: 0,
                         size,
                         is_invisible,
                         is_keyframe,
@@ -139,6 +143,7 @@ pub(crate) fn parse_laced_frames<R: Read + Seek>(
                 frames.push_back(LacedFrame {
                     track,
                     timestamp,
+            lace_index: 0,
                     size,
                     is_invisible,
                     is_keyframe,
@@ -164,6 +169,7 @@ pub(crate) fn parse_laced_frames<R: Read + Seek>(
                 frames.push_back(LacedFrame {
                     track,
                     timestamp,
+            lace_index: 0,
                     size,
                     is_invisible,
                     is_keyframe,
@@ -185,6 +191,7 @@ pub(crate) fn parse_laced_frames<R: Read + Seek>(
                         frames.push_back(LacedFrame {
                             track,
                             timestamp,
+            lace_index: 0,
                             size,
                             is_invisible,
                             is_keyframe,
@@ -205,6 +212,7 @@ pub(crate) fn parse_laced_frames<R: Read + Seek>(
                 frames.push_back(LacedFrame {
                     track,
                     timestamp,
+            lace_index: 0,
                     size,
                     is_invisible,
                     is_keyframe,
@@ -232,6 +240,7 @@ pub(crate) fn parse_laced_frames<R: Read + Seek>(
                     frames.push_back(LacedFrame {
                         track,
                         timestamp,
+            lace_index: 0,
                         size,
                         is_invisible,
                         is_keyframe,
@@ -243,6 +252,9 @@ pub(crate) fn parse_laced_frames<R: Read + Seek>(
         }
     }
 
+    for (index, frame) in frames.iter_mut().skip(first_frame).enumerate() {
+        frame.lace_index = index as u64;
+    }
     Ok(())
 }
 
@@ -292,6 +304,32 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
+
+    #[test]
+    fn lace_positions_preserve_block_time_and_payload_sizes() {
+        // Three two-byte packets, with each supported lace encoding.
+        for (flags, header) in [(0x02, vec![2, 2, 2]),
+                                (0x04, vec![2]),
+                                (0x06, vec![2, 0x82, 0xbf])] {
+            let mut data = vec![0x81, 0, 7, flags];
+            data.extend(header);
+            data.extend([1, 2, 3, 4, 5, 6]);
+            let size = data.len() as u64;
+            let mut cursor = Cursor::new(data);
+            let mut frames = VecDeque::new();
+            parse_laced_frames(&mut cursor, &mut frames, size, 100, 0, true).unwrap();
+            assert_eq!(frames.len(), 3);
+            for (i, frame) in frames.iter().enumerate() {
+                assert_eq!(frame.lace_index, i as u64);
+                assert_eq!(frame.timestamp, 107);
+                assert_eq!(frame.size, 2);
+            }
+            let mut plain = Cursor::new(vec![0x81, 0, 8, 0, 1, 2]);
+            parse_laced_frames(&mut plain, &mut frames, 6, 100, 0, true).unwrap();
+            assert_eq!(frames.back().unwrap().lace_index, 0);
+            assert_eq!(frames.front().unwrap().lace_index, 0);
+        }
+    }
 
     #[test]
     fn reject_block_smaller_than_header() {
