@@ -241,6 +241,9 @@ final class Store: ObservableObject {
                 lastHistoryFetch = Date()
             }
             await flushProgress()
+            #if !os(tvOS)
+            await DownloadQueue.shared.syncProgress()
+            #endif
             status = newStatus
             torrents = newTorrents.sorted { $0.addedDate > $1.addedDate }
             receiveActivity(newEvents)

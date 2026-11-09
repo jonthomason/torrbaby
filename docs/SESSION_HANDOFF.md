@@ -369,3 +369,26 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
   season ordering, and real-device background transfer/PiP checks.
 - These app builds remain WIP and were not installed or published. Stable OTA42
   and installed Mac37 unchanged. Production Rust unchanged.
+
+## Follow-up: durable offline progress upload
+
+- Rust `/v1/playback/offline` + schema 7 receipt table now implemented (not deployed).
+  Uses event UUID/client identity, resolves catalog media identity without file reads,
+  accepts newer observation times, acknowledges stale reports without applying,
+  defers newer reports during a recently active streaming session, deduplicates
+  retries, and updates shared position/watched state without changing any media.
+- App records separate progress UUID/timestamp, retains progress after local file
+  deletion, retries on report/refresh when connected, and acknowledges only the
+  matching event. Old in-flight replies cannot clear a newer local report.
+- See docs/offline-progress.md for protocol, clock-skew policy and limitations.
+  Bidirectional pull of newer shared progress before local playback still pending;
+  this change is upload-only. Clock ordering assumes reasonably correct devices.
+- Rust build and scratch HTTP smoke passed (auth, idempotency, newer/stale progress,
+  active-session deferral/retry, completion, invalid future clock, schema 7).
+  Swift storage smoke passed retention after deletion/restart and acknowledgment
+  race handling. Scripts saved under local-state/checkpoints/2026-11-09 as
+  torrbaby-offline-progress-smoke.py and torrbaby-storage-sync-smoke.swift.
+- Production remains schema 6 and existing released server/apps. Schema 7 needs
+  backup before deployment; rolling back to an older binary requires its DB backup.
+- Mac and iOS Simulator builds passed for offline sync. Per-item sync failures are
+  isolated so a removed catalog asset does not block other pending reports.

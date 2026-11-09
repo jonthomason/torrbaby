@@ -31,6 +31,8 @@ final class DownloadStorage {
         var watched = false
         var playbackFinished = false
         var progressNeedsSync = false
+        var progressEventID: UUID?
+        var progressRecordedAt: Date?
         var updated = Date()
         var error: String?
     }
@@ -68,6 +70,9 @@ final class DownloadStorage {
         try excluded.setResourceValues(attributes)
         try FileManager.default.createDirectory(at: self.root.appendingPathComponent("media"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: self.root.appendingPathComponent("partial"), withIntermediateDirectories: true)
+        for item in items where item.progressNeedsSync && item.progressEventID == nil {
+            try update(item.id) { $0.progressEventID = UUID(); $0.progressRecordedAt = item.updated }
+        }
         // A durable removal intent is safe to replay after interruption.
         for item in manifest.items where item.state == .removing { try finishRemoval(item.id) }
         try reconcileFiles()
@@ -225,7 +230,13 @@ final class DownloadStorage {
             $0.watched = reachedEnd || position / duration >= 0.95
             $0.playbackFinished = reachedEnd
             $0.progressNeedsSync = true
+            $0.progressEventID = UUID()
+            $0.progressRecordedAt = Date()
         }
+    }
+    func acknowledgeProgress(_ id: UUID, eventID: UUID) throws {
+        guard let item = items.first(where: { $0.id == id }), item.progressEventID == eventID else { return }
+        try update(id) { $0.progressNeedsSync = false }
     }
     /// Called only after the native player's did-play-to-end event and after releasing its file.
     func removeAfterPlayback(_ id: UUID) throws {

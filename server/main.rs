@@ -3,6 +3,7 @@ mod api;
 mod catalog;
 mod config;
 mod metadata;
+mod offline;
 mod organizer;
 mod pairing;
 mod scanner;

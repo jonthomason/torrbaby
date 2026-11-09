@@ -24,6 +24,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     var backgroundCompletion: (() -> Void)? { didSet { completeBackgroundEvents() } }
     private var finishing = 0
     private var backgroundEventsFinished = false
+    private var syncingProgress = false
 
     init(root requestedRoot: URL? = nil, configuration: URLSessionConfiguration? = nil) {
         let root = requestedRoot ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -175,8 +176,40 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         guard let storage, position.isFinite, duration.isFinite, duration > 0, position >= 0 else { return false }
         do {
             try storage.recordPlayback(id, position: position, duration: duration, reachedEnd: reachedEnd)
-            reload(); return true
+            reload()
+            Task { await syncProgress() }
+            return true
         } catch { self.error = error.localizedDescription; return false }
+    }
+    func syncProgress() async {
+        guard !syncingProgress, let store, store.configured, store.connected, let storage else { return }
+        syncingProgress = true
+        defer { syncingProgress = false }
+        let server = store.server, client = store.clientId
+        do {
+            try await store.registerClient()
+            for item in storage.items where item.server == server && item.progressNeedsSync {
+                guard store.server == server && store.clientId == client else { return }
+                guard let event = item.progressEventID, let recorded = item.progressRecordedAt else { continue }
+                do {
+                    struct Acknowledgment: Decodable { let acknowledged: Bool }
+                    let reply: Acknowledgment = try await store.request("POST", "/v1/playback/offline", body: [
+                        "event_id": event.uuidString, "client_id": client, "asset_id": item.assetID,
+                        "position": item.position, "duration": item.duration,
+                        "recorded_at": recorded.timeIntervalSince1970, "reached_end": item.playbackFinished
+                    ])
+                    guard store.server == server && store.clientId == client else { return }
+                    if reply.acknowledged { try storage.acknowledgeProgress(item.id, eventID: event) }
+                } catch {
+                    // One removed catalog asset must not block other reports.
+                    continue
+                }
+            }
+            reload()
+        } catch {
+            // Keep the durable report for the next refresh/reconnection. Playback
+            // and local deletion must not depend on network availability.
+        }
     }
     func finished(_ id: UUID) {
         do { try storage?.removeAfterPlayback(id); reload(); pump() }

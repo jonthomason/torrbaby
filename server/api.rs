@@ -351,6 +351,12 @@ fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
 }
 
 async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> Result<Value> {
+    if method == Method::POST && path == "/v1/playback/offline" {
+        let mut db =
+            s.db.lock()
+                .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
+        return crate::offline::sync(&mut db, body);
+    }
     if method == Method::GET {
         if let Some(id) = path
             .strip_prefix("/v1/library/assets/")
