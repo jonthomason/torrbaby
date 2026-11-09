@@ -68,6 +68,7 @@ final class Api {
   }
 
   private Object requestValue(String method, String path, JSONObject body) throws Exception {
+    if (path.equals("/v1/library")) StartupTrace.mark("Library HTTP started");
     HttpURLConnection c = (HttpURLConnection) new URL(url(path)).openConnection();
     c.setConnectTimeout(8000);
     c.setReadTimeout(path.endsWith("/remove") && method.equals("POST") ? 90000 : 15000);
@@ -84,13 +85,16 @@ final class Api {
         }
       }
       int code = c.getResponseCode();
+      if (path.equals("/v1/library")) StartupTrace.mark("Library HTTP headers received");
       if (code == 401 || code == 403)
         throw new AuthException("The connection has expired or was revoked. Link this TV again.");
       InputStream in = code < 400 ? c.getInputStream() : c.getErrorStream();
       String raw = in == null ? "{}" : read(in, 16 * 1024 * 1024);
+      if (path.equals("/v1/library")) StartupTrace.mark("Library HTTP body received");
       Object json;
       try {
         json = new JSONTokener(raw).nextValue();
+        if (path.equals("/v1/library")) StartupTrace.mark("Library JSON decoded");
       } catch (JSONException e) {
         throw new IOException("The server returned an unexpected response (HTTP " + code + ").");
       }

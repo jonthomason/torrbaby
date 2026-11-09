@@ -494,6 +494,15 @@ fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
 }
 
 async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> Result<Value> {
+    if method == Method::POST && path == "/v1/diagnostics/startup" {
+        anyhow::ensure!(body["platform"] == "android" && body["build"].as_u64().is_some(), "Invalid startup report");
+        let stages=body["stages"].as_array().context("Missing startup stages")?;
+        anyhow::ensure!(stages.len()<=40 && stages.iter().all(|stage|
+            stage["stage"].as_str().is_some_and(|name|name.len()<=64 && name.chars().all(|c|c.is_ascii_alphabetic() || c==' '))
+            && stage["elapsed_ms"].as_u64().is_some_and(|ms|ms<=3_600_000)), "Invalid startup stages");
+        s.event("client_startup",json!({"platform":"android","build":body["build"],"stages":stages}))?;
+        return Ok(json!({"accepted":true}));
+    }
     if method == Method::GET {
         if let Some(id) = path.strip_prefix("/v1/hls-jobs/") {
             return s.hls.status(id);

@@ -54,6 +54,7 @@ public class MainActivity extends Activity {
   @Override
   public void onCreate(Bundle state) {
     super.onCreate(state);
+    StartupTrace.start(this);
     store = new SecureStore(this);
     if (state != null) {
       section = state.getString("section", "Home");
@@ -69,7 +70,10 @@ public class MainActivity extends Activity {
     try {
       Api test = Bootstrap.from(getIntent());
       if (test != null) store.save(test);
+      StartupTrace.mark("Credentials read started");
       api = store.load();
+      StartupTrace.mark(api == null ? "No saved connection" : "Credentials ready");
+      StartupTrace.connected(api);
     } catch (Exception e) {
       discover("The saved connection could not be opened.");
       return;
@@ -170,6 +174,7 @@ public class MainActivity extends Activity {
 
   private void load() {
     if (loading) return;
+    StartupTrace.mark("Library load enqueued");
     loading = true;
     if (library == null) {
       base();
@@ -177,17 +182,21 @@ public class MainActivity extends Activity {
     }
     io.execute(
         () -> {
+          StartupTrace.mark("Library worker started");
           Api requested = api;
           BrowseCache cache = new BrowseCache(this, requested);
           if (library == null) {
             try {
+              StartupTrace.mark("Catalog cache read started");
               byte[] saved = cache.read("library", 0);
+              StartupTrace.mark(saved == null ? "Catalog cache miss" : "Catalog cache hit");
               if (saved != null) {
                 JSONObject snapshot = new JSONObject(new String(saved, java.nio.charset.StandardCharsets.UTF_8));
                 Library cached = Library.parse(snapshot);
+                StartupTrace.mark("Cached catalog parsed");
                 runOnUiThread(() -> {
                   if (isDestroyed() || api != requested || library != null) return;
-                  library = cached; librarySnapshot = snapshot.toString(); render();
+                  library = cached; librarySnapshot = snapshot.toString(); StartupTrace.mark("Cached render started"); render(); StartupTrace.mark("Cached render returned");
                 });
               }
             } catch (Exception ignored) {}
@@ -195,18 +204,22 @@ public class MainActivity extends Activity {
           try {
             JSONObject response = requested.request("GET", "/v1/library", null);
             Library result = Library.parse(response);
+            StartupTrace.mark("Live catalog parsed");
             runOnUiThread(
                 () -> {
                   if (isDestroyed()) return;
                   loading = false;
                   if (api != requested) return;
+                  StartupTrace.mark("Live render started");
                   library = result;
                   librarySnapshot = response.toString();
                   render();
                 });
+            StartupTrace.mark("Catalog cache write started");
             cache.write("library", response.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StartupTrace.mark("Catalog cache write returned");
             // History synchronization must not delay the first library frame.
-            try { requested.register(); ProgressQueue.flush(this, requested); } catch (Exception ignored) {}
+            try { StartupTrace.mark("Registration started"); requested.register(); StartupTrace.mark("Registration finished"); ProgressQueue.flush(this, requested); StartupTrace.mark("History sync finished"); } catch (Exception ignored) {}
           } catch (Exception e) {
             runOnUiThread(
                 () -> {
@@ -241,6 +254,13 @@ public class MainActivity extends Activity {
   private void render() {
     if (library == null) return;
     shell();
+    StartupTrace.mark("Library view construction started");
+    root.getViewTreeObserver().addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
+      public boolean onPreDraw() {
+        root.getViewTreeObserver().removeOnPreDrawListener(this);
+        StartupTrace.mark("First library frame ready"); return true;
+      }
+    });
     inLibrary = true;
     Library.Title detail = library.find(detailId);
     if (detail != null) {
@@ -1266,12 +1286,14 @@ public class MainActivity extends Activity {
               "Refresh library",
               "Change server connection",
               "Default subtitles",
+              "Startup diagnostics",
               "Disconnect this TV"
             },
             (d, w) -> {
               if (w == 0) load();
               else if (w == 1) discover("");
               else if (w == 2) Subtitles.edit(this, api, io, null);
+              else if (w == 3) new AlertDialog.Builder(this).setTitle("Startup timings").setMessage(StartupTrace.text()).setPositiveButton("Close", null).show();
               else
                 new AlertDialog.Builder(this)
                     .setTitle("Disconnect this TV?")
@@ -1358,6 +1380,7 @@ public class MainActivity extends Activity {
       }
       public void changed(Map<String, String> servers) {
         if (generation != connectionGeneration || connectingLan || servers.isEmpty()) return;
+        StartupTrace.mark("Server discovered");
         discoveryHandler.removeCallbacksAndMessages(null);
         choices.removeAllViews();
         if (servers.size() == 1) {
@@ -1380,6 +1403,7 @@ public class MainActivity extends Activity {
         }
       }
     });
+    StartupTrace.mark("Discovery started");
     discovery.start();
     discoveryHandler.postDelayed(() -> {
       if (generation == connectionGeneration && !connectingLan) {
@@ -1403,6 +1427,7 @@ public class MainActivity extends Activity {
                     "POST",
                     "/v1/lan/register",
                     new JSONObject().put("name", Build.MODEL).put("platform", "other"));
+            StartupTrace.mark("LAN registration finished");
             Api connected =
                 new Api(address, credential.getString("token"), credential.getString("client_id"));
             Library result = Library.parse(connected.request("GET", "/v1/library", null));
@@ -1414,6 +1439,7 @@ public class MainActivity extends Activity {
 
                     if (art != null) art.close();
                     api = connected;
+                    StartupTrace.connected(api);
                     art = new Art(this, api);
                     library = result;
                     section = "Home";

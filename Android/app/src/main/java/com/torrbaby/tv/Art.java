@@ -78,7 +78,10 @@ final class Art {
                   for (WeakReference<ImageView> ref : group) {
                     ImageView target = ref.get();
                     if (target != null && key.equals(target.getTag()))
+                    {
                       target.setImageBitmap(bitmap);
+                      StartupTrace.mark(variant.equals("backdrop") ? "First backdrop assigned" : "First thumbnail assigned");
+                    }
                   }
               });
         });
