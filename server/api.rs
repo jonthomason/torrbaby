@@ -327,12 +327,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             return Ok(record);
         }
         if method == Method::GET && action == "artwork" {
-            let id = torrent_metadata(s, hash)?
-                .and_then(|r| r["selected"]["id"].as_str().map(str::to_owned));
-            return match id {
-                Some(id) => artwork(s, &id, "poster").await,
-                None => Ok(json!({"data":null})),
-            };
+            return artwork(s, &format!("torrent:{hash}"), "poster").await;
         }
     }
     if path == "/v1/settings" && (method == Method::GET || method == Method::PATCH) {
@@ -906,7 +901,13 @@ async fn artwork(s: &Service, id: &str, variant: &str) -> Result<Value> {
             s.db.lock()
                 .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
         let entities = db.documents("entities")?;
-        if let Some(entity) = entities.iter().find(|e| e["id"] == id) {
+        if let Some(hash) = id.strip_prefix("torrent:") {
+            db.documents("metadata")?
+                .iter()
+                .find(|r| r["hash"] == hash)
+                .and_then(|r| r["selected"]["thumbnail"].as_str())
+                .map(str::to_owned)
+        } else if let Some(entity) = entities.iter().find(|e| e["id"] == id) {
             entity[match variant {
                 "backdrop" => "backdrop",
                 "logo" => "logo",
@@ -936,18 +937,6 @@ async fn artwork(s: &Service, id: &str, variant: &str) -> Result<Value> {
     let Some(url) = url else {
         return Ok(json!({"data":null}));
     };
-    // Legacy Plex references are deliberately not fetched by the standalone server.
-    if url.starts_with('/') {
-        return Ok(json!({"data":null}));
-    }
-    let parsed = reqwest::Url::parse(&url)?;
-    if parsed.scheme() != "https"
-        || ![Some("image.tmdb.org"), Some("static.tvmaze.com")].contains(&parsed.host_str())
-        || !parsed.username().is_empty()
-        || parsed.password().is_some()
-    {
-        bail!("Unsupported artwork source");
-    }
     let key = sha2::Sha256::digest(url.as_bytes())
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -958,6 +947,18 @@ async fn artwork(s: &Service, id: &str, variant: &str) -> Result<Value> {
     let bytes = if path.exists() {
         tokio::fs::read(&path).await?
     } else {
+        // Legacy Plex references are deliberately not fetched by the standalone server.
+        if url.starts_with('/') {
+            return Ok(json!({"data":null}));
+        }
+        let parsed = reqwest::Url::parse(&url)?;
+        if parsed.scheme() != "https"
+            || ![Some("image.tmdb.org"), Some("static.tvmaze.com")].contains(&parsed.host_str())
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+        {
+            bail!("Unsupported artwork source");
+        }
         let mut response = s
             .http
             .get(parsed)
@@ -1051,6 +1052,7 @@ async fn scan_library(s: &Service) -> Result<()> {
                 )?;
             }
             tx.commit()?;
+            db.link_extras()?;
             state["library_scan"] = json!({"scanning":false,"last_scan":now(),"error":if inventory.errors.is_empty(){None}else{Some(inventory.errors.join("\n"))}});
         }
         Err(error) => {
@@ -1088,6 +1090,7 @@ fn save_match(s: &Service, id: &str, entity: Value, confirmed: bool) -> Result<(
         rusqlite::params![id, asset.to_string()],
     )?;
     tx.commit()?;
+    db.link_extras()?;
     Ok(())
 }
 

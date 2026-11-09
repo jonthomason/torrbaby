@@ -39,7 +39,8 @@ impl Database {
             .filter_map(|v| v["id"].as_str().map(str::to_owned).map(|id| (id, v)))
             .collect();
         let mut titles = BTreeMap::<String, Value>::new();
-        for asset in self.documents("assets")? {
+        let assets = self.documents("assets")?;
+        for asset in &assets {
             if asset["available"] != true || asset["role"] == "extra" {
                 continue;
             }
@@ -92,9 +93,39 @@ impl Database {
                 .cloned()
                 .unwrap_or(json!({}));
             title["assets"].as_array_mut().unwrap().push(json!({
-                "id":id,"name":episode["title"].as_str().unwrap_or(if kind=="movie"{name}else{&fallback}),
+                "id":id,"role":"main","name":episode["title"].as_str().unwrap_or(if kind=="movie"{name}else{&fallback}),
                 "season":asset["season"],"episode":asset["episode"],"summary":episode["summary"].as_str().unwrap_or(""),
                 "airdate":episode["airdate"],"thumbnail":episode["thumbnail"],"duration_minutes":episode.get("duration_minutes").unwrap_or(&entity["duration_minutes"]),
+                "complete":asset["complete"],"size":asset["size"],"position":progress["position"].as_f64().unwrap_or(0.0),
+                "duration":progress["duration"].as_f64().unwrap_or(0.0),"watched":progress["watched"].as_bool().unwrap_or(false),
+                "last_played":progress["last_played"].as_f64().unwrap_or(0.0),"torrent_hash":asset["torrent_hash"]
+            }));
+        }
+        for asset in assets
+            .iter()
+            .filter(|a| a["available"] == true && a["role"] == "extra")
+        {
+            let Some(parent) = asset["parent_title_id"].as_str() else {
+                continue;
+            };
+            let Some(title) = titles.get_mut(parent) else {
+                continue;
+            };
+            let id = asset["id"].as_str().context("Invalid extra ID")?;
+            let path = std::path::Path::new(asset["path"].as_str().unwrap_or(""));
+            let name = path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .replace(['.', '_'], " ");
+            let media = format!(
+                "{}:{}",
+                asset["torrent_hash"].as_str().unwrap_or(id),
+                asset["file_index"].as_u64().unwrap_or(0)
+            );
+            let progress = history.get(&media).cloned().unwrap_or(json!({}));
+            title["assets"].as_array_mut().unwrap().push(json!({
+                "id":id,"role":"extra","name":name,"season":null,"episode":null,"summary":"","thumbnail":null,
                 "complete":asset["complete"],"size":asset["size"],"position":progress["position"].as_f64().unwrap_or(0.0),
                 "duration":progress["duration"].as_f64().unwrap_or(0.0),"watched":progress["watched"].as_bool().unwrap_or(false),
                 "last_played":progress["last_played"].as_f64().unwrap_or(0.0),"torrent_hash":asset["torrent_hash"]
@@ -107,5 +138,76 @@ impl Database {
         Ok(
             json!({"titles":titles,"last_scan":scan["last_scan"],"scanning":scan["scanning"].as_bool().unwrap_or(false),"error":scan["error"]}),
         )
+    }
+}
+
+impl Database {
+    /// Prefer shared torrent ownership, then a dedicated extras folder, when there
+    /// is one parent title. Collections with multiple films stay unlinked.
+    pub fn link_extras(&self) -> Result<()> {
+        let assets = self.documents("assets")?;
+        for extra in assets.iter().filter(|a| a["role"] == "extra") {
+            let path = std::path::Path::new(extra["path"].as_str().unwrap_or(""));
+            let anchor = path
+                .ancestors()
+                .skip(1)
+                .find(|p| {
+                    p.file_name().and_then(|s| s.to_str()).is_some_and(|s| {
+                        [
+                            "extras",
+                            "featurettes",
+                            "samples",
+                            "sample",
+                            "trailers",
+                            "bonus",
+                        ]
+                        .contains(&s.to_ascii_lowercase().as_str())
+                    })
+                })
+                .and_then(|p| p.parent());
+            let mut parents = std::collections::BTreeSet::new();
+            if let Some(hash) = extra["torrent_hash"].as_str() {
+                for main in assets.iter().filter(|a| {
+                    a["available"] == true && a["role"] != "extra" && a["torrent_hash"] == hash
+                }) {
+                    if let Some(id) = main["entity_id"].as_str().or(main["id"].as_str()) {
+                        parents.insert(id.to_owned());
+                    }
+                }
+            }
+            if parents.is_empty() {
+                if let Some(anchor) = anchor {
+                    for main in assets
+                        .iter()
+                        .filter(|a| a["available"] == true && a["role"] != "extra")
+                    {
+                        if std::path::Path::new(main["path"].as_str().unwrap_or(""))
+                            .starts_with(anchor)
+                        {
+                            if let Some(id) = main["entity_id"].as_str().or(main["id"].as_str()) {
+                                parents.insert(id.to_owned());
+                            }
+                        }
+                    }
+                }
+            }
+            let parent = if parents.len() == 1 {
+                json!(parents.into_iter().next())
+            } else {
+                Value::Null
+            };
+            if extra["parent_title_id"] != parent {
+                let mut updated = extra.clone();
+                updated["parent_title_id"] = parent;
+                self.connection.execute(
+                    "UPDATE library_assets SET document=? WHERE id=?",
+                    rusqlite::params![
+                        updated.to_string(),
+                        extra["id"].as_str().context("Invalid extra ID")?
+                    ],
+                )?;
+            }
+        }
+        Ok(())
     }
 }

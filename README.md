@@ -4,9 +4,9 @@ A personal media server and Transmission companion, with native Apple apps.
 It organizes downloads while preserving seeding and exposes an authenticated HTTP
 API and CLI. MIT licensed.
 
-The deployed legacy server currently uses Python and Plex. Its Rust replacement
-is under active development and has no Plex integration; see the migration status
-below before choosing which server to run.
+The deployed server is Rust and streams directly from the filesystem. Plex is
+not required by the Rust server. Legacy Python sources remain temporarily for
+rollback and migration reference.
 
 ## Active development goal
 
@@ -30,9 +30,9 @@ other push infrastructure is requested. Keep Settings limited to actionable cont
 
 ### Standalone server migration
 
-The server is now being ported to **Rust**, replacing the Python runtime before
-further server feature development. The deployed Python daemon remains in place
-only until the Rust replacement is ready. Preserve the HTTP API, configuration,
+The shared Diamond server now runs **Rust**. The Python launch agent has been
+replaced, with a pre-cutover database and launch configuration retained for rollback.
+The migration preserves the HTTP API, configuration,
 SQLite records, client identities, watch history, and Transmission seeding state.
 The migration must not require clients to reconnect or reset their libraries.
 
@@ -63,8 +63,10 @@ torrent moves, with Transmission responsible for file changes and filesystem
 verification before marking work complete. It holds an exclusive database lease
 and handles launchd termination gracefully. High-confidence media and matching
 subtitle names are applied through Transmission with persisted rename plans.
-The signed Rust preview on Diamond has verified direct filesystem range streaming.
-Production launchd cutover remains pending; the legacy server is still live.
+The production Rust launch agent on Diamond has verified direct filesystem range
+streaming, legacy torrent artwork, client identity and watch history. All 174 assets
+from the cutover snapshot remain available; seven bundled extras are classified
+separately from movie titles. Further library UI, naming and search work continues.
 
 Turn the shared Diamond daemon into a **standalone media server with no Plex
 dependency**. Scan and persist metadata for every movie and TV episode, apply
@@ -439,3 +441,12 @@ app --device DEVICE_ID PATH_TO_APP`. No App Store Connect record is needed for
 this direct development route. Safari-style OTA installation links are not the
 Apple TV delivery path. TestFlight is an optional later route and requires an App
 Store Connect record and uploaded build.
+
+### Bundled special features
+
+Recognized extras are linked to a single parent title using shared torrent ownership
+first, then their extras folder when no torrent relationship is available. Multiple
+possible parent titles remain unassigned. Missing metadata alone is not evidence
+that a file is an extra. Parent links are stored in SQLite; extras retain their own
+playback history and appear under Special features, outside the main Play/Resume
+selection. No files move merely to create this grouping.

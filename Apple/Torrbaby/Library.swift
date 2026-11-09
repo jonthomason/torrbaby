@@ -19,12 +19,13 @@ struct LibraryTitle: Decodable, Identifiable {
     let backdrop: String?
     let addedAt: Double
     let assets: [LibraryAsset]
-    var playable: [LibraryAsset] { assets.filter(\.complete).sorted { ($0.season ?? 0, $0.episode ?? 0, $0.name ?? "") < ($1.season ?? 0, $1.episode ?? 0, $1.name ?? "") } }
+    var playable: [LibraryAsset] { assets.filter { $0.complete && $0.role != "extra" }.sorted { ($0.season ?? 0, $0.episode ?? 0, $0.name ?? "") < ($1.season ?? 0, $1.episode ?? 0, $1.name ?? "") } }
     var resume: LibraryAsset? { playable.filter { !$0.watched && $0.position > 0 }.max { $0.lastPlayed < $1.lastPlayed } }
 }
 struct LibraryAsset: Decodable, Identifiable {
     let id: String
     let name: String?
+    let role: String?
     let season: Int?
     let episode: Int?
     let summary: String
@@ -202,7 +203,7 @@ struct LibraryDetail: View {
                             ForEach(seasons, id: \.self) { Text($0 == 0 ? "Specials" : "Season \($0)").tag($0) }
                         }.frame(maxWidth: 340)
                     }
-                    ForEach(title.assets.filter { season == -1 || $0.season == season }.sorted { ($0.season ?? 0, $0.episode ?? 0) < ($1.season ?? 0, $1.episode ?? 0) }) { asset in
+                    ForEach(title.assets.filter { $0.role != "extra" && (season == -1 || $0.season == season) }.sorted { ($0.season ?? 0, $0.episode ?? 0) < ($1.season ?? 0, $1.episode ?? 0) }) { asset in
                         Button { play(asset, title: title.title) } label: {
                             HStack(spacing: 16) {
                                 Image(systemName: asset.watched ? "checkmark.circle.fill" : "play.circle.fill").font(.title).foregroundStyle(Theme.mint)
@@ -216,6 +217,23 @@ struct LibraryDetail: View {
                                 Spacer()
                             }.padding(18).background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
                         }.buttonStyle(.plain).disabled(!asset.complete || loading)
+                    }
+                    let extras = title.assets.filter { $0.role == "extra" }.sorted { ($0.name ?? "").localizedStandardCompare($1.name ?? "") == .orderedAscending }
+                    if !extras.isEmpty {
+                        Text("Special features").font(.title2.bold())
+                        ForEach(extras) { asset in
+                            Button { play(asset, title: asset.name ?? title.title) } label: {
+                                HStack(spacing: 16) {
+                                    Image(systemName: asset.watched ? "checkmark.circle.fill" : "play.circle.fill").font(.title).foregroundStyle(Theme.mint)
+                                    VStack(alignment: .leading, spacing: 5) {
+                                        Text(asset.name ?? "Special feature").font(.headline)
+                                        if asset.duration > 0 && !asset.watched { ProgressView(value: min(1, asset.position / asset.duration)) }
+                                        if !asset.complete { Text("Downloading").font(.caption).foregroundStyle(Theme.muted) }
+                                    }
+                                    Spacer()
+                                }.padding(18).background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
+                            }.buttonStyle(.plain).disabled(!asset.complete || loading)
+                        }
                     }
                 }.padding(24)
             }
