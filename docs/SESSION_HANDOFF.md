@@ -314,3 +314,21 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
   is implemented but has not been exercised in a timing smoke check yet.
 - No production deployment and no HTTP/client subtitle feature yet. Do not confuse
   working translation infrastructure with end-to-end translated captions.
+
+## Follow-up: timed SRT translation/preparation
+
+- `torrbaby prepare-subtitles --input FILE [--source en --target zh-Hans]
+  [--helper PATH]` now emits WebVTT on stdout. Translation can run both directions;
+  omitting languages only normalizes SRT. Full output waits for successful batches.
+- Parser handles UTF-8/BOM and CRLF/LF, retains integer-millisecond timings and
+  overlaps, flattens common SRT text formatting and escapes WebVTT payload markup.
+  Strict limits/errors are documented in helpers/README.md. No legacy encoding,
+  ASS/SSA or embedded-track extraction yet.
+- This remains a CLI preparation stage: no automatic discovery/cache, HTTP
+  rendition, HLS muxing, or selectable translated captions in clients yet.
+- Current playback still streams original files directly. Native playback success
+  for existing files does not prove arbitrary container/codec compatibility.
+- Verification passed: cargo build --locked, format/diff checks; BOM+CRLF SRT with
+  two overlapping cues translated through Rust -> SSH helper on Diamond and kept
+  exact timing lines. Invalid minute values rejected with no stdout. The fixture
+  used synthetic dialogue only; no library files changed. Production unchanged.

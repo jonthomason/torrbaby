@@ -26,6 +26,17 @@ struct Arguments {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Convert UTF-8 SRT subtitles to WebVTT, optionally translating their text.
+    PrepareSubtitles {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long, requires = "target")]
+        source: Option<String>,
+        #[arg(long, requires = "source")]
+        target: Option<String>,
+        #[arg(long)]
+        helper: Option<PathBuf>,
+    },
     /// Translate a bounded JSON cue batch from stdin using installed Apple models.
     TranslateSubtitles {
         #[arg(long)]
@@ -102,6 +113,26 @@ fn check_folder(path: &Path) -> io::Result<(usize, bool)> {
 #[tokio::main]
 async fn main() -> Result<()> {
     match Arguments::parse().command {
+        Command::PrepareSubtitles {
+            input,
+            source,
+            target,
+            helper,
+        } => {
+            let mut bytes = Vec::new();
+            fs::File::open(input)?
+                .take(8_388_609)
+                .read_to_end(&mut bytes)?;
+            anyhow::ensure!(bytes.len() <= 8_388_608, "Subtitle file too large");
+            let mut cues = subtitles::parse_srt(std::str::from_utf8(&bytes)?)?;
+            if let (Some(source), Some(target)) = (source, target) {
+                let helper = helper.unwrap_or(
+                    std::env::current_exe()?.with_file_name("torrbaby-subtitle-translator"),
+                );
+                subtitles::translate_cues(&helper, &source, &target, &mut cues).await?;
+            }
+            print!("{}", subtitles::webvtt(&cues));
+        }
         Command::TranslateSubtitles { helper } => {
             let helper = helper
                 .unwrap_or(std::env::current_exe()?.with_file_name("torrbaby-subtitle-translator"));
