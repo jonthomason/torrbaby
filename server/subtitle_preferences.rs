@@ -1,4 +1,4 @@
-//! Shared household defaults and whole-title subtitle overrides.
+//! Per-device subtitle choices, retaining legacy household/title APIs for older clients.
 use crate::storage::{Database, now};
 use anyhow::{Result, ensure};
 use rusqlite::{OptionalExtension, params};
@@ -43,6 +43,15 @@ impl Database {
             Ok("default".into())
         }
     }
+    pub fn device_subtitle_preferences(&self, client: &str, body: Option<Value>) -> Result<Value> {
+        ensure!(!client.is_empty() && client.len() <= 256, "Invalid device ID");
+        let scope = format!("device:{client}");
+        if let Some(body) = body { self.save_subtitle_scope(&scope, body)?; }
+        let raw: Option<String> = self.connection.query_row("SELECT document FROM subtitle_preferences WHERE scope=?", [&scope], |r| r.get(0)).optional()?;
+        // Device choices do not inherit household or show overrides.
+        let p: Preferences = raw.map(|s| serde_json::from_str(&s)).transpose()?.unwrap_or(Preferences { enabled: true, language: "en".into(), ..Preferences::default() });
+        Ok(json!({"defaults":p,"effective":p,"overridden":false}))
+    }
     pub fn subtitle_preferences(&self, title: Option<&str>) -> Result<Value> {
         let scope = self.subtitle_scope(title)?;
         let read = |key: &str| -> Result<Option<Preferences>> {
@@ -64,6 +73,10 @@ impl Database {
     }
     pub fn save_subtitle_preferences(&self, title: Option<&str>, body: Value) -> Result<Value> {
         let scope = self.subtitle_scope(title)?;
+        self.save_subtitle_scope(&scope, body)?;
+        self.subtitle_preferences(title)
+    }
+    fn save_subtitle_scope(&self, scope: &str, body: Value) -> Result<()> {
         let p: Preferences = serde_json::from_value(body)?;
         ensure!(
             ["original", "en", "zh-Hans"].contains(&p.language.as_str()),
@@ -80,7 +93,7 @@ impl Database {
             "Invalid subtitle style"
         );
         self.connection.execute("INSERT INTO subtitle_preferences(scope,document,updated) VALUES(?,?,?) ON CONFLICT(scope) DO UPDATE SET document=excluded.document,updated=excluded.updated", params![scope,serde_json::to_string(&p)?,now()])?;
-        self.subtitle_preferences(title)
+        Ok(())
     }
     pub fn reset_subtitle_preferences(&self, title: &str) -> Result<Value> {
         let scope = self.subtitle_scope(Some(title))?;
@@ -129,6 +142,17 @@ mod tests {
             "zh-Hans"
         );
         assert!(db.subtitle_preferences(Some("missing")).is_err());
+        assert_eq!(db.device_subtitle_preferences("tv", None)?["effective"]["language"], "en");
+        let mut device = serde_json::to_value(Preferences::default())?;
+        device["language"] = json!("zh-Hans");
+        device["enabled"] = json!(true);
+        db.device_subtitle_preferences("tv", Some(device.clone()))?;
+        assert_eq!(db.device_subtitle_preferences("tablet", None)?["effective"]["language"], "en");
+        device["size_percent"] = json!(999);
+        assert!(db.device_subtitle_preferences("tv", Some(device)).is_err());
+        drop(db);
+        let db = Database::open(&path, None)?;
+        assert_eq!(db.device_subtitle_preferences("tv", None)?["effective"]["language"], "zh-Hans");
         drop(db);
         fs_cleanup(&root)?;
         Ok(())

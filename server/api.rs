@@ -959,6 +959,13 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             return Ok(json!(db.torrent_rates(hash)?));
         }
     }
+    if let Some(client) = path.strip_prefix("/v1/devices/").and_then(|p| p.strip_suffix("/subtitle-preferences")) {
+        return match method.as_str() {
+            "GET" => db.device_subtitle_preferences(client, None),
+            "PUT" => db.device_subtitle_preferences(client, Some(body)),
+            _ => bail!("Unsupported subtitle preferences method"),
+        };
+    }
     if let Some(title) = path
         .strip_prefix("/v1/library/titles/")
         .and_then(|p| p.strip_suffix("/subtitle-preferences"))

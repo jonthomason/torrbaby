@@ -42,7 +42,7 @@ final class MediaLanguages {
       JSONObject track = tracks.optJSONObject(i);
       if (track != null) {
         String language = name(track.optString("language", "und"));
-        if (!language.equals("Unknown")) names.add(language);
+        names.add(language.equals("Unknown") ? "Unknown language" : language);
       }
     }
     return names.isEmpty() ? "None" : String.join(" · ", names);

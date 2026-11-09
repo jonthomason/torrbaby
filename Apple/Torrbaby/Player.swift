@@ -378,7 +378,7 @@ final class SubtitlePlaybackController {
     init(item: AVPlayerItem, titleID: String?, store: Store) {
         task = Task { [weak self, weak item] in
             guard let self, let item else { return }
-            let path = titleID.map { "/v1/library/titles/\($0)/subtitle-preferences" } ?? "/v1/subtitle-preferences"
+            let path = store.deviceSubtitlePath
             do {
                 let response: SubtitlePreferenceResponse = try await store.request("GET", path, timeout: 5)
                 guard !Task.isCancelled, !self.stopped else { return }
@@ -402,7 +402,6 @@ final class SubtitlePlaybackController {
                 }
                 item.select(option, in: group)
                 self.lastOption = option
-                guard let titleID else { return }
                 self.observer = NotificationCenter.default.addObserver(forName: AVPlayerItem.mediaSelectionDidChangeNotification, object: item, queue: .main) { [weak self, weak item] _ in
                     Task { @MainActor [weak self, weak item] in
                         guard let self, let item, !self.stopped else { return }
@@ -416,7 +415,7 @@ final class SubtitlePlaybackController {
                             else if language.hasPrefix("en") { self.preferences.language = "en" }
                             else { self.preferences.language = "original" }
                         }
-                        do { try await store.send("PUT", "/v1/library/titles/\(titleID)/subtitle-preferences", body: self.preferences.body) }
+                        do { try await store.send("PUT", store.deviceSubtitlePath, body: self.preferences.body) }
                         catch { store.actionError = "Couldn’t save subtitle preference: " + error.localizedDescription }
                     }
                 }
@@ -438,7 +437,7 @@ struct SubtitlePreferencesView: View {
     @State private var loaded = false
     @State private var saving = false
     @State private var error: String?
-    private let path = "/v1/subtitle-preferences"
+    private var path: String { store.deviceSubtitlePath }
     var body: some View {
         NavigationStack {
             Form {
@@ -466,7 +465,7 @@ struct SubtitlePreferencesView: View {
                         ForEach(Array(stride(from: 0, through: 100, by: 10)), id: \.self) { Text("\($0)%").tag($0) }
                     }
                 }.disabled(!loaded || saving)
-            }.navigationTitle("Default subtitles")
+            }.navigationTitle("Subtitles on this device")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("Save") { save() }.disabled(!loaded || saving) }

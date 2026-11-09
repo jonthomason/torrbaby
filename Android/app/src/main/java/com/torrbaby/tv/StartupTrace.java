@@ -15,24 +15,46 @@ final class StartupTrace {
   private static long started;
   private static Context context;
   private static volatile Api connection;
+  private static final Handler reports = new Handler(Looper.getMainLooper());
+  private static int generation;
+  private static boolean frameReportScheduled;
   static synchronized void start(Context ctx) {
     context = ctx.getApplicationContext(); connection = null;
-    marks.clear(); started = SystemClock.elapsedRealtime(); mark("Activity created");
-    new Handler(Looper.getMainLooper()).postDelayed(() -> {
-      final Api api = connection;
-      final JSONObject report = report();
-      context.getSharedPreferences("startup_diagnostics", Context.MODE_PRIVATE).edit().putString("last", text()).apply();
-      if (api != null) new Thread(() -> {
-        try { api.request("POST", "/v1/diagnostics/startup", report); }
-        catch (Exception ignored) {}
-      }, "torrbaby-startup-report").start();
-    }, 60000);
+    begin("Activity created");
+  }
+  static synchronized boolean foreground() {
+    if (!marks.containsKey("First library frame ready")) return false;
+    begin("Activity resumed");
+    return true;
+  }
+  private static void begin(String label) {
+    reports.removeCallbacksAndMessages(null);
+    generation++; frameReportScheduled = false;
+    marks.clear(); started = SystemClock.elapsedRealtime(); mark(label);
+    // Retry after a minute even if the first report encountered a transient failure.
+    reports.postDelayed(StartupTrace::publish, 60000);
+  }
+  private static synchronized void publish() {
+    final Api api = connection;
+    final JSONObject report = report();
+    final int session = generation;
+    context.getSharedPreferences("startup_diagnostics", Context.MODE_PRIVATE).edit().putString("last", text()).apply();
+    if (api != null) new Thread(() -> {
+      try { api.request("POST", "/v1/diagnostics/startup", report); }
+      catch (Exception ignored) {
+        android.util.Log.w("TorrbabyStartup", "Timing report could not be delivered for session " + session);
+      }
+    }, "torrbaby-startup-report").start();
   }
   static void connected(Api api) { connection = api; }
   static synchronized void mark(String name) {
     if (started == 0 || marks.containsKey(name) || marks.size() >= 40) return;
     long elapsed = SystemClock.elapsedRealtime() - started;
     marks.put(name, elapsed);
+    if (name.equals("First library frame ready") && !frameReportScheduled) {
+      frameReportScheduled = true;
+      reports.postDelayed(StartupTrace::publish, 1500);
+    }
     android.util.Log.i("TorrbabyStartup", elapsed + "ms " + name);
   }
   private static synchronized JSONObject report() {

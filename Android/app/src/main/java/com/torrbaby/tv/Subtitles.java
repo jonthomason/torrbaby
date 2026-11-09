@@ -13,14 +13,12 @@ import org.json.JSONObject;
 /** Shared server preferences, with native rendering and D-pad-friendly editing. */
 @androidx.annotation.OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)
 final class Subtitles {
-  static String path(String title) {
-    return title == null
-        ? "/v1/subtitle-preferences"
-        : "/v1/library/titles/" + Api.part(title) + "/subtitle-preferences";
+  static String path(Api api) {
+    return "/v1/devices/" + Api.part(api.client) + "/subtitle-preferences";
   }
 
   static JSONObject load(Api api, String title) throws Exception {
-    return api.request("GET", path(title), null).getJSONObject("effective");
+    return api.request("GET", path(api), null).getJSONObject("effective");
   }
 
   static void apply(JSONObject p, ExoPlayer player, SubtitleView view) {
@@ -78,7 +76,7 @@ final class Subtitles {
     };
     AlertDialog.Builder dialog =
         new AlertDialog.Builder(a)
-            .setTitle(title == null ? "Default subtitles" : "Subtitles")
+            .setTitle("Subtitles on this TV")
             .setItems(
                 labels,
                 (d, which) -> {
@@ -126,8 +124,6 @@ final class Subtitles {
                 })
             .setPositiveButton("Save", (d, w) -> save(a, api, io, title, p, false))
             .setNegativeButton("Cancel", null);
-    if (title != null)
-      dialog.setNeutralButton("Use defaults", (d, w) -> save(a, api, io, title, p, true));
     dialog.show();
   }
 
@@ -136,7 +132,7 @@ final class Subtitles {
     io.execute(
         () -> {
           try {
-            api.request(reset ? "DELETE" : "PUT", path(title), reset ? new JSONObject() : p);
+            api.request(reset ? "DELETE" : "PUT", path(api), reset ? new JSONObject() : p);
             a.runOnUiThread(
                 () -> Toast.makeText(a, "Subtitle preferences saved", Toast.LENGTH_SHORT).show());
           } catch (Exception e) {

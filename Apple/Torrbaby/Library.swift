@@ -107,17 +107,17 @@ struct MediaTrackInfo: Decodable {
 struct MediaLanguagesView: View {
     let info: MediaTrackInfo?
     private func name(_ code: String?) -> String {
-        guard let code, code != "und", !code.isEmpty else { return "Unknown" }
+        guard let code, code != "und", !code.isEmpty else { return "Unknown language" }
         let normalized = ["eng":"en", "zho":"zh", "chi":"zh", "jpn":"ja", "spa":"es", "fra":"fr", "fre":"fr", "deu":"de" ][code] ?? code
         return Locale.current.localizedString(forIdentifier: normalized) ?? code
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let info, info.state == "ready" {
-                languageRow("Audio", icon: "speaker.wave.2", languages: info.audioTracks.map { name($0.language) }.filter { $0 != "Unknown" })
+                languageRow("Audio", icon: "speaker.wave.2", languages: info.audioTracks.map { name($0.language) })
                 VStack(alignment: .leading, spacing: 3) {
                     Label("Subtitles", systemImage: "captions.bubble").font(.caption.weight(.semibold))
-                    let original = Array(Set(info.subtitleTracks.map { name($0.language) }.filter { $0 != "Unknown" })).sorted()
+                    let original = Array(Set(info.subtitleTracks.map { name($0.language) })).sorted()
                     let generated = info.prepared.filter { $0.generated && $0.state == "ready" }
                     HStack(spacing: 6) {
                         if !original.isEmpty { Text(original.joined(separator: " · ")) }
@@ -209,7 +209,7 @@ struct LibraryBrowser: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 28) {
-                if browsing, let featured = titles.first(where: { $0.backdrop != nil && !$0.playable.isEmpty }) {
+                if browsing, let featured = titles.homeHero {
                     NavigationLink(value: LibraryDestination(id: featured.id)) {
                         LibraryArtwork(id: featured.id, variant: "backdrop")
                             .frame(height: 360)
@@ -360,7 +360,6 @@ struct LibraryDetail: View {
                                     if let s = asset.season, let e = asset.episode { Text("S\(s) · E\(e)").font(.caption).foregroundStyle(Theme.muted) }
                                     Text(asset.name ?? title.title).font(.headline)
                                     if !asset.summary.isEmpty { Text(asset.summary).font(.caption).lineLimit(3).foregroundStyle(Theme.muted) }
-                                    if title.kind == "tv", asset.mediaInfo?.state == "ready" { MediaLanguagesView(info: asset.mediaInfo) }
                                     if asset.duration > 0 && !asset.watched { ProgressView(value: min(1, asset.position / asset.duration)) }
                                     if !asset.complete { Text("Downloading").font(.caption).foregroundStyle(Theme.muted) }
                                 }
@@ -424,5 +423,13 @@ struct LibraryDetail: View {
                 #endif
             } catch { if !Task.isCancelled { store.actionError = error.localizedDescription } }
         }
+    }
+}
+
+extension Array where Element == LibraryTitle {
+    var homeHero: LibraryTitle? {
+        let watched = filter { !$0.playable.isEmpty && $0.assets.contains { $0.lastPlayed > 0 } }
+        return watched.max { ($0.assets.map(\.lastPlayed).max() ?? 0) < ($1.assets.map(\.lastPlayed).max() ?? 0) }
+            ?? first(where: { $0.backdrop != nil && !$0.playable.isEmpty })
     }
 }

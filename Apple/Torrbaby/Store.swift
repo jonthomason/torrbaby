@@ -326,7 +326,7 @@ extension Store {
         let base = "/v1/library/assets/\(asset.id)"
         var body: [String: Any] = ["client_id": clientId]
         do {
-            let preferences: SubtitlePreferenceResponse = try await request("GET", "/v1/library/titles/\(titleID)/subtitle-preferences")
+            let preferences: SubtitlePreferenceResponse = try await request("GET", deviceSubtitlePath)
             if preferences.effective.enabled {
                 progress("Preparing subtitles…")
                 struct Track: Decodable {
@@ -394,4 +394,8 @@ extension Store {
         guard server == serverAtStart else { throw CancellationError() }
         return try await request("POST", base + "/play", body: body)
     }
+}
+
+extension Store {
+    var deviceSubtitlePath: String { "/v1/devices/\(clientId)/subtitle-preferences" }
 }

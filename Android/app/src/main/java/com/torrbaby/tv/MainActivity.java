@@ -106,9 +106,19 @@ public class MainActivity extends Activity {
   @Override
   protected void onResume() {
     super.onResume();
-    if (!discoveringScreen && (played || (api != null && library != null))) {
-      played = false;
-      load();
+    if (StartupTrace.foreground()) {
+      View foregroundView = getWindow().getDecorView();
+      foregroundView.getViewTreeObserver().addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
+        public boolean onPreDraw() {
+          foregroundView.getViewTreeObserver().removeOnPreDrawListener(this);
+          StartupTrace.mark("First library frame ready"); return true;
+        }
+      });
+      foregroundView.postInvalidateOnAnimation();
+    }
+    if (!discoveringScreen && api != null && library != null) {
+      if (played) { played = false; load(); }
+      else refreshLibrary();
     }
   }
 
@@ -373,6 +383,8 @@ public class MainActivity extends Activity {
         featured = t;
         break;
       }
+    for (Library.Title t : recent)
+      if (!t.playable().isEmpty() && t.latestPlayed() > featured.latestPlayed()) featured = t;
     ambient(featured);
     hero(page, featured, false);
     LinearLayout body = Ui.column(this);
@@ -1215,7 +1227,6 @@ public class MainActivity extends Activity {
       summary.setEllipsize(android.text.TextUtils.TruncateAt.END);
       Ui.add(text, summary, -1, -2);
     }
-    mediaLanguages(text, a, true);
     if (!a.complete || a.watched || a.position > 0) {
       Ui.gap(text, 6);
       Ui.add(text, Ui.text(this, a.status(), 12, Ui.MUTED), -1, -2);

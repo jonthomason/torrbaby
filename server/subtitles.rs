@@ -142,6 +142,10 @@ pub fn parse_srt(input: &str) -> Result<Vec<TimedCue>> {
         .trim_start_matches('\u{feff}')
         .replace("\r\n", "\n")
         .replace('\r', "\n");
+    // Some SRT exporters insert a blank line between a timestamp and its text.
+    // Join it only when the following line is text, not another cue number.
+    let gap = regex::Regex::new(r"(?m)(-->[^\n]+)\n(?:[ \t]*\n)+([ \t]*[^\d\s][^\n]*)").unwrap();
+    let normalized = gap.replace_all(&normalized, "$1\n$2");
     let mut cues = Vec::new();
     let mut block = Vec::new();
     for line in normalized.lines().chain(std::iter::once("")) {
@@ -414,4 +418,16 @@ pub fn read_sidecar(media: &Path, id: &str) -> Result<String> {
     Ok(webvtt(&parse_srt(
         std::str::from_utf8(&bytes).context("Subtitles must be UTF-8")?,
     )?))
+}
+
+#[cfg(test)]
+mod sidecar_tests {
+    use super::*;
+    #[test]
+    fn blank_line_before_dialogue_does_not_reject_track() {
+        let cues = parse_srt("1\n00:00:01,000 --> 00:00:02,000\n\n ... juicy ... \n\n2\n00:00:03,000 --> 00:00:04,000\nNext line\n").unwrap();
+        assert_eq!(cues.len(), 2);
+        assert_eq!(cues[0].start_ms, 1000);
+        assert_eq!(cues[1].text, "Next line");
+    }
 }

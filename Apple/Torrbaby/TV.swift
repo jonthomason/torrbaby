@@ -131,7 +131,7 @@ private struct TVLibraryView: View {
         (store.library?.titles ?? []).filter { kind == nil || $0.kind == kind }
             .sorted { $0.addedAt > $1.addedAt }
     }
-    private var featured: LibraryTitle? { titles.first(where: { $0.backdrop != nil && !$0.playable.isEmpty }) }
+    private var featured: LibraryTitle? { titles.homeHero }
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 48) {

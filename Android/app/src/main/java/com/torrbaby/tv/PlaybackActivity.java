@@ -101,7 +101,7 @@ public class PlaybackActivity extends Activity {
                     new MediaItem.SubtitleConfiguration.Builder(
                             Uri.parse(api.url(t.getString("path"))))
                         .setMimeType(MimeTypes.TEXT_VTT)
-                        .setLabel(t.optString("name", t.optString("language", "Subtitles")));
+                        .setLabel(t.isNull("language") ? "Subtitles (unknown language)" : MediaLanguages.name(t.optString("language")));
                 if (!t.isNull("language")) b.setLanguage(t.optString("language"));
                 subtitles.add(b.build());
               }
@@ -350,12 +350,10 @@ public class PlaybackActivity extends Activity {
                             : language != null && language.startsWith("en") ? "en" : "original");
                   }
                   JSONObject saved = new JSONObject(subtitlePreferences.toString());
-                  String title = getIntent().getStringExtra("title_id");
-                  if (title != null)
-                    io.execute(
+                  io.execute(
                         () -> {
                           try {
-                            api.request("PUT", Subtitles.path(title), saved);
+                            api.request("PUT", Subtitles.path(api), saved);
                           } catch (Exception e) {
                             Subtitles.error(this, e);
                           }
