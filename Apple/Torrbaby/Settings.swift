@@ -318,11 +318,15 @@ struct AddTorrentView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
                         store.perform {
-                            struct AddedTorrent: Decodable { let name: String? }
+                            struct AddedTorrent: Decodable { let name: String?; let hashString: String? }
                             struct AddResult: Decodable { let torrentAdded: AddedTorrent?; let torrentDuplicate: AddedTorrent? }
                             let result: AddResult = try await store.request("POST", "/v1/torrents", body: ["magnet": canonicalMagnet(magnet), "paused": paused])
                             dismiss()
-                            store.notify(result.torrentDuplicate == nil ? "Torrent added" : "Torrent already in your list", detail: result.torrentAdded?.name ?? result.torrentDuplicate?.name ?? "")
+                            let added = result.torrentAdded ?? result.torrentDuplicate
+                            let existing = store.torrents.first { $0.id == added?.hashString }
+                            let state = existing.map { !$0.completed ? "Downloading" : $0.status == 6 ? "Seeding · Download complete" : "Complete" }
+                            let detail = [added?.name, result.torrentDuplicate == nil ? nil : state].compactMap { $0 }.joined(separator: " · ")
+                            store.notify(result.torrentDuplicate == nil ? "Torrent added" : "Torrent already in your list", detail: detail, torrentHash: added?.hashString)
                         }
                     }.disabled(!canonicalMagnet(magnet).hasPrefix("magnet:?") || store.busy || !store.connected)
                 }

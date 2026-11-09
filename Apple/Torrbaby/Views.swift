@@ -44,6 +44,7 @@ struct RootView: View {
     @State private var selection: Section? = .library
     @State private var showConnect = false
     @State private var torrentDraft: TorrentDraft?
+    @State private var revealedTorrent: String?
     var body: some View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 22) {
@@ -106,6 +107,7 @@ struct RootView: View {
                     }
                 }
                 .navigationDestination(for: String.self) { hash in TorrentDetail(hash: hash) }
+                .navigationDestination(item: $revealedTorrent) { hash in TorrentDetail(hash: hash) }
                 .safeAreaInset(edge: .top) {
                     if let error = store.connectionError {
                         HStack {
@@ -130,7 +132,14 @@ struct RootView: View {
                 torrentDraft = TorrentDraft(magnet: canonicalMagnet(url.absoluteString))
             }
         }
-        .overlay(alignment: .top) { NoticeBanner().padding(.top, 12) }
+        .overlay(alignment: .top) {
+            NoticeBanner { hash in
+                if let torrent = store.torrents.first(where: { $0.id == hash }) {
+                    selection = !torrent.completed ? .active : torrent.status == 6 ? .seeding : .complete
+                }
+                revealedTorrent = hash
+            }.padding(.top, 12)
+        }
         .alert("Couldn’t complete that action", isPresented: Binding(get: { store.actionError != nil }, set: { if !$0 { store.actionError = nil } })) {
             Button("OK") { store.actionError = nil }
         } message: { Text(store.actionError ?? "") }
@@ -414,6 +423,7 @@ struct TransferHistoryView: View {
 
 struct NoticeBanner: View {
     @EnvironmentObject var store: Store
+    var showTorrent: (String) -> Void
     var body: some View {
         if let notice = store.notices.first {
             HStack(spacing: 12) {
@@ -423,6 +433,12 @@ struct NoticeBanner: View {
                     if !notice.detail.isEmpty { Text(notice.detail).font(.caption).lineLimit(2) }
                 }
                 Spacer(minLength: 4)
+                if let hash = notice.torrentHash {
+                    Button("Show torrent") {
+                        showTorrent(hash)
+                        store.notices.removeAll { $0.id == notice.id }
+                    }.buttonStyle(.bordered)
+                }
                 Button { store.notices.removeAll { $0.id == notice.id } } label: { Image(systemName: "xmark") }
                     .buttonStyle(.plain).accessibilityLabel("Dismiss notification")
             }.padding(16).frame(maxWidth: 480)

@@ -37,6 +37,7 @@ struct AppNotice: Identifiable {
     let id = UUID()
     let title: String
     let detail: String
+    let torrentHash: String?
 }
 #if os(iOS)
 final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
@@ -245,8 +246,8 @@ final class Store: ObservableObject {
             connectionError = nil
         } catch { connectionError = error.localizedDescription }
     }
-    func notify(_ title: String, detail: String = "") {
-        notices.append(AppNotice(title: title, detail: detail))
+    func notify(_ title: String, detail: String = "", torrentHash: String? = nil) {
+        notices.append(AppNotice(title: title, detail: detail, torrentHash: torrentHash))
         if notices.count > 8 { notices.removeFirst(notices.count - 8) }
         #if os(iOS)
         Task {
@@ -272,7 +273,7 @@ final class Store: ObservableObject {
             notify("Torrent activity", detail: "\(recent.count) downloads or seeding goals completed.")
         } else {
             for event in recent {
-                notify(event.kind == "download_complete" ? "Download complete" : "Seeding goal reached", detail: event.name ?? "")
+                notify(event.kind == "download_complete" ? "Download complete" : "Seeding goal reached", detail: event.name ?? "", torrentHash: event.hash)
             }
         }
     }
