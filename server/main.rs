@@ -1,7 +1,9 @@
 //! Native server and CLI. Production cutover follows API and data parity checks.
 mod api;
+mod catalog;
 mod config;
 mod storage;
+mod telemetry;
 mod transmission;
 use anyhow::Result;
 use clap::{Parser, Subcommand};

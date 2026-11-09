@@ -25,6 +25,9 @@ pub struct Service {
     db: Mutex<Database>,
     rpc: Transmission,
     started: Instant,
+    torrents: Mutex<Option<(Instant, Vec<Value>)>>,
+    data_dir: PathBuf,
+    http: reqwest::Client,
 }
 
 // Keep unimplemented routes explicit during the port; never silently report success.
@@ -44,6 +47,39 @@ pub async fn serve(config_path: PathBuf, database: PathBuf, listen: String) -> R
         db: Mutex::new(Database::open(&database, None)?),
         config,
         started: Instant::now(),
+        torrents: Mutex::new(None),
+        data_dir: database
+            .parent()
+            .context("Database needs a parent directory")?
+            .to_path_buf(),
+        http: reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(20))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?,
+    });
+    let sampling_service = service.clone();
+    let sampler = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let result = sampling_service
+                .rpc
+                .call("torrent_get", json!({"fields":crate::transmission::FIELDS}))
+                .await;
+            if let Ok(mut result) = result {
+                if let Some(torrents) = result["torrents"].as_array_mut() {
+                    if let Ok(mut db) = sampling_service.db.lock() {
+                        if let Err(error) = db.sample_torrents(torrents) {
+                            eprintln!("Transfer sampling: {error}");
+                        }
+                    }
+                    if let Ok(mut cache) = sampling_service.torrents.lock() {
+                        *cache = Some((Instant::now(), torrents.clone()));
+                    }
+                }
+            }
+        }
     });
     let router = Router::new()
         .fallback(any(dispatch))
@@ -59,6 +95,7 @@ pub async fn serve(config_path: PathBuf, database: PathBuf, listen: String) -> R
             let _ = tokio::signal::ctrl_c().await;
         })
         .await?;
+    sampler.abort();
     Ok(())
 }
 
@@ -137,6 +174,12 @@ fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
 }
 
 async fn handle(s: &Service, method: &Method, path: &str, body: Value) -> Result<Value> {
+    if method == Method::GET {
+        if let Some(route) = path.strip_prefix("/v1/library/artwork/") {
+            let (id, variant) = route.rsplit_once('/').context("Missing artwork variant")?;
+            return artwork(s, id, variant).await;
+        }
+    }
     if path == "/v1/seeding" {
         if method == Method::PATCH {
             let limit = body["ratio"].as_f64().context("ratio must be a number")?;
@@ -167,6 +210,12 @@ async fn handle(s: &Service, method: &Method, path: &str, body: Value) -> Result
         );
     }
     if method == Method::POST {
+        if let Some(id) = path
+            .strip_prefix("/v1/library/assets/")
+            .and_then(|s| s.strip_suffix("/play"))
+        {
+            return playback_link(s, id, &body).await;
+        }
         if let Some(hash) = path
             .strip_prefix("/v1/torrents/")
             .and_then(|s| s.strip_suffix("/play"))
@@ -175,6 +224,16 @@ async fn handle(s: &Service, method: &Method, path: &str, body: Value) -> Result
         }
     }
     if method == Method::GET && path == "/v1/torrents" {
+        if let Some((updated, torrents)) = s
+            .torrents
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Torrent cache lock failed"))?
+            .as_ref()
+        {
+            if updated.elapsed().as_secs() < 15 {
+                return Ok(json!(torrents));
+            }
+        }
         return Ok(s
             .rpc
             .call("torrent_get", json!({"fields":crate::transmission::FIELDS}))
@@ -185,7 +244,16 @@ async fn handle(s: &Service, method: &Method, path: &str, body: Value) -> Result
     let mut db =
         s.db.lock()
             .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
+    if method == Method::GET {
+        if let Some(hash) = path
+            .strip_prefix("/v1/torrents/")
+            .and_then(|s| s.strip_suffix("/rates"))
+        {
+            return Ok(json!(db.torrent_rates(hash)?));
+        }
+    }
     match (method.as_str(),path) {
+        ("GET","/v1/library") => db.catalog(),
         ("GET","/v1/status") => {
             let state = db.state()?;
             Ok(json!({"version":env!("CARGO_PKG_VERSION"),"uptime_seconds":s.started.elapsed().as_secs(),
@@ -244,6 +312,48 @@ fn checked_path(root: &std::path::Path, relative: &str) -> Result<PathBuf> {
 }
 
 async fn media_file(s: &Service, hash: &str, index: u64) -> Result<PathBuf> {
+    if hash.starts_with("asset-") {
+        if index != 0 {
+            bail!("Invalid asset file index");
+        }
+        let asset =
+            s.db.lock()
+                .map_err(|_| anyhow::anyhow!("Database lock failed"))?
+                .asset(hash)?;
+        if asset["complete"] != true {
+            bail!("Download is not complete");
+        }
+        let path = PathBuf::from(text(&asset, "path")?);
+        let mut allowed = None;
+        for root in [&s.config.source, &s.config.movies, &s.config.tv] {
+            if let Ok(relative) = path.strip_prefix(root) {
+                allowed = Some(checked_path(
+                    std::path::Path::new(root),
+                    relative.to_str().context("Invalid media path")?,
+                )?);
+                break;
+            }
+        }
+        let path = allowed.context("Media is outside managed roots")?;
+        if let Ok(metadata) = path.metadata() {
+            if metadata.is_file() && Some(metadata.len()) == asset["size"].as_u64() {
+                return Ok(path);
+            }
+        }
+        if let Some(torrent) = asset["torrent_hash"].as_str() {
+            return torrent_media_file(
+                s,
+                torrent,
+                asset["file_index"].as_u64().context("Invalid file index")?,
+            )
+            .await;
+        }
+        bail!("Media is unavailable or changed");
+    }
+    torrent_media_file(s, hash, index).await
+}
+
+async fn torrent_media_file(s: &Service, hash: &str, index: u64) -> Result<PathBuf> {
     if hash.len() != 40 || !hash.bytes().all(|c| c.is_ascii_hexdigit()) {
         bail!("Invalid torrent hash");
     }
@@ -294,7 +404,11 @@ async fn media_file(s: &Service, hash: &str, index: u64) -> Result<PathBuf> {
 }
 
 async fn playback_link(s: &Service, hash: &str, body: &Value) -> Result<Value> {
-    let index = body["file_index"].as_u64().context("Invalid file index")?;
+    let index = if hash.starts_with("asset-") {
+        0
+    } else {
+        body["file_index"].as_u64().context("Invalid file index")?
+    };
     let path = media_file(s, hash, index).await?;
     let size = path.metadata()?.len();
     // Opening now makes permission errors visible before presenting the player.
@@ -303,16 +417,25 @@ async fn playback_link(s: &Service, hash: &str, body: &Value) -> Result<Value> {
     let expires = now() as u64 + 21600;
     let mut result = json!({"path":format!("/v1/stream/{hash}/{index}?expires={expires}&sig={}",signature(&s.token,hash,index,expires)),"expires":expires,"name":path.file_name().unwrap_or_default().to_string_lossy()});
     if let Some(client) = body.get("client_id") {
-        let progress =
+        let mut db =
             s.db.lock()
-                .map_err(|_| anyhow::anyhow!("Database lock failed"))?
-                .begin(
-                    hash,
-                    index,
-                    &path.file_name().unwrap_or_default().to_string_lossy(),
-                    size,
-                    client.as_str().context("Invalid client ID")?,
-                )?;
+                .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
+        let (media_hash, media_index) = if hash.starts_with("asset-") {
+            let asset = db.asset(hash)?;
+            (
+                asset["torrent_hash"].as_str().unwrap_or(hash).to_owned(),
+                asset["file_index"].as_u64().unwrap_or(0),
+            )
+        } else {
+            (hash.to_owned(), index)
+        };
+        let progress = db.begin(
+            &media_hash,
+            media_index,
+            &path.file_name().unwrap_or_default().to_string_lossy(),
+            size,
+            client.as_str().context("Invalid client ID")?,
+        )?;
         result
             .as_object_mut()
             .unwrap()
@@ -446,4 +569,94 @@ fn byte_range(header: Option<&str>, size: u64) -> Result<(u64, u64)> {
         bail!("Unsatisfiable range");
     }
     Ok((start, end))
+}
+
+async fn artwork(s: &Service, id: &str, variant: &str) -> Result<Value> {
+    use base64::Engine;
+    use sha2::Digest;
+    if !["poster", "backdrop", "logo", "episode"].contains(&variant) {
+        bail!("Unknown artwork variant");
+    }
+    let url = {
+        let db =
+            s.db.lock()
+                .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
+        let entities = db.documents("entities")?;
+        if let Some(entity) = entities.iter().find(|e| e["id"] == id) {
+            entity[match variant {
+                "backdrop" => "backdrop",
+                "logo" => "logo",
+                _ => "thumbnail",
+            }]
+            .as_str()
+            .map(str::to_owned)
+        } else {
+            let asset = db.asset(id)?;
+            entities
+                .iter()
+                .find(|e| e["id"] == asset["entity_id"])
+                .and_then(|entity| {
+                    entity["episodes"]
+                        .as_array()
+                        .and_then(|episodes| {
+                            episodes.iter().find(|e| {
+                                e["season"] == asset["season"] && e["episode"] == asset["episode"]
+                            })
+                        })
+                        .and_then(|episode| episode["thumbnail"].as_str())
+                        .or(entity["thumbnail"].as_str())
+                        .map(str::to_owned)
+                })
+        }
+    };
+    let Some(url) = url else {
+        return Ok(json!({"data":null}));
+    };
+    // Legacy Plex references are deliberately not fetched by the standalone server.
+    if url.starts_with('/') {
+        return Ok(json!({"data":null}));
+    }
+    let parsed = reqwest::Url::parse(&url)?;
+    if parsed.scheme() != "https"
+        || ![Some("image.tmdb.org"), Some("static.tvmaze.com")].contains(&parsed.host_str())
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        bail!("Unsupported artwork source");
+    }
+    let key = sha2::Sha256::digest(url.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let cache = s.data_dir.join("artwork");
+    tokio::fs::create_dir_all(&cache).await?;
+    let path = cache.join(format!("{key}.image"));
+    let bytes = if path.exists() {
+        tokio::fs::read(&path).await?
+    } else {
+        let mut response = s
+            .http
+            .get(parsed)
+            .send()
+            .await
+            .map_err(|_| anyhow::anyhow!("Artwork service unavailable"))?;
+        if !response.status().is_success() {
+            bail!("Artwork service HTTP {}", response.status().as_u16());
+        }
+        let mut data = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if data.len() + chunk.len() > 8 * 1024 * 1024 {
+                bail!("Artwork too large");
+            }
+            data.extend_from_slice(&chunk);
+        }
+        let temporary = cache.join(format!("{key}.{}.tmp", uuid::Uuid::new_v4()));
+        tokio::fs::write(&temporary, &data).await?;
+        tokio::fs::rename(&temporary, &path).await?;
+        data
+    };
+    if bytes.len() > 8 * 1024 * 1024 {
+        bail!("Artwork too large");
+    }
+    Ok(json!({"data":base64::engine::general_purpose::STANDARD.encode(bytes)}))
 }

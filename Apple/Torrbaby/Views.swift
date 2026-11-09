@@ -184,6 +184,7 @@ struct TorrentListView: View {
                 } else {
                     LazyVStack(spacing: compact ? 4 : 10) {
                         ForEach(filtered) { torrent in
+                          VStack(spacing: 6) {
                             NavigationLink(value: torrent.id) {
                                 if compact { CompactTorrentRow(torrent: torrent, showReason: section == .attention) }
                                 else { TorrentRow(torrent: torrent, showReason: section == .attention) }
@@ -200,6 +201,10 @@ struct TorrentListView: View {
                                     Label("Remove…", systemImage: "trash")
                                 }.disabled(store.busy || !store.connected)
                             }
+                            if !compact && (!torrent.completed || torrent.status == 6) {
+                                TransferHistoryView(compact: true, torrentHash: torrent.id, uploadOnly: torrent.completed)
+                            }
+                          }
                         }
                     }
                 }
@@ -296,6 +301,7 @@ struct CompactTorrentRow: View {
                     if !torrent.completed { Label(rate(torrent.rateDownload), systemImage: "arrow.down") }
                     Label(rate(torrent.rateUpload), systemImage: "arrow.up")
                     Text("Ratio \(max(0, torrent.uploadRatio), specifier: "%.2f")")
+                    if !torrent.completed { Text(torrent.etaText) }
                 }.font(.caption2.monospacedDigit()).foregroundStyle(Theme.muted)
                 if showReason, let reason = torrent.progressIssue { Text(reason).font(.caption2).foregroundStyle(.orange).lineLimit(2) }
             }
@@ -330,15 +336,20 @@ struct TorrentActivity: View {
 struct TransferHistoryView: View {
     @EnvironmentObject var store: Store
     let compact: Bool
+    var torrentHash: String? = nil
+    var uploadOnly = false
+    @State private var torrentSamples: [TransferSample]?
     @AppStorage("transferHistoryHours") private var hours = 24
     var samples: [TransferSample] {
         let cutoff = Date().timeIntervalSince1970 - Double(hours * 3600)
-        return store.transferHistory.filter { $0.time >= cutoff }
+        return (torrentHash == nil ? store.transferHistory : (torrentSamples ?? [])).filter { $0.time >= cutoff }
     }
     var body: some View {
+      Group {
+       if torrentHash == nil || torrentSamples != nil {
         VStack(alignment: .leading, spacing: compact ? 6 : 12) {
             HStack {
-                Text("TRANSFER HISTORY").font(.caption2.weight(.semibold)).tracking(1)
+                Text(uploadOnly ? "UPLOAD HISTORY" : "TRANSFER HISTORY").font(.caption2.weight(.semibold)).tracking(1)
                 Spacer()
                 Picker("Time range", selection: $hours) {
                     Text("1h").tag(1)
@@ -347,8 +358,10 @@ struct TransferHistoryView: View {
                 }.pickerStyle(.segmented).frame(width: 150, height: 24)
             }.foregroundStyle(Theme.muted)
             Chart(samples) { sample in
-                LineMark(x: .value("Time", sample.date), y: .value("Bytes/sec", sample.download))
-                    .foregroundStyle(by: .value("Transfer", "Download"))
+                if !uploadOnly {
+                    LineMark(x: .value("Time", sample.date), y: .value("Bytes/sec", sample.download))
+                        .foregroundStyle(by: .value("Transfer", "Download"))
+                }
                 LineMark(x: .value("Time", sample.date), y: .value("Bytes/sec", sample.upload))
                     .foregroundStyle(by: .value("Transfer", "Upload"))
             }
@@ -369,6 +382,15 @@ struct TransferHistoryView: View {
             }
         }.padding(compact ? 12 : 18)
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
+       }
+      }.task(id: store.server + (torrentHash ?? "")) {
+          guard let hash = torrentHash else { return }
+          while !Task.isCancelled {
+              do { torrentSamples = try await store.request("GET", "/v1/torrents/\(hash)/rates") }
+              catch { return }
+              try? await Task.sleep(for: .seconds(30))
+          }
+      }
     }
 }
 

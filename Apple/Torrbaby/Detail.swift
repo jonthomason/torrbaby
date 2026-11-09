@@ -44,6 +44,7 @@ struct TorrentDetail: View {
                             HStack(spacing: 12) { actions(t) }
                             VStack(alignment: .leading, spacing: 12) { actions(t) }
                         }.disabled(store.busy || !store.connected)
+                        TransferHistoryView(compact: false, torrentHash: t.id, uploadOnly: t.completed)
                         if let job = store.status?.jobs[hash] {
                             Card {
                                 VStack(alignment: .leading, spacing: 10) {

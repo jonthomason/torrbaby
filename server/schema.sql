@@ -10,4 +10,7 @@ PRAGMA foreign_keys=ON;
         CREATE TABLE IF NOT EXISTS metadata (hash TEXT PRIMARY KEY, document TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS library_assets (id TEXT PRIMARY KEY, document TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS library_entities (id TEXT PRIMARY KEY, document TEXT NOT NULL);
-        PRAGMA user_version=4;
+        CREATE TABLE IF NOT EXISTS torrent_rates (hash TEXT NOT NULL, time INTEGER NOT NULL, download REAL NOT NULL, upload REAL NOT NULL, samples INTEGER NOT NULL, PRIMARY KEY(hash,time));
+        CREATE INDEX IF NOT EXISTS torrent_rates_time ON torrent_rates(time);
+        CREATE TABLE IF NOT EXISTS eta_state (hash TEXT PRIMARY KEY, started REAL NOT NULL, updated REAL NOT NULL, activity REAL NOT NULL, rate REAL NOT NULL);
+        PRAGMA user_version=5;
