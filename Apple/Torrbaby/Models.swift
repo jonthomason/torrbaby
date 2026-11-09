@@ -189,3 +189,42 @@ struct MetadataEpisode: Codable {
     let title: String?
     let durationMinutes: Double?
 }
+
+/// Shared ordering for Mac, mobile and TV torrent lists.
+enum TorrentSort: String, CaseIterable, Identifiable {
+    case progress, ratio, added, alphabetic, size
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .progress: "Progress"
+        case .ratio: "Ratio"
+        case .added: "Date added"
+        case .alphabetic: "Alphabetical"
+        case .size: "Size"
+        }
+    }
+    static func choices(_ category: String) -> [Self] {
+        switch category {
+        case "Seeding": [.ratio, .added]
+        case "Complete": [.alphabetic, .added, .size]
+        default: [.progress, .added, .alphabetic]
+        }
+    }
+    func ordered(_ torrents: [Torrent]) -> [Torrent] {
+        torrents.sorted { a, b in
+            switch self {
+            case .progress:
+                if a.percentDone != b.percentDone { return a.percentDone > b.percentDone }
+            case .ratio:
+                if a.uploadRatio != b.uploadRatio { return a.uploadRatio > b.uploadRatio }
+            case .added:
+                if a.addedDate != b.addedDate { return a.addedDate > b.addedDate }
+            case .size:
+                if a.size != b.size { return a.size > b.size }
+            case .alphabetic: break
+            }
+            let comparison = a.displayName.localizedStandardCompare(b.displayName)
+            return comparison == .orderedSame ? a.id < b.id : comparison == .orderedAscending
+        }
+    }
+}

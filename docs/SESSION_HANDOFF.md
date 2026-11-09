@@ -583,3 +583,9 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
 - Episode list defaults to the in-progress season, then an unwatched regular season, rather than always the first/specials season. Unnumbered episodes remain available separately when numbered seasons exist.
 - Episode rows fetch stills via existing authenticated asset/episode artwork endpoint; incomplete items show Downloading. Playback title includes episode name.
 - tvOS simulator build passed. Device Hub remote navigation verified TV Shows tab → Paradise detail → season control → Episode 1 focus; actual episode stills loaded for Episodes 1/2. Did not start playback or alter watch history. Multi-season switching and resume selection still require runtime acceptance.
+
+## Build 56 torrent sorting
+
+- Shared TorrentSort in Models.swift implements per-list defaults/options in docs/interface.md for macOS/iOS/iPadOS/tvOS. Per-list AppStorage persistence; deterministic title/ID ties; dates newest first, size largest first. No Android edits: concurrent port should follow the documented contract.
+- Mac and signed iOS build56 passed; tvOS debug simulator build passed/reinstalled. Mac installed/running; mobile OTA56 published on Mac-only Miyu Install. IPA SHA256 800be1caf6c4a00b6c0b34c003d0fc02d5a9ce296dc215d90a48682e6a87edb9.
+- Mac live AX verified Downloading progress order 99/66/33/11/4 percent and Seeding ratio order .63/.20/.05 etc. Other ordering choices compiled but not all manually exercised yet.

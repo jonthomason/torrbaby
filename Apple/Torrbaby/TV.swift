@@ -264,15 +264,28 @@ private struct TVPosterGrid: View {
 private struct TVTorrentView: View {
     @EnvironmentObject var store: Store
     @State private var category = "Downloading"
-    private var torrents: [Torrent] {
-        store.torrents.filter {
-            category == "Downloading" ? !$0.completed : category == "Seeding" ? $0.completed && $0.status == 6 : $0.completed && $0.status != 6
+    @AppStorage("torrentSort.downloading") private var downloadingSort = TorrentSort.progress
+    @AppStorage("torrentSort.seeding") private var seedingSort = TorrentSort.ratio
+    @AppStorage("torrentSort.complete") private var completeSort = TorrentSort.alphabetic
+    private var sortSelection: Binding<TorrentSort> {
+        switch category {
+        case "Seeding": $seedingSort
+        case "Complete": $completeSort
+        default: $downloadingSort
         }
+    }
+    private var torrents: [Torrent] {
+        sortSelection.wrappedValue.ordered(store.torrents.filter {
+            category == "Downloading" ? !$0.completed : category == "Seeding" ? $0.completed && $0.status == 6 : $0.completed && $0.status != 6
+        })
     }
     var body: some View {
         VStack(spacing: 30) {
             Picker("Torrents", selection: $category) {
                 ForEach(["Downloading", "Seeding", "Complete"], id: \.self) { Text($0).tag($0) }
+            }.pickerStyle(.segmented).padding(.horizontal, 70)
+            Picker("Sort", selection: sortSelection) {
+                ForEach(TorrentSort.choices(category)) { Text($0.label).tag($0) }
             }.pickerStyle(.segmented).padding(.horizontal, 70)
             ScrollView {
                 LazyVStack(spacing: 28) {

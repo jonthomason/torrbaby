@@ -183,6 +183,16 @@ struct RootView: View {
 struct TorrentListView: View {
     @EnvironmentObject var store: Store
     let section: Section
+    @AppStorage("torrentSort.downloading") private var downloadingSort = TorrentSort.progress
+    @AppStorage("torrentSort.seeding") private var seedingSort = TorrentSort.ratio
+    @AppStorage("torrentSort.complete") private var completeSort = TorrentSort.alphabetic
+    private var sortSelection: Binding<TorrentSort> {
+        switch section.rawValue {
+        case "Seeding": $seedingSort
+        case "Complete": $completeSort
+        default: $downloadingSort
+        }
+    }
     @State private var search = ""
     #if os(macOS)
     @FocusState private var searchFocused: Bool
@@ -194,7 +204,7 @@ struct TorrentListView: View {
     @AppStorage("compactTorrentView") private var compact = false
     #endif
     var filtered: [Torrent] {
-        store.torrents.filter { t in
+        sortSelection.wrappedValue.ordered(store.torrents.filter { t in
             let included: Bool
             switch section {
             case .active: included = !t.completed
@@ -205,7 +215,7 @@ struct TorrentListView: View {
             default: included = true
             }
             return included && (search.isEmpty || t.name.localizedCaseInsensitiveContains(search))
-        }
+        })
     }
     var body: some View {
         ScrollView {
@@ -227,7 +237,9 @@ struct TorrentListView: View {
                 HStack {
                     Text("\(filtered.count) \(filtered.count == 1 ? "TORRENT" : "TORRENTS")").font(.caption.weight(.semibold)).tracking(1.6).foregroundStyle(Theme.muted)
                     Spacer()
-                    if let date = store.lastUpdated { Text(date, style: .time).font(.caption).foregroundStyle(Theme.muted) }
+                    Picker("Sort", selection: sortSelection) {
+                        ForEach(TorrentSort.choices(section.rawValue)) { Text($0.label).tag($0) }
+                    }.pickerStyle(.menu).fixedSize()
                 }
                 if filtered.isEmpty {
                     ContentUnavailableView(search.isEmpty ? "All clear" : "No matches", systemImage: search.isEmpty ? "checkmark.circle" : "magnifyingglass", description: Text(search.isEmpty ? "" : "Try a different title."))
