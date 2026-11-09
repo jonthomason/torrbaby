@@ -301,7 +301,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             self.reload()
             if let storage = self.storage {
                 do {
-                    if try storage.availableBytes() < self.policy.freeSpaceBytes || self.used > self.policy.limitBytes {
+                    if try storage.availableBytes() < self.policy.freeSpaceBytes || !self.policy.permits(used: self.used) {
                         self.pause(id)
                     }
                 } catch { self.error = error.localizedDescription; self.pause(id) }

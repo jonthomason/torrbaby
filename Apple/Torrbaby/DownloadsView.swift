@@ -10,11 +10,15 @@ struct DownloadsView: View {
     @State private var playback: Playback?
     @State private var settings = false
     @State private var preparing = false
+    @AppStorage("downloads.swipeHintSeen") private var swipeHintSeen = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hintRow: UUID?
+    @State private var hintOffset: CGFloat = 0
     var body: some View {
         List {
             SwiftUI.Section {
                 HStack {
-                    Label("\(bytes(queue.used)) used · \(bytes(queue.policy.limitBytes)) limit", systemImage: "internaldrive")
+                    Label(queue.policy.useAvailableSpace ? "\(bytes(queue.used)) used · Available space" : "\(bytes(queue.used)) used · \(bytes(queue.policy.limitBytes)) limit", systemImage: "internaldrive")
                         .font(.subheadline.monospacedDigit()).foregroundStyle(Theme.muted)
                     Spacer()
                     Button { settings = true } label: { Image(systemName: "slider.horizontal.3") }.help("Download storage")
@@ -46,31 +50,52 @@ struct DownloadsView: View {
                         }
                         Spacer(minLength: 8)
                         if item.state == .ready {
-                            Button { play(item.id) } label: { Image(systemName: "play.circle.fill").font(.title) }.help("Play download").disabled(preparing)
+                            Button { play(item.id) } label: { Image(systemName: "play.circle.fill").font(.title).frame(width: 48, height: 48).contentShape(Rectangle()) }.buttonStyle(.borderless).accessibilityLabel("Play download").help("Play download").disabled(preparing)
                         } else if item.state == .transferring || item.state == .queued {
                             Button { queue.pause(item.id) } label: { Image(systemName: "pause.circle").font(.title2) }.help("Pause download")
                         } else {
                             Button { queue.resume(item.id) } label: { Image(systemName: "arrow.down.circle").font(.title2) }.help("Resume download")
                         }
-                        #if os(macOS)
-                        Button(role: .destructive) { queue.remove(item.id) } label: { Image(systemName: "trash") }.help("Delete download")
-                        #endif
-                        Menu {
-                            Toggle("Keep downloaded", isOn: Binding(get: { item.pinned }, set: { queue.pin(item.id, keep: $0) }))
-                            Button("Remove local download", role: .destructive) { queue.remove(item.id) }
-                        } label: { Image(systemName: "ellipsis.circle") }.menuStyle(.borderlessButton)
+
                       }
                       if item.state != .ready {
                           TorrentProgressGauge(value: item.size > 0 ? Double(queue.received[item.id] ?? item.received) / Double(item.size) : 0)
                       }
                     }.padding(.vertical, 6)
+                    .background(Theme.panel)
+                    .offset(x: hintRow == item.id ? hintOffset : 0)
+                    .background(alignment: .trailing) {
+                        if hintRow == item.id {
+                            Text("Delete").font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                                .frame(width: 76).frame(maxHeight: .infinity).background(.red)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .clipped()
+                    .allowsHitTesting(hintRow != item.id)
+                    .accessibilityHint("Swipe left to delete this download")
                     .listRowBackground(Theme.panel)
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        Button("Delete", role: .destructive) { queue.remove(item.id) }
+                        Button("Delete", role: .destructive) { queue.remove(item.id) }.tint(.red)
                     }
                 }
             }
         }.listStyle(.plain).scrollContentBackground(.hidden).background(Theme.canvas)
+        .task(id: queue.items.first(where: { $0.state != .removed })?.id) {
+            guard !swipeHintSeen, let first = queue.items.first(where: { $0.state != .removed }) else { return }
+            guard !reduceMotion else { swipeHintSeen = true; return }
+            do {
+                try await Task.sleep(for: .milliseconds(800))
+                try Task.checkCancellation()
+                swipeHintSeen = true
+                hintRow = first.id
+                defer { hintOffset = 0; hintRow = nil }
+                withAnimation(.easeInOut(duration: 0.35)) { hintOffset = -76 }
+                try await Task.sleep(for: .milliseconds(1100))
+                withAnimation(.easeInOut(duration: 0.35)) { hintOffset = 0 }
+                try await Task.sleep(for: .milliseconds(400))
+            } catch { /* Leaving the page cancels the hint. */ }
+        }
         .sheet(isPresented: $settings) { DownloadSettingsView() }
         #if os(iOS)
         .background(MobilePlayerPresentation(playback: $playback, store: store).frame(width: 0, height: 0))
@@ -117,13 +142,15 @@ struct DownloadSettingsView: View {
     @ObservedObject private var queue = DownloadQueue.shared
     @Environment(\.dismiss) private var dismiss
     @State private var limit = 20.0
-    @State private var reserve = 5.0
+    @State private var reserve = 0.0
+    @State private var useAvailableSpace = true
     @State private var wifiOnly = true
     @State private var deleteAfter = true
     var body: some View {
         NavigationStack {
             Form {
-                TextField("Download limit (GB)", value: $limit, format: .number)
+                Toggle("Use available space", isOn: $useAvailableSpace)
+                if !useAvailableSpace { TextField("Download limit (GB)", value: $limit, format: .number) }
                 TextField("Keep free (GB)", value: $reserve, format: .number)
                 Toggle("Wi-Fi only", isOn: $wifiOnly)
                 Toggle("Delete after playback", isOn: $deleteAfter)
@@ -133,6 +160,7 @@ struct DownloadSettingsView: View {
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Save") {
                             var policy = queue.policy
+                            policy.useAvailableSpace = useAvailableSpace
                             policy.limitBytes = Int64(limit * 1_000_000_000)
                             policy.freeSpaceBytes = Int64(reserve * 1_000_000_000)
                             policy.wifiOnly = wifiOnly; policy.deleteAfterPlayback = deleteAfter
@@ -141,6 +169,7 @@ struct DownloadSettingsView: View {
                     }
                 }
         }.onAppear {
+            useAvailableSpace = queue.policy.useAvailableSpace
             limit = Double(queue.policy.limitBytes) / 1_000_000_000
             reserve = Double(queue.policy.freeSpaceBytes) / 1_000_000_000
             wifiOnly = queue.policy.wifiOnly; deleteAfter = queue.policy.deleteAfterPlayback

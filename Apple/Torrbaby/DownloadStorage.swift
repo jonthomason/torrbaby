@@ -6,9 +6,31 @@ import Foundation
 final class DownloadStorage {
     struct Policy: Codable {
         var limitBytes: Int64 = 20_000_000_000
-        var freeSpaceBytes: Int64 = 5_000_000_000
+        var freeSpaceBytes: Int64 = 0
+        var useAvailableSpace = true
         var deleteAfterPlayback = true
         var wifiOnly = true
+        init() {}
+        private enum CodingKeys: String, CodingKey { case limitBytes, freeSpaceBytes, useAvailableSpace, deleteAfterPlayback, wifiOnly }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            limitBytes = try c.decode(Int64.self, forKey: .limitBytes)
+            freeSpaceBytes = try c.decode(Int64.self, forKey: .freeSpaceBytes)
+            deleteAfterPlayback = try c.decode(Bool.self, forKey: .deleteAfterPlayback)
+            wifiOnly = try c.decode(Bool.self, forKey: .wifiOnly)
+            if let available = try c.decodeIfPresent(Bool.self, forKey: .useAvailableSpace) {
+                useAvailableSpace = available
+            } else {
+                // Upgrade the old defaults; preserve explicitly customized budgets.
+                useAvailableSpace = limitBytes == 20_000_000_000 && freeSpaceBytes == 5_000_000_000
+                if useAvailableSpace { freeSpaceBytes = 0 }
+            }
+        }
+        func permits(used: Int64, additional: Int64 = 0) -> Bool {
+            guard used >= 0, additional >= 0 else { return false }
+            return useAvailableSpace || (used <= limitBytes && additional <= limitBytes - used)
+        }
+
     }
     enum State: String, Codable { case queued, transferring, paused, ready, removing, removed, failed }
     struct Item: Codable, Identifiable {
@@ -151,7 +173,7 @@ final class DownloadStorage {
         if !existed {
             let used = try accountedBytes()
             let free = try availableBytes()
-            guard used <= policy.limitBytes, Int64(data.count) <= policy.limitBytes - used,
+            guard policy.permits(used: used, additional: Int64(data.count)),
                   free >= policy.freeSpaceBytes, Int64(data.count) <= free - policy.freeSpaceBytes else { return }
             try data.write(to: destination, options: .atomic)
         }
@@ -231,11 +253,11 @@ final class DownloadStorage {
         let (withOverhead, overheadOverflow) = withItem.addingReportingOverflow(1_000_000)
         let (disk, diskOverflow) = diskNeeded.addingReportingOverflow(item.size)
         guard !overflow && !overheadOverflow && !diskOverflow else { return false }
-        return withOverhead <= policy.limitBytes && free >= policy.freeSpaceBytes
+        return policy.permits(used: withOverhead) && free >= policy.freeSpaceBytes
             && disk <= free - policy.freeSpaceBytes
     }
     func markTransferring(_ id: UUID) throws {
-        guard try canStart(id) else { throw StorageError(message: "Download paused: storage limit reached.") }
+        guard try canStart(id) else { throw StorageError(message: "Download paused: not enough available storage.") }
         try update(id) { $0.state = .transferring; $0.error = nil }
     }
     func resetTransferBytes(_ id: UUID) throws {
@@ -260,9 +282,9 @@ final class DownloadStorage {
         let used = try accountedBytes(excluding: id)
         let localTemporary = temporary.standardizedFileURL.path.hasPrefix(root.path + "/")
         let additional = localTemporary ? 0 : item.size
-        guard used <= policy.limitBytes, additional <= policy.limitBytes - used,
+        guard policy.permits(used: used, additional: additional),
               try availableBytes() >= policy.freeSpaceBytes else {
-            throw StorageError(message: "Download paused: storage limit reached.")
+            throw StorageError(message: "Download paused: not enough available storage.")
         }
         let destination = mediaURL(item)
         guard !fm.fileExists(atPath: destination.path) else { throw StorageError(message: "A downloaded copy already exists.") }
