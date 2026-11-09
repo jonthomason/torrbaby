@@ -33,13 +33,17 @@ enum Section: String, CaseIterable, Identifiable {
     }
 }
 
+private struct TorrentDraft: Identifiable {
+    let id = UUID()
+    var magnet = ""
+}
+
 struct RootView: View {
     @EnvironmentObject var store: Store
     @Environment(\.scenePhase) var phase
     @State private var selection: Section? = .library
     @State private var showConnect = false
-    @State private var showAdd = false
-    @State private var incomingMagnet = ""
+    @State private var torrentDraft: TorrentDraft?
     var body: some View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 22) {
@@ -97,7 +101,7 @@ struct RootView: View {
                         if store.busy { ProgressView().controlSize(.small) }
                         Button { Task { await store.refresh() } } label: { Image(systemName: "arrow.clockwise") }
                             .help("Refresh").disabled(!store.configured)
-                        Button { incomingMagnet = ""; showAdd = true } label: { Image(systemName: "plus") }.help("Add torrent")
+                        Button { torrentDraft = TorrentDraft() } label: { Image(systemName: "plus") }.help("Add torrent")
                             .disabled(!store.connected)
                     }
                 }
@@ -115,14 +119,15 @@ struct RootView: View {
             }
         }
         #if os(macOS)
-        .focusedSceneValue(\.addTorrent, { incomingMagnet = ""; showAdd = true })
+        .focusedSceneValue(\.addTorrent, { torrentDraft = TorrentDraft() })
         #endif
         .sheet(isPresented: $showConnect) { ConnectionView() }
-        .sheet(isPresented: $showAdd) { AddTorrentView(initialMagnet: incomingMagnet) }
+        .sheet(item: $torrentDraft) { draft in
+            AddTorrentView(initialMagnet: draft.magnet).id(draft.id)
+        }
         .onOpenURL { url in
             if url.scheme?.lowercased() == "magnet" {
-                incomingMagnet = url.absoluteString
-                showAdd = true
+                torrentDraft = TorrentDraft(magnet: canonicalMagnet(url.absoluteString))
             }
         }
         .alert("Couldn’t complete that action", isPresented: Binding(get: { store.actionError != nil }, set: { if !$0 { store.actionError = nil } })) {

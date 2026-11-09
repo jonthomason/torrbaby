@@ -274,12 +274,24 @@ struct ConnectionView: View {
     }
 }
 
+// Preserve the encoded query (including every tracker); normalize browser variants
+// such as magnet:/? and magnet://? to Transmission's canonical magnet:? form.
+func canonicalMagnet(_ input: String) -> String {
+    let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let colon = trimmed.firstIndex(of: ":"),
+          trimmed[..<colon].lowercased() == "magnet",
+          let query = trimmed[colon...].firstIndex(of: "?") else { return trimmed }
+    let between = trimmed[trimmed.index(after: colon)..<query]
+    guard between.allSatisfy({ $0 == "/" }) else { return trimmed }
+    return "magnet:" + trimmed[query...]
+}
+
 struct AddTorrentView: View {
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) var dismiss
     @State private var magnet = ""
     @State private var paused = false
-    init(initialMagnet: String = "") { _magnet = State(initialValue: initialMagnet) }
+    init(initialMagnet: String = "") { _magnet = State(initialValue: canonicalMagnet(initialMagnet)) }
     var body: some View {
         NavigationStack {
             Form {
@@ -299,10 +311,10 @@ struct AddTorrentView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
                         store.perform {
-                            try await store.send("POST", "/v1/torrents", body: ["magnet": magnet.trimmingCharacters(in: .whitespacesAndNewlines), "paused": paused])
+                            try await store.send("POST", "/v1/torrents", body: ["magnet": canonicalMagnet(magnet), "paused": paused])
                             dismiss()
                         }
-                    }.disabled(!magnet.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("magnet:?") || store.busy || !store.connected)
+                    }.disabled(!canonicalMagnet(magnet).hasPrefix("magnet:?") || store.busy || !store.connected)
                 }
             }
         }
