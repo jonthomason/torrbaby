@@ -489,3 +489,16 @@ For episodes, save progress, release/delete the completed local copy and play th
 next episode: use a local copy first, otherwise stream when Diamond is reachable.
 Stop with an explanation when the next episode is unavailable; do not skip gaps.
 This work follows QR device linking.
+
+The Rust transfer foundation is implemented: authenticated
+`GET /v1/library/assets/{asset_id}/download-info` returns original-file size,
+content type, filename, revision ETag and the download path.
+`GET`/`HEAD /v1/library/assets/{asset_id}/download` accepts the paired device's
+bearer credential and supports single byte ranges. Send the descriptor's ETag in
+`If-Match` when resuming; a changed file returns 412. With `If-Range`, a changed
+file instead returns the complete representation (200), which clients must never
+append to a partial file. The ETag is a filesystem revision validator, not a
+content checksum. These endpoints neither create playback sessions nor change
+watch history. Revocation prevents subsequent transfer requests; an already-open
+response can finish. Local download queues, storage controls and offline playback
+remain to be implemented in the clients.

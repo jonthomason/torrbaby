@@ -258,6 +258,31 @@ async fn dispatch(
         )
             .into_response();
     }
+    if let Some(id) = uri
+        .path()
+        .strip_prefix("/v1/library/assets/")
+        .and_then(|p| p.strip_suffix("/download"))
+    {
+        let result = async {
+            if !id.starts_with("asset-")
+                || id.contains('/')
+                || (method != Method::GET && method != Method::HEAD)
+            {
+                bail!("Invalid download request");
+            }
+            let path = media_file(&s, id, 0).await?;
+            file_response(&path, &method, &headers).await
+        }
+        .await;
+        return match result {
+            Ok(response) => response,
+            Err(error) => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error":error.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     let body = if bytes.is_empty() {
         json!({})
     } else {
@@ -288,6 +313,26 @@ fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
 }
 
 async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> Result<Value> {
+    if method == Method::GET {
+        if let Some(id) = path
+            .strip_prefix("/v1/library/assets/")
+            .and_then(|p| p.strip_suffix("/download-info"))
+        {
+            if !id.starts_with("asset-") || id.contains('/') {
+                bail!("Invalid asset ID")
+            }
+            let path = media_file(s, id, 0).await?;
+            let file = tokio::fs::File::open(&path)
+                .await
+                .context("Torrbaby Server needs permission to read this media volume")?;
+            let metadata = file.metadata().await?;
+            return Ok(
+                json!({"asset_id":id,"path":format!("/v1/library/assets/{id}/download"),
+                "name":path.file_name().unwrap_or_default().to_string_lossy(),"size":metadata.len(),
+                "etag":file_revision(&metadata),"content_type":media_type(&path),"representation":"original"}),
+            );
+        }
+    }
     if path == "/v1/pairings"
         || path.starts_with("/v1/pairings/")
         || path.starts_with("/v1/device-credentials/")
@@ -784,7 +829,6 @@ async fn stream(
     headers: &HeaderMap,
 ) -> Result<Response> {
     use hmac::{Hmac, Mac};
-    use tokio::io::{AsyncReadExt, AsyncSeekExt};
     let parts: Vec<_> = uri.path().trim_matches('/').split('/').collect();
     if parts.len() != 4 || (method != Method::GET && method != Method::HEAD) {
         bail!("Invalid streaming request");
@@ -812,19 +856,84 @@ async fn stream(
     mac.verify_slice(&decoded?)
         .map_err(|_| anyhow::anyhow!("Invalid playback signature"))?;
     let path = media_file(s, parts[2], index).await?;
-    let size = path.metadata()?.len();
-    let range = headers.get("range").map(|h| h.to_str()).transpose()?;
+    file_response(&path, method, headers).await
+}
+
+// File-system revision validator, not a content checksum. Includes inode and nanosecond
+// change times so replacement and in-place modification invalidate a resumed download.
+fn file_revision(metadata: &std::fs::Metadata) -> String {
+    use sha2::Digest;
+    use std::os::unix::fs::MetadataExt;
+    let revision = format!(
+        "{}:{}:{}:{}:{}:{}:{}",
+        metadata.dev(),
+        metadata.ino(),
+        metadata.len(),
+        metadata.mtime(),
+        metadata.mtime_nsec(),
+        metadata.ctime(),
+        metadata.ctime_nsec()
+    );
+    let hash: String = sha2::Sha256::digest(revision.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    format!("\"{hash}\"")
+}
+
+fn media_type(path: &std::path::Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "mp4" | "m4v" => "video/mp4",
+        "mov" => "video/quicktime",
+        "mkv" => "video/x-matroska",
+        "webm" => "video/webm",
+        _ => "application/octet-stream",
+    }
+}
+
+async fn file_response(
+    path: &std::path::Path,
+    method: &Method,
+    headers: &HeaderMap,
+) -> Result<Response> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .context("Torrbaby Server needs permission to read this media volume")?;
+    let metadata = file.metadata().await?;
+    let size = metadata.len();
+    let revision = file_revision(&metadata);
+    if let Some(condition) = headers.get("if-match") {
+        let condition = condition.to_str()?;
+        if condition != "*" && !condition.split(',').any(|value| value.trim() == revision) {
+            return Ok(Response::builder()
+                .status(412)
+                .header("ETag", &revision)
+                .header("Cache-Control", "private, no-store")
+                .body(axum::body::Body::empty())?);
+        }
+    }
+    let mut range = headers.get("range").map(|h| h.to_str()).transpose()?;
+    if let Some(condition) = headers.get("if-range") {
+        if condition.to_str()? != revision {
+            range = None;
+        }
+    }
     let selected = byte_range(range, size);
     if selected.is_err() {
         return Ok(Response::builder()
             .status(416)
+            .header("ETag", &revision)
             .header("Content-Range", format!("bytes */{size}"))
             .body(axum::body::Body::empty())?);
     }
     let (start, end) = selected?;
-    let mut file = tokio::fs::File::open(&path)
-        .await
-        .context("Torrbaby Server needs permission to read this media volume")?;
     file.seek(std::io::SeekFrom::Start(start)).await?;
     let mut response = Response::builder()
         .status(if range.is_some() { 206 } else { 200 })
@@ -832,16 +941,8 @@ async fn stream(
         .header("X-Torrbaby-Source", "filesystem")
         .header("Cache-Control", "private, no-store")
         .header("Content-Length", end - start + 1)
-        .header(
-            "Content-Type",
-            match path.extension().and_then(|s| s.to_str()).unwrap_or("") {
-                "mp4" | "m4v" => "video/mp4",
-                "mov" => "video/quicktime",
-                "mkv" => "video/x-matroska",
-                "webm" => "video/webm",
-                _ => "application/octet-stream",
-            },
-        );
+        .header("ETag", &revision)
+        .header("Content-Type", media_type(path));
     if range.is_some() {
         response = response.header("Content-Range", format!("bytes {start}-{end}/{size}"));
     }
