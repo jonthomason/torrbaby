@@ -4,27 +4,36 @@ Read this before continuing. The user requested a stopping point before clearing
 context. The full persistent goal is still active and NOT complete. Do not infer
 completion from the deployed Rust cutover or the current client builds.
 
-## Checkpoint and release boundaries
+## Current release boundaries (updated 2026-11-09, build 54)
 
 - Repository: `~/src/torrbaby`, public MIT, `github.com/jonthomason/torrbaby`.
-- Stable `main` / `origin/main`: **1527d03**, mobile build **42**.
-- Current work branch: **codex/offline-downloads**. Its queue/player work is a
-  checkpoint, NOT a released feature. Review its changes before merging to main.
-- Latest mobile release was built from the clean detached worktree
-  `/tmp/torrbaby-qr-landscape-release` at stable main, not from the dirty download
-  checkout. It contains QR landscape and native PiP fixes plus responsive torrent
-  rows, but does NOT include DownloadQueue or the Downloads page.
-- Installed Mac app is **build 37**, verified in its Info.plist. The more recent
-  stable changes are iOS-specific. Do not accidentally install the unfinished
-  download build when the user asks for the current stable Mac app.
-- Current branch's macOS and iOS Simulator builds both pass. Logs are under
-  `local-state/checkpoints/2026-11-09/`. These builds have not been installed or
-  published. Formal test-suite expansion is not requested.
-- Stale local Rust preview PID 42922 and its SSH tunnels (55759 and 59363) were
-  verified and stopped at checkpoint. Production Diamond was not stopped.
-- tvOS 27.2 simulator runtime download completed. `xcrun simctl list runtimes`
-  now lists it. No need to download it again. Apple TV physical pairing remains
-  unresolved; continue simulator development until the user pairs it.
+- `main` fast-forwarded through `a5ee609` for the early Downloads release.
+  `codex/offline-downloads` remains as the development checkpoint branch.
+- **Mac build 54 installed and running**, exactly one app process at
+  `~/Applications/Torrbaby/Torrbaby.app`. CUA verified Connected and the Downloads
+  page. Previous build37 archived at `local-state/releases/Torrbaby-mac-37.zip`.
+- **Mobile build 54 published** to the Mac's Miyu Install host only:
+  https://jons-m5-mbp.bengal-locrian.ts.net/ota/torrbaby/index.html
+  IPA SHA256 `5f6321e6542395f7c495139279f79ee1ac7a70e4d2fcb8e686d263e50b9b6b86`.
+  HTTPS IPA hash, current.json54, and hub entry verified. Profile covers six
+  devices and expires 2027-11-09. No Bronze publishing.
+- Source for build54 is `a5ee609`; later documentation commits do not change it.
+  Future builds must use a number greater than54.
+- Includes QR landscape, native full-screen/PiP, mobile torrent rows, and early
+  Downloads: pause/resume, quota controls, cached posters, local-first playback,
+  same-season episode continuation, delete after actual local completion, and
+  bidirectional watch-position sync. Native device background transfer/PiP still
+  needs real-device acceptance; no claim of universal container playback.
+- Diamond is on the verified schema7 Rust server with backup; see production
+  section. Subtitle preparation/discovery/translation CLI exist, but selectable
+  translated player captions are NOT yet implemented.
+- The old detached release worktree `/tmp/torrbaby-qr-landscape-release` remains at
+  build42 source; do not use it for a current release without updating explicitly.
+- Mac/iOS simulator/device builds passed, along with focused scratch fixtures.
+  No permanent broad test suite was added. No test media was added to live library.
+- tvOS27.2 runtime is installed; physical Apple TV pairing still unresolved.
+- Follow-up entries below are chronological history and may describe earlier WIP
+  status. This section and the latest deployment/release entries take precedence.
 
 ## User direction and priorities
 
@@ -484,3 +493,15 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
   and visual device acceptance remain pending. No new OTA/install yet.
 - Mac and iOS Simulator builds passed for poster/row changes. Production Rust
   remains the verified schema-7 deployment; installed Mac37 and OTA42 unchanged.
+
+## Release: Mac and iOS build54
+
+- Built and signed from a5ee609; installed Mac via staged replacement after normal
+  app quit. CUA reopened it, verified Home Connected and Downloads empty state.
+  Process check found exactly one Torrbaby app process at the installed path.
+- Universal mobile build54 signed/profile verified and published to existing
+  Mac-hosted OTA. Six registered devices, expiry2027-11-09. HTTPS IPA digest and
+  hub visibility verified. No change to host routing or unrelated Miyu services.
+- Main fast-forwarded to the reviewed feature branch. Earlier WIP warnings remain
+  historical; this is now an early released Downloads feature with limitations
+  listed in docs/release-notes.md. Full persistent goal is NOT complete.
