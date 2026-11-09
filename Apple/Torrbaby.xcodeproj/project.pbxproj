@@ -197,6 +197,7 @@
 			<array>
 				<string>4411227784337DBB3AE28994</string>
 				<string>FBE0B9919A6FBE5EDE525267</string>
+				<string>44236D4B917299E3A921FE21</string>
 				<string>452DD7801481B6DCBE203458</string>
 				<string>8BF4A28E43F6CF370D3EE1C2</string>
 				<string>CBD319AE60AD6032681B4904</string>
@@ -223,6 +224,17 @@
 			<string>sourcecode.swift</string>
 			<key>path</key>
 			<string>App.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
+		<key>44236D4B917299E3A921FE21</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>DownloadStorage.swift</string>
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
 		</dict>
@@ -371,6 +383,13 @@
 			<key>isa</key>
 			<string>PBXBuildFile</string>
 		</dict>
+		<key>86CB94279876336AF04E019D</key>
+		<dict>
+			<key>fileRef</key>
+			<string>44236D4B917299E3A921FE21</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+		</dict>
 		<key>8BF4A28E43F6CF370D3EE1C2</key>
 		<dict>
 			<key>isa</key>
@@ -461,6 +480,7 @@
 			<array>
 				<string>0742EAAFE818D8AF1F2654FF</string>
 				<string>4A65F154EF0D30B3C788EBB8</string>
+				<string>86CB94279876336AF04E019D</string>
 				<string>801803212947630192DC4AE3</string>
 				<string>D1B1E93CC8825EE71A6BC9AF</string>
 				<string>44C878CAF4153C18E9BD5988</string>

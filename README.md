@@ -502,3 +502,11 @@ content checksum. These endpoints neither create playback sessions nor change
 watch history. Revocation prevents subsequent transfer requests; an already-open
 response can finish. Local download queues, storage controls and offline playback
 remain to be implemented in the clients.
+
+The client storage foundation (`DownloadStorage`) now persists per-device limits,
+owned local file records, pins and offline progress. Admission reserves full file
+sizes and temporary space; finalization rechecks the limits. Local deletion records
+its intent before touching UUID-owned files, retains progress for sync, and recovers
+interrupted removal on restart. Delete-after-playback requires actual end-of-file;
+a 95% watched marker alone never deletes media. The foundation is not yet wired to
+client transfer queues or playback and does not expose a Downloads UI yet.
