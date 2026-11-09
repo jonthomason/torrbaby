@@ -2,6 +2,7 @@
 mod api;
 mod catalog;
 mod config;
+mod dolby;
 mod hls;
 mod lan;
 mod matroska;

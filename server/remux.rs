@@ -38,6 +38,7 @@ struct Track {
     video: bool,
     count: u64,
     pts: Vec<u64>,
+    audio_samples: u64,
 }
 
 pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Value> {
@@ -69,6 +70,7 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
             "V_MPEG4/ISO/AVC" => "h264",
             "V_MPEGH/ISO/HEVC" => "hevc",
             "A_AAC" => "aac",
+            "A_AC3" => "ac3",
             other => anyhow::bail!("Remux codec not implemented yet: {other}"),
         };
         let mut params = if video {
@@ -76,10 +78,13 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
         } else {
             CodecParameters::audio(CodecId::new(codec))
         };
-        params.extradata = t
-            .codec_private()
-            .context("Missing codec configuration")?
-            .to_vec();
+        params.extradata = if codec == "ac3" {
+            Vec::new()
+        } else {
+            t.codec_private()
+                .context("Missing codec configuration")?
+                .to_vec()
+        };
         let duration_ns;
         let time_base;
         if video {
@@ -95,6 +100,16 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
                 "Invalid video duration"
             );
             time_base = TimeBase::new(1, 1000);
+        } else if codec == "ac3" {
+            let a = t.audio().context("Missing audio parameters")?;
+            ensure!(
+                [32000.0, 44100.0, 48000.0].contains(&a.sampling_frequency()),
+                "Unsupported AC-3 sample rate"
+            );
+            params.sample_rate = Some(a.sampling_frequency() as u32);
+            params.channels = Some(a.channels().get().try_into()?);
+            duration_ns = 0;
+            time_base = TimeBase::new(1, a.sampling_frequency() as i64);
         } else {
             let a = t.audio().context("Missing audio parameters")?;
             let asc = &params.extradata;
@@ -137,10 +152,47 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
                 video,
                 count: 0,
                 pts: Vec::new(),
+                audio_samples: if codec == "ac3" { 1536 } else { 1024 },
             },
         );
     }
     ensure!(tracks.values().any(|t| t.video), "No supported video track");
+    if tracks
+        .values()
+        .any(|t| t.stream.params.codec_id.as_str() == "ac3")
+    {
+        let started = Instant::now();
+        let mut frame = Frame::default();
+        let mut scanned = 0;
+        while tracks.values().any(|t| {
+            t.stream.params.codec_id.as_str() == "ac3" && t.stream.params.extradata.is_empty()
+        }) {
+            ensure!(
+                scanned < 100_000 && started.elapsed() < Duration::from_secs(30),
+                "AC-3 configuration scan limit"
+            );
+            ensure!(mkv.next_frame(&mut frame)?, "Missing AC-3 audio packet");
+            scanned += 1;
+            ensure!(
+                frame.data.len() <= 64 * 1024 * 1024,
+                "Media frame too large"
+            );
+            if let Some(t) = tracks.get_mut(&frame.track) {
+                if t.stream.params.codec_id.as_str() == "ac3"
+                    && t.stream.params.extradata.is_empty()
+                {
+                    let config = crate::dolby::ac3(&frame.data)?;
+                    ensure!(
+                        Some(config.sample_rate) == t.stream.params.sample_rate
+                            && Some(config.channels) == t.stream.params.channels,
+                        "AC-3 container/header mismatch"
+                    );
+                    t.stream.params.extradata = config.dac3.to_vec();
+                }
+            }
+        }
+        mkv = MatroskaFile::open(BufReader::new(File::open(input)?))?;
+    }
     let mut streams: Vec<_> = tracks.values().map(|t| t.stream.clone()).collect();
     streams.sort_by_key(|s| s.index);
     // create_new never replaces source media or an existing destination.
@@ -196,15 +248,22 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
                 packet.dts = Some(dts);
                 packet.duration = Some(next - dts);
             } else {
+                if t.stream.params.codec_id.as_str() == "ac3" {
+                    let config = crate::dolby::ac3(&packet.data)?;
+                    ensure!(
+                        config.dac3.as_slice() == t.stream.params.extradata,
+                        "AC-3 configuration changed midstream"
+                    );
+                }
                 let rate = t.stream.params.sample_rate.unwrap() as u128;
-                let expected = t.count as u128 * 1024 * 1_000_000_000 / rate;
+                let expected = t.count as u128 * t.audio_samples as u128 * 1_000_000_000 / rate;
                 ensure!(
                     expected.abs_diff(ns as u128) <= scale as u128,
                     "Audio offset/gap needs additional timing support"
                 );
-                packet.pts = Some((t.count * 1024).try_into()?);
+                packet.pts = Some((t.count * t.audio_samples).try_into()?);
                 packet.dts = packet.pts;
-                packet.duration = Some(1024);
+                packet.duration = Some(t.audio_samples as i64);
             }
             packet.flags.keyframe = !t.video || frame.is_keyframe == Some(true);
             mux.write_packet(&packet)?;

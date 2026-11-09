@@ -59,3 +59,25 @@ Existing-output refusal passed. This is not proof of HEVC/HDR, audio sync or see
 behavior. Dolby/DTS, metadata preservation, variable frame rate, nonzero offsets,
 full process supervision and HLS integration remain required. No production
 server deployment or compatibility claim is made for this development command.
+
+## AC-3 passthrough
+
+The development converter now supports AC-3 with a zero-origin, no-CodecDelay
+timeline. `server/dolby.rs` derives the three-byte MP4 dac3 configuration from
+the syncframe header per ETSI TS 102 366 sections 4 and F.4. It validates sync,
+version, sample rate, exact frame length, channel layout and conditional header
+fields. Each packet is revalidated; midstream configuration changes fail rather
+than silently producing a bad stream. A bounded initial scan finds configuration
+before writing the MP4 header. Audio duration is 1,536 samples per syncframe.
+
+Validation used our existing 24-second generated AVC clip plus an owned 440 Hz
+stereo tone. The already-installed ffmpeg was used only to encode the test tone
+and make a reference M4A; it is not linked, bundled or called by the daemon.
+Native Apple decoding produced identical 576 video frames and 1,151,712 PCM
+samples. Both reference and remux audio ended at 23.994 seconds (native decoder
+trimming); their timelines match. An unsupported midstream header caused failure
+and removal of the newly created partial output. A focused standard-header test
+checks the dac3 bytes and rejects truncated/wrong-version packets.
+
+E-AC-3, DTS, nonzero CodecDelay/track offsets, seek acceptance, HDR metadata and
+production HLS integration are still outstanding. No production activation yet.
