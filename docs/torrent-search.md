@@ -45,3 +45,17 @@ The default source option is named Recommended (TPB + CSV); Nyaa is opt-in.
 Visual acceptance remains open: CUA returned `cgWindowNotFound` for both Torrbaby
 and Finder, even though the installed Mac process was running and its main thread
 sample was idle in the AppKit event loop. Do not treat build success as UI proof.
+
+## Matching refinement
+
+Season and episode ranges (S01-S04, Season 1 to 8, S02E03-E05) now rank as packs
+containing the requested episode/season, below exact matches but above conflicting
+releases. Title searches stay broad so literal S02 filtering does not exclude
+those releases. Targeted regression checks pass. Deployed to Diamond with backup
+`rust-20261109-204903`; live search returned 39 unique results in 1.01 seconds,
+cache in 3 ms, and paused magnet add/remove passed again.
+
+TCL confirmed build 20 installed through PACKAGEINFO. Android 21 adds a small
+search-state fix: old results cannot open while a new query is pending, preventing
+a disabled Search button on return. Build 21 is published with verified HTTPS
+checksum; Apple remains 84. Native window inspection is still unavailable.

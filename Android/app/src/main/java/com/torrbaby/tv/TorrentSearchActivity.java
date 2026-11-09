@@ -53,7 +53,7 @@ public final class TorrentSearchActivity extends Activity {
   private LinearLayout page() { LinearLayout root=Ui.column(this); root.setBackgroundColor(Ui.BG); Ui.pad(root,36,24); return root; }
   private void search() {
     String value=query.getText().toString().trim(); if (value.length()<2) return;
-    int request=++generation; int provider=source; search.setEnabled(false); status.setText("Searching…");
+    int request=++generation; int provider=source; search.setEnabled(false); list.setEnabled(false); status.setText("Searching…");
     ((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(query.getWindowToken(),0);
     io.execute(() -> {
       try {
@@ -67,14 +67,14 @@ public final class TorrentSearchActivity extends Activity {
         JSONObject response=api.request("POST","/v1/search/torrents",body);
         runOnUiThread(() -> {
           if(isDestroyed() || request!=generation)return;
-          search.setEnabled(true); results=response.optJSONArray("items"); if(results==null)results=new JSONArray();
+          search.setEnabled(true); list.setEnabled(true); results=response.optJSONArray("items"); if(results==null)results=new JSONArray();
           List<String> messages=new ArrayList<>(); messages.add(results.length()+" results");
           JSONArray providers=response.optJSONArray("providers");
           if(providers!=null) for(int i=0;i<providers.length();i++) {JSONObject p=providers.optJSONObject(i); if(p!=null&&!p.isNull("error"))messages.add(label(p.optString("provider"))+": "+p.optString("error"));}
           status.setText(String.join(" · ",messages)); ((BaseAdapter)list.getAdapter()).notifyDataSetChanged();
           if(results.length()>0)list.requestFocus();
         });
-      } catch(Exception error) {runOnUiThread(() -> {if(!isDestroyed()&&request==generation){search.setEnabled(true);status.setText(MainActivity.message(error));}});}
+      } catch(Exception error) {runOnUiThread(() -> {if(!isDestroyed()&&request==generation){search.setEnabled(true);list.setEnabled(true);status.setText(MainActivity.message(error));}});}
     });
   }
   private static String label(String provider) {return provider.equals("tpb")?"The Pirate Bay":provider.equals("csv")?"Torrent CSV":"Nyaa";}

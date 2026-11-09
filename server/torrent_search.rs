@@ -31,7 +31,9 @@ pub struct Source {
 pub struct Hints {
     pub year: Option<u16>,
     pub season: Option<u16>,
+    pub season_end: Option<u16>,
     pub episode: Option<u16>,
+    pub episode_end: Option<u16>,
     pub resolution: Option<String>,
     pub video_codec: Option<String>,
     pub release_source: Option<String>,
@@ -144,15 +146,9 @@ impl Search {
             .gate
             .try_acquire()
             .context("Search is busy. Try again shortly.")?;
-        let mut terms = query.query.clone();
-        if let Some(season) = query.season {
-            terms.push_str(&format!(" S{season:02}"));
-            if let Some(episode) = query.episode {
-                terms.push_str(&format!("E{episode:02}"));
-            }
-        } else if let Some(year) = query.year {
-            terms.push_str(&format!(" {year}"));
-        }
+        // Keep title searches broad: requiring S02 would hide "Season 2" and
+        // S01-S04 packs. Rank the requested season/episode locally instead.
+        let terms = query.query.clone();
         let responses = futures_util::future::join_all(query.sources.iter().map(|provider| {
             let terms = &terms;
             async move {
@@ -585,6 +581,15 @@ fn hints(name: &str) -> Hints {
     static YEAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b((?:19|20)\d{2})\b").unwrap());
     static EPISODE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)\bS(\d{1,2})(?:[ ._-]*E(\d{1,3}))?\b").unwrap());
+    static SEASON_WORD: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)\bSeasons?[ ._-]+(\d{1,2})(?:[ ._-]*(?:to|-)[ ._-]*(\d{1,2}))?\b").unwrap()
+    });
+    static SEASON_RANGE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)\bS(\d{1,2})[ ._-]*(?:-|to)[ ._-]*S?(\d{1,2})\b").unwrap()
+    });
+    static EPISODE_RANGE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)\bS\d{1,2}[ ._-]*E(\d{1,3})(?:[ ._-]*-[ ._-]*E?|E)(\d{1,3})\b").unwrap()
+    });
     static RES: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)\b(2160p|1080p|1080i|720p|480p|4k)\b").unwrap());
     static CODEC: LazyLock<Regex> = LazyLock::new(|| {
@@ -602,10 +607,30 @@ fn hints(name: &str) -> Hints {
     static LANG: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)\b(ENG|CHS|CHT|JPN|MULTI|DUAL[ ._-]AUDIO)\b").unwrap());
     let ep = EPISODE.captures(name);
+    let season_range = SEASON_RANGE
+        .captures(name)
+        .or_else(|| SEASON_WORD.captures(name));
+    let episode_range = EPISODE_RANGE.captures(name);
+    let season = season_range
+        .as_ref()
+        .and_then(|c| c[1].parse().ok())
+        .or_else(|| ep.as_ref().and_then(|c| c[1].parse().ok()));
+    let episode = episode_range
+        .as_ref()
+        .and_then(|c| c[1].parse().ok())
+        .or_else(|| ep.as_ref().and_then(|c| c.get(2)?.as_str().parse().ok()));
     Hints {
         year: YEAR.captures(name).and_then(|c| c[1].parse().ok()),
-        season: ep.as_ref().and_then(|c| c[1].parse().ok()),
-        episode: ep.as_ref().and_then(|c| c.get(2)?.as_str().parse().ok()),
+        season,
+        season_end: season_range
+            .as_ref()
+            .and_then(|c| c.get(2)?.as_str().parse().ok())
+            .filter(|end| season.is_some_and(|start| *end >= start)),
+        episode,
+        episode_end: episode_range
+            .as_ref()
+            .and_then(|c| c[2].parse().ok())
+            .filter(|end| episode.is_some_and(|start| *end >= start)),
         resolution: RES.find(name).map(|m| m.as_str().to_ascii_lowercase()),
         video_codec: CODEC.find(name).map(|m| m.as_str().to_ascii_uppercase()),
         release_source: SOURCE.find(name).map(|m| m.as_str().to_owned()),
@@ -634,16 +659,30 @@ fn score(item: &mut Item, query: &Query) {
     if overlap == wanted.len() {
         item.match_notes.push("Title words match".into());
     }
-    for (label, want, got) in [
-        ("Year", query.year, item.hints.year),
-        ("Season", query.season, item.hints.season),
-        ("Episode", query.episode, item.hints.episode),
+    for (label, want, got, end) in [
+        ("Year", query.year, item.hints.year, None),
+        (
+            "Season",
+            query.season,
+            item.hints.season,
+            item.hints.season_end,
+        ),
+        (
+            "Episode",
+            query.episode,
+            item.hints.episode,
+            item.hints.episode_end,
+        ),
     ] {
         if let Some(want) = want {
             match got {
                 Some(got) if got == want => {
                     score += 10;
                     item.match_notes.push(format!("{label} matches"));
+                }
+                Some(start) if end.is_some_and(|end| (start..=end).contains(&want)) => {
+                    score += 8;
+                    item.match_notes.push(format!("{label} included in pack"));
                 }
                 Some(_) => {
                     score -= 45;
@@ -679,10 +718,25 @@ mod tests {
             "a".repeat(40),
             source.clone(),
         );
+        let mut pack = item(
+            "Example Show S01-S04 Complete".into(),
+            "c".repeat(40),
+            source.clone(),
+        );
+        let mut word_pack = item(
+            "Example Show Season 1 to 8".into(),
+            "d".repeat(40),
+            source.clone(),
+        );
         let mut wrong = item("Example.Show.S01E03.1080p".into(), "b".repeat(40), source);
+        score(&mut pack, &q);
+        score(&mut word_pack, &q);
         score(&mut right, &q);
         score(&mut wrong, &q);
         assert!(right.match_score > wrong.match_score);
+        assert!(pack.match_score > wrong.match_score);
+        assert!(word_pack.match_score > wrong.match_score);
+        assert_eq!(hints("Example S02E03-E05").episode_end, Some(5));
         assert_eq!(right.hints.episode, Some(3));
         assert_eq!(right.hints.audio, vec!["DDP5.1"]);
         let url = reqwest::Url::parse(&right.magnet).unwrap();
