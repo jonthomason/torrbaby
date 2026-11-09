@@ -351,6 +351,8 @@ struct AddTorrentView: View {
     @Environment(\.dismiss) var dismiss
     @State private var magnet = ""
     @State private var paused = false
+    @State private var submitting = false
+    @State private var showProgress = false
     init(initialMagnet: String = "") { _magnet = State(initialValue: canonicalMagnet(initialMagnet)) }
     var body: some View {
         NavigationStack {
@@ -361,18 +363,33 @@ struct AddTorrentView: View {
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                         #endif
                     Toggle("Add paused", isOn: $paused)
-                }
-                SwiftUI.Section {
+                }.disabled(submitting)
+                if showProgress {
+                    SwiftUI.Section {
+                        HStack(spacing: 10) {
+                            ProgressView().controlSize(.small)
+                            Text("Adding download…").foregroundStyle(.secondary)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("Adding download")
+                    }
                 }
             }.formStyle(.grouped).navigationTitle("Add a torrent")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }.disabled(submitting)
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
+                        guard !submitting, !store.busy else { return }
+                        let link = canonicalMagnet(magnet)
+                        let addPaused = paused
                         store.perform {
+                            submitting = true
+                            defer { submitting = false; showProgress = false }
                             struct AddedTorrent: Decodable { let name: String?; let hashString: String? }
                             struct AddResult: Decodable { let torrentAdded: AddedTorrent?; let torrentDuplicate: AddedTorrent? }
-                            let result: AddResult = try await store.request("POST", "/v1/torrents", body: ["magnet": canonicalMagnet(magnet), "paused": paused])
+                            let result: AddResult = try await store.request("POST", "/v1/torrents", body: ["magnet": link, "paused": addPaused])
                             dismiss()
                             let added = result.torrentAdded ?? result.torrentDuplicate
                             let existing = store.torrents.first { $0.id == added?.hashString }
@@ -380,9 +397,17 @@ struct AddTorrentView: View {
                             let detail = [added?.name, result.torrentDuplicate == nil ? nil : state].compactMap { $0 }.joined(separator: " · ")
                             store.notify(result.torrentDuplicate == nil ? "Torrent added" : "Torrent already in your list", detail: detail, torrentHash: added?.hashString)
                         }
-                    }.disabled(!canonicalMagnet(magnet).hasPrefix("magnet:?") || store.busy || !store.connected)
+                    }.disabled(!canonicalMagnet(magnet).hasPrefix("magnet:?") || submitting || store.busy || !store.connected)
                 }
             }
+        }
+        .interactiveDismissDisabled(submitting)
+        .task(id: submitting) {
+            guard submitting else { showProgress = false; return }
+            do { try await Task.sleep(for: .milliseconds(500)) }
+            catch { return }
+            guard !Task.isCancelled, submitting else { return }
+            showProgress = true
         }
         #if os(macOS)
         .frame(width: 540, height: 390)
