@@ -164,7 +164,7 @@ struct RootView: View {
                 }.padding(.horizontal, 18).padding(.top, 24)
                 List(selection: Binding(get: { location.section }, set: { navigate(Location(section: $0)) })) {
                     SwiftUI.Section("Library") {
-                        ForEach([Section.library, .findTorrents, .movies, .shows, .downloads]) { section in
+                        ForEach([Section.library, .findTorrents, .movies, .shows]) { section in
                             Label(section.rawValue, systemImage: section.icon).padding(.vertical, 5).tag(section)
                         }
                     }
