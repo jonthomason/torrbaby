@@ -1,0 +1,16 @@
+{
+  "listen_host": "127.0.0.1",
+  "listen_port": 8765,
+  "token_file": "~/.config/torrbaby/api.token",
+  "state_file": "~/.local/state/torrbaby/state.json",
+  "transmission_url": "http://127.0.0.1:9091/transmission/rpc",
+  "transmission_auth_file": null,
+  "plex_url": "http://127.0.0.1:32400",
+  "plex_token_file": null,
+  "plex_preferences": "~/Library/Preferences/com.plexapp.plexmediaserver.plist",
+  "source": "/path/to/Media/Downloads",
+  "movies": "/path/to/Media/Movies",
+  "tv": "/path/to/Media/TV",
+  "poll_seconds": 30,
+  "paused": false
+}
