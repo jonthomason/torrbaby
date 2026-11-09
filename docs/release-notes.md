@@ -1,3 +1,14 @@
+## Mobile build 83 — 2026-11-09
+
+Republished the stable Apple client from commit `de1ebb3` as iPhone/iPad build 83.
+Subtitles pins the running job above the queue, with title, target language,
+cue progress, and two-second status refresh. In-progress torrent-search work is
+not included in this release.
+
+Published to Miyu Install on the Mac. Verified the HTTPS install page, manifest,
+and downloaded IPA checksum. Signing covers six registered devices and expires
+2027-11-09. Confirm build 83 at the top of Settings after installing.
+
 # Build 54 — early offline downloads
 
 Mac build installed; iPhone/iPad build available on the Mac-hosted Miyu Install
