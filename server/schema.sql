@@ -16,4 +16,5 @@ PRAGMA foreign_keys=ON;
         CREATE TABLE IF NOT EXISTS pairing_grants (id TEXT PRIMARY KEY, digest TEXT NOT NULL UNIQUE, expires REAL NOT NULL, client_id TEXT);
         CREATE TABLE IF NOT EXISTS device_credentials (client_id TEXT PRIMARY KEY REFERENCES clients(id), digest TEXT NOT NULL UNIQUE);
         CREATE TABLE IF NOT EXISTS offline_progress_events (client_id TEXT NOT NULL REFERENCES clients(id), event_id TEXT NOT NULL, response TEXT NOT NULL, received REAL NOT NULL, PRIMARY KEY(client_id,event_id));
-        PRAGMA user_version=7;
+        CREATE TABLE IF NOT EXISTS subtitle_preferences (scope TEXT PRIMARY KEY, document TEXT NOT NULL, updated REAL NOT NULL);
+        PRAGMA user_version=8;

@@ -640,3 +640,9 @@ User reports iPad left/right correctly skip 15 seconds but Space does not play/p
 - Downloads now compact native List rows, 40x60 thumbnails, sizes, active progress/status; storage used/limit at top; mobile trailing full swipe deletes without extra prompt. Mac has direct trash. Existing keep-download toggle retained.
 - Mac/iOS release60 compiled. Mac installed/relaunched; live AX verified Resume+Download on Matrix and storage total on empty Downloads page. Active/ready/swipe transitions not physically exercised yet. iOS OTA60 published to Mac-only Miyu Install.
 - Latest explicit user requirement: shared server subtitle defaults (enabled, language, style), per-title overrides shared across devices, inherited default until overridden, Use defaults reset. Mobile Chinese still absent because prepared VTT isn't delivered via native player. Next priority is native subtitle delivery plus persistent preference API/client application. Do not claim translation generation equals playable captions.
+
+## Shared subtitle preference backend
+
+- Schema8 adds subtitle_preferences, shared household defaults plus whole-title overrides (series applies to episodes). API contract documented in docs/interface.md. Strict validation; reset resumes inheritance; reads return defaults/effective/overridden.
+- Rust build passed. One focused SQLite check passed default inheritance, override persistence across reopen, invalid value rejection, unknown title rejection, reset. Not deployed; Diamond remains schema7. Apple UI and native player application remain pending. Prepare signed server deployment with database backup before schema8 rollout.
+- Download build60 published and Mac installed; latest commit bf2d3e1. User still waiting on Chinese caption selection and persistent settings: prioritize next.

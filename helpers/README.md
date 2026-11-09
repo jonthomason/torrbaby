@@ -165,10 +165,10 @@ target/debug/torrbaby package-media --input INPUT --output NEW_OUTPUT_DIRECTORY 
   --helper /tmp/torrbaby-media-segmenter --max-bytes 536870912
 ```
 
-Prototype limits: 8 audio/video tracks, 300 elapsed seconds during packaging,
-512 MiB output. A production Rust worker must enforce external timeout/cancellation,
-source revision checks, disk reservations/cache cleanup, authentication and session
-URL scoping before integration. It intentionally does not replace direct playback.
+Limits: 8 audio/video tracks, 600 elapsed seconds inside the helper,
+512 MiB default output budget. The Rust supervisor enforces timeout/cancellation
+and source revision checks. Persistent cache cleanup, authentication and session
+URL scoping are still needed before playback integration. It intentionally does not replace direct playback.
 Container/audio/HDR compatibility and timestamp alignment need broader validation.
 
 A generated 24-second H.264 fixture was packaged and served from a temporary

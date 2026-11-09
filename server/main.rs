@@ -11,6 +11,7 @@ mod pairing;
 mod scanner;
 mod storage;
 mod subtitle_jobs;
+mod subtitle_preferences;
 mod subtitles;
 mod telemetry;
 mod transmission;

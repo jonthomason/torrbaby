@@ -795,7 +795,17 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             return Ok(json!(db.torrent_rates(hash)?));
         }
     }
+    if let Some(title) = path.strip_prefix("/v1/library/titles/").and_then(|p| p.strip_suffix("/subtitle-preferences")) {
+        return match method.as_str() {
+            "GET" => db.subtitle_preferences(Some(title)),
+            "PUT" => db.save_subtitle_preferences(Some(title), body),
+            "DELETE" => db.reset_subtitle_preferences(title),
+            _ => bail!("Unsupported subtitle preferences method"),
+        };
+    }
     match (method.as_str(),path) {
+        ("GET","/v1/subtitle-preferences") => db.subtitle_preferences(None),
+        ("PUT","/v1/subtitle-preferences") => db.save_subtitle_preferences(None, body),
         ("GET","/v1/library") => db.catalog(),
         ("GET","/v1/library/matches") => Ok(json!(db.documents("assets")?.into_iter().filter(|a|a["available"]==true && a["status"]!="matched" && a["role"]!="extra").collect::<Vec<_>>())),
         ("GET","/v1/status") => {
