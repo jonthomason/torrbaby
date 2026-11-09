@@ -759,3 +759,10 @@ User reports iPad left/right correctly skip 15 seconds but Space does not play/p
 - Latest live API: 50 scanned, 1 translated, 0 failed; next Chinese job 1296/1619 cues. Catalog processing continues on Diamond.
 - Visual inspection unavailable: CUA cgWindowNotFound for installed Mac and Device Hub. Mac process at correct installed path was running; do not claim visual acceptance.
 - Android remains untouched/untracked. Persistent goal remains incomplete: MKV native remux/delivery, offline generated captions, profiles, physicalTV pairing and broader backlog still pending.
+
+## Remux timing investigation continuation
+
+- Previous goal turn was progress: build71 and daemon checkpoints deployed, committed/pushed.
+- Reviewed local oxideav-mp4 muxer/fragmented writer and Dolby sample entries: explicit PTS/DTS/durations required; Dolby config must be provided, not inferred by muxer. No dependency added. Design/evidence in docs/matroska-remux.md.
+- Extended inspect-matroska with presentation-order cadence histogram, duplicate PTS and quantization-aware default-duration deviations. Packet order stays unchanged. cargo check/build passed; owned synthetic reordered timestamps, duplicates, gaps and scale fixture passed. This diagnostic is not yet deployed; no app build required.
+- Next: derive/validate decode timeline and Dolby configuration, implement supervised Rust remux, prove native AVPlayer decode/seek/sync before exposing MKV prepared captions. Goal active.

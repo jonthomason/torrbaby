@@ -40,6 +40,7 @@ pub fn inspect(path: &Path, frame_limit: usize) -> Result<Value> {
         explicit_duration: usize, keyframes: usize,
     }
     let mut timing: BTreeMap<u64,Timing> = BTreeMap::new();
+    let mut presentation_times: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
     let mut frame = Frame::default();
     let start = Instant::now();
     let mut sampled = 0;
@@ -48,6 +49,7 @@ pub fn inspect(path: &Path, frame_limit: usize) -> Result<Value> {
         ensure!(frame.data.len() <= 64 * 1024 * 1024, "Media frame too large");
         sampled += 1;
         let pts = frame.timestamp.checked_mul(scale).context("Timestamp overflow")?;
+        presentation_times.entry(frame.track).or_default().push(pts);
         let stats = timing.entry(frame.track).or_default();
         if stats.last_pts_ns.is_some_and(|previous| previous > pts) { stats.reordered += 1; }
         stats.frames += 1; stats.bytes += frame.data.len() as u64;
@@ -57,8 +59,23 @@ pub fn inspect(path: &Path, frame_limit: usize) -> Result<Value> {
         stats.explicit_duration += usize::from(frame.duration.is_some());
         stats.keyframes += usize::from(frame.is_keyframe == Some(true));
     }
+    // Presentation-order cadence is separate from packet/decode order. Reporting
+    // adjacent packet PTS differences would mistake B-frame reordering for gaps.
+    let cadence: BTreeMap<_,_> = presentation_times.into_iter().map(|(track, mut times)| {
+        times.sort_unstable();
+        let mut deltas: BTreeMap<u64,usize> = BTreeMap::new();
+        for pair in times.windows(2) { *deltas.entry(pair[1]-pair[0]).or_default() += 1; }
+        let duplicate_pts = deltas.remove(&0).unwrap_or(0);
+        let default_duration = file.tracks().iter().find(|t|t.track_number().get()==track)
+            .and_then(|t|t.default_duration()).map(|n|n.get());
+        // Matroska timestamp quantization permits one tick of rounding error.
+        let outside_default_cadence = default_duration.map(|duration| deltas.iter()
+            .filter(|(delta,_)| delta.abs_diff(duration)>scale).map(|(_,count)|*count).sum::<usize>());
+        (track, json!({"duplicate_pts":duplicate_pts,"presentation_delta_ns":deltas,
+            "outside_default_cadence":outside_default_cadence}))
+    }).collect();
     Ok(json!({"container":"matroska","timestamp_scale_ns":scale,"tracks":tracks,
-        "sampled_frames":sampled,"timing":timing}))
+        "sampled_frames":sampled,"timing":timing,"cadence":cadence}))
 }
 
 pub fn tracks(path: &Path) -> Result<Value> {
