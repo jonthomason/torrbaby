@@ -13,6 +13,7 @@ struct TVRootView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     Image("TorrbabyLogo").resizable().frame(width: 110, height: 110)
                         .clipShape(RoundedRectangle(cornerRadius: 22)).accessibilityHidden(true)
+                    Text(AppRelease.description).font(.headline).foregroundStyle(.secondary)
                     Text("Meet your server.").font(.largeTitle.bold())
                     TextField("Server URL", text: $server)
                     SecureField("API token", text: $token)
@@ -31,6 +32,8 @@ struct TVRootView: View {
                     TVTorrentView().tabItem { Label("Torrents", systemImage: "arrow.down.circle") }
                     TVSearchView().tabItem { Label("Search", systemImage: "magnifyingglass") }
                     VStack(spacing: 30) {
+                        Text("Torrbaby").font(.largeTitle.bold())
+                        Text(AppRelease.description).font(.headline).monospacedDigit().foregroundStyle(.secondary)
                         Image("TorrbabyLogo").resizable().frame(width: 120, height: 120)
                         Label(store.connected ? "Connected" : "Offline", systemImage: store.connected ? "checkmark.circle" : "wifi.slash")
                         Button("Connection settings") { settings = true }
@@ -62,7 +65,7 @@ private struct TVLibraryView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 48) {
-                if let featured {
+                if kind == nil, let featured {
                     NavigationLink(value: LibraryDestination(id: featured.id)) {
                         LibraryArtwork(id: featured.id, variant: "backdrop")
                             .frame(height: 600)
@@ -78,14 +81,21 @@ private struct TVLibraryView: View {
                             }
                     }.buttonStyle(TVHeroButtonStyle()).padding(.horizontal, -70).padding(.top, -40)
                 }
-                let continuing = titles.filter { $0.resume != nil }.sorted { ($0.resume?.lastPlayed ?? 0) > ($1.resume?.lastPlayed ?? 0) }
-                TVShelf(name: "Continue watching", titles: continuing)
-                TVShelf(name: "Recently added", titles: Array(titles.prefix(20)))
                 if kind == nil {
+                    let continuing = titles.filter { $0.resume != nil }.sorted { ($0.resume?.lastPlayed ?? 0) > ($1.resume?.lastPlayed ?? 0) }
+                    TVShelf(name: "Continue watching", titles: continuing)
+                    TVShelf(name: "Recently added", titles: titles)
+                    let watched = titles.filter { $0.assets.contains { $0.lastPlayed > 0 } }
+                        .sorted { ($0.assets.map(\.lastPlayed).max() ?? 0) > ($1.assets.map(\.lastPlayed).max() ?? 0) }
+                    TVShelf(name: "Recently watched", titles: watched)
                     TVShelf(name: "Movies", titles: titles.filter { $0.kind == "movie" })
                     TVShelf(name: "TV Shows", titles: titles.filter { $0.kind == "tv" })
+                    let genres = Array(Set(titles.flatMap(\.genres))).sorted()
+                    ForEach(genres, id: \.self) { genre in
+                        TVShelf(name: genre, titles: titles.filter { $0.genres.contains(genre) })
+                    }
                 } else {
-                    Text(kind == "movie" ? "All movies" : "All shows").font(.title2.bold())
+                    Text(kind == "movie" ? "Movies" : "TV Shows").font(.largeTitle.bold())
                     TVPosterGrid(titles: titles.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending })
                 }
                 if titles.isEmpty { ContentUnavailableView("Your library", systemImage: "film.stack") }
@@ -227,14 +237,39 @@ private struct TVShelf: View {
     var body: some View {
         if !titles.isEmpty {
             VStack(alignment: .leading, spacing: 24) {
-                Text(name).font(.title2.bold())
+                HStack {
+                    Text(name).font(.title2.bold())
+                    Spacer()
+                    NavigationLink {
+                        TVCollectionView(name: name, titleIDs: titles.map(\.id))
+                    } label: { Label("See All", systemImage: "chevron.right").font(.headline) }
+                }
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: 40) {
-                        ForEach(titles) { TVPoster(title: $0).frame(width: 240) }
+                        ForEach(Array(titles.prefix(10))) { TVPoster(title: $0).frame(width: 240) }
                     }.padding(20)
                 }.scrollClipDisabled().scrollIndicators(.hidden)
             }.focusSection()
         }
+    }
+}
+
+
+private struct TVCollectionView: View {
+    @EnvironmentObject var store: Store
+    let name: String
+    let titleIDs: [String]
+    private var titles: [LibraryTitle] {
+        let byID = Dictionary((store.library?.titles ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return titleIDs.compactMap { byID[$0] }
+    }
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 40) {
+                Text(name).font(.largeTitle.bold())
+                TVPosterGrid(titles: titles)
+            }.padding(70)
+        }.background(Theme.canvas)
     }
 }
 

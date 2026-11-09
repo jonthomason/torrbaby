@@ -24,3 +24,7 @@ Remember the selected order independently per list on each client:
 | Complete | Alphabetical | Date added (newest first), size (largest first) |
 
 Use natural, case-insensitive title order for alphabetical sorting; break equal primary values by title then stable torrent identity. Sorting occurs after filtering/search. Downloads here means the torrent Downloading list, not the separate offline media download queue. Apple clients share `TorrentSort` in Models.swift; preferences are `torrentSort.downloading`, `torrentSort.seeding`, `torrentSort.complete`. Android implementation belongs to the concurrent Android session.
+
+### App release identification
+
+Every client must display its installed app version and build number at the top of Settings, including while disconnected. Use bundle/package metadata, never a hard-coded release string. Apple format: `Version 0.2.0 · Build 59`. Server version is separate. Android should use versionName/versionCode for the same presentation.

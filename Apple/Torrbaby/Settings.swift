@@ -100,6 +100,9 @@ struct SettingsView: View {
     @State private var showPairing = false
     var body: some View {
         Form {
+            SwiftUI.Section("Torrbaby") {
+                Text(AppRelease.description).monospacedDigit()
+            }
             SwiftUI.Section("Connection") {
                 LabeledContent("Server", value: store.server.isEmpty ? "Not configured" : store.server)
                 if let status = store.status { LabeledContent("Daemon", value: "Torrbaby \(status.version)") }
@@ -182,7 +185,7 @@ struct SettingsView: View {
             }
             #endif
             SwiftUI.Section("About") {
-                Text("Torrbaby 0.2 · MIT License")
+                Text("MIT License")
             }
         }.formStyle(.grouped)
         .onAppear {

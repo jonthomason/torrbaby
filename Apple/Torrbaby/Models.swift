@@ -228,3 +228,12 @@ enum TorrentSort: String, CaseIterable, Identifiable {
         }
     }
 }
+
+/// Read the installed bundle so every platform reports the actual release.
+enum AppRelease {
+    static var description: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+        return "Version \(version) · Build \(build)"
+    }
+}

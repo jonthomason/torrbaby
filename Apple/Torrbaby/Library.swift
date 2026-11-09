@@ -132,7 +132,7 @@ struct LibraryBrowser: View {
                 } else if browsing && order == "Recently added" {
                     let continuing = titles.filter { $0.resume != nil }.sorted { ($0.resume?.lastPlayed ?? 0) > ($1.resume?.lastPlayed ?? 0) }
                     if !continuing.isEmpty { shelf("Continue watching", continuing) }
-                    shelf("Recently added", Array(titles.prefix(16)))
+                    shelf("Recently added", titles)
                     shelf("Movies", titles.filter { $0.kind == "movie" })
                     shelf("TV Shows", titles.filter { $0.kind == "tv" })
                     ForEach(genres.prefix(6), id: \.self) { genre in shelf(genre, titles.filter { $0.genres.contains(genre) }) }
@@ -152,10 +152,20 @@ struct LibraryBrowser: View {
     @ViewBuilder func shelf(_ name: String, _ items: [LibraryTitle]) -> some View {
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: 14) {
-                Text(name).font(.title2.bold())
+                HStack {
+                    Text(name).font(.title2.bold())
+                    Spacer()
+                    NavigationLink {
+                        ScrollView {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 155, maximum: 240), spacing: 20)], alignment: .leading, spacing: 28) {
+                                ForEach(items) { title in poster(title) }
+                            }.padding(24)
+                        }.background(Theme.canvas).navigationTitle(name)
+                    } label: { Text("See All").font(.subheadline.weight(.semibold)) }
+                }
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: 18) {
-                        ForEach(items) { title in poster(title).frame(width: 175) }
+                        ForEach(Array(items.prefix(8))) { title in poster(title).frame(width: 175) }
                     }.padding(.vertical, 6)
                 }.scrollIndicators(.hidden)
             }
