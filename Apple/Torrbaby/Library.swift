@@ -1,5 +1,7 @@
 import SwiftUI
 
+struct LibraryDestination: Hashable { let id: String }
+
 struct MediaLibrary: Decodable {
     let titles: [LibraryTitle]
     let lastScan: Double?
@@ -101,7 +103,7 @@ struct LibraryBrowser: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 28) {
                 if browsing, let featured = titles.first(where: { $0.backdrop != nil && !$0.playable.isEmpty }) {
-                    NavigationLink { LibraryDetail(titleID: featured.id) } label: {
+                    NavigationLink(value: LibraryDestination(id: featured.id)) {
                         LibraryArtwork(id: featured.id, variant: "backdrop")
                             .frame(height: 360)
                             .overlay(LinearGradient(colors: [.clear, .black.opacity(0.92)], startPoint: .top, endPoint: .bottom))
@@ -161,7 +163,7 @@ struct LibraryBrowser: View {
         }
     }
     func poster(_ title: LibraryTitle) -> some View {
-        NavigationLink { LibraryDetail(titleID: title.id) } label: {
+        NavigationLink(value: LibraryDestination(id: title.id)) {
             VStack(alignment: .leading, spacing: 8) {
                 LibraryArtwork(id: title.id).aspectRatio(2/3, contentMode: .fit).clipShape(RoundedRectangle(cornerRadius: 12))
                 Text(title.title).font(.headline).lineLimit(2).multilineTextAlignment(.leading)

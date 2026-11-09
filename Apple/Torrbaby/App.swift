@@ -95,8 +95,18 @@ private struct TransferMenu: View {
 
 #if os(macOS)
 private struct AddTorrentCommandKey: FocusedValueKey { typealias Value = () -> Void }
+private struct BackCommandKey: FocusedValueKey { typealias Value = () -> Void }
+private struct ForwardCommandKey: FocusedValueKey { typealias Value = () -> Void }
 private struct SearchCommandKey: FocusedValueKey { typealias Value = () -> Void }
 extension FocusedValues {
+    var goBack: (() -> Void)? {
+        get { self[BackCommandKey.self] }
+        set { self[BackCommandKey.self] = newValue }
+    }
+    var goForward: (() -> Void)? {
+        get { self[ForwardCommandKey.self] }
+        set { self[ForwardCommandKey.self] = newValue }
+    }
     var addTorrent: (() -> Void)? {
         get { self[AddTorrentCommandKey.self] }
         set { self[AddTorrentCommandKey.self] = newValue }
@@ -108,6 +118,8 @@ extension FocusedValues {
 }
 private struct TorrbabyCommands: Commands {
     @ObservedObject var store: Store
+    @FocusedValue(\.goBack) private var goBack
+    @FocusedValue(\.goForward) private var goForward
     @FocusedValue(\.addTorrent) private var addTorrent
     @FocusedValue(\.searchContent) private var searchContent
     var body: some Commands {
@@ -123,6 +135,10 @@ private struct TorrbabyCommands: Commands {
         CommandGroup(after: .toolbar) {
             Button("Refresh") { Task { await store.refresh() } }.keyboardShortcut("r")
                 .disabled(!store.configured)
+        }
+        CommandMenu("History") {
+            Button("Back") { goBack?() }.keyboardShortcut("[").disabled(goBack == nil)
+            Button("Forward") { goForward?() }.keyboardShortcut("]").disabled(goForward == nil)
         }
         SidebarCommands()
     }

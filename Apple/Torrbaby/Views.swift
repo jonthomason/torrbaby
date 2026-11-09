@@ -41,10 +41,41 @@ private struct TorrentDraft: Identifiable {
 struct RootView: View {
     @EnvironmentObject var store: Store
     @Environment(\.scenePhase) var phase
-    @State private var selection: Section? = .library
+    private struct Location: Equatable {
+        var section: Section? = .library
+        var path = NavigationPath()
+    }
+    @State private var location = Location()
+    @State private var past: [Location] = []
+    @State private var future: [Location] = []
+    private var selection: Section? { location.section }
+    private func navigate(_ next: Location) {
+        guard next != location else { return }
+        past.append(location)
+        if past.count > 100 { past.removeFirst() }
+        future.removeAll()
+        location = next
+    }
+    private func back() {
+        guard let previous = past.popLast() else { return }
+        future.append(location)
+        location = previous
+    }
+    private func forward() {
+        guard let next = future.popLast() else { return }
+        past.append(location)
+        location = next
+    }
+    @ToolbarContentBuilder private var historyControls: some ToolbarContent {
+        ToolbarItemGroup(placement: .navigation) {
+            Button(action: back) { Image(systemName: "chevron.left") }
+                .help("Back").disabled(past.isEmpty)
+            Button(action: forward) { Image(systemName: "chevron.right") }
+                .help("Forward").disabled(future.isEmpty)
+        }
+    }
     @State private var showConnect = false
     @State private var torrentDraft: TorrentDraft?
-    @State private var revealedTorrent: String?
     var body: some View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 22) {
@@ -56,7 +87,7 @@ struct RootView: View {
                         Text("Your home cinema").font(.caption2).foregroundStyle(Theme.muted)
                     }
                 }.padding(.horizontal, 18).padding(.top, 24)
-                List(selection: $selection) {
+                List(selection: Binding(get: { location.section }, set: { navigate(Location(section: $0)) })) {
                     SwiftUI.Section("Library") {
                         ForEach([Section.library, .movies, .shows]) { section in
                             Label(section.rawValue, systemImage: section.icon).padding(.vertical, 5).tag(section)
@@ -86,7 +117,7 @@ struct RootView: View {
                 }.padding(20)
             }.navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
         } detail: {
-            NavigationStack {
+            NavigationStack(path: Binding(get: { location.path }, set: { navigate(Location(section: selection, path: $0)) })) {
                 Group {
                     if selection == .automation { AutomationView() }
                     else if selection == .settings { SettingsView(showConnect: $showConnect) }
@@ -98,6 +129,7 @@ struct RootView: View {
                 .background(Theme.canvas)
                 .navigationTitle(selection?.rawValue ?? "Torrbaby")
                 .toolbar {
+                    historyControls
                     ToolbarItemGroup(placement: .primaryAction) {
                         if store.busy { ProgressView().controlSize(.small) }
                         Button { Task { await store.refresh() } } label: { Image(systemName: "arrow.clockwise") }
@@ -106,8 +138,8 @@ struct RootView: View {
                             .disabled(!store.connected)
                     }
                 }
-                .navigationDestination(for: String.self) { hash in TorrentDetail(hash: hash) }
-                .navigationDestination(item: $revealedTorrent) { hash in TorrentDetail(hash: hash) }
+                .navigationDestination(for: String.self) { hash in TorrentDetail(hash: hash).navigationBarBackButtonHidden().toolbar { historyControls } }
+                .navigationDestination(for: LibraryDestination.self) { route in LibraryDetail(titleID: route.id).navigationBarBackButtonHidden().toolbar { historyControls } }
                 .safeAreaInset(edge: .top) {
                     if let error = store.connectionError {
                         HStack {
@@ -122,6 +154,9 @@ struct RootView: View {
         }
         #if os(macOS)
         .focusedSceneValue(\.addTorrent, { torrentDraft = TorrentDraft() })
+        .focusedSceneValue(\.goBack, past.isEmpty ? nil : { back() })
+        .focusedSceneValue(\.goForward, future.isEmpty ? nil : { forward() })
+        .background(MouseHistoryNavigation(back: { back() }, forward: { forward() }))
         #endif
         .sheet(isPresented: $showConnect) { ConnectionView() }
         .sheet(item: $torrentDraft) { draft in
@@ -134,10 +169,12 @@ struct RootView: View {
         }
         .overlay(alignment: .top) {
             NoticeBanner { hash in
+                var next = Location(section: selection)
                 if let torrent = store.torrents.first(where: { $0.id == hash }) {
-                    selection = !torrent.completed ? .active : torrent.status == 6 ? .seeding : .complete
+                    next.section = !torrent.completed ? .active : torrent.status == 6 ? .seeding : .complete
                 }
-                revealedTorrent = hash
+                next.path.append(hash)
+                navigate(next)
             }.padding(.top, 12)
         }
         .alert("Couldn’t complete that action", isPresented: Binding(get: { store.actionError != nil }, set: { if !$0 { store.actionError = nil } })) {
@@ -511,4 +548,37 @@ struct NoticeBanner: View {
     }
 }
 
+#endif
+
+#if os(macOS)
+/// Local event handling stays scoped to this window and never captures another app's mouse input.
+private struct MouseHistoryNavigation: NSViewRepresentable {
+    let back: () -> Void
+    let forward: () -> Void
+    final class HistoryView: NSView {
+        var back: () -> Void = {}
+        var forward: () -> Void = {}
+        var monitor: Any?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .otherMouseUp) { [weak self] event in
+                guard let self, let window = self.window, window.isKeyWindow,
+                      event.window === window, window.attachedSheet == nil else { return event }
+                switch event.buttonNumber {
+                case 3: self.back(); return nil
+                case 4: self.forward(); return nil
+                default: return event
+                }
+            }
+        }
+        deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
+    }
+    func makeNSView(context: Context) -> HistoryView { HistoryView() }
+    func updateNSView(_ view: HistoryView, context: Context) {
+        view.back = back
+        view.forward = forward
+    }
+}
 #endif

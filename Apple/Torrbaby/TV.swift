@@ -31,6 +31,7 @@ struct TVRootView: View {
                     }.pickerStyle(.segmented).padding(.horizontal, 60)
                     LibraryBrowser(kind: category == "Home" ? nil : category == "Movies" ? "movie" : "tv").id(category)
                 }.navigationTitle("Torrbaby")
+                .navigationDestination(for: LibraryDestination.self) { route in LibraryDetail(titleID: route.id) }
                 .toolbar { Button("Settings") { settings = true } }
             }
         }
