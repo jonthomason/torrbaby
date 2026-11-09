@@ -24,6 +24,11 @@ struct Arguments {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Run the standalone server and background library/organization workers.
+    Serve {
+        #[arg(long)]
+        config: PathBuf,
+    },
     /// Run the migration preview against a copy of the database. No organizer runs.
     Preview {
         #[arg(long)]
@@ -90,11 +95,17 @@ fn check_folder(path: &Path) -> io::Result<(usize, bool)> {
 #[tokio::main]
 async fn main() -> Result<()> {
     match Arguments::parse().command {
+        Command::Serve { config } => {
+            let settings = config::Config::load(&config)?;
+            let database = config::expand(&settings.state_file)?.with_extension("sqlite3");
+            let listen = format!("{}:{}", settings.listen_host, settings.listen_port);
+            api::serve(config, database, listen, false).await?;
+        }
         Command::Preview {
             config,
             database,
             listen,
-        } => api::serve(config, database, listen).await?,
+        } => api::serve(config, database, listen, true).await?,
         Command::CheckAccess { media_root } => {
             let mut failed = false;
             for folder in ["Downloads", "Movies", "TV"] {

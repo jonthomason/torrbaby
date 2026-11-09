@@ -339,11 +339,11 @@ fn plan(config: &Config, t: &Value) -> Result<Option<Value>> {
 }
 
 pub async fn tick(s: &Service) -> Result<()> {
+    let _guard = s.mutation_lock.lock().await;
     let config = s.effective_config()?;
     if config.paused {
         return Ok(());
     }
-    let _guard = s.mutation_lock.lock().await;
     let all = torrents(s).await?;
     s.change_state(|state| {
         state["last_poll"] = json!(now());

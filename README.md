@@ -28,7 +28,7 @@ an alternate port before replacing the live service. Back up the database and
 retain the old executable/configuration for rollback. Do not run two organizers
 against the live library at once.
 
-The Rust binary provides `preview --config PATH --database COPY --listen ADDRESS`,
+The Rust binary provides `serve --config PATH`, `preview --config PATH --database COPY --listen ADDRESS`,
 `check-access --media-root PATH`, `check-transmission --config PATH`, and an
 API client (`request METHOD PATH --token-file PATH`). Build with `cargo build --locked`.
 The preview serves the filesystem catalog, direct range streaming, TMDB metadata
@@ -38,10 +38,12 @@ supports torrent actions, watched status and persisted settings through the API.
 only automatic organization is disabled. Use an isolated RPC fixture for mutation
 checks. Never point a preview at the live database.
 
-The move/rename workflow is being ported with Transmission responsible for file
-changes and filesystem verification before marking work complete. Automatic
-organization, automatic naming and production launchd cutover are not yet enabled.
-The legacy server remains live until that work and compatibility checks pass.
+The `serve` command runs automatic library scans, metadata collection and completed
+torrent moves, with Transmission responsible for file changes and filesystem
+verification before marking work complete. It holds an exclusive database lease
+and handles launchd termination gracefully. Automatic metadata-based naming and
+production launchd cutover remain in progress; the legacy server remains live
+until that work and compatibility checks pass.
 
 Turn the shared Diamond daemon into a **standalone media server with no Plex
 dependency**. Scan and persist metadata for every movie and TV episode, apply

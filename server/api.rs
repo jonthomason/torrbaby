@@ -25,6 +25,7 @@ pub struct Service {
     pub(crate) db: Mutex<Database>,
     pub(crate) rpc: Transmission,
     started: Instant,
+    preview: bool,
     torrents: Mutex<Option<(Instant, Vec<Value>)>>,
     data_dir: PathBuf,
     http: reqwest::Client,
@@ -35,22 +36,49 @@ pub struct Service {
 }
 
 // Keep unimplemented routes explicit during the port; never silently report success.
-pub async fn serve(config_path: PathBuf, database: PathBuf, listen: String) -> Result<()> {
+pub async fn serve(
+    config_path: PathBuf,
+    database: PathBuf,
+    listen: String,
+    preview: bool,
+) -> Result<()> {
     let config = Config::load(&config_path)?;
     let live = expand(&config.state_file)?.with_extension("sqlite3");
-    if database == live
-        || (database.exists()
-            && live.exists()
-            && database.canonicalize()? == live.canonicalize()?)
+    if preview
+        && (database == live
+            || (database.exists()
+                && live.exists()
+                && database.canonicalize()? == live.canonicalize()?))
     {
         bail!("The migration preview must use a copy of the live database");
     }
+    // Bind before starting workers: a second server must never organize files.
+    let listener = tokio::net::TcpListener::bind(&listen).await?;
+    if let Some(parent) = database.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    use std::os::unix::fs::OpenOptionsExt;
+    let database = database
+        .parent()
+        .context("Database needs a parent directory")?
+        .canonicalize()?
+        .join(database.file_name().context("Invalid database path")?);
+    let lease = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(database.with_extension("server.lock"))?;
+    lease
+        .try_lock()
+        .context("Another Torrbaby server owns this database")?;
     let service = Arc::new(Service {
         token: config.token()?,
         rpc: Transmission::new(&config)?,
         db: Mutex::new(Database::open(&database, None)?),
         config,
         started: Instant::now(),
+        preview,
         torrents: Mutex::new(None),
         data_dir: database
             .parent()
@@ -99,21 +127,73 @@ pub async fn serve(config_path: PathBuf, database: PathBuf, listen: String) -> R
             }
         }
     });
+    let mut workers = Vec::new();
+    if !preview {
+        let organizer = service.clone();
+        workers.push(tokio::spawn(async move {
+            loop {
+                if let Err(error) = crate::organizer::tick(&organizer).await {
+                    let message = error.to_string();
+                    let _ = organizer.change_state(|state| state["last_error"] = json!(message));
+                    eprintln!("Organization: {error}");
+                }
+                let seconds = organizer
+                    .effective_config()
+                    .map(|c| c.poll_seconds)
+                    .unwrap_or(30.0);
+                tokio::time::sleep(std::time::Duration::from_secs_f64(seconds)).await;
+            }
+        }));
+        let scanner = service.clone();
+        workers.push(tokio::spawn(async move {
+            loop {
+                if let Err(error) = scan_library(&scanner).await {
+                    let _ = scanner.change_state(|state| {
+                        state["library_scan"]["scanning"] = json!(false);
+                        state["library_scan"]["error"] = json!(error.to_string());
+                    });
+                    eprintln!("Library scan: {error}");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        }));
+        let metadata = service.clone();
+        workers.push(tokio::spawn(async move {
+            loop {
+                if let Err(error) = collect_metadata(&metadata).await {
+                    eprintln!("Metadata collection: {error}");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        }));
+    }
     let router = Router::new()
         .fallback(any(dispatch))
         .layer(DefaultBodyLimit::max(65536))
         .with_state(service);
-    let listener = tokio::net::TcpListener::bind(&listen).await?;
     eprintln!(
-        "Torrbaby Rust migration preview listening on {}; organizer disabled",
-        listener.local_addr()?
+        "Torrbaby Rust server listening on {}; automation {}",
+        listener.local_addr()?,
+        if preview {
+            "disabled (preview)"
+        } else {
+            "enabled"
+        }
     );
     axum::serve(listener, router)
         .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+            let mut terminate =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("Install termination handler");
+            tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
         })
         .await?;
     sampler.abort();
+    for worker in workers {
+        worker.abort();
+        let _ = worker.await;
+    }
+    drop(lease);
     Ok(())
 }
 
@@ -435,8 +515,8 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             let state = db.state()?;
             let config = effective.as_ref().context("Missing settings")?;
             Ok(json!({"version":env!("CARGO_PKG_VERSION"),"uptime_seconds":s.started.elapsed().as_secs(),
-                "settings":{"source":config.source,"movies":config.movies,"tv":config.tv,"poll_seconds":config.poll_seconds,"paused":true},
-                "last_poll":null,"last_error":"Migration preview: organizer not enabled","pending_scans":0,"scan_error":null,"jobs":state["jobs"]}))
+                "settings":{"source":config.source,"movies":config.movies,"tv":config.tv,"poll_seconds":config.poll_seconds,"paused":s.preview || config.paused},
+                "last_poll":state["last_poll"],"last_error":if s.preview { json!("Migration preview: organizer not enabled") } else {state["last_error"].clone()},"pending_scans":0,"scan_error":null,"jobs":state["jobs"]}))
         }
         ("GET","/v1/events") => Ok(db.state()?["events"].take()),
         ("GET","/v1/clients") => Ok(json!(db.rows("SELECT * FROM clients ORDER BY last_seen DESC",[])?)),
@@ -846,6 +926,7 @@ async fn scan_library(s: &Service) -> Result<()> {
     let Ok(_guard) = s.scan_lock.try_lock() else {
         return Ok(());
     };
+    let _mutation = s.mutation_lock.lock().await;
     let old = {
         let mut db =
             s.db.lock()
