@@ -571,3 +571,9 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
 - Apple/Torrbaby/TV.swift now has native Home/Movies/TV Shows/Torrents/Search/Settings tabs, a large backdrop hero, blurred backdrop color wash, 240pt poster shelves, and native card focus behavior. Search keyboard is confined to Search. No local downloads on tvOS by user requirement. Torrents secondary, read-only status grouped Downloading/Seeding/Complete with wide violet gauges.
 - Debug tvOS simulator build passed and live Diamond library verified visually in Device Hub. Physical TV and full remote navigation/playback acceptance remain pending. Detail screen still shared with mobile and needs a TV-specific visual pass. Hero still has native TV safe-area/card treatment; user prefers as much full bleed as possible. Metadata currently requests w1280 backdrops; higher-resolution cache support remains follow-up.
 - Unsigned simulator build did not retain Keychain token across reinstall/relaunch; repeat DEBUG one-use bootstrap copy into app data tmp and SIMCTL_CHILD_TORRBABY_BOOTSTRAP_FILE for launch. Do not put token in command arguments/logs/source.
+
+## tvOS full-bleed/detail follow-up
+
+- TVLibraryView ignores horizontal safe-area for genuine edge-to-edge hero artwork; hero uses a restrained mint underline for remote focus rather than scaling/rounding the whole image card.
+- TVMediaDetail replaces the shared mobile detail on tvOS: full-bleed backdrop, large title/rating/genre, Play/Resume, season controls, episode rows and extras, backdrop wash. Uses existing native PlayerScreen and server playback/progress APIs; no downloads.
+- tvOS simulator build passed. Live UI verification with Device Hub remote Down/Select/Back confirmed hero focus, opening movie detail, and returning to Home. No playback started during this visual check; physical Apple TV acceptance and episode/season navigation still pending.
