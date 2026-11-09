@@ -276,6 +276,9 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             do {
                 let file = try move.get()
                 defer { try? FileManager.default.removeItem(at: file) }
+                // Background callbacks can precede task restoration, but a known
+                // replacement task must never be finalized by an older callback.
+                if let current = self.tasks[id], current !== downloadTask { return }
                 guard let response, (200...299).contains(response.statusCode) else {
                     throw APIError(message: response?.statusCode == 412 ? "The file changed. Remove this download and add it again." : "Download failed. Reconnect and try again.")
                 }

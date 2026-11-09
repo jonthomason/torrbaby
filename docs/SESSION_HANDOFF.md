@@ -437,3 +437,16 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
   guard late completion from an older task when a replacement task exists for the
   same download ID, without dropping background completions delivered before task
   restoration. Continue the existing cancellation/finalization lifecycle review.
+
+## Follow-up: complete queue HTTP verification and server rollout preparation
+
+- Guarded stale successful completion callbacks when a replacement task for the
+  same item already exists; early background callbacks before task restoration
+  remain admissible and still pass durable state/revision/size checks.
+- Updated the saved queue fixture for current Playback/API signatures and shared
+  progress. Real HTTP 4 MiB transfer passed pause/resume, exact payload, local URL,
+  shared resume import, no deletion on partial viewing, end-triggered deletion,
+  retained pending progress after deletion, and subsequent acknowledgment sync.
+- Rechecked Rust download/range and pairing fixtures: both passed. Signed Rust
+  bundle build passed. Preparing an additive server rollout with DB backup;
+  production before rollout is schema 6, 1 history record and 3 registered clients.
