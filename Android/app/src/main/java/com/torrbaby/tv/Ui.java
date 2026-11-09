@@ -8,6 +8,9 @@ import android.view.*;
 import android.widget.*;
 
 final class Ui {
+  private static final Typeface BODY_FONT = Typeface.create("sans-serif", Typeface.NORMAL);
+  private static final Typeface LABEL_FONT = Typeface.create("sans-serif-medium", Typeface.NORMAL);
+  private static final Typeface TITLE_FONT = Typeface.create("sans-serif", Typeface.BOLD);
   static final int BG = Color.rgb(14, 19, 26),
       PANEL = Color.rgb(23, 29, 38),
       TEXT = Color.rgb(240, 243, 245),
@@ -21,8 +24,8 @@ final class Ui {
   static GradientDrawable shape(int color, int stroke, Context c) {
     GradientDrawable g = new GradientDrawable();
     g.setColor(color);
-    g.setCornerRadius(dp(c, 7));
-    if (stroke != 0) g.setStroke(dp(c, 3), stroke);
+    g.setCornerRadius(dp(c, 12));
+    if (stroke != 0) g.setStroke(dp(c, 2), stroke);
     return g;
   }
 
@@ -31,7 +34,7 @@ final class Ui {
     StateListDrawable s = new StateListDrawable();
     s.addState(new int[] {android.R.attr.state_focused}, shape(0xff304d49, ACCENT, c));
     s.addState(new int[] {android.R.attr.state_pressed}, shape(0xff304d49, ACCENT, c));
-    s.addState(new int[] {}, shape(0x663d454b, 0, c));
+    s.addState(new int[] {}, shape(0xff242e39, 0, c));
     v.setBackground(s);
     v.setFocusable(true);
     v.setFocusableInTouchMode(true);
@@ -56,17 +59,15 @@ final class Ui {
     t.setTextSize(size);
     t.setTextColor(color);
     t.setIncludeFontPadding(false);
-    t.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
-    t.setLetterSpacing(-.015f);
+    t.setTypeface(BODY_FONT);
+    t.setLetterSpacing(0);
     return t;
   }
 
   static TextView title(Context c, String s, int size) {
     TextView t = text(c, s, size, TEXT);
-    t.setTypeface(
-        Typeface.create(
-            size >= 24 ? "sans-serif" : "sans-serif-medium",
-            size >= 24 ? Typeface.BOLD : Typeface.NORMAL));
+    t.setTypeface(size >= 24 ? TITLE_FONT : LABEL_FONT);
+    t.setLetterSpacing(size >= 24 ? -.025f : -.01f);
     return t;
   }
 
@@ -74,7 +75,7 @@ final class Ui {
     Button b = new Button(c);
     b.setText(label);
     b.setTextSize(15);
-    b.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+    b.setTypeface(LABEL_FONT);
     b.setLetterSpacing(0);
     b.setIncludeFontPadding(false);
     b.setStateListAnimator(null);

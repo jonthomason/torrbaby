@@ -312,6 +312,33 @@ pub struct Sidecar {
     pub hearing_impaired: bool,
 }
 
+// Detect unlabelled text only; never infer audio language from subtitle content.
+fn detected_sidecar_language(path: &Path) -> Option<String> {
+    use std::{collections::HashMap, io::Write, process::{Command, Stdio}, sync::{LazyLock, Mutex}, time::{Duration, Instant}};
+    use sha2::Digest;
+    static CACHE: LazyLock<Mutex<HashMap<Vec<u8>, Option<String>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+    let raw = std::fs::read_to_string(path).ok()?;
+    let cues = parse_srt(&raw).ok()?;
+    let sample: String = cues.iter().take(400).map(|c| c.text.as_str()).collect::<Vec<_>>().join(" ").chars().take(6000).collect();
+    let key = sha2::Sha256::digest(sample.as_bytes()).to_vec();
+    if let Some(result) = CACHE.lock().ok()?.get(&key) { return result.clone(); }
+    let helper = std::env::current_exe().ok()?.with_file_name("torrbaby-subtitle-extractor");
+    let mut child = Command::new(helper).arg("--detect-language").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    if child.stdin.take()?.write_all(sample.as_bytes()).is_err() { let _ = child.kill(); let _ = child.wait(); return None; }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            _ => { let _ = child.kill(); let _ = child.wait(); return None; }
+        }
+    }
+    let output = child.wait_with_output().ok()?;
+    let result: Option<String> = serde_json::from_slice(&output.stdout).ok()?;
+    if let Ok(mut cache) = CACHE.lock() { if cache.len() >= 1024 { cache.clear(); } cache.insert(key, result.clone()); }
+    result
+}
+
 /// Only exact video stems or stem.language/flags suffixes in the same directory.
 /// Never guess that arbitrary subtitles in a season folder belong to one episode.
 pub fn discover(media: &Path) -> Result<Vec<Sidecar>> {
@@ -382,6 +409,7 @@ pub fn discover(media: &Path) -> Result<Vec<Sidecar>> {
         if !recognized || entry.metadata()?.len() > 8_388_608 {
             continue;
         }
+        if language.is_none() { language = detected_sidecar_language(&path); }
         let id: String = sha2::Sha256::digest(name.as_bytes())
             .iter()
             .map(|b| format!("{b:02x}"))
@@ -397,6 +425,11 @@ pub fn discover(media: &Path) -> Result<Vec<Sidecar>> {
     }
     tracks.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(tracks)
+}
+
+pub fn sidecar_path(media: &Path, id: &str) -> Result<std::path::PathBuf> {
+    let track = discover(media)?.into_iter().find(|t| t.id == id).context("Subtitle track not found")?;
+    crate::api::checked_path(media.parent().context("Missing directory")?, &track.name)
 }
 
 pub fn read_sidecar(media: &Path, id: &str) -> Result<String> {

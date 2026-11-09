@@ -452,11 +452,11 @@ public class MainActivity extends Activity {
         new FrameLayout.LayoutParams(
             Ui.dp(this, detail ? 675 : 625), -2, Gravity.BOTTOM | Gravity.LEFT);
     frame.addView(info, ip);
-    TextView name = Ui.title(this, t.title, detail ? 28 : 24);
+    TextView name = Ui.title(this, t.title, detail ? 32 : 30);
     name.setMaxLines(2);
     Ui.add(info, name, -1, -2);
     Ui.gap(info, 10);
-    Ui.add(info, Ui.text(this, t.metadata(), 19, 0xffcccccc), -1, -2);
+    Ui.add(info, Ui.text(this, t.metadata(), 14, 0xffbdc9d4), -1, -2);
     Ui.gap(info, 15);
     Library.Asset asset = t.preferred();
     if (detail) {
@@ -570,11 +570,11 @@ public class MainActivity extends Activity {
     ImageView poster = new ImageView(this);
     poster.setScaleType(ImageView.ScaleType.CENTER_CROP);
     poster.setBackgroundColor(Ui.PANEL);
-    Ui.round(poster, 8);
+    Ui.round(poster, 12);
     Ui.add(card, poster, -1, 180);
     art.load(poster, t.id, "poster");
     Ui.gap(card, 10);
-    TextView name = Ui.title(this, t.title, 13);
+    TextView name = Ui.title(this, t.title, 14);
     name.setMaxLines(2);
     name.setEllipsize(android.text.TextUtils.TruncateAt.END);
     Ui.add(card, name, -1, 34);

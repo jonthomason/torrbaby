@@ -231,15 +231,28 @@ final class Store: ObservableObject {
             await refresh()
         } catch { connectionError = error.localizedDescription }
     }
+    @Published var subtitleQueueError: String?
+    private var refreshingStatus = false
+    func refreshStatus() async {
+        guard configured, !refreshingStatus else { return }
+        refreshingStatus = true
+        defer { refreshingStatus = false }
+        do {
+            let value: DaemonStatus = try await request("GET", "/v1/status", timeout: 8)
+            status = value
+            subtitleQueueError = nil
+        } catch {
+            subtitleQueueError = "Couldn’t refresh the queue. Reconnecting…"
+        }
+    }
     func refresh() async {
         guard configured, !refreshing else { return }
         refreshing = true
         defer { refreshing = false }
         do {
-            let newStatus: DaemonStatus = try await request("GET", "/v1/status")
+            await refreshStatus()
             let received: [Torrent] = try await request("GET", "/v1/torrents")
             let newTorrents = etaSmoother.update(received, server: server, now: Date().timeIntervalSince1970)
-            status = newStatus
             torrents = newTorrents.sorted { $0.addedDate > $1.addedDate }
             connectionError = nil
             let newEvents: [AuditEvent] = try await request("GET", "/v1/events")
@@ -262,7 +275,6 @@ final class Store: ObservableObject {
             #if !os(tvOS)
             DownloadQueue.shared.importSharedProgress()
             #endif
-            status = newStatus
             torrents = newTorrents.sorted { $0.addedDate > $1.addedDate }
             receiveActivity(newEvents)
             events = newEvents.reversed()

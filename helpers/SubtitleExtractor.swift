@@ -1,11 +1,24 @@
 // Text-only MP4/QuickTime subtitle extraction. No OCR or media decoding.
 import Foundation
 import AVFoundation
+import NaturalLanguage
 struct ExtractionFailure: Error { let message: String }
 struct TimedText: Codable { let start_ms: UInt64; let end_ms: UInt64; let text: String }
 @main struct SubtitleExtractor {
     static func main() async {
         do {
+            if CommandLine.arguments.dropFirst().first == "--detect-language" {
+                let data = try FileHandle.standardInput.readToEnd() ?? Data()
+                guard data.count <= 32768, let text = String(data: data, encoding: .utf8), text.count >= 200 else {
+                    FileHandle.standardOutput.write(Data("null".utf8)); return
+                }
+                let recognizer = NLLanguageRecognizer()
+                recognizer.processString(text)
+                let best = recognizer.languageHypotheses(withMaximum: 2).sorted { $0.value > $1.value }
+                let language = best.first.flatMap { $0.value >= 0.75 && $0.value - (best.dropFirst().first?.value ?? 0) >= 0.5 ? $0.key.rawValue : nil }
+                FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject: language as Any? ?? NSNull(), options: [.fragmentsAllowed]))
+                return
+            }
             guard (2...3).contains(CommandLine.arguments.count) else { throw ExtractionFailure(message: "Expected input and optional track ID") }
             let asset = AVURLAsset(url: URL(fileURLWithPath: CommandLine.arguments[1]))
             let allTracks = try await asset.load(.tracks)

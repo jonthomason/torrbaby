@@ -25,9 +25,13 @@ enum Section: String, CaseIterable, Identifiable {
 
 struct SubtitleQueueView: View {
     @EnvironmentObject var store: Store
-    private let groups = [("Working", ["running"]), ("Waiting", ["queued", "scanning", "interrupted"]), ("Finished", ["ready"]), ("Needs attention", ["failed", "stale", "expired"])]
+    @Environment(\.scenePhase) private var phase
+    private let groups = [("Waiting", ["queued", "scanning", "interrupted"]), ("Finished", ["ready"]), ("Needs attention", ["failed", "stale", "expired"])]
     var body: some View {
         List {
+            if let error = store.subtitleQueueError {
+                Label(error, systemImage: "wifi.exclamationmark").foregroundStyle(.secondary)
+            }
             if store.status?.settings.backgroundSubtitles == false {
                 Label("Automatic subtitles paused", systemImage: "pause.circle")
             } else if store.status?.subtitlePreparation?.waitingForIdle == true {
@@ -66,8 +70,32 @@ struct SubtitleQueueView: View {
                 if preparation.queue?.isEmpty != false { Text("No subtitle jobs").foregroundStyle(.secondary) }
             } else { ProgressView("Loading subtitles…") }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let item = store.status?.subtitlePreparation?.queue?.first(where: { $0.state == "running" }) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Now processing", systemImage: "captions.bubble").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Text(item.title).font(.headline).lineLimit(2)
+                    HStack {
+                        Text(item.target == nil ? "Extracting subtitles" : item.target == "en" ? "English" : "简体中文")
+                        Spacer()
+                        if item.totalCues > 0 { Text("\(item.completedCues) / \(item.totalCues)").monospacedDigit() }
+                    }.font(.caption).foregroundStyle(.secondary)
+                    if item.totalCues > 0 {
+                        ProgressView(value: Double(item.completedCues), total: Double(item.totalCues))
+                    } else { ProgressView().controlSize(.small) }
+                }
+                .padding().frame(maxWidth: .infinity, alignment: .leading)
+                .background(.regularMaterial)
+            }
+        }
         .navigationTitle("Subtitles")
-        .refreshable { await store.refresh() }
+        .refreshable { await store.refreshStatus() }
+        .task {
+            while !Task.isCancelled {
+                if phase == .active { await store.refreshStatus() }
+                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            }
+        }
     }
     private func prioritize(_ item: SubtitleQueueItem) {
         guard item.state != "ready", item.state != "running",
@@ -75,7 +103,7 @@ struct SubtitleQueueView: View {
         store.perform {
             try await store.send("POST", "/v1/library/assets/\(asset)/subtitles/prioritize")
             store.notify("Title prioritized", detail: "Starts after the current subtitle job.")
-            await store.refresh()
+            await store.refreshStatus()
         }
     }
 }

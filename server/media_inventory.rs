@@ -21,6 +21,24 @@ fn save(db: &Database, id: &str, revision: &str, info: &Value) -> Result<()> {
         rusqlite::params![id,revision,info.to_string(),now()])?;
     Ok(())
 }
+pub fn update_sidecar_languages(db: &Database, id: &str, tracks: &[crate::subtitles::Sidecar]) -> Result<()> {
+    let mut info = cached(db, id)?;
+    if info["state"] != "ready" { return Ok(()); }
+    if let Some(existing) = info["subtitle_tracks"].as_array_mut() {
+        for item in existing.iter_mut().filter(|t| t["sidecar"] == true) {
+            if let Some(track) = tracks.iter().find(|t| item["name"].as_str() == Some(t.name.as_str())) {
+                item["language"] = serde_json::to_value(&track.language)?;
+                item["id"] = json!(track.id); item["track"] = json!(1); item["extraction_supported"] = json!(true);
+            }
+        }
+    }
+    let asset = db.asset(id)?;
+    if let Some(path) = asset["path"].as_str() {
+        save(db, id, &crate::subtitle_jobs::revision(Path::new(path))?, &info)?;
+    }
+    Ok(())
+}
+
 fn language(track: &Value) -> Option<&'static str> {
     let tag = track["language"].as_str()?.to_ascii_lowercase();
     if tag == "en" || tag == "eng" || tag.starts_with("en-") { Some("en") }
@@ -89,7 +107,7 @@ pub async fn tick(s: &Service) -> Result<()> {
             cached(&db,id)?
         };
         if info["retry_after"].as_f64().is_some_and(|t| t>now()) { continue; }
-        if info["state"] == "pending" || info["state"] == "failed" {
+        if info["state"] == "pending" || info["state"] == "failed" || (info["language_inventory_version"] != 3 && info["subtitle_tracks"].as_array().is_some_and(|tracks| tracks.iter().any(|t|t["sidecar"]==true))) {
             if inspected { continue; }
             inspected=true;
             let input = match crate::api::media_file(s,id,0).await { Ok(p)=>p, Err(_)=>continue };
@@ -98,9 +116,9 @@ pub async fn tick(s: &Service) -> Result<()> {
                     let sidecar_input=input.clone();
                     let sidecars=tokio::task::spawn_blocking(move || crate::subtitles::discover(&sidecar_input)).await??;
                     let mut subtitle_tracks=inventory["tracks"].as_array().cloned().unwrap_or_default();
-                    subtitle_tracks.extend(sidecars.into_iter().map(|t|json!({"language":t.language,"name":t.name,"sidecar":true,"text_extractable":true,"extraction_supported":false,"forced":t.forced})));
-                    info=json!({"state":"ready","audio_tracks":inventory["audio_tracks"].as_array().cloned().unwrap_or_default(),
-                        "subtitle_tracks":subtitle_tracks,"prepared":[],"jobs":[],"scanned_at":now()});
+                    subtitle_tracks.extend(sidecars.into_iter().map(|t|json!({"id":t.id,"track":1,"language":t.language,"name":t.name,"sidecar":true,"text_extractable":true,"extraction_supported":true,"forced":t.forced})));
+                    info=json!({"state":"ready","language_inventory_version":3,"audio_tracks":inventory["audio_tracks"].as_array().cloned().unwrap_or_default(),
+                        "subtitle_tracks":subtitle_tracks,"prepared":info["prepared"],"jobs":info["jobs"],"scanned_at":now()});
                 }
                 Err(error)=> { info=json!({"state":"failed","error":error.to_string(),"retry_after":now()+3600.0,"audio_tracks":[],"subtitle_tracks":[],"prepared":[]}); }
             }
@@ -145,13 +163,17 @@ pub async fn tick(s: &Service) -> Result<()> {
         let Some(source)=tracks.iter().find(|t| language(t)==Some(source_language) && t["extraction_supported"]==true && t["forced"]!=true) else { continue; };
         let Some(track)=source["track"].as_u64() else { continue; };
         let input=crate::api::media_file(s,id,0).await?;
+        let input=if source["sidecar"]==true {
+            let sidecar=source["id"].as_str().context("Missing sidecar ID")?.to_owned();
+            tokio::task::spawn_blocking(move || crate::subtitles::sidecar_path(&input,&sidecar)).await??
+        } else {input};
         let original=s.subtitle_jobs.prepare(id,input.clone(),track,Some(source_language.into()),None)?;
         let translated=s.subtitle_jobs.prepare(id,input,track,Some(source_language.into()),Some(target_language.into()))?;
         info["jobs"]=json!([original["id"],translated["id"]]);
         info["preparation_state"]=json!("preparing");
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
         save(&db,id,&revision,&info)?;
-        break;
+        if s.subtitle_jobs.busy() { break; }
     }
     Ok(())
 }

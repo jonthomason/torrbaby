@@ -19,7 +19,7 @@ final class MediaLanguages {
   }
 
   static String name(String code) {
-    if (code == null || code.isEmpty() || code.equals("und") || code.equals("null")) return "Unknown";
+    if (code == null || code.isEmpty() || code.equals("und") || code.equals("null")) return "";
     String tag = code.toLowerCase(Locale.ROOT).replace('_', '-');
     if (tag.equals("zh-hans")) return "Chinese (Simplified)";
     if (tag.equals("zh-hant")) return "Chinese (Traditional)";
@@ -42,7 +42,12 @@ final class MediaLanguages {
       JSONObject track = tracks.optJSONObject(i);
       if (track != null) {
         String language = name(track.optString("language", "und"));
-        names.add(language.equals("Unknown") ? "Unknown language" : language);
+        if (language.isEmpty()) {
+          String codec = track.optString("codec", "").trim();
+          language = key.equals("audio_tracks") && !codec.isEmpty()
+              ? codec.toUpperCase(Locale.ROOT) : "Track " + (i + 1);
+        }
+        names.add(language);
       }
     }
     return names.isEmpty() ? "None" : String.join(" · ", names);
@@ -66,7 +71,7 @@ final class MediaLanguages {
     }
     List<String> subtitles = new ArrayList<>();
     if (!nativeLanguages.equals("None")) subtitles.add(nativeLanguages);
-    for (String language : generated) if (!language.equals("Unknown")) subtitles.add(language + " \uFFFC");
+    for (String language : generated) if (!language.isEmpty()) subtitles.add(language + " \uFFFC");
     lines.add("Subtitles  ·  " + (subtitles.isEmpty() ? "None" : String.join(" · ", subtitles)));
     return lines;
   }

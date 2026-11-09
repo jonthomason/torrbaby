@@ -47,7 +47,7 @@ final class Subtitles {
             CaptionStyleCompat.EDGE_TYPE_NONE,
             Color.BLACK,
             font));
-    view.setFractionalTextSize(.035f * p.optInt("size_percent", 100) / 100);
+    view.setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * p.optInt("size_percent", 100) / 100);
   }
 
   static void edit(Activity activity, Api api, Executor io, String title) {

@@ -34,7 +34,7 @@ public final class DiscoveryTestRunner extends Instrumentation {
         Library.Asset asset = library.titles.get(0).assets.get(0);
         if (!asset.complete || asset.position != 12.5 || asset.season != 1
             || asset.mediaInfo.has("probe")
-            || asset.mediaInfo.getJSONArray("audio_tracks").getJSONObject(0).has("codec")
+            || !asset.mediaInfo.getJSONArray("audio_tracks").getJSONObject(0).getString("codec").equals("aac")
             || !MediaLanguages.lines(asset.mediaInfo).get(1).contains("Chinese (Simplified)"))
           throw new Exception("Catalog projection lost browsing information");
         Library.parse(CatalogJson.parse(compact.toString()));

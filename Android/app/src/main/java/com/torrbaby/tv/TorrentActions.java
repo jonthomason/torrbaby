@@ -272,7 +272,7 @@ final class TorrentActions {
       case 6:
         return "Seeding";
       default:
-        return "Unknown status";
+        return "Status unavailable";
     }
   }
 

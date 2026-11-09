@@ -129,6 +129,7 @@ impl Manager {
         }
         Ok(
             json!({"id":job.id,"asset_id":job.asset_id,"state":job.state,"error":job.error,
+            "sidecar":if job.input.extension().is_some_and(|e|e.eq_ignore_ascii_case("srt")) { job.input.file_name().and_then(|n|n.to_str()).map(|name|sha2::Sha256::digest(name.as_bytes()).iter().map(|b|format!("{b:02x}")).collect::<String>()) } else {None},
             "track":job.track,"source":job.source,"target":job.target,"completed_cues":job.completed_cues,"total_cues":job.total_cues,
             "path":if job.state=="ready" {Some(format!("/v1/subtitle-jobs/{id}.vtt"))} else {None}}),
         )
@@ -169,8 +170,8 @@ impl Manager {
             input
                 .extension()
                 .and_then(|s|s.to_str())
-                .is_some_and(|s| ["mkv", "webm", "mp4", "m4v", "mov"].contains(&s.to_ascii_lowercase().as_str())),
-            "Embedded preparation supports Matroska and MP4 text subtitles"
+                .is_some_and(|s| ["mkv", "webm", "mp4", "m4v", "mov", "srt"].contains(&s.to_ascii_lowercase().as_str())),
+            "Preparation supports Matroska, MP4 and SRT text subtitles"
         );
         ensure!(
             (target.is_none() && source.as_deref().is_none_or(|s| ["en", "zh-Hans"].contains(&s)))
@@ -354,5 +355,32 @@ impl Manager {
         if let Ok(mut pending) = self.pending.lock() {
             pending.remove(&job.id);
         }
+    }
+}
+
+#[cfg(test)]
+mod sidecar_job_tests {
+    use super::*;
+    #[tokio::test]
+    async fn sidecar_jobs_preserve_timing_and_track_file_revisions() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("torrbaby-sidecar-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root)?;
+        let input = root.join("example.en.srt");
+        fs::write(&input, "1\n00:00:01,000 --> 00:00:03,000\nOur garden is quiet today.\n")?;
+        let manager = Manager::new(&root)?;
+        let job = manager.prepare("asset-test", input.clone(), 1, Some("en".into()), None)?;
+        let id = job["id"].as_str().unwrap();
+        for _ in 0..100 {
+            if manager.status(id)?["state"] == "ready" { break; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let ready = manager.status(id)?;
+        assert_eq!(ready["state"], "ready");
+        assert_eq!(ready["sidecar"].as_str().unwrap().len(), 64);
+        assert!(manager.artifact(id)?.contains("00:00:01.000 --> 00:00:03.000"));
+        fs::write(&input, "changed source")?;
+        assert_eq!(manager.status(id)?["state"], "stale");
+        fs::remove_dir_all(root)?;
+        Ok(())
     }
 }

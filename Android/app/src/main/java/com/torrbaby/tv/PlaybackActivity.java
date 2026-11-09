@@ -101,7 +101,7 @@ public class PlaybackActivity extends Activity {
                     new MediaItem.SubtitleConfiguration.Builder(
                             Uri.parse(api.url(t.getString("path"))))
                         .setMimeType(MimeTypes.TEXT_VTT)
-                        .setLabel(t.isNull("language") ? "Subtitles (unknown language)" : MediaLanguages.name(t.optString("language")));
+                        .setLabel(MediaLanguages.name(t.optString("language")).isEmpty() ? "Subtitles" : MediaLanguages.name(t.optString("language")));
                 if (!t.isNull("language")) b.setLanguage(t.optString("language"));
                 subtitles.add(b.build());
               }

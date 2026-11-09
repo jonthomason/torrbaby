@@ -24,6 +24,6 @@ public class MediaLanguagesTest {
   @Test public void missingInventoryIsNotReportedAsNoLanguages() throws Exception {
     assertEquals("Checking languages…", MediaLanguages.lines(null).get(0));
     assertEquals("Languages unavailable", MediaLanguages.lines(new JSONObject("{\"state\":\"failed\"}")).get(0));
-    assertEquals("Unknown", MediaLanguages.name("und"));
+    assertEquals("", MediaLanguages.name("und"));
   }
 }

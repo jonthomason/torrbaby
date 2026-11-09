@@ -52,7 +52,7 @@ struct Torrent: Codable, Identifiable, Hashable {
         case 4: return isStalled ? "Waiting for peers" : "Downloading"
         case 5: return "Queued to seed"
         case 6: return "Seeding"
-        default: return "Unknown"
+        default: return "Status unavailable"
         }
     }
     var displayName: String {

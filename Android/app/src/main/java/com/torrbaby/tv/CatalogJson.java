@@ -12,7 +12,7 @@ final class CatalogJson {
   private static final Set<String> INFO = new HashSet<>(Arrays.asList(
       "state", "audio_tracks", "subtitle_tracks", "prepared"));
   private static final Set<String> TRACK = new HashSet<>(Arrays.asList(
-      "state", "language", "generated"));
+      "state", "language", "generated", "codec"));
 
   static JSONObject parse(String raw) throws Exception {
     try (JsonReader reader = new JsonReader(new StringReader(raw))) {

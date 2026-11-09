@@ -557,7 +557,10 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
                 bail!("Invalid asset ID");
             }
             let input = media_file(s, id, 0).await?;
-            let track = body["track"].as_u64().context("Choose a subtitle track")?;
+            let (input, track) = if let Some(sidecar) = body["sidecar"].as_str() {
+                let sidecar = sidecar.to_owned();
+                (tokio::task::spawn_blocking(move || crate::subtitles::sidecar_path(&input, &sidecar)).await??, 1)
+            } else { (input, body["track"].as_u64().context("Choose a subtitle track")?) };
             let source = body
                 .get("source")
                 .map(|value| {
@@ -626,6 +629,10 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             let tracks =
                 tokio::task::spawn_blocking(move || crate::subtitles::discover(&sidecar_media))
                     .await??;
+            {
+                let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+                crate::media_inventory::update_sidecar_languages(&db, id, &tracks)?;
+            }
             let tracks: Vec<_> = tracks
                 .into_iter()
                 .map(|track| {
