@@ -814,3 +814,13 @@ User reports iPad left/right correctly skip 15 seconds but Space does not play/p
 - Native Apple format description confirms BT2020/PQ/matrix9,pasp3:4,mastering24bytes correctGBR+white+luminance,CLL1000/FALL400. Owned fixture checks exactboxes. This is metadata transport, not real10bit HDR visual/device acceptance.
 - cargo build, noticesgeneration (vendoredlicensepresent), existing Matroskasubtitle smoke, owned EAC3 offset/delay/native-seek checks passed. No production deployment/new Apple build. Prior realcatalog temporaryHLS artifacts still retained for next test.
 - Next remaining: dynamicDV/HDR10+ evidence, tracklanguage/default preservation, actualnative HLS/generatedcaption acceptance and conditional supervised integration. Goal active, Android untouched.
+
+## Build73 / offline experience and current continuation
+
+- Apple offline state now observes network availability and server reachability. Library empty state says Offline mode and links to Downloads; cached titles remain visible. Sidebar/banner use concise offline status; retry does not require re-entering credentials.
+- Mac/iOS/tvOS simulator build logs all report BUILD SUCCEEDED. OTA current.json is build73, SHA b53b6fbe9f74645f48c7dd2da669cc5db477f36561a7a41a6a5f4d2b0af3a0c0. Mobile published on the existing Miyu Install server only.
+- Dedicated iPhone simulator offline fixture verified Offline mode and navigation to Downloads in the preceding turn. Physical airplane-mode acceptance still pending.
+- User reported duplicate Mac copies. Terminated the running build-directory copy, launched ~/Applications/Torrbaby/Torrbaby.app (73), and verified one process at the installed path plus connected Home window through CUA.
+- Homeland review private draft is under local-state/subtitle-review/homeland and Diamond Library/Application Support/Torrbaby/subtitle-reviews/homeland. S01E01 manifest has 80/804 draft cues; not published or marked complete. No subtitle dialogue belongs in the public repository.
+- Remux audio-language/default changes remain separate uncommitted work. Re-ran native inspector against owned two-audio fixture: English en and Simplified Chinese zh-hans both selectable, default zh-hans; PASS. No remux API activation or daemon deployment.
+- New server/api.rs, metadata.rs and scanner.rs edits were present on resumption and are left untouched pending ownership/context review. Android remains untouched. Full persistent goal remains active.

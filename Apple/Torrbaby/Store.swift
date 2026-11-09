@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import SwiftUI
 import Security
 #if os(iOS)
@@ -123,9 +124,21 @@ final class Store: ObservableObject {
     @Published var busy = false
     @Published var lastUpdated: Date?
     @Published var isConnecting = false
+    @Published private(set) var networkAvailable = true
+    private let networkMonitor = NWPathMonitor()
     private var refreshing = false
     private var etaSmoother = TorrentETASmoother()
     init() {
+        networkMonitor.pathUpdateHandler = { [weak self] path in
+            let available = path.status == .satisfied
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let restored = !self.networkAvailable && available
+                self.networkAvailable = available
+                if restored { await self.refresh() }
+            }
+        }
+        networkMonitor.start(queue: DispatchQueue(label: "org.torrbaby.connectivity"))
         #if !os(tvOS)
         DownloadQueue.shared.attach(self)
         #endif
@@ -165,7 +178,8 @@ final class Store: ObservableObject {
         #endif
     }
     var configured: Bool { !server.isEmpty && !token.isEmpty }
-    var connected: Bool { status != nil && connectionError == nil }
+    var connected: Bool { networkAvailable && status != nil && connectionError == nil }
+    var offline: Bool { configured && (!networkAvailable || connectionError != nil) }
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase

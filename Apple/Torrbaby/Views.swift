@@ -95,7 +95,7 @@ struct RootView: View {
                 VStack(alignment: .leading, spacing: 9) {
                     HStack(spacing: 7) {
                         Circle().fill(store.connected ? Theme.mint : .orange).frame(width: 6, height: 6)
-                        Text(store.connected ? "Connected" : "Not connected").font(.caption.weight(.semibold))
+                        Text(store.connected ? "Connected" : (store.offline ? "Offline mode" : "Connecting…")).font(.caption.weight(.semibold))
                     }
                     if store.status?.settings.paused == true {
                         Label("Automation paused", systemImage: "pause.circle").font(.caption2).foregroundStyle(.orange)
@@ -109,9 +109,9 @@ struct RootView: View {
                     if selection == .downloads { DownloadsView() }
                     else if selection == .automation { AutomationView() }
                     else if selection == .settings { SettingsView(showConnect: $showConnect) }
-                    else if selection == .library || selection == nil { LibraryBrowser() }
-                    else if selection == .movies { LibraryBrowser(kind: "movie").id("movies") }
-                    else if selection == .shows { LibraryBrowser(kind: "tv").id("shows") }
+                    else if selection == .library || selection == nil { LibraryBrowser(showDownloads: { navigate(Location(section: .downloads)) }) }
+                    else if selection == .movies { LibraryBrowser(kind: "movie", showDownloads: { navigate(Location(section: .downloads)) }).id("movies") }
+                    else if selection == .shows { LibraryBrowser(kind: "tv", showDownloads: { navigate(Location(section: .downloads)) }).id("shows") }
                     else { TorrentListView(section: selection ?? .active) }
                 }
                 .background(Theme.canvas)
@@ -129,12 +129,14 @@ struct RootView: View {
                 .navigationDestination(for: String.self) { hash in TorrentDetail(hash: hash).navigationBarBackButtonHidden().toolbar { historyControls } }
                 .navigationDestination(for: LibraryDestination.self) { route in LibraryDetail(titleID: route.id).navigationBarBackButtonHidden().toolbar { historyControls } }
                 .safeAreaInset(edge: .top) {
-                    if let error = store.connectionError {
+                    if store.offline {
                         HStack {
-                            Image(systemName: "wifi.exclamationmark")
-                            Text("Connection lost · " + error).font(.caption).lineLimit(2)
+                            Label("Offline mode", systemImage: "wifi.slash").font(.subheadline.weight(.semibold))
                             Spacer()
-                            Button("Reconnect") { showConnect = true }.font(.caption.weight(.semibold))
+                            if selection != .downloads {
+                                Button("Downloads") { navigate(Location(section: .downloads)) }.font(.subheadline.weight(.semibold))
+                            }
+                            Button { Task { await store.refresh() } } label: { Image(systemName: "arrow.clockwise") }.accessibilityLabel("Try reconnecting")
                         }.padding(12).background(.orange.opacity(0.12))
                     }
                 }

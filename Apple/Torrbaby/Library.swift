@@ -178,6 +178,7 @@ struct LibraryArtwork: View {
 struct LibraryBrowser: View {
     @EnvironmentObject var store: Store
     var kind: String? = nil
+    var showDownloads: () -> Void = {}
     @State private var search = ""
     #if os(macOS)
     @FocusState private var searchFocused: Bool
@@ -215,7 +216,7 @@ struct LibraryBrowser: View {
                         }.clipShape(RoundedRectangle(cornerRadius: 24))
                     }.buttonStyle(.plain)
                 }
-                HStack {
+                if !titles.isEmpty { HStack {
                     Picker("Genre", selection: $genre) {
                         Text("All genres").tag("All genres")
                         ForEach(genres, id: \.self) { Text($0).tag($0) }
@@ -223,10 +224,24 @@ struct LibraryBrowser: View {
                     Picker("Sort", selection: $order) {
                         ForEach(["Recently added", "Release date", "Title"], id: \.self) { Text($0).tag($0) }
                     }
-                }.frame(maxWidth: 600)
-                if let error = store.libraryError ?? store.library?.error { Text(error).font(.callout).foregroundStyle(.orange) }
+                }.frame(maxWidth: 600) }
+                if !store.offline, let error = store.libraryError ?? store.library?.error { Text(error).font(.callout).foregroundStyle(.orange) }
                 if titles.isEmpty {
-                    ContentUnavailableView("Your library", systemImage: "film.stack", description: Text(search.isEmpty ? "No movies or shows yet." : "No titles match your search."))
+                    if store.offline {
+                        ContentUnavailableView {
+                            Label("Offline mode", systemImage: "wifi.slash")
+                        } description: {
+                            Text("Watch your downloaded movies and episodes.")
+                        } actions: {
+                            Button(action: showDownloads) { Label("Downloads", systemImage: "arrow.down.circle.fill") }.buttonStyle(.borderedProminent)
+                        }
+                    } else if store.configured && store.library == nil && store.libraryError == nil {
+                        ProgressView("Loading library…").frame(maxWidth: .infinity).padding(.vertical, 60)
+                    } else if store.library == nil {
+                        ContentUnavailableView("Library unavailable", systemImage: "film.stack")
+                    } else {
+                        ContentUnavailableView("Your library", systemImage: "film.stack", description: Text(search.isEmpty ? "No movies or shows yet." : "No titles match your search."))
+                    }
                 } else if browsing && order == "Recently added" {
                     let continuing = titles.filter { $0.resume != nil }.sorted { ($0.resume?.lastPlayed ?? 0) > ($1.resume?.lastPlayed ?? 0) }
                     if !continuing.isEmpty { shelf("Continue watching", continuing) }
