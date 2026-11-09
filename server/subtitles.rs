@@ -110,6 +110,7 @@ pub async fn translate(helper: &Path, request: TranslationRequest) -> Result<Tra
 }
 
 /// A normalized text cue. Integer milliseconds avoid timestamp drift in translation.
+#[derive(Serialize, Deserialize)]
 pub struct TimedCue {
     pub start_ms: u64,
     pub end_ms: u64,

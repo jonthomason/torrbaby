@@ -146,3 +146,91 @@ fn ass_text(packet: &str) -> Result<String> {
             .replace("\\h", " "),
     ))
 }
+
+/// Isolate parser panics and CPU-heavy scans from the serving process. This is
+/// not a memory sandbox: macOS rejects the tested address/data rlimits.
+pub async fn extract_worker(path: &Path, track: u64) -> Result<Vec<TimedCue>> {
+    use std::{os::unix::fs::MetadataExt, process::Stdio, sync::LazyLock};
+    use tokio::io::AsyncReadExt;
+    static WORKERS: LazyLock<tokio::sync::Semaphore> =
+        LazyLock::new(|| tokio::sync::Semaphore::new(1));
+    let _permit = WORKERS.acquire().await?;
+    fn revision(path: &Path) -> Result<(u64, u64, u64, i64, i64, i64, i64)> {
+        let m = path.metadata()?;
+        Ok((
+            m.dev(),
+            m.ino(),
+            m.len(),
+            m.mtime(),
+            m.mtime_nsec(),
+            m.ctime(),
+            m.ctime_nsec(),
+        ))
+    }
+    let before = revision(path)?;
+    let mut child = tokio::process::Command::new("/bin/sh")
+        .args([
+            "-c",
+            "ulimit -c 0; ulimit -t 180 || exit 1; exec \"$@\"",
+            "torrbaby-subtitle-worker",
+        ])
+        .arg(std::env::current_exe()?)
+        .args(["matroska-subtitles", "--input"])
+        .arg(path)
+        .arg("--track")
+        .arg(track.to_string())
+        .arg("--json-cues")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .context("Start subtitle extraction worker")?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("Subtitle worker stdout unavailable")?;
+    let outcome = tokio::time::timeout(Duration::from_secs(190), async {
+        let mut bytes = Vec::new();
+        stdout.take(16_777_217).read_to_end(&mut bytes).await?;
+        ensure!(
+            bytes.len() <= 16_777_216,
+            "Subtitle worker response too large"
+        );
+        ensure!(
+            child.wait().await?.success(),
+            "Subtitle extraction worker failed"
+        );
+        let cues: Vec<TimedCue> =
+            serde_json::from_slice(&bytes).context("Invalid subtitle worker response")?;
+        ensure!(
+            !cues.is_empty()
+                && cues.len() <= 100_000
+                && cues.iter().all(|cue| cue.end_ms > cue.start_ms
+                    && !cue.text.trim().is_empty()
+                    && cue.text.len() <= 16_384),
+            "Invalid extracted cues"
+        );
+        ensure!(
+            cues.windows(2)
+                .all(|pair| pair[0].start_ms <= pair[1].start_ms),
+            "Extracted cues out of order"
+        );
+        ensure!(
+            before == revision(path)?,
+            "Media changed during subtitle extraction"
+        );
+        Ok(cues)
+    })
+    .await;
+    match outcome {
+        Ok(Ok(cues)) => Ok(cues),
+        failed => {
+            let _ = child.kill().await;
+            match failed {
+                Ok(Err(error)) => Err(error),
+                _ => anyhow::bail!("Subtitle extraction timed out"),
+            }
+        }
+    }
+}

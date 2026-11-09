@@ -34,11 +34,16 @@ enum Command {
         input: PathBuf,
         #[arg(long)]
         track: Option<u64>,
+        #[arg(long, requires = "track", hide = true)]
+        json_cues: bool,
     },
     /// Convert UTF-8 SRT subtitles to WebVTT, optionally translating their text.
     PrepareSubtitles {
         #[arg(long)]
         input: PathBuf,
+        /// Read this embedded Matroska track instead of an SRT sidecar.
+        #[arg(long)]
+        track: Option<u64>,
         #[arg(long, requires = "target")]
         source: Option<String>,
         #[arg(long, requires = "source")]
@@ -122,25 +127,39 @@ fn check_folder(path: &Path) -> io::Result<(usize, bool)> {
 #[tokio::main]
 async fn main() -> Result<()> {
     match Arguments::parse().command {
-        Command::MatroskaSubtitles { input, track } => {
+        Command::MatroskaSubtitles {
+            input,
+            track,
+            json_cues,
+        } => {
             if let Some(track) = track {
-                print!("{}", subtitles::webvtt(&matroska::extract(&input, track)?));
+                let cues = matroska::extract(&input, track)?;
+                if json_cues {
+                    println!("{}", serde_json::to_string(&cues)?);
+                } else {
+                    print!("{}", subtitles::webvtt(&cues));
+                }
             } else {
                 println!("{}", serde_json::to_string(&matroska::tracks(&input)?)?);
             }
         }
         Command::PrepareSubtitles {
             input,
+            track,
             source,
             target,
             helper,
         } => {
-            let mut bytes = Vec::new();
-            fs::File::open(input)?
-                .take(8_388_609)
-                .read_to_end(&mut bytes)?;
-            anyhow::ensure!(bytes.len() <= 8_388_608, "Subtitle file too large");
-            let mut cues = subtitles::parse_srt(std::str::from_utf8(&bytes)?)?;
+            let mut cues = if let Some(track) = track {
+                matroska::extract_worker(&input, track).await?
+            } else {
+                let mut bytes = Vec::new();
+                fs::File::open(input)?
+                    .take(8_388_609)
+                    .read_to_end(&mut bytes)?;
+                anyhow::ensure!(bytes.len() <= 8_388_608, "Subtitle file too large");
+                subtitles::parse_srt(std::str::from_utf8(&bytes)?)?
+            };
             if let (Some(source), Some(target)) = (source, target) {
                 let helper = helper.unwrap_or(
                     std::env::current_exe()?.with_file_name("torrbaby-subtitle-translator"),

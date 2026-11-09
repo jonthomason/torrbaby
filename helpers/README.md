@@ -97,3 +97,26 @@ parser can allocate frame/metadata buffers before those checks; these are not a
 complete memory/CPU sandbox. Automatic library jobs need subprocess resource
 limits, cancellation, revision-aware caching and concurrency limits before wiring
 this into the daemon. Player/HLS subtitle selection is still pending.
+
+## Extraction + translation pipeline
+
+```sh
+torrbaby prepare-subtitles --input movie.mkv --track 3 --source en --target zh-Hans > movie.zh-Hans.vtt
+```
+
+Omit the language options for original-language WebVTT. `--track` selects embedded
+Matroska extraction; without it the input is a UTF-8 SRT sidecar.
+
+Embedded preparation invokes the same Rust executable as a child worker. One
+worker at a time is allowed per parent process. Worker CPU time is limited to180s,
+parent elapsed time to190s, stdout to16MiB; core dumps are disabled. Timeout,
+malformed output and extraction errors kill/reap the child. Cancellation uses
+kill-on-drop. The parent validates cue counts/text/timing/order and rejects a file
+whose inode/size/change timestamps changed during extraction. Only then are cue
+texts sent in bounded batches to the Apple Translation helper. Timing stays in
+Rust; output is emitted after complete success.
+
+macOS rejected the tested address-space and data-size limits (`ulimit -v/-d`)
+with Invalid argument. The worker is process isolation plus runtime/output
+limits, **not a hard memory sandbox**. Automatic API preparation/caching and
+native selectable rendition delivery still need implementation.

@@ -532,3 +532,27 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
   server bundle now includes unreleased Matroska code; don't deploy accidentally.
 - Installed Mac54/OTA54 and production schema7 APIs unchanged. Persistent full
   objective remains active; native translated captions are not implemented yet.
+
+## Follow-up: embedded extraction-to-translation pipeline
+
+- `prepare-subtitles --input movie.mkv --track N [--source en --target zh-Hans]`
+  now composes child-process extraction, validation, optional Apple translation,
+  and WebVTT output. Timing remains server-owned and unchanged through translation.
+- Worker invokes the same current executable, with1 concurrent worker per parent,
+  CPU180s, parent wall190s, output16MiB and no core dumps. Error/timeout kills and
+  reaps; cancellation kill-on-drop. File revision before/after must match.
+- Tested macOS `ulimit -v/-d` rejected the limits with Invalid argument; allocation
+  still succeeded. Do NOT describe this as a hard memory sandbox. Automatic HTTP
+  preparation/cache/native delivery remain pending.
+- Rust build and synthetic MKV full pipeline passed: subprocess normalized output
+  equaled direct extraction; real Apple Translation helper on Diamond translated
+  synthetic embedded dialogue into Chinese while preserving exact timing lines.
+  ASS drawing normalization/bitmap/missing-duration checks still passed.
+  Fixture saved as local-state/checkpoints/2026-11-09/torrbaby-matroska-pipeline-smoke.py.
+- This pipeline remains unreleased on codex/subtitles. Mac54/OTA54/productionRust
+  are unchanged. The per-parent semaphore does not coordinate independent CLI
+  invocations; daemon job scheduling must use the shared parent process.
+- Full read-only inspection of62 completed MKVs on Diamond found52 with text
+  subtitle tracks,8 with image/other-only tracks,2 with no subtitle tracks.
+  Track totals:1068 S_TEXT/UTF8,7 S_TEXT/ASS,22 S_VOBSUB. This is track metadata,
+  not full extraction/translation proof for all tracks. MP4s not inspected yet.
