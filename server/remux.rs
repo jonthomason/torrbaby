@@ -42,6 +42,8 @@ struct Track {
     origin_ns: Option<u64>,
     codec_delay_ns: u64,
     visual_boxes: Vec<u8>,
+    labels: TrackLabels,
+    default_track: bool,
 }
 
 pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Value> {
@@ -163,6 +165,15 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
                 },
                 origin_ns: None,
                 codec_delay_ns: t.codec_delay().unwrap_or(0),
+                labels: TrackLabels {
+                    language: normalized_language(
+                        t.language_bcp47().or(t.language()).unwrap_or("und"),
+                    )?,
+                    name: t.name().map(str::to_owned),
+                    audio: !video,
+                    enabled: t.flag_enabled(),
+                },
+                default_track: t.flag_default(),
                 visual_boxes: t
                     .video()
                     .map(crate::video_metadata::boxes)
@@ -211,6 +222,14 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
             }
         }
         mkv = MatroskaFile::open(BufReader::new(File::open(input)?))?;
+    }
+    let selected_audio = tracks
+        .values()
+        .filter(|t| !t.video && t.labels.enabled)
+        .min_by_key(|t| (!t.default_track, t.stream.index))
+        .map(|t| t.stream.index);
+    for t in tracks.values_mut().filter(|t| !t.video) {
+        t.labels.enabled = selected_audio == Some(t.stream.index);
     }
     let mut streams: Vec<_> = tracks.values().map(|t| t.stream.clone()).collect();
     streams.sort_by_key(|s| s.index);
@@ -340,7 +359,11 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
             .filter(|t| t.video)
             .map(|t| (t.stream.index + 1, t.visual_boxes.clone()))
             .collect();
-        repair_presentation_durations(output, &durations, &visual, max_bytes)?;
+        let labels = tracks
+            .values()
+            .map(|t| (t.stream.index + 1, t.labels.clone()))
+            .collect();
+        repair_presentation_durations(output, &durations, &visual, &labels, max_bytes)?;
         Ok(
             serde_json::json!({"tracks":streams.len(),"bytes":output.metadata()?.len(),"development_only":true}),
         )
@@ -354,7 +377,13 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
 // oxideav-mp4 0.0.11 writes media duration into movie/track headers even when
 // edit lists offset/trim that media. Update only these fixed-size fields in our
 // own finished output; sample tables, compressed packets and edits stay intact.
-fn repair_presentation_durations(path: &Path, durations: &BTreeMap<u32, u64>, visual: &BTreeMap<u32, Vec<u8>>, max_bytes: u64) -> Result<()> {
+fn repair_presentation_durations(
+    path: &Path,
+    durations: &BTreeMap<u32, u64>,
+    visual: &BTreeMap<u32, Vec<u8>>,
+    labels: &BTreeMap<u32, TrackLabels>,
+    max_bytes: u64,
+) -> Result<()> {
     let mut file = OpenOptions::new().read(true).write(true).open(path)?;
     let length = file.metadata()?.len();
     let mut offset = 0;
@@ -443,7 +472,7 @@ fn repair_presentation_durations(path: &Path, durations: &BTreeMap<u32, u64>, vi
                 offset + size == length,
                 "Metadata rewrite requires moov at end"
             );
-            let moov = rewrite_visual_tracks(&moov, visual)?;
+            let moov = rewrite_visual_tracks(&moov, visual, labels)?;
             let boxed = crate::video_metadata::atom(b"moov", &moov)?;
             ensure!(
                 offset + boxed.len() as u64 <= max_bytes,
@@ -498,7 +527,11 @@ fn write_duration(payload: &mut [u8], position: usize, version: u8, value: u64) 
     Ok(())
 }
 
-fn rewrite_visual_tracks(moov: &[u8], visual: &BTreeMap<u32, Vec<u8>>) -> Result<Vec<u8>> {
+fn rewrite_visual_tracks(
+    moov: &[u8],
+    visual: &BTreeMap<u32, Vec<u8>>,
+    labels: &BTreeMap<u32, TrackLabels>,
+) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     for (kind, start, end) in children(moov)? {
         let body = &moov[start..end];
@@ -511,13 +544,17 @@ fn rewrite_visual_tracks(moov: &[u8], visual: &BTreeMap<u32, Vec<u8>>) -> Result
             let pos = if header[0] == 0 { 12 } else { 20 };
             ensure!(header.len() >= pos + 4, "Truncated track ID");
             let id = u32::from_be_bytes(header[pos..pos + 4].try_into()?);
+            let body =
+                rewrite_track_labels(body, labels.get(&id).context("Missing track labels")?)?;
             if let Some(extra) = visual.get(&id) {
                 out.extend(crate::video_metadata::atom(
                     &kind,
-                    &rewrite_visual_container(body, extra, 0)?,
+                    &rewrite_visual_container(&body, extra, 0)?,
                 )?);
                 continue;
             }
+            out.extend(crate::video_metadata::atom(&kind, &body)?);
+            continue;
         }
         out.extend(crate::video_metadata::atom(&kind, body)?);
     }
@@ -558,6 +595,109 @@ fn rewrite_visual_container(data: &[u8], extra: &[u8], depth: usize) -> Result<V
             body.to_vec()
         };
         out.extend(crate::video_metadata::atom(&kind, &rewritten)?);
+    }
+    Ok(out)
+}
+
+#[derive(Clone)]
+struct TrackLabels {
+    language: String,
+    name: Option<String>,
+    audio: bool,
+    enabled: bool,
+}
+fn normalized_language(tag: &str) -> Result<String> {
+    ensure!(
+        tag.len() <= 63
+            && !tag.is_empty()
+            && tag
+                .split('-')
+                .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric())),
+        "Invalid track language tag"
+    );
+    let tag = tag.to_ascii_lowercase();
+    Ok(match tag.as_str() {
+        "eng" => "en",
+        "chi" | "zho" => "zh",
+        "jpn" => "ja",
+        "fre" | "fra" => "fr",
+        "ger" | "deu" => "de",
+        "spa" => "es",
+        _ => &tag,
+    }
+    .to_owned())
+}
+fn packed_language(tag: &str) -> u16 {
+    let primary = tag.split('-').next().unwrap_or("und");
+    let iso = match primary {
+        "en" => "eng",
+        "zh" => "zho",
+        "ja" => "jpn",
+        "fr" => "fra",
+        "de" => "deu",
+        "es" => "spa",
+        "ko" => "kor",
+        "it" => "ita",
+        "pt" => "por",
+        "ru" => "rus",
+        "ar" => "ara",
+        "hi" => "hin",
+        s if s.len() == 3 => s,
+        _ => "und",
+    };
+    if !iso.bytes().all(|b| b.is_ascii_lowercase()) {
+        return packed_language("und");
+    }
+    iso.bytes().fold(0, |n, b| (n << 5) | (b - b'`') as u16)
+}
+fn rewrite_track_labels(data: &[u8], labels: &TrackLabels) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    for (kind, start, end) in children(data)? {
+        let mut body = data[start..end].to_vec();
+        if &kind == b"tkhd" {
+            let group = match body.first() {
+                Some(0) => 34,
+                Some(1) => 46,
+                _ => anyhow::bail!("Unsupported track header"),
+            };
+            ensure!(body.len() >= group + 2, "Truncated track flags");
+            body[3] = (body[3] & !1) | u8::from(labels.enabled);
+            body[group..group + 2]
+                .copy_from_slice(&(if labels.audio { 1u16 } else { 0u16 }).to_be_bytes());
+        } else if &kind == b"mdia" {
+            let mut media = Vec::new();
+            for (k, s, e) in children(&body)? {
+                ensure!(&k != b"elng", "Duplicate language metadata");
+                let mut child = body[s..e].to_vec();
+                if &k == b"mdhd" {
+                    let position = match child.first() {
+                        Some(0) => 20,
+                        Some(1) => 32,
+                        _ => anyhow::bail!("Unsupported media header"),
+                    };
+                    ensure!(child.len() >= position + 2, "Truncated media language");
+                    child[position..position + 2]
+                        .copy_from_slice(&packed_language(&labels.language).to_be_bytes());
+                } else if &k == b"hdlr" {
+                    if let Some(name) = &labels.name {
+                        ensure!(
+                            child.len() >= 24 && name.len() <= 1024 && !name.contains('\0'),
+                            "Invalid track name"
+                        );
+                        child.truncate(24);
+                        child.extend(name.as_bytes());
+                        child.push(0);
+                    }
+                }
+                media.extend(crate::video_metadata::atom(&k, &child)?);
+            }
+            let mut language = vec![0; 4];
+            language.extend(labels.language.as_bytes());
+            language.push(0);
+            media.extend(crate::video_metadata::atom(b"elng", &language)?);
+            body = media;
+        }
+        out.extend(crate::video_metadata::atom(&kind, &body)?);
     }
     Ok(out)
 }
