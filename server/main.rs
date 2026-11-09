@@ -21,6 +21,7 @@ mod subtitle_preferences;
 mod subtitles;
 mod telemetry;
 mod transmission;
+mod video_metadata;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::{

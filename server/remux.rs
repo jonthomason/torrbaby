@@ -41,6 +41,7 @@ struct Track {
     audio_samples: u64,
     origin_ns: Option<u64>,
     codec_delay_ns: u64,
+    visual_boxes: Vec<u8>,
 }
 
 pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Value> {
@@ -162,6 +163,11 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
                 },
                 origin_ns: None,
                 codec_delay_ns: t.codec_delay().unwrap_or(0),
+                visual_boxes: t
+                    .video()
+                    .map(crate::video_metadata::boxes)
+                    .transpose()?
+                    .unwrap_or_default(),
             },
         );
     }
@@ -329,7 +335,12 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
                 (t.stream.index + 1, end_ms.max(0) as u64)
             })
             .collect();
-        repair_presentation_durations(output, &durations)?;
+        let visual: BTreeMap<u32, Vec<u8>> = tracks
+            .values()
+            .filter(|t| t.video)
+            .map(|t| (t.stream.index + 1, t.visual_boxes.clone()))
+            .collect();
+        repair_presentation_durations(output, &durations, &visual, max_bytes)?;
         Ok(
             serde_json::json!({"tracks":streams.len(),"bytes":output.metadata()?.len(),"development_only":true}),
         )
@@ -343,7 +354,7 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
 // oxideav-mp4 0.0.11 writes media duration into movie/track headers even when
 // edit lists offset/trim that media. Update only these fixed-size fields in our
 // own finished output; sample tables, compressed packets and edits stay intact.
-fn repair_presentation_durations(path: &Path, durations: &BTreeMap<u32, u64>) -> Result<()> {
+fn repair_presentation_durations(path: &Path, durations: &BTreeMap<u32, u64>, visual: &BTreeMap<u32, Vec<u8>>, max_bytes: u64) -> Result<()> {
     let mut file = OpenOptions::new().read(true).write(true).open(path)?;
     let length = file.metadata()?.len();
     let mut offset = 0;
@@ -428,8 +439,19 @@ fn repair_presentation_durations(path: &Path, durations: &BTreeMap<u32, u64>) ->
                 movie && seen.len() == durations.len(),
                 "Missing MP4 presentation headers"
             );
-            file.seek(SeekFrom::Start(offset + header_size))?;
-            file.write_all(&moov)?;
+            ensure!(
+                offset + size == length,
+                "Metadata rewrite requires moov at end"
+            );
+            let moov = rewrite_visual_tracks(&moov, visual)?;
+            let boxed = crate::video_metadata::atom(b"moov", &moov)?;
+            ensure!(
+                offset + boxed.len() as u64 <= max_bytes,
+                "Remux metadata exceeded storage limit"
+            );
+            file.seek(SeekFrom::Start(offset))?;
+            file.write_all(&boxed)?;
+            file.set_len(offset + boxed.len() as u64)?;
             file.sync_all()?;
             return Ok(());
         }
@@ -474,4 +496,68 @@ fn write_duration(payload: &mut [u8], position: usize, version: u8, value: u64) 
     );
     payload[position..position + bytes.len()].copy_from_slice(&bytes);
     Ok(())
+}
+
+fn rewrite_visual_tracks(moov: &[u8], visual: &BTreeMap<u32, Vec<u8>>) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    for (kind, start, end) in children(moov)? {
+        let body = &moov[start..end];
+        if &kind == b"trak" {
+            let (_, s, e) = children(body)?
+                .into_iter()
+                .find(|(k, _, _)| k == b"tkhd")
+                .context("Missing track header")?;
+            let header = &body[s..e];
+            let pos = if header[0] == 0 { 12 } else { 20 };
+            ensure!(header.len() >= pos + 4, "Truncated track ID");
+            let id = u32::from_be_bytes(header[pos..pos + 4].try_into()?);
+            if let Some(extra) = visual.get(&id) {
+                out.extend(crate::video_metadata::atom(
+                    &kind,
+                    &rewrite_visual_container(body, extra, 0)?,
+                )?);
+                continue;
+            }
+        }
+        out.extend(crate::video_metadata::atom(&kind, body)?);
+    }
+    Ok(out)
+}
+fn rewrite_visual_container(data: &[u8], extra: &[u8], depth: usize) -> Result<Vec<u8>> {
+    ensure!(depth < 6, "Unexpected MP4 nesting");
+    let mut out = Vec::new();
+    for (kind, start, end) in children(data)? {
+        let body = &data[start..end];
+        let rewritten = if [&b"mdia"[..], &b"minf"[..], &b"stbl"[..]].contains(&kind.as_slice()) {
+            rewrite_visual_container(body, extra, depth + 1)?
+        } else if &kind == b"stsd" {
+            ensure!(
+                body.len() >= 8 && u32::from_be_bytes(body[4..8].try_into()?) == 1,
+                "Unexpected sample descriptions"
+            );
+            let entries = children(&body[8..])?;
+            ensure!(entries.len() == 1, "Unexpected video sample entry");
+            let (codec, s, e) = entries[0];
+            ensure!(
+                [*b"avc1", *b"hvc1"].contains(&codec),
+                "Unexpected video codec"
+            );
+            let mut entry = body[8 + s..8 + e].to_vec();
+            ensure!(entry.len() >= 78, "Truncated video sample entry");
+            for (k, _, _) in children(&entry[78..])? {
+                ensure!(
+                    ![*b"colr", *b"pasp", *b"clli", *b"mdcv"].contains(&k),
+                    "Duplicate video metadata"
+                );
+            }
+            entry.extend(extra);
+            let mut replacement = body[..8].to_vec();
+            replacement.extend(crate::video_metadata::atom(&codec, &entry)?);
+            replacement
+        } else {
+            body.to_vec()
+        };
+        out.extend(crate::video_metadata::atom(&kind, &rewritten)?);
+    }
+    Ok(out)
 }

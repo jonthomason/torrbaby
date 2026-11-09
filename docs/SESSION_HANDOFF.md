@@ -806,3 +806,11 @@ User reports iPad left/right correctly skip 15 seconds but Space does not play/p
 - Full asset-7337420c80824e59adb65d3eacb89816 (305265910bytes, HEVC/EAC3) remux succeeded:306244831bytes,two tracks,duration2105.056s. Native first2sec decoded48video frames/96000audio samples; native seeks2/12.5/23passed. package-media with production signed MediaSegmenter completed HLS.
 - Temporary outputs retained for next caption/HLS check: Diamond /var/folders/lq/5pc_ykqd34g19r01n5pnb3dc0000gn/T/torrbaby-eac3-check-v_5zki51/{output.mp4,hls}. These are owned scratch (~600MB); remove when validation ends. Development binary /tmp/torrbaby-remux-diagnostic, native helpers /tmp/torrbaby-decode-remux-sample,/tmp/torrbaby-seek-remux. No production deployment this turn, no source media changed. App72 and signeddaemon17:51unchanged.
 - Next: actual native HLS/generated-caption acceptance on temporaryresult, HDR/color/language preservation and conditional supervised integration. Goal active, Android untouched.
+
+## Visual metadata / demuxer correction
+
+- Added server/video_metadata.rs: colr(nclx knownrange/nclc unspecifiedrange), reduced pasp, clli, mdcv. Rewrites bounded owned moov/stsd at end, adjusts box sizes while retaining mdat/chunk offsets and bytebudget. Cropping and incomplete mastering reject.
+- Distinct-value metadata fixture revealed upstream matroska-demuxer0.8.1 bugs: MaxCLL/MaxFALL read MatrixCoefficients; RGB Y read X. Vendored source under MIT-compatible license via Cargo patch, changed five lookups, retained licenses/provenance. generate_notices now skips only our root package so vendored licenses included. No upstream message/PR sent.
+- Native Apple format description confirms BT2020/PQ/matrix9,pasp3:4,mastering24bytes correctGBR+white+luminance,CLL1000/FALL400. Owned fixture checks exactboxes. This is metadata transport, not real10bit HDR visual/device acceptance.
+- cargo build, noticesgeneration (vendoredlicensepresent), existing Matroskasubtitle smoke, owned EAC3 offset/delay/native-seek checks passed. No production deployment/new Apple build. Prior realcatalog temporaryHLS artifacts still retained for next test.
+- Next remaining: dynamicDV/HDR10+ evidence, tracklanguage/default preservation, actualnative HLS/generatedcaption acceptance and conditional supervised integration. Goal active, Android untouched.

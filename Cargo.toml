@@ -34,3 +34,6 @@ matroska-demuxer = "=0.8.1"
 oxideav-core = "0.1"
 oxideav-mp4 = "=0.0.11"
 
+
+[patch.crates-io]
+matroska-demuxer = { path = "vendor/matroska-demuxer" }

@@ -136,3 +136,27 @@ No original files were modified and no playback API was switched to this path.
 
 Outstanding: generated-caption HLS playback acceptance on that output, HDR/color/
 track metadata, remaining packet layouts, and supervised conditional integration.
+
+## Visual metadata preservation
+
+The converter now adds colr, pasp, clli and mdcv boxes to its visual sample entry.
+Color primaries/transfer/matrix use H.273 code points; nclx carries known range,
+and nclc avoids inventing a range when the container leaves it unspecified.
+Aspect ratios are reduced rational values. Mastering chromaticities are stored
+in G/B/R order at1/50000 precision; luminance uses1/10000 units. Invalid/incomplete
+mastering data and unsupported cropping reject conversion. Rebuilding the final
+moov preserves media offsets (mdat precedes moov), obeys the output budget, and
+changes no compressed packet bytes.
+
+An owned metadata transport fixture verified BT.2020/PQ/matrix9,3:4pixel aspect,
+MaxCLL1000/MaxFALL400 and distinct mastering X/Y values exactly. Apple's format
+description reads all these fields back correctly. This is a metadata transport
+check, not a visual HDR grading/10-bit/device acceptance test.
+
+The fixture found five wrong field lookups in matroska-demuxer0.8.1. A vendored
+MIT-compatible patch fixes MaxCLL/MaxFALL and red/green/blue Y coordinates, with
+original license texts and patch provenance. Notices now include vendored path
+dependencies. Existing Matroska extraction fixtures and EAC3 seek checks pass.
+
+Dynamic Dolby Vision/HDR10+ handling, real HDR visual acceptance, language/default
+track preservation and conditional HLS integration remain outstanding.

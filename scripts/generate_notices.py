@@ -12,7 +12,7 @@ metadata = json.loads(subprocess.check_output([
 ]))
 parts = ['Torrbaby Server — third-party notices\n\nTorrbaby source code is MIT licensed. Dependencies retain their respective licenses.\n']
 for package in sorted(metadata['packages'], key=lambda p: (p['name'], p['version'])):
-    if package.get('source') is None:
+    if pathlib.Path(package['manifest_path']).resolve() == root / 'Cargo.toml':
         continue
     folder = pathlib.Path(package['manifest_path']).parent
     parts.append(f"\n{'=' * 72}\n{package['name']} {package['version']}\nLicense: {package.get('license') or 'See license file'}\n{package.get('repository') or ''}\n")
