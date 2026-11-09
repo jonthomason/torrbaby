@@ -152,3 +152,27 @@ resubmitted; changed media returns `stale`, missing artifacts `expired`.
 Status/artifact requests revalidate the managed library asset. No database schema
 change or Plex access is involved. This API produces subtitle files; it does not
 yet make them selectable in AVPlayer.
+
+## Native HLS packaging experiment
+
+`MediaSegmenter.swift` is a development helper, not bundled/deployed yet. It uses
+AVFoundation passthrough samples (no re-encoding) to emit fragmented MP4 init/media
+segments and a VOD playlist from compatible local media:
+
+```sh
+swiftc -parse-as-library helpers/MediaSegmenter.swift -o /tmp/torrbaby-media-segmenter
+/tmp/torrbaby-media-segmenter INPUT EMPTY_OUTPUT_DIRECTORY
+```
+
+Prototype limits: 8 audio/video tracks, 300 elapsed seconds during packaging,
+512 MiB output. A production Rust worker must enforce external timeout/cancellation,
+source revision checks, disk reservations/cache cleanup, authentication and session
+URL scoping before integration. It intentionally does not replace direct playback.
+Container/audio/HDR compatibility and timestamp alignment need broader validation.
+
+A generated 24-second H.264 fixture was packaged and served from a temporary
+loopback-only test server with English/Chinese WebVTT renditions. AVPlayer reported
+readyToPlay and its native legible media-selection group contained `en` and
+`zh-Hans`; selecting either succeeded. This verifies native track discovery/selection,
+not rendered cue accuracy, production media compatibility, or deployed app support.
+The temporary fixture server is diagnostic tooling, not a Python production service.

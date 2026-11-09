@@ -613,3 +613,10 @@ User reports iPad left/right correctly skip 15 seconds but Space does not play/p
 
 - Build57 iOS release + iOS simulator compiled. Published to Mac Miyu Install; IPA SHA256 e0abe0e2f2197dacb8511616953b071983648a1fe27a6e203c4c2436faac21af. Space play/pause explicitly registered in shared KeyboardPlayerController, using timeControlStatus; mobile wrapper now subclasses it. Native non-overridden keyCommands preserved and discovery labels added. Physical Magic Keyboard verification pending; full audit in docs/hardware-keyboard.md.
 - User cannot see subtitle selector on tvOS. Explained translated WebVTT output is NOT yet native-player delivery. Make native selectable original/translated subtitle renditions next playback priority. Do not claim completed translation jobs imply visible captions. Native player may show original tracks only when detected in delivered media.
+
+## Native subtitle delivery experiment
+
+- helpers/MediaSegmenter.swift development helper emits HLS fMP4 via AVAssetReader/Writer passthrough; no external codecs/packages. Not shipped/deployed/integrated with Rust yet. Apple WWDC20 10011 and AVAssetWriter outputFileTypeProfile docs support this approach.
+- Generated own 24s H.264 fixture; output 4 segments. Temporary loopback HTTP18897 with HLS master and synthetic English/Chinese captions. Swift AVPlayer probe reported playable, readyToPlay, legible group en/zh-Hans and successful native option selection. Does not prove rendering/timing or actual movie/container/audio/HDR support.
+- Scripts/logs ignored under local-state/checkpoints/2026-11-09/{make-hls-fixture.swift,inspect-hls-subtitles.swift,hls-*}; output /tmp/torrbaby-hls-packaged. Need external worker bounds, revision-keyed cache/quota, session-authenticated playlists/segments and real library/player integration. No production Python added.
+- User feedback: tvOS library bare-bones; mobile Home requires too much horizontal scrolling. Proposed keep Home to Continue Watching/Recently Added/few highlights, See All to vertical poster grids, Movies/TV Shows grid-first with genre/sort. Needs implementation; preserve imagery-first/full-bleed TV direction.
