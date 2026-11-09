@@ -109,3 +109,15 @@ installed. Android remains OTA21, TCL confirmed20.
 Outstanding: user TCL search/details check requested asynchronously. CUA rejects
 its standalone emulator binary as an invalid app, so Android's actual search UI
 has not been visually accepted. Goal is not complete yet.
+
+## Completion
+
+The user confirmed that searching for Sintel and opening a result works normally
+on the physical TCL. This resolves the remaining Android UI acceptance item.
+Together with the Apple UI checks, live multi-provider searches, source details
+and file lists, matching regression checks, and verified Transmission addition,
+the torrent-search goal is complete. Nyaa remains optional and may time out from
+Diamond; the default TPB + Torrent CSV sources are operational. Index descriptions
+and release tags are source claims, not independently probed media tracks.
+
+Unrelated Android subtitle/playback edits present at closure were left untouched.
