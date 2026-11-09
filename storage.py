@@ -30,7 +30,9 @@ class Database:
         CREATE TABLE IF NOT EXISTS playback_sessions (id TEXT PRIMARY KEY, media_id TEXT NOT NULL REFERENCES media(id), client_id TEXT NOT NULL REFERENCES clients(id), started REAL NOT NULL, sequence INTEGER NOT NULL DEFAULT -1, ended INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS transfer_rates (time INTEGER PRIMARY KEY, download REAL NOT NULL, upload REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS metadata (hash TEXT PRIMARY KEY, document TEXT NOT NULL);
-        PRAGMA user_version=3;
+        CREATE TABLE IF NOT EXISTS library_assets (id TEXT PRIMARY KEY, document TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS library_entities (id TEXT PRIMARY KEY, document TEXT NOT NULL);
+        PRAGMA user_version=4;
         ''')
         self.conn.commit()
         self.path.chmod(0o600)
@@ -159,3 +161,19 @@ class Database:
     def refresh_metadata(self, hash_):
         with self.lock, self.conn:
             self.conn.execute("DELETE FROM metadata WHERE hash=?", (hash_,))
+
+    def library_assets(self):
+        with self.lock:
+            return [json.loads(r[0]) for r in self.conn.execute("SELECT document FROM library_assets")]
+
+    def library_entities(self):
+        with self.lock:
+            return {r[0]: json.loads(r[1]) for r in self.conn.execute("SELECT id,document FROM library_entities")}
+
+    def save_library_asset(self, asset):
+        with self.lock, self.conn:
+            self.conn.execute("INSERT OR REPLACE INTO library_assets VALUES(?,?)", (asset['id'], json.dumps(asset, ensure_ascii=False)))
+
+    def save_library_entity(self, entity):
+        with self.lock, self.conn:
+            self.conn.execute("INSERT OR REPLACE INTO library_entities VALUES(?,?)", (entity['id'], json.dumps(entity, ensure_ascii=False)))

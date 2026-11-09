@@ -66,18 +66,20 @@ class MetadataCollector:
         video = self.plex_index[str(Path(torrent['download_dir']) / torrent['files'][files[0]['file_index']]['name'])]
         # Show-level genres/artwork/title belong to the series, not its first episode.
         if video.get('grandparentKey'):
-            detail = ET.fromstring(self.s.plex.request(video.get('grandparentKey')))
+            detail = ET.fromstring(self.s.plex.request(video.get('grandparentKey') + '?includeGuids=1'))
             source = detail.find('Directory')
             if source is None: source = video
         else:
-            detail = ET.fromstring(self.s.plex.request(video.get('key')))
+            detail = ET.fromstring(self.s.plex.request(video.get('key') + '?includeGuids=1'))
             source = detail.find('Video')
             if source is None: source = video
         return {'provider': 'Plex', 'provider_id': source.get('ratingKey'), 'title': source.get('title'),
                 'year': source.get('year', ''), 'genres': [g.get('tag') for g in source.findall('Genre')],
                 'content_rating': source.get('contentRating'), 'duration_minutes': round(float(source.get('duration', 0))/60000, 1),
                 'summary': source.get('summary', ''), 'thumbnail': source.get('thumb'), 'logo': None,
-                'source_url': None, 'episodes': files, 'files': files, 'match_confidence': 'plex_file_match'}
+                'source_url': None, 'episodes': files, 'files': files, 'match_confidence': 'plex_file_match',
+                'tmdb_id': next((g.get('id').split('://',1)[1] for g in source.findall('Guid') if g.get('id','').startswith('tmdb://')), None),
+                'kind': 'tv' if video.get('grandparentKey') else 'movie'}
 
     def tmdb(self, path, token_override=None, **query):
         token = token_override or self.token_path.read_text().strip()
@@ -128,6 +130,13 @@ class MetadataCollector:
             local = None
         if local:
             local['match_confidence'] = 'exact_plex_title_year' if normalized(local['title']) == normalized(query) and (not year or local['year'] == year) else None
+        if local and local.get('tmdb_id') and self.token_path.exists():
+            candidate = {'provider': 'TMDB', 'provider_id': local['tmdb_id'], 'kind': local['kind'],
+                         'title': local['title'], 'year': local['year'], 'genres': [], 'episodes': [],
+                         'match_confidence': 'plex_provider_id',
+                         'source_url': 'https://www.themoviedb.org/' + local['kind'] + '/' + local['tmdb_id']}
+            selected = self.enrich(candidate)
+            return {'status': 'matched', 'query': query, 'candidates': [selected], 'selected': selected}
         if local and not self.token_path.exists():
             return {'status': 'matched', 'query': query, 'candidates': [local], 'selected': local}
         if local:
@@ -167,9 +176,22 @@ class MetadataCollector:
 
     def enrich(self, candidate):
         candidate = dict(candidate)
+        entity_id = candidate['provider'].lower().replace(' ', '-') + ':' + candidate.get('kind', 'tv' if candidate['provider'] == 'TVmaze' else 'movie') + ':' + str(candidate['provider_id'])
+        cached = self.s.db.library_entities().get(entity_id)
+        if cached and time.time() - cached.get('fetched_at', 0) < 86400:
+            cached = dict(cached)
+            cached['match_confidence'] = candidate.get('match_confidence')
+            return cached
         if candidate['provider'] == 'TMDB':
             kind = candidate['kind']
             detail = self.tmdb(kind + '/' + str(int(candidate['provider_id'])), language='en-US', append_to_response='images,release_dates,content_ratings', include_image_language='en,zh,null')
+            candidate['title'] = detail.get('title') or detail.get('name') or candidate['title']
+            candidate['original_title'] = detail.get('original_title') or detail.get('original_name')
+            candidate['release_date'] = detail.get('release_date') or detail.get('first_air_date') or ''
+            candidate['year'] = candidate['release_date'][:4]
+            candidate['summary'] = detail.get('overview', '')
+            candidate['thumbnail'] = 'https://image.tmdb.org/t/p/w500' + detail['poster_path'] if detail.get('poster_path') else None
+            candidate['backdrop'] = 'https://image.tmdb.org/t/p/w1280' + detail['backdrop_path'] if detail.get('backdrop_path') else None
             candidate['genres'] = [g['name'] for g in detail.get('genres', [])]
             candidate['duration_minutes'] = detail.get('runtime') or next(iter(detail.get('episode_run_time', [])), None)
             logos = detail.get('images', {}).get('logos', [])
@@ -183,13 +205,15 @@ class MetadataCollector:
                 for season in detail.get('seasons', []):
                     if self.s.stop.is_set(): break
                     data = self.tmdb('tv/' + str(int(candidate['provider_id'])) + '/season/' + str(season['season_number']), language='en-US')
-                    candidate['episodes'].extend({'title': e['name'], 'season': e['season_number'], 'episode': e['episode_number'], 'duration_minutes': e.get('runtime'), 'airdate': e.get('air_date')} for e in data.get('episodes', []))
+                    candidate['episodes'].extend({'title': e['name'], 'season': e['season_number'], 'episode': e['episode_number'], 'duration_minutes': e.get('runtime'), 'airdate': e.get('air_date'), 'summary': e.get('overview', ''), 'thumbnail': 'https://image.tmdb.org/t/p/w500' + e['still_path'] if e.get('still_path') else None} for e in data.get('episodes', []))
         elif candidate['provider'] == 'TVmaze':
             episodes = fetch('https://api.tvmaze.com/shows/' + str(int(candidate['provider_id'])) + '/episodes?specials=1')
             candidate['episodes'] = [{'title': e['name'], 'season': e.get('season'), 'episode': e.get('number'),
                                      'duration_minutes': e.get('runtime'), 'airdate': e.get('airdate'),
                                      'thumbnail': (e.get('image') or {}).get('medium'), 'source_url': e.get('url')}
                                     for e in episodes]
+        candidate.update(id=entity_id, fetched_at=time.time())
+        self.s.db.save_library_entity(candidate)
         return candidate
 
     def artwork(self, hash_):

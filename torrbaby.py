@@ -24,6 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from storage import Database
 from metadata import MetadataCollector
+from library import Library
 
 VERSION = "0.2.0"
 TV = re.compile(r"(?<![a-z0-9])(?:s\d{1,2}(?:[ ._-]*e\d{1,3})?(?!\d|[a-df-z])|season[ ._-]*\d{1,2}\b|\d{1,2}x\d{2}\b)", re.I)
@@ -216,6 +217,7 @@ class Service:
         self.last_error = None
         self.started = time.time()
         self.metadata_collector = MetadataCollector(self)
+        self.library = Library(self)
 
     def save(self):
         self.db.save_state(self.state)
@@ -666,7 +668,7 @@ class Handler(BaseHTTPRequestHandler):
             if expires < time.time() or not hmac.compare_digest(sig.encode(), expected.encode()):
                 return self.reply(401, {"error": "Invalid or expired playback URL"})
             with self.server.service.lock:
-                path = self.server.service.media_file(parts[2], int(parts[3]))
+                path = self.server.service.library.media_file(parts[2]) if parts[2].startswith("asset-") else self.server.service.media_file(parts[2], int(parts[3]))
                 size = path.stat().st_size
             try:
                 start, end = byte_range(self.headers.get("Range"), size)
@@ -720,6 +722,38 @@ class Handler(BaseHTTPRequestHandler):
     def do_PATCH(self):
         self.dispatch("PATCH")
 
+    def library_request(self, method, parts, body):
+        s = self.server.service
+        library = s.library
+        if method == 'GET' and not parts: return library.snapshot()
+        if method == 'POST' and parts == ['scan']:
+            library.wake.set()
+            return {'accepted': True}
+        if method == 'GET' and parts == ['matches']:
+            return [a for a in s.db.library_assets() if a.get('available') and a.get('status') != 'matched']
+        if method == 'GET' and len(parts) == 3 and parts[0] == 'artwork':
+            return library.artwork(parts[1], parts[2])
+        if method == 'POST' and len(parts) == 3 and parts[0] == 'assets':
+            asset = library.asset(parts[1])
+            if parts[2] == 'play':
+                path = library.media_file(asset['id'])
+                expires = int(time.time()) + 21600
+                sig = stream_signature(self.server.token, asset['id'], 0, expires)
+                result = {'path': '/v1/stream/%s/0?expires=%s&sig=%s' % (asset['id'], expires, sig), 'expires': expires, 'name': path.name}
+                result.update(s.db.begin(asset.get('torrent_hash',asset['id']), asset.get('file_index',0), path.name, asset['size'], body.get('client_id')))
+                return result
+            if parts[2] == 'watched':
+                return s.db.mark(asset.get('torrent_hash',asset['id']),asset.get('file_index',0),Path(asset['path']).name,asset['size'],body.get('watched'))
+            if parts[2] == 'match':
+                index = body.get('candidate')
+                if type(index) is not int or not 0 <= index < len(asset.get('candidates',[])): raise ValueError('Invalid candidate')
+                entity = s.metadata_collector.enrich(asset['candidates'][index])
+                s.db.save_library_entity(entity)
+                asset.update(entity_id=entity['id'],confirmed=True,status='matched')
+                s.db.save_library_asset(asset)
+                return {'accepted': True}
+        raise ValueError('Unknown library request')
+
     def dispatch(self, method):
         if not hmac.compare_digest(self.headers.get("Authorization", "").encode(), ("Bearer " + self.server.token).encode()):
             return self.reply(401, {"error": "Unauthorized"})
@@ -735,6 +769,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("JSON body must be an object")
             parts = urllib.parse.urlsplit(self.path).path.strip("/").split("/")
             s = self.server.service
+            if len(parts) >= 2 and parts[:2] == ["v1", "library"]:
+                return self.reply(200, self.library_request(method, [urllib.parse.unquote(p) for p in parts[2:]], body))
             with s.lock:
                 if method == "GET" and parts == ["v1", "status"]:
                     result = s.status()
@@ -873,6 +909,8 @@ def serve(config_path):
         worker.start()
         metadata_worker = threading.Thread(target=service.metadata_collector.run, daemon=True)
         metadata_worker.start()
+        library_worker = threading.Thread(target=service.library.run, daemon=True)
+        library_worker.start()
         def shutdown(*_):
             service.stop.set()
             service.wake.set()
