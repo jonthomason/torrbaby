@@ -45,6 +45,7 @@ final class DownloadStorage {
         let revision: String
         let size: Int64
         let fileExtension: String
+        var virtualJob: String? = nil
         var episodeOrder: [EpisodeNumber]?
         var state: State = .queued
         var received: Int64 = 0
@@ -154,13 +155,13 @@ final class DownloadStorage {
         try save(next)
     }
     func enqueue(server: String, assetID: String, titleID: String, title: String, name: String,
-                 season: Int?, episode: Int?, revision: String, size: Int64, fileExtension: String) throws -> Item {
+                 season: Int?, episode: Int?, revision: String, size: Int64, fileExtension: String, virtualJob: String? = nil) throws -> Item {
         guard size > 0, !revision.isEmpty, !server.isEmpty, !assetID.isEmpty else { throw StorageError(message: "The file is not ready to download.") }
         if let existing = items.first(where: { $0.server == server && $0.assetID == assetID && $0.state != .removed }) { return existing }
         let ext = fileExtension.lowercased()
         guard ["mp4", "m4v", "mov", "mkv", "webm", "avi", "ts", "m2ts"].contains(ext) else { throw StorageError(message: "Unsupported download format.") }
         let item = Item(id: UUID(), server: server, assetID: assetID, titleID: titleID, title: title, name: name,
-                        season: season, episode: episode, revision: revision, size: size, fileExtension: ext)
+                        season: season, episode: episode, revision: revision, size: size, fileExtension: ext, virtualJob: virtualJob)
         var next = manifest; next.items.append(item); try save(next)
         return item
     }

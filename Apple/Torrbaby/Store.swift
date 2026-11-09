@@ -334,10 +334,10 @@ final class Store: ObservableObject {
 
 extension Store {
     /// Request native virtual MP4 tracks without copying the audiovisual stream.
-    func mediaPlaybackLink(asset: LibraryAsset, titleID: String, progress: @escaping (String) -> Void = { _ in }) async throws -> PlaybackLink {
+    func mediaPlaybackLink(asset: LibraryAsset, titleID: String, startSession: Bool = true, progress: @escaping (String) -> Void = { _ in }) async throws -> PlaybackLink {
         let serverAtStart = server
         let base = "/v1/library/assets/\(asset.id)"
-        var body: [String: Any] = ["client_id": clientId]
+        var body: [String: Any] = startSession ? ["client_id": clientId] : [:]
         var ids: [String] = []
         progress("Preparing playback…")
         struct Track: Decodable {

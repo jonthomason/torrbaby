@@ -3,7 +3,10 @@ import AVFoundation
 @main struct Probe {
     @MainActor static func main() async throws {
         let start = Date()
-        let asset = AVURLAsset(url: URL(string: "http://127.0.0.1:18769/movie.mp4")!)
+        let source: URL
+        if CommandLine.arguments.count > 1 { source = URL(fileURLWithPath: CommandLine.arguments[1]) }
+        else { source = URL(string: "http://127.0.0.1:18769/movie.mp4")! }
+        let asset = AVURLAsset(url: source)
         guard let group = try await asset.loadMediaSelectionGroup(for: .legible) else { fatalError("No subtitles") }
         let duration = try await asset.load(.duration).seconds
         print("Duration seconds", duration)

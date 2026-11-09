@@ -74,12 +74,14 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         let server = store.server
         do {
             struct Info: Decodable { let name: String; let size: Int64; let etag: String }
-            let info: Info = try await store.request("GET", "/v1/library/assets/\(asset.id)/download-info")
+            let link = try await store.mediaPlaybackLink(asset: asset, titleID: title.id, startSession: false)
+            let virtualJob = URLComponents(string: link.path)?.queryItems?.first(where: { $0.name == "virtual" })?.value
+            let info: Info = try await store.request("POST", "/v1/library/assets/\(asset.id)/download-info", body: virtualJob.map { ["virtual_job": $0] } ?? [:])
             guard store.server == server else { return }
             let item = try storage.enqueue(server: server, assetID: asset.id, titleID: title.id,
                                     title: title.title, name: asset.name ?? info.name,
                                     season: asset.season, episode: asset.episode, revision: info.etag,
-                                    size: info.size, fileExtension: URL(fileURLWithPath: info.name).pathExtension)
+                                    size: info.size, fileExtension: URL(fileURLWithPath: info.name).pathExtension, virtualJob: virtualJob)
             try storage.rememberEpisodeOrder(item.id, episodes: title.episodeOrder)
             try storage.importProgress(item.id, position: asset.position, duration: asset.duration,
                                        watched: asset.watched, recordedAt: Date(timeIntervalSince1970: asset.lastPlayed))
@@ -121,7 +123,8 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         guard let item = items.first(where: { $0.state == .queued && $0.server == store.server }) else { return }
         do {
             try storage.markTransferring(item.id)
-            var request = URLRequest(url: try store.endpoint("/v1/library/assets/\(item.assetID)/download"))
+            let suffix = item.virtualJob.map { "?virtual=" + $0 } ?? ""
+            var request = URLRequest(url: try store.endpoint("/v1/library/assets/\(item.assetID)/download" + suffix))
             request.setValue("Bearer " + store.token, forHTTPHeaderField: "Authorization")
             request.setValue(item.revision, forHTTPHeaderField: "If-Match")
             request.allowsCellularAccess = !policy.wifiOnly

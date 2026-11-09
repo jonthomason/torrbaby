@@ -144,6 +144,29 @@ pub async fn serve(
             database.parent().context("Missing data directory")?,
         )?,
     });
+    // Pre-index one completed MKV at a time while no virtual stream is active.
+    // Ready indices are shared by every subtitle version and survive restarts.
+    let virtual_worker = if !preview {
+        let service=service.clone();
+        Some(tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                if !service.virtual_media.idle() {continue;}
+                let assets=service.db.lock().ok().and_then(|db|db.documents("assets").ok()).unwrap_or_default();
+                for asset in assets {
+                    if !service.virtual_media.idle() {break;}
+                    let Some(id)=asset["id"].as_str() else {continue;};
+                    let Some(path)=asset["path"].as_str() else {continue;};
+                    if asset["complete"]!=true || !std::path::Path::new(path).extension().is_some_and(|e|e.eq_ignore_ascii_case("mkv")) {continue;}
+                    if let Ok(input)=media_file(&service,id,0).await {
+                        if let Ok(job)=service.virtual_media.prepare(id,input,Vec::new()) {
+                            if job["state"]=="queued" || job["state"]=="running" {break;}
+                        }
+                    }
+                }
+            }
+        }))
+    } else {None};
     let sampling_service = service.clone();
     let cached_entities = service
         .db
@@ -186,6 +209,7 @@ pub async fn serve(
         }
     });
     let mut workers = Vec::new();
+    if let Some(worker)=virtual_worker {workers.push(worker);}
     if !preview {
         let organizer = service.clone();
         workers.push(tokio::spawn(async move {
@@ -456,6 +480,11 @@ async fn dispatch(
                 bail!("Invalid download request");
             }
             let path = media_file(&s, id, 0).await?;
+            let parsed=reqwest::Url::parse(&format!("http://localhost{uri}"))?;
+            if let Some((_,job))=parsed.query_pairs().find(|(key,_)|key=="virtual") {
+                let reader=s.virtual_media.reader(&job,id,&path).await?;
+                return virtual_response(reader,&job,&method,&headers).await;
+            }
             file_response(&path, &method, &headers).await
         }
         .await;
@@ -737,7 +766,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
                 "embedded_tracks_scanned":scanned,"embedded_error":error}));
         }
     }
-    if method == Method::GET {
+    if method == Method::GET || method == Method::POST {
         if let Some(id) = path
             .strip_prefix("/v1/library/assets/")
             .and_then(|p| p.strip_suffix("/download-info"))
@@ -746,6 +775,11 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
                 bail!("Invalid asset ID")
             }
             let path = media_file(s, id, 0).await?;
+            if let Some(job)=body.get("virtual_job").and_then(Value::as_str) {
+                let reader=s.virtual_media.reader(job,id,&path).await?;
+                let name=path.with_extension("mp4").file_name().unwrap_or_default().to_string_lossy().into_owned();
+                return Ok(json!({"asset_id":id,"name":name,"size":reader.len(),"etag":format!("\"{job}\""),"content_type":"video/mp4","representation":"virtual-mp4"}));
+            }
             let file = tokio::fs::File::open(&path)
                 .await
                 .context("Torrbaby Server needs permission to read this media volume")?;

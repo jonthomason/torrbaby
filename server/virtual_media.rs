@@ -42,7 +42,11 @@ impl Manager {
             let item = item?;
             let name = item.file_name();
             let name = name.to_string_lossy();
-            if name.strip_suffix(".building").is_some_and(valid) && item.file_type()?.is_dir() {
+            if name
+                .strip_suffix(".building")
+                .is_some_and(|n| valid(n) || n.strip_prefix("base-").is_some_and(valid))
+                && item.file_type()?.is_dir()
+            {
                 fs::remove_dir_all(item.path())?;
             }
         }
@@ -52,6 +56,26 @@ impl Manager {
             gate: tokio::sync::Semaphore::new(1),
             readers: Mutex::new(HashMap::new()),
         }))
+    }
+    fn index_path(&self, job: &Job) -> Result<PathBuf> {
+        use sha2::{Digest, Sha256};
+        let key: String = Sha256::digest(serde_json::to_vec(&(
+            1,
+            &job.asset,
+            &job.input,
+            &job.revision,
+        ))?)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+        Ok(self.root.join(format!("base-{key}")))
+    }
+    pub fn idle(&self) -> bool {
+        self.pending.lock().is_ok_and(|p| p.is_empty())
+            && self
+                .readers
+                .lock()
+                .is_ok_and(|r| r.values().all(|v| Arc::strong_count(v) == 1))
     }
     fn job(&self, id: &str) -> Result<Job> {
         ensure!(valid(id), "Invalid virtual media ID");
@@ -68,27 +92,54 @@ impl Manager {
         Ok(())
     }
     pub fn purge_assets(&self, assets: &std::collections::BTreeSet<String>) -> Result<()> {
-        let pending = self.pending.lock().map_err(|_| anyhow::anyhow!("Media queue unavailable"))?;
+        let pending = self
+            .pending
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Media queue unavailable"))?;
         let mut ids = Vec::new();
         for entry in fs::read_dir(&self.root)? {
             let entry = entry?;
             let name = entry.file_name();
-            let Some(id) = name.to_str().and_then(|n|n.strip_suffix(".json")).filter(|id|valid(id)) else { continue; };
+            let Some(id) = name
+                .to_str()
+                .and_then(|n| n.strip_suffix(".json"))
+                .filter(|id| valid(id))
+            else {
+                continue;
+            };
             let job = self.job(id)?;
             if assets.contains(&job.asset) {
-                ensure!(!pending.contains(id), "Waiting for media preparation to finish");
+                ensure!(
+                    !pending.contains(id),
+                    "Waiting for media preparation to finish"
+                );
                 ids.push(id.to_owned());
             }
         }
         for id in ids {
+            let base = self.index_path(&self.job(&id)?)?;
+            if base.exists() {
+                ensure!(base.is_dir() && !base.is_symlink(), "Unsafe index path");
+                fs::remove_dir_all(base)?;
+            }
             for suffix in ["", ".building"] {
                 let path = self.root.join(format!("{id}{suffix}"));
-                if let Ok(info) = fs::symlink_metadata(&path) {
-                    ensure!(info.is_dir() && !info.file_type().is_symlink(), "Unsafe media cache path");
-                    fs::remove_dir_all(path)?;
+                match fs::symlink_metadata(&path) {
+                    Ok(info) => {
+                        ensure!(
+                            info.is_dir() && !info.file_type().is_symlink(),
+                            "Unsafe media cache path"
+                        );
+                        fs::remove_dir_all(path)?;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
                 }
             }
-            self.readers.lock().map_err(|_| anyhow::anyhow!("Media cache unavailable"))?.remove(&id);
+            self.readers
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Media cache unavailable"))?
+                .remove(&id);
             fs::remove_file(self.root.join(format!("{id}.json")))?;
         }
         Ok(())
@@ -139,7 +190,7 @@ impl Manager {
         let source = if is_mkv(path) {
             crate::virtual_captions::Source::Indexed(Arc::new(crate::virtual_mkv::Reader::open(
                 path,
-                &self.root.join(id),
+                &self.index_path(&j)?,
             )?))
         } else {
             crate::virtual_captions::Source::file(path)?
@@ -222,7 +273,7 @@ impl Manager {
         let mut job = self.job(id)?;
         job.state = "running".into();
         self.save(&job)?;
-        let final_path = self.root.join(id);
+        let final_path = self.index_path(&job)?;
         if !final_path.exists() {
             let mut used = 0u64;
             for entry in fs::read_dir(&self.root)? {
@@ -237,7 +288,7 @@ impl Manager {
                 used + 256 * 1024 * 1024 <= 2 * 1024 * 1024 * 1024,
                 "Virtual media index storage limit reached"
             );
-            let temporary = self.root.join(format!("{id}.building"));
+            let temporary = final_path.with_extension("building");
             if is_mkv(&job.input) {
                 crate::virtual_mkv::build(&job.input, &temporary)?;
             } else {
