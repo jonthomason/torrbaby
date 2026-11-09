@@ -7,6 +7,7 @@ import org.json.*;
 
 final class Api {
   final String base, token, client;
+  volatile String libraryRaw = "";
 
   Api(String base, String token, String client) throws Exception {
     this.base = validateBase(base);
@@ -93,7 +94,7 @@ final class Api {
       if (path.equals("/v1/library")) StartupTrace.mark("Library HTTP body received");
       Object json;
       try {
-        json = new JSONTokener(raw).nextValue();
+        json = path.equals("/v1/library") ? CatalogJson.parse(raw) : new JSONTokener(raw).nextValue();
         if (path.equals("/v1/library")) StartupTrace.mark("Library JSON decoded");
       } catch (JSONException e) {
         throw new IOException("The server returned an unexpected response (HTTP " + code + ").");
@@ -104,6 +105,7 @@ final class Api {
             Library.string(json instanceof JSONObject ? (JSONObject) json : null, "error").isEmpty()
                 ? "Server request failed (HTTP " + code + ")."
                 : Library.string(json instanceof JSONObject ? (JSONObject) json : null, "error"));
+      if (path.equals("/v1/library")) libraryRaw = json.toString();
       return json;
     } finally {
       c.disconnect();

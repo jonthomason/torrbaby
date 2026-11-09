@@ -37,6 +37,11 @@ public class MainActivity extends Activity {
   private TorrentActions torrentActions;
   private boolean inLibrary, refreshingLibrary;
   private String librarySnapshot = "";
+  // Keep one browse hierarchy, including its scroll and focus, while viewing a title.
+  private View savedBrowseView, savedBrowseFocus;
+  private LinearLayout savedBrowseRoot, savedBrowseContent, savedBrowseNav;
+  private Api savedBrowseApi;
+  private String savedBrowseSnapshot;
   private int refreshCount;
   private final Handler refreshHandler = new Handler(Looper.getMainLooper());
   private final Runnable refreshTick =
@@ -176,6 +181,7 @@ public class MainActivity extends Activity {
     if (loading) return;
     StartupTrace.mark("Library load enqueued");
     loading = true;
+    boolean refreshingExistingScreen = library != null;
     if (library == null) {
       base();
       connectionScreen();
@@ -191,12 +197,13 @@ public class MainActivity extends Activity {
               byte[] saved = cache.read("library", 0);
               StartupTrace.mark(saved == null ? "Catalog cache miss" : "Catalog cache hit");
               if (saved != null) {
-                JSONObject snapshot = new JSONObject(new String(saved, java.nio.charset.StandardCharsets.UTF_8));
+                String cachedRaw = new String(saved, java.nio.charset.StandardCharsets.UTF_8);
+                JSONObject snapshot = CatalogJson.parse(cachedRaw);
                 Library cached = Library.parse(snapshot);
                 StartupTrace.mark("Cached catalog parsed");
                 runOnUiThread(() -> {
                   if (isDestroyed() || api != requested || library != null) return;
-                  library = cached; librarySnapshot = snapshot.toString(); StartupTrace.mark("Cached render started"); render(); StartupTrace.mark("Cached render returned");
+                  library = cached; librarySnapshot = cachedRaw; StartupTrace.mark("Cached render started"); render(); StartupTrace.mark("Cached render returned");
                 });
               }
             } catch (Exception ignored) {}
@@ -204,19 +211,24 @@ public class MainActivity extends Activity {
           try {
             JSONObject response = requested.request("GET", "/v1/library", null);
             Library result = Library.parse(response);
+            String liveRaw = requested.libraryRaw;
             StartupTrace.mark("Live catalog parsed");
             runOnUiThread(
                 () -> {
                   if (isDestroyed()) return;
                   loading = false;
                   if (api != requested) return;
-                  StartupTrace.mark("Live render started");
+                  boolean firstScreen = library == null;
                   library = result;
-                  librarySnapshot = response.toString();
-                  render();
+                  // Cached content is already usable. Refresh the model without tearing
+                  // down the screen immediately before its first frame.
+                  if (firstScreen || refreshingExistingScreen) {
+                    librarySnapshot = liveRaw;
+                    StartupTrace.mark("Live render started"); render();
+                  }
                 });
             StartupTrace.mark("Catalog cache write started");
-            cache.write("library", response.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            cache.write("library", liveRaw.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             StartupTrace.mark("Catalog cache write returned");
             // History synchronization must not delay the first library frame.
             try { StartupTrace.mark("Registration started"); requested.register(); StartupTrace.mark("Registration finished"); ProgressQueue.flush(this, requested); StartupTrace.mark("History sync finished"); } catch (Exception ignored) {}
@@ -255,9 +267,10 @@ public class MainActivity extends Activity {
     if (library == null) return;
     shell();
     StartupTrace.mark("Library view construction started");
-    root.getViewTreeObserver().addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
+    View drawingRoot = root;
+    drawingRoot.getViewTreeObserver().addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
       public boolean onPreDraw() {
-        root.getViewTreeObserver().removeOnPreDrawListener(this);
+        drawingRoot.getViewTreeObserver().removeOnPreDrawListener(this);
         StartupTrace.mark("First library frame ready"); return true;
       }
     });
@@ -493,14 +506,30 @@ public class MainActivity extends Activity {
     row.setClipChildren(false);
     sc.addView(row);
     Ui.add(body, sc, -1, 265);
-    for (Library.Title t : list.subList(0, Math.min(list.size(), 10))) {
-      View posterCard = card(t);
-      posterCard.setId(View.generateViewId());
-      posterCard.setNextFocusUpId(all.getId());
-      if (row.getChildCount() == 0) all.setNextFocusDownId(posterCard.getId());
-      Ui.add(row, posterCard, 120, 247);
-      Ui.gap(row, 20);
-    }
+    // Reserve the shelf's space, but construct posters only near the viewport.
+    // Headings remain focusable so D-pad navigation can enter an unloaded shelf.
+    Runnable populate = () -> {
+      if (row.getChildCount() != 0) return;
+      for (Library.Title t : list.subList(0, Math.min(list.size(), 10))) {
+        View posterCard = card(t);
+        posterCard.setId(View.generateViewId());
+        posterCard.setNextFocusUpId(all.getId());
+        if (row.getChildCount() == 0) all.setNextFocusDownId(posterCard.getId());
+        Ui.add(row, posterCard, 120, 247);
+        Ui.gap(row, 20);
+      }
+    };
+    all.setOnFocusChangeListener((v, focused) -> { if (focused) populate.run(); });
+    if (body.getChildCount() <= 3) populate.run();
+    Runnable nearViewport = () -> {
+      if (row.getChildCount() != 0 || !sc.isShown()) return;
+      int[] location = new int[2]; sc.getLocationOnScreen(location);
+      int height = getResources().getDisplayMetrics().heightPixels;
+      if (location[1] < height + Ui.dp(this, 300) && location[1] + sc.getHeight() > 0)
+        populate.run();
+    };
+    sc.getViewTreeObserver().addOnScrollChangedListener(nearViewport::run);
+    sc.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> nearViewport.run());
   }
 
   private View card(Library.Title t) {
@@ -994,7 +1023,7 @@ public class MainActivity extends Activity {
         () -> {
           try {
             JSONObject response = requested.request("GET", "/v1/library", null);
-            String snapshot = response.toString();
+            String snapshot = requested.libraryRaw;
             new BrowseCache(this, requested).write("library", snapshot.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             Library updated = Library.parse(response);
             runOnUiThread(
@@ -1024,6 +1053,17 @@ public class MainActivity extends Activity {
   }
 
   private void open(Library.Title t) {
+    Library.Title current = library.find(t.id);
+    if (current == null) { render(); return; }
+    t = current;
+    if (detailId.isEmpty()) {
+      android.view.ViewGroup host = findViewById(android.R.id.content);
+      savedBrowseView = host.getChildAt(0);
+      savedBrowseFocus = getCurrentFocus();
+      savedBrowseRoot = root; savedBrowseContent = content; savedBrowseNav = nav;
+      savedBrowseApi = api;
+      savedBrowseSnapshot = librarySnapshot;
+    }
     restoreId = t.id;
     detailId = t.id;
     season = -1;
@@ -1341,7 +1381,12 @@ public class MainActivity extends Activity {
 
   private TextView connectionScreen() {
     root.setGravity(Gravity.CENTER);
-    TextView label = Ui.title(this, "Connecting to library\n正在连接媒体库", 24);
+    ImageView logo = new ImageView(this);
+    logo.setImageResource(R.drawable.torrbaby_icon);
+    logo.setContentDescription("Torrbaby");
+    Ui.add(root, logo, 160, 160);
+    Ui.gap(root, 24);
+    TextView label = Ui.title(this, "", 24);
     label.setLineSpacing(Ui.dp(this, 12), 1);
     label.setGravity(Gravity.CENTER);
     Ui.add(root, label, -1, -2);
@@ -1522,7 +1567,18 @@ public class MainActivity extends Activity {
   public void onBackPressed() {
     if (!detailId.isEmpty()) {
       detailId = "";
-      render();
+      if (savedBrowseView != null && savedBrowseApi == api) {
+        long started = SystemClock.elapsedRealtime();
+        connectionGeneration++;
+        root = savedBrowseRoot; content = savedBrowseContent; nav = savedBrowseNav;
+        setContentView(savedBrowseView);
+        librarySnapshot = savedBrowseSnapshot;
+        inLibrary = true;
+        if (savedBrowseFocus != null) savedBrowseFocus.requestFocus();
+        savedBrowseView = null; savedBrowseFocus = null;
+        savedBrowseRoot = savedBrowseContent = savedBrowseNav = null;
+        android.util.Log.i("TorrbabyStartup", "Browse layout restored in " + (SystemClock.elapsedRealtime() - started) + " ms");
+      } else render();
     } else if (!collectionName.isEmpty()) {
       restoreShelf = collectionName;
       collectionName = "";

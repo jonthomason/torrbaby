@@ -18,8 +18,31 @@ public final class DiscoveryTestRunner extends Instrumentation {
     public void onServiceUnregistered(NsdServiceInfo info) {}
     public void onUnregistrationFailed(NsdServiceInfo info, int error) {}
   };
-  public void onCreate(Bundle args) { super.onCreate(args); start(); }
+  private boolean catalogCheck;
+  public void onCreate(Bundle args) {
+    super.onCreate(args); catalogCheck = args != null && args.getBoolean("catalog", false);
+    if (args != null && "true".equals(args.getString("catalog"))) catalogCheck = true;
+    start();
+  }
   public void onStart() {
+    if (catalogCheck) {
+      Bundle result = new Bundle();
+      try {
+        String raw = "{\"titles\":[{\"id\":\"test\",\"assets\":[{\"id\":\"episode\",\"season\":1,\"position\":12.5,\"complete\":true,\"media_info\":{\"state\":\"ready\",\"probe\":{\"ignored\":[1,null,{}]},\"audio_tracks\":[{\"language\":\"eng\",\"codec\":\"aac\"}],\"subtitle_tracks\":[],\"prepared\":[{\"language\":\"zh-Hans\",\"state\":\"ready\",\"generated\":true}]}}]}]}";
+        org.json.JSONObject compact = CatalogJson.parse(raw);
+        Library library = Library.parse(compact);
+        Library.Asset asset = library.titles.get(0).assets.get(0);
+        if (!asset.complete || asset.position != 12.5 || asset.season != 1
+            || asset.mediaInfo.has("probe")
+            || asset.mediaInfo.getJSONArray("audio_tracks").getJSONObject(0).has("codec")
+            || !MediaLanguages.lines(asset.mediaInfo).get(1).contains("Chinese (Simplified)"))
+          throw new Exception("Catalog projection lost browsing information");
+        Library.parse(CatalogJson.parse(compact.toString()));
+        result.putString("stream", "PASS: compact catalog preserves browsing, progress and generated languages\n");
+        finish(-1, result);
+      } catch (Exception error) { result.putString("stream", "FAIL: " + error); finish(0, result); }
+      return;
+    }
     main.post(() -> {
       manager = (NsdManager)getTargetContext().getSystemService(android.content.Context.NSD_SERVICE);
       discovery = new ServerDiscovery(getTargetContext(), new ServerDiscovery.Listener() {
