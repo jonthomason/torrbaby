@@ -43,7 +43,8 @@ struct LibraryArtwork: View {
     @State private var data: Data?
     private static let cache = NSCache<NSString, NSData>()
     var body: some View {
-        ZStack {
+        GeometryReader { geometry in
+          ZStack {
             Theme.panel
             if let data {
                 #if os(macOS)
@@ -54,7 +55,8 @@ struct LibraryArtwork: View {
             } else {
                 Image(systemName: "film").font(.largeTitle).foregroundStyle(Theme.muted)
             }
-        }.clipped()
+          }.frame(width: geometry.size.width, height: geometry.size.height).clipped()
+        }
         .task(id: store.server + id + variant) {
             data = nil
             let key = (store.server + id + variant) as NSString
@@ -96,16 +98,18 @@ struct LibraryBrowser: View {
             LazyVStack(alignment: .leading, spacing: 28) {
                 if browsing, let featured = titles.first(where: { $0.backdrop != nil && !$0.playable.isEmpty }) {
                     NavigationLink { LibraryDetail(titleID: featured.id) } label: {
-                        ZStack(alignment: .bottomLeading) {
-                            LibraryArtwork(id: featured.id, variant: "backdrop")
-                            LinearGradient(colors: [.clear, .black.opacity(0.92)], startPoint: .top, endPoint: .bottom)
+                        LibraryArtwork(id: featured.id, variant: "backdrop")
+                            .frame(height: 360)
+                            .overlay(LinearGradient(colors: [.clear, .black.opacity(0.92)], startPoint: .top, endPoint: .bottom))
+                            .overlay(alignment: .bottomLeading) {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text("TONIGHT AT HOME").font(.caption.bold()).tracking(3)
                                 Text(featured.title).font(.system(size: 38, weight: .bold, design: .serif))
+                                    .lineLimit(3).minimumScaleFactor(0.7).multilineTextAlignment(.leading)
                                 Text(([featured.year ?? ""] + featured.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · ")).font(.subheadline)
                                 Label("Explore", systemImage: "play.circle.fill").font(.headline).padding(.top, 5)
                             }.padding(28).foregroundStyle(.white)
-                        }.frame(height: 360).clipShape(RoundedRectangle(cornerRadius: 24))
+                        }.clipShape(RoundedRectangle(cornerRadius: 24))
                     }.buttonStyle(.plain)
                 }
                 HStack {
