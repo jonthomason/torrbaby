@@ -352,10 +352,26 @@ pub async fn tick(s: &Service) -> Result<()> {
     for t in &all {
         let hash = text(t, "hash_string")?;
         let previous = job(s, hash)?;
-        if ["done", "ignored"].contains(&previous["phase"].as_str().unwrap_or("")) {
+        if previous["phase"] == "ignored" {
             continue;
         }
-        if let Err(error) = advance(s, &config, t, &all, previous.clone()).await {
+        let result = if previous["phase"] == "done" {
+            Ok(())
+        } else {
+            advance(s, &config, t, &all, previous.clone()).await
+        };
+        let result = match result {
+            Ok(()) => auto_name(s, &config, hash).await,
+            Err(error) => Err(error),
+        };
+        if result.is_ok() {
+            let mut current = job(s, hash)?;
+            if current.is_object() && !current["error"].is_null() {
+                current["error"] = Value::Null;
+                save_job(s, hash, current)?;
+            }
+        }
+        if let Err(error) = result {
             let mut current = job(s, hash)?;
             if current.is_null() {
                 current = json!({"hash":hash,"name":t["name"],"phase":"blocked"});
@@ -458,5 +474,222 @@ async fn advance(
         )
         .await?;
     s.invalidate_torrents();
+    Ok(())
+}
+
+fn clean_name(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| {
+            if c.is_control() || "/\\:*?\"<>|".contains(c) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_matches([' ', '.'])
+        .to_owned()
+}
+
+/// Plan against stable Transmission file indices. Persist before any rename so a
+/// restart can finish subtitle renames even after the video has its new name.
+async fn auto_name(s: &Service, config: &Config, hash: &str) -> Result<()> {
+    let t = torrent(s, hash).await?;
+    if !complete(&t)
+        || t["download_dir"] == config.source
+        || !managed(config, Path::new(text(&t, "download_dir")?))
+    {
+        return Ok(());
+    }
+    let (assets, entities, mut pending) = {
+        let db =
+            s.db.lock()
+                .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
+        (
+            db.documents("assets")?,
+            db.documents("entities")?,
+            db.state()?["renames"][hash].clone(),
+        )
+    };
+    if !pending.is_object() {
+        let mut operations = Vec::new();
+        for asset in assets.iter().filter(|a| {
+            a["torrent_hash"] == hash
+                && a["available"] == true
+                && a["role"] != "extra"
+                && a["status"] == "matched"
+        }) {
+            let Some(entity) = entities.iter().find(|e| e["id"] == asset["entity_id"]) else {
+                continue;
+            };
+            let confidence = asset["match_confidence"]
+                .as_str()
+                .or_else(|| entity["match_confidence"].as_str())
+                .unwrap_or("");
+            if asset["confirmed"] != true
+                && !["exact_title_year", "exact_unique_title"].contains(&confidence)
+            {
+                continue;
+            }
+            let Some(index) = asset["file_index"].as_u64() else {
+                continue;
+            };
+            let Some(file) = files(&t)?.get(index as usize) else {
+                continue;
+            };
+            let old = text(file, "name")?;
+            let path = Path::new(old);
+            if !video(path) {
+                continue;
+            }
+            let title = clean_name(entity["title"].as_str().unwrap_or(""));
+            if title.is_empty() {
+                continue;
+            }
+            let year = entity["year"].as_str().unwrap_or("");
+            let title = if year.len() == 4 && year.bytes().all(|c| c.is_ascii_digit()) {
+                format!("{title} ({year})")
+            } else {
+                title
+            };
+            let stem = if entity["kind"] == "tv" {
+                let (Some(season), Some(episode)) =
+                    (asset["season"].as_u64(), asset["episode"].as_u64())
+                else {
+                    continue;
+                };
+                // Multi-episode files need an explicit mapping, not a guessed first episode.
+                let filename = path.file_stem().unwrap_or_default().to_string_lossy();
+                let markers = regex::Regex::new(
+                    r"(?i)(?:s\d{1,3}[. _-]*e\d{1,3}|\d{1,3}x\d{1,3})(?:[. _-]*(?:e\d|[-+]\d))",
+                )?;
+                if markers.is_match(&filename)
+                    || crate::scanner::EPISODE.find_iter(&filename).count() != 1
+                {
+                    continue;
+                }
+                let Some(ep) = entity["episodes"].as_array().and_then(|v| {
+                    v.iter()
+                        .find(|e| e["season"] == season && e["episode"] == episode)
+                }) else {
+                    continue;
+                };
+                let episode_title = clean_name(ep["title"].as_str().unwrap_or(""));
+                if episode_title.is_empty() {
+                    format!("{title} - S{season:02}E{episode:02}")
+                } else {
+                    format!("{title} - S{season:02}E{episode:02} - {episode_title}")
+                }
+            } else if entity["kind"] == "movie" {
+                title
+            } else {
+                continue;
+            };
+            let extension = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .context("Missing file extension")?;
+            let name = format!("{stem}.{extension}");
+            if name.len() > 240 || path.file_name().and_then(|p| p.to_str()) == Some(&name) {
+                continue;
+            }
+            operations.push(json!({"index":index,"path":old,"name":name}));
+            let old_stem = path
+                .file_stem()
+                .and_then(|p| p.to_str())
+                .context("Invalid filename")?;
+            for (side_index, sidecar) in files(&t)?.iter().enumerate() {
+                let side = Path::new(text(sidecar, "name")?);
+                if side.parent() != path.parent() {
+                    continue;
+                }
+                let ext = side
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                if !["srt", "ass", "ssa", "vtt", "sub", "idx"].contains(&ext.as_str()) {
+                    continue;
+                }
+                let Some(suffix) = side
+                    .file_name()
+                    .and_then(|p| p.to_str())
+                    .and_then(|p| p.strip_prefix(old_stem))
+                    .filter(|p| p.starts_with('.'))
+                else {
+                    continue;
+                };
+                let name = format!("{stem}{suffix}");
+                if name.len() <= 240 {
+                    operations
+                        .push(json!({"index":side_index,"path":text(sidecar,"name")?,"name":name}));
+                }
+            }
+        }
+        if operations.is_empty() {
+            return Ok(());
+        }
+        // Reject conflicting targets or multiple interpretations before any mutation.
+        let mut targets = HashSet::new();
+        let mut indices = HashSet::new();
+        for op in &operations {
+            let target = Path::new(text(op, "path")?)
+                .parent()
+                .unwrap_or(Path::new(""))
+                .join(text(op, "name")?);
+            if !targets.insert(target.clone()) || !indices.insert(op["index"].as_u64()) {
+                bail!("Ambiguous canonical names; review required");
+            }
+            let full = checked_path(
+                Path::new(text(&t, "download_dir")?),
+                target.to_str().context("Invalid name")?,
+            )?;
+            if full.symlink_metadata().is_ok() {
+                bail!("Canonical name already exists; review required");
+            }
+        }
+        pending = json!({"operations":operations,"created":now()});
+        s.change_state(|state| {
+            if !state["renames"].is_object() {
+                state["renames"] = json!({});
+            }
+            state["renames"][hash] = pending.clone();
+        })?;
+    }
+    for op in pending["operations"]
+        .as_array()
+        .context("Invalid rename plan")?
+    {
+        let current = torrent(s, hash).await?;
+        let index = op["index"].as_u64().context("Invalid planned file index")?;
+        let file = files(&current)?
+            .get(index as usize)
+            .context("Planned file no longer exists")?;
+        let old = text(op, "path")?;
+        let name = text(op, "name")?;
+        let target = Path::new(old).parent().unwrap_or(Path::new("")).join(name);
+        if file["name"].as_str() == target.to_str() {
+            let full = checked_path(
+                Path::new(text(&current, "download_dir")?),
+                target.to_str().context("Invalid path")?,
+            )?;
+            if !full.is_file() || Some(full.metadata()?.len()) != file["length"].as_u64() {
+                bail!("Renamed file verification failed");
+            }
+            continue;
+        }
+        if file["name"] != old {
+            bail!("Torrent path changed since rename planning; review required");
+        }
+        rename(s, hash, old, name).await?;
+    }
+    s.change_state(|state| {
+        state["renames"].as_object_mut().map(|r| r.remove(hash));
+    })?;
+    s.event("automatic_rename_complete", json!({"hash":hash}))?;
     Ok(())
 }

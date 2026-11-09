@@ -974,6 +974,7 @@ async fn scan_library(s: &Service) -> Result<()> {
                         "candidates",
                         "confirmed",
                         "matched_at",
+                        "match_confidence",
                         "error",
                     ] {
                         if let Some(value) = current.get(key) {
@@ -1009,6 +1010,7 @@ fn save_match(s: &Service, id: &str, entity: Value, confirmed: bool) -> Result<(
     asset["entity_id"] = json!(entity_id);
     asset["matched_at"] = json!(now());
     asset["status"] = json!("matched");
+    asset["match_confidence"] = entity["match_confidence"].clone();
     asset["error"] = Value::Null;
     if confirmed {
         asset["confirmed"] = json!(true);
