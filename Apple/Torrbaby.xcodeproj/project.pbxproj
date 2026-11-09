@@ -156,6 +156,17 @@
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
 		</dict>
+		<key>3343252C3DA956EE0F714F10</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>TorrentETA.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
 		<key>3685E330EC5277A9DD5661C6</key>
 		<dict>
 			<key>isa</key>
@@ -186,11 +197,13 @@
 			<array>
 				<string>4411227784337DBB3AE28994</string>
 				<string>FBE0B9919A6FBE5EDE525267</string>
+				<string>452DD7801481B6DCBE203458</string>
 				<string>8BF4A28E43F6CF370D3EE1C2</string>
 				<string>D9971AA8CEDEB53072ACC646</string>
 				<string>91B0C263E7F578CAA54EF22C</string>
 				<string>0991948DBEFEC33CC776D59D</string>
 				<string>1ECEF93D7B95A72C85B1364D</string>
+				<string>3343252C3DA956EE0F714F10</string>
 				<string>A9BCA438417D62B8BB39B2EE</string>
 				<string>3685E330EC5277A9DD5661C6</string>
 			</array>
@@ -209,6 +222,17 @@
 			<string>sourcecode.swift</string>
 			<key>path</key>
 			<string>App.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
+		<key>452DD7801481B6DCBE203458</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>Library.swift</string>
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
 		</dict>
@@ -332,6 +356,13 @@
 			<key>runOnlyForDeploymentPostprocessing</key>
 			<integer>0</integer>
 		</dict>
+		<key>801803212947630192DC4AE3</key>
+		<dict>
+			<key>fileRef</key>
+			<string>452DD7801481B6DCBE203458</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+		</dict>
 		<key>8BF4A28E43F6CF370D3EE1C2</key>
 		<dict>
 			<key>isa</key>
@@ -422,11 +453,13 @@
 			<array>
 				<string>0742EAAFE818D8AF1F2654FF</string>
 				<string>4A65F154EF0D30B3C788EBB8</string>
+				<string>801803212947630192DC4AE3</string>
 				<string>D1B1E93CC8825EE71A6BC9AF</string>
 				<string>6EA70B4B366A3E62187E0B8F</string>
 				<string>1E2C8407FF9F846813DB5507</string>
 				<string>5CC0D972A739984FFFBD4091</string>
 				<string>49253D63F8B5038EF11A07DE</string>
+				<string>E9ACACC5C8F21FD48C7E6429</string>
 				<string>D7693334FE5864081CBB4379</string>
 			</array>
 			<key>isa</key>
@@ -458,6 +491,13 @@
 			<string>Player.swift</string>
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
+		</dict>
+		<key>E9ACACC5C8F21FD48C7E6429</key>
+		<dict>
+			<key>fileRef</key>
+			<string>3343252C3DA956EE0F714F10</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
 		</dict>
 		<key>ED8772ADEC3A6C25161BC957</key>
 		<dict>

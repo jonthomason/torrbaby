@@ -93,6 +93,8 @@ struct TorrentDetail: View {
         Label(rate(t.rateUpload), systemImage: "arrow.up").foregroundStyle(.cyan)
         Text("\(t.peersConnected) peers").foregroundStyle(Theme.muted)
         Text("Ratio \(max(0, t.uploadRatio), specifier: "%.2f")").foregroundStyle(Theme.muted)
+        if !t.completed { Text(t.etaText).foregroundStyle(Theme.muted) }
+        Text("\(bytes(t.downloaded)) / \(bytes(t.size))").foregroundStyle(Theme.muted)
     }
     @ViewBuilder func actions(_ t: Torrent) -> some View {
         Button { store.action(t, t.status == 0 ? "start" : "stop") } label: {

@@ -117,6 +117,7 @@ struct SettingsView: View {
                 }
                 Text("Playback progress is shared across your devices. Each installation has its own stable ID.").font(.caption).foregroundStyle(.secondary)
             }
+            SeedingSettings()
             SwiftUI.Section("Automation") {
                 if let status = store.status {
                     Toggle("Organize completed downloads", isOn: Binding(get: { !status.settings.paused }, set: { _ in store.toggleAutomation() })).disabled(store.busy)
@@ -168,6 +169,41 @@ struct SettingsView: View {
         .onChange(of: movies) { _, _ in saved = false }
         .onChange(of: tv) { _, _ in saved = false }
         .onChange(of: interval) { _, _ in saved = false }
+    }
+}
+
+struct SeedingSettings: View {
+    @EnvironmentObject var store: Store
+    @State private var available = false
+    @State private var enabled = true
+    @State private var ratio = 1.2
+    @State private var saved = false
+    struct Policy: Decodable { let enabled: Bool; let ratio: Double }
+    var body: some View {
+        Group {
+            if available {
+                SwiftUI.Section("Seeding") {
+                    Toggle("Move to Complete at target ratio", isOn: $enabled)
+                    TextField("Target upload/download ratio", value: $ratio, format: .number.precision(.fractionLength(1...2)))
+                        .disabled(!enabled)
+                    Text("Stops seeding when the upload/download ratio reaches this target. Media files stay in your library. Applies to torrents using Transmission’s default ratio policy.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button(saved ? "Saved" : "Save seeding settings") {
+                        store.perform {
+                            let policy: Policy = try await store.request("PATCH", "/v1/seeding", body: ["enabled":enabled, "ratio":ratio])
+                            enabled = policy.enabled; ratio = policy.ratio; saved = true
+                        }
+                    }.disabled(store.busy || !store.connected || !ratio.isFinite || ratio <= 0 || ratio > 1000)
+                }
+            }
+        }
+        .task(id: store.server) {
+            if let policy: Policy = try? await store.request("GET", "/v1/seeding") {
+                enabled = policy.enabled; ratio = policy.ratio; available = true
+            }
+        }
+        .onChange(of: enabled) { _, _ in saved = false }
+        .onChange(of: ratio) { _, _ in saved = false }
     }
 }
 

@@ -32,6 +32,8 @@ enum Credentials {
 
 @MainActor
 final class Store: ObservableObject {
+    @Published var library: MediaLibrary?
+    @Published var libraryError: String?
     @Published var metadata: [MediaMetadata] = []
     @Published var transferHistory: [TransferSample] = []
     private var lastHistoryFetch = Date.distantPast
@@ -102,6 +104,7 @@ final class Store: ObservableObject {
     @Published var lastUpdated: Date?
     @Published var isConnecting = false
     private var refreshing = false
+    private var etaSmoother = TorrentETASmoother()
     init() {
         #if os(macOS)
         if server.isEmpty, let legacy = UserDefaults.standard.persistentDomain(forName: "org.torrbaby.app"), let address = legacy["server"] as? String {
@@ -182,11 +185,19 @@ final class Store: ObservableObject {
         defer { refreshing = false }
         do {
             let newStatus: DaemonStatus = try await request("GET", "/v1/status")
-            let newTorrents: [Torrent] = try await request("GET", "/v1/torrents")
+            let received: [Torrent] = try await request("GET", "/v1/torrents")
+            let newTorrents = etaSmoother.update(received, server: server, now: Date().timeIntervalSince1970)
+            status = newStatus
+            torrents = newTorrents.sorted { $0.addedDate > $1.addedDate }
+            connectionError = nil
             let newEvents: [AuditEvent] = try await request("GET", "/v1/events")
             try await registerClient()
             clients = try await request("GET", "/v1/clients")
             history = try await request("GET", "/v1/playback")
+            do {
+                library = try await request("GET", "/v1/library")
+                libraryError = nil
+            } catch { libraryError = error.localizedDescription }
             if Date().timeIntervalSince(lastHistoryFetch) >= 30 {
                 transferHistory = try await request("GET", "/v1/rates")
                 metadata = try await request("GET", "/v1/metadata")

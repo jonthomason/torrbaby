@@ -20,11 +20,14 @@ struct Torrent: Codable, Identifiable, Hashable {
     let rateDownload: Int64
     let rateUpload: Int64
     let eta: Int
+    var smoothedEta: Int?
     let uploadRatio: Double
     let addedDate: Double
     let activityDate: Double
     let peersConnected: Int
     let peersSendingToUs: Int
+    let downloadedEver: Int64?
+    let uploadedEver: Int64?
     let isStalled: Bool
     var id: String { hashString }
     var completed: Bool { percentDone >= 1 }
@@ -58,6 +61,18 @@ struct Torrent: Codable, Identifiable, Hashable {
         return value.replacingOccurrences(of: ".", with: " ").replacingOccurrences(of: "_", with: " ")
     }
     var size: Int64 { files.reduce(0) { $0 + $1.length } }
+    var downloaded: Int64 { files.reduce(0) { $0 + $1.bytesCompleted } }
+    var etaText: String {
+        if completed { return "Complete" }
+        if status == 0 { return "Paused" }
+        if status != 4 { return stateName }
+        if isStalled { return "Waiting for activity" }
+        guard let estimate = smoothedEta, estimate >= 0 else { return "Estimating…" }
+        if estimate < 60 { return "<1m remaining" }
+        if estimate < 3600 { return "~\(max(1, estimate / 60))m remaining" }
+        if estimate < 86400 { return "~\(estimate / 3600)h \((estimate % 3600) / 60)m remaining" }
+        return "~\(estimate / 86400)d \((estimate % 86400) / 3600)h remaining"
+    }
 }
 
 struct DaemonSettings: Codable {

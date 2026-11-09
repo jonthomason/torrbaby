@@ -3,13 +3,14 @@ import SwiftUI
 import Charts
 
 enum Section: String, CaseIterable, Identifiable {
-    case overview = "All torrents", active = "Active torrents", downloading = "Downloading", seeding = "Seeding", attention = "Not progressing", library = "Ready to watch", automation = "Automation", settings = "Settings"
+    case library = "Home", movies = "Movies", shows = "TV Shows", active = "Downloading", seeding = "Seeding", complete = "Complete", attention = "Not progressing", automation = "Automation", settings = "Settings"
     var id: String { rawValue }
     var icon: String {
         switch self {
-        case .overview: return "square.stack.3d.up"
+        case .movies: return "film"
+        case .shows: return "tv"
         case .active: return "waveform.path"
-        case .downloading: return "arrow.down.circle"
+        case .complete: return "checkmark.circle"
         case .seeding: return "arrow.up.circle"
         case .attention: return "exclamationmark.circle"
         case .library: return "play.rectangle"
@@ -19,9 +20,10 @@ enum Section: String, CaseIterable, Identifiable {
     }
     var subtitle: String {
         switch self {
-        case .overview: return "A little order for everything coming in."
-        case .active: return "Everything downloading, queued or seeding."
-        case .downloading: return "On their way to your library."
+        case .movies: return "Movie night starts here."
+        case .shows: return "Your shows, season by season."
+        case .active: return "Incomplete downloads, including paused and stalled torrents."
+        case .complete: return "Finished downloads that are not currently seeding."
         case .seeding: return "Downloaded. Organized. Giving back."
         case .attention: return "Stalled downloads, idle peers and errors worth a look."
         case .library: return "Your files, straight from your server."
@@ -34,7 +36,7 @@ enum Section: String, CaseIterable, Identifiable {
 struct RootView: View {
     @EnvironmentObject var store: Store
     @Environment(\.scenePhase) var phase
-    @State private var selection: Section? = .overview
+    @State private var selection: Section? = .library
     @State private var showConnect = false
     @State private var showAdd = false
     @State private var incomingMagnet = ""
@@ -46,12 +48,25 @@ struct RootView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 9)).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 1) {
                         Text("torrbaby").font(.system(size: 24, weight: .bold, design: .rounded))
-                        Text("A home for your downloads").font(.caption2).foregroundStyle(Theme.muted)
+                        Text("Your home cinema").font(.caption2).foregroundStyle(Theme.muted)
                     }
                 }.padding(.horizontal, 18).padding(.top, 24)
-                List(Section.allCases, selection: $selection) { section in
-                    Label(section.rawValue, systemImage: section.icon)
-                        .font(.system(size: 14, weight: .medium)).padding(.vertical, 5).tag(section)
+                List(selection: $selection) {
+                    SwiftUI.Section("Library") {
+                        ForEach([Section.library, .movies, .shows]) { section in
+                            Label(section.rawValue, systemImage: section.icon).padding(.vertical, 5).tag(section)
+                        }
+                    }
+                    SwiftUI.Section("Torrents") {
+                        ForEach([Section.active, .seeding, .complete, .attention]) { section in
+                            Label(section.rawValue, systemImage: section.icon).padding(.vertical, 5).tag(section)
+                        }
+                    }
+                    SwiftUI.Section("Server") {
+                        ForEach([Section.automation, .settings]) { section in
+                            Label(section.rawValue, systemImage: section.icon).padding(.vertical, 5).tag(section)
+                        }
+                    }
                 }.listStyle(.sidebar)
                 VStack(alignment: .leading, spacing: 9) {
                     HStack(spacing: 7) {
@@ -70,7 +85,10 @@ struct RootView: View {
                 Group {
                     if selection == .automation { AutomationView() }
                     else if selection == .settings { SettingsView(showConnect: $showConnect) }
-                    else { TorrentListView(section: selection ?? .overview) }
+                    else if selection == .library || selection == nil { LibraryBrowser() }
+                    else if selection == .movies { LibraryBrowser(kind: "movie").id("movies") }
+                    else if selection == .shows { LibraryBrowser(kind: "tv").id("shows") }
+                    else { TorrentListView(section: selection ?? .active) }
                 }
                 .background(Theme.canvas)
                 .navigationTitle(selection?.rawValue ?? "Torrbaby")
@@ -127,9 +145,9 @@ struct TorrentListView: View {
         store.torrents.filter { t in
             let included: Bool
             switch section {
-            case .active: included = t.status != 0
-            case .downloading: included = !t.completed
-            case .seeding: included = t.status == 6
+            case .active: included = !t.completed
+            case .seeding: included = t.completed && t.status == 6
+            case .complete: included = t.completed && t.status != 6
             case .attention: included = t.needsAttention
             case .library: included = t.files.contains { $0.isVideo && $0.complete }
             default: included = true
@@ -141,7 +159,7 @@ struct TorrentListView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 if !compact { VStack(alignment: .leading, spacing: 6) {
-                    Text(section == .overview ? "Everything, in its place." : section.rawValue)
+                    Text(section.rawValue)
                         .font(.system(size: 30, weight: .bold, design: .rounded))
                     Text(section.subtitle).foregroundStyle(Theme.muted)
                 } }
@@ -242,14 +260,13 @@ struct TorrentRow: View {
                     Spacer(minLength: 0)
                     if !torrent.completed { Text(torrent.percentDone, format: .percent.precision(.fractionLength(0))).foregroundStyle(Theme.muted) }
                 }.font(.caption)
-                if !torrent.completed {
-                    ProgressView(value: torrent.percentDone).tint(color)
-                    HStack {
-                        Text(rate(torrent.rateDownload))
-                        Spacer()
-                        Text("\(torrent.peersConnected) peers")
-                    }.font(.caption2).foregroundStyle(Theme.muted).monospacedDigit()
-                }
+                ProgressView(value: torrent.percentDone).tint(color)
+                Text("\(bytes(torrent.downloaded)) of \(bytes(torrent.size)) · \(Int(torrent.percentDone * 100))%")
+                    .font(.caption.monospacedDigit()).foregroundStyle(Theme.muted)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 16) { TorrentActivity(torrent: torrent) }
+                    VStack(alignment: .leading, spacing: 5) { TorrentActivity(torrent: torrent) }
+                }.font(.caption).foregroundStyle(Theme.muted).monospacedDigit()
                 if showReason, let reason = torrent.progressIssue { Text(reason).font(.caption).foregroundStyle(.orange) }
             }
             Image(systemName: "chevron.right").font(.caption.weight(.medium)).foregroundStyle(Theme.muted).padding(.top, 18)
@@ -272,9 +289,14 @@ struct CompactTorrentRow: View {
                 HStack(spacing: 6) {
                     Text(torrent.stateName)
                     Text("·")
-                    Text(torrent.completed ? bytes(torrent.size) : "\(Int(torrent.percentDone * 100))% · \(rate(torrent.rateDownload))")
+                    Text("\(bytes(torrent.downloaded))/\(bytes(torrent.size)) · \(Int(torrent.percentDone * 100))%")
                     Text("· \(torrent.peersConnected) peers")
                 }.font(.system(size: 10)).foregroundStyle(Theme.muted).lineLimit(1)
+                HStack(spacing: 10) {
+                    if !torrent.completed { Label(rate(torrent.rateDownload), systemImage: "arrow.down") }
+                    Label(rate(torrent.rateUpload), systemImage: "arrow.up")
+                    Text("Ratio \(max(0, torrent.uploadRatio), specifier: "%.2f")")
+                }.font(.caption2.monospacedDigit()).foregroundStyle(Theme.muted)
                 if showReason, let reason = torrent.progressIssue { Text(reason).font(.caption2).foregroundStyle(.orange).lineLimit(2) }
             }
             Spacer(minLength: 0)
@@ -288,6 +310,22 @@ struct CompactTorrentRow: View {
     }
 }
 
+struct TorrentActivity: View {
+    let torrent: Torrent
+    var body: some View {
+        if !torrent.completed {
+            Label(rate(torrent.rateDownload), systemImage: "arrow.down").foregroundStyle(Theme.mint)
+        }
+        Label(rate(torrent.rateUpload), systemImage: "arrow.up").foregroundStyle(.cyan)
+        Text("\(torrent.peersConnected) peers · \(torrent.peersSendingToUs) sending")
+        if !torrent.completed { Text(torrent.etaText) }
+        Text("Ratio \(max(0, torrent.uploadRatio), specifier: "%.2f")")
+        if let uploaded = torrent.uploadedEver { Text("\(bytes(uploaded)) uploaded") }
+        if torrent.activityDate > 0 {
+            Text("Active \(Date(timeIntervalSince1970: torrent.activityDate), style: .relative) ago")
+        }
+    }
+}
 
 struct TransferHistoryView: View {
     @EnvironmentObject var store: Store
