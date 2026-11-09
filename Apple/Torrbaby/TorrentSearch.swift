@@ -107,6 +107,11 @@ struct TorrentSearchView: View {
     @State private var searching = false
     @State private var work: Task<Void, Never>?
     @State private var selectedID: String?
+    @FocusState private var searchFocused: Bool
+    @State private var prepareNextSearch = false
+    #if !os(tvOS)
+    @State private var querySelection: TextSelection?
+    #endif
     private var selectedItem: TorrentSearchItem? { response?.items.first { $0.id == selectedID } }
     var body: some View {
         GeometryReader { geometry in
@@ -121,7 +126,7 @@ struct TorrentSearchView: View {
                                 .frame(width: min(440, max(280, geometry.size.width * 0.43)))
                             Divider()
                             if let selectedItem {
-                                TorrentSearchDetail(item: selectedItem, embedded: true).id(selectedItem.id)
+                                TorrentSearchDetail(item: selectedItem, embedded: true, onAdded: { prepareNextSearch = true; focusNextSearch() }).id(selectedItem.id)
                             } else {
                                 ContentUnavailableView("Choose a release", systemImage: "text.magnifyingglass")
                                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -136,6 +141,13 @@ struct TorrentSearchView: View {
             }
         }
         .navigationTitle("Find")
+        .onAppear { if prepareNextSearch { focusNextSearch() } }
+        .onChange(of: query) { _, _ in
+            if prepareNextSearch {
+                year = nil; season = nil; episode = nil
+                prepareNextSearch = false
+            }
+        }
         .onDisappear { work?.cancel(); searching = false }
         .task { if !query.isEmpty && response == nil { search() } }
     }
@@ -152,8 +164,9 @@ struct TorrentSearchView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
                 Image(systemName: "magnifyingglass").foregroundStyle(Theme.mint)
-                TextField("Movie, show, or release", text: $query).onSubmit(search).autocorrectionDisabled()
-                    .textFieldStyle(.plain)
+                searchField
+                    .focused($searchFocused)
+                    .onSubmit(search).autocorrectionDisabled().textFieldStyle(.plain)
                 Button(action: search) { Text(searching ? "Searching…" : "Search") }
                     .buttonStyle(.borderedProminent)
                     .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || searching)
@@ -197,11 +210,29 @@ struct TorrentSearchView: View {
                     .listRowBackground(selectedID == item.id ? Theme.mint.opacity(0.13) : Color.clear)
                     .accessibilityAddTraits(selectedID == item.id ? .isSelected : [])
             } else {
-                NavigationLink { TorrentSearchDetail(item: item).id(item.id) } label: { TorrentSearchRow(item: item) }
+                NavigationLink { TorrentSearchDetail(item: item, onAdded: { prepareNextSearch = true }).id(item.id) } label: { TorrentSearchRow(item: item) }
             }
         }.listStyle(.plain).disabled(searching)
     }
+    @ViewBuilder private var searchField: some View {
+        #if os(tvOS)
+        TextField("Movie, show, or release", text: $query)
+        #else
+        TextField("Movie, show, or release", text: $query, selection: $querySelection)
+        #endif
+    }
+    private func focusNextSearch() {
+        #if !os(tvOS)
+        Task { @MainActor in
+            // Allow the phone's detail navigation to finish before opening its keyboard.
+            await Task.yield()
+            searchFocused = true
+            querySelection = TextSelection(range: query.startIndex..<query.endIndex)
+        }
+        #endif
+    }
     private func search() {
+        searchFocused = false
         guard query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 else { return }
         work?.cancel(); searching = true; error = nil
         var body: [String: Any] = ["query": query, "sources": source == "all" ? [] : [source]]
@@ -219,10 +250,47 @@ struct TorrentSearchView: View {
     }
 }
 
+private struct SearchReleaseArtwork: View {
+    @EnvironmentObject var store: Store
+    let name: String
+    @State private var data: Data?
+    private static let cache = NSCache<NSString, NSData>()
+    var body: some View {
+        Group {
+            if let data {
+                #if os(macOS)
+                if let image = NSImage(data: data) { Image(nsImage: image).resizable().scaledToFill() }
+                #else
+                if let image = UIImage(data: data) { Image(uiImage: image).resizable().scaledToFill() }
+                #endif
+            } else {
+                RoundedRectangle(cornerRadius: 7).fill(Theme.panel)
+                    .overlay(Image(systemName: "film").foregroundStyle(Theme.muted))
+            }
+        }.frame(width: 46, height: 69).clipShape(RoundedRectangle(cornerRadius: 7))
+            .accessibilityHidden(true)
+            .task(id: store.server + name) {
+                data = nil
+                let key = (store.server + name) as NSString
+                if let cached = Self.cache.object(forKey: key) { data = cached as Data; return }
+                struct Artwork: Decodable { let data: String? }
+                do {
+                    let artwork: Artwork = try await store.request("POST", "/v1/search/torrents/artwork", body: ["name": name], timeout: 20)
+                    guard !Task.isCancelled, let encoded = artwork.data, let decoded = Data(base64Encoded: encoded) else { return }
+                    data = decoded
+                    Self.cache.totalCostLimit = 8 * 1024 * 1024
+                    Self.cache.setObject(decoded as NSData, forKey: key, cost: decoded.count)
+                } catch { /* Optional artwork never blocks a release. */ }
+            }
+    }
+}
+
 private struct TorrentSearchRow: View {
     let item: TorrentSearchItem
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        HStack(alignment: .top, spacing: 12) {
+          SearchReleaseArtwork(name: item.name)
+          VStack(alignment: .leading, spacing: 8) {
             Text(item.title).font(.headline).foregroundStyle(.primary).lineLimit(2)
             if !item.edition.isEmpty { Text(item.edition).font(.subheadline).foregroundStyle(.secondary) }
             HStack(alignment: .firstTextBaseline) {
@@ -230,6 +298,10 @@ private struct TorrentSearchRow: View {
                 Spacer(minLength: 8)
                 Text(item.size).monospacedDigit().fixedSize()
             }.font(.caption).foregroundStyle(.secondary)
+            if !item.hints.audio.isEmpty {
+                Label(item.hints.audio.joined(separator: " · "), systemImage: "speaker.wave.2")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Label(item.languages.isEmpty ? "Languages not listed" : item.languages, systemImage: "globe")
                 .font(.caption).foregroundStyle(.secondary).lineLimit(2)
             HStack {
@@ -238,14 +310,17 @@ private struct TorrentSearchRow: View {
                 Spacer()
                 if let peers = item.leechers { Text("\(peers.formatted()) \(peers == 1 ? "peer" : "peers")").foregroundStyle(.secondary) }
             }.font(.caption).monospacedDigit()
+          }
         }.padding(.vertical, 10).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
     }
 }
 
 private struct TorrentSearchDetail: View {
     @EnvironmentObject var store: Store
+    @Environment(\.dismiss) private var dismiss
     let item: TorrentSearchItem
     var embedded = false
+    var onAdded: () -> Void = {}
     @State private var detail: TorrentSearchDetails?
     @State private var loading = false
     @State private var adding = false
@@ -323,6 +398,10 @@ private struct TorrentSearchDetail: View {
             let result: Added = try await store.request("POST", "/v1/torrents", body: ["magnet": item.magnet, "paused": paused], timeout: 45)
             added = true; message = result.torrentDuplicate == nil ? "Torrent added" : "Already in your torrents"
             store.notify(message ?? "Torrent added", detail: item.name, torrentHash: item.infoHash)
+            #if !os(tvOS)
+            onAdded()
+            if !embedded { dismiss() }
+            #endif
         } catch { message = error.localizedDescription }
     }
 }

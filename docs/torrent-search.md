@@ -143,3 +143,14 @@ Unrelated Android subtitle/playback edits present at closure were left untouched
   the user was asked to unlock the Mac.
 - Existing concurrent subtitle/player/server edits were preserved and not included
   in this change's commit. Builds used the shared current workspace.
+
+
+## Search polish — Apple build 90 (2026-11-10)
+
+Release rows now include audio tags (including AAC, AC-3/E-AC-3, TrueHD and Atmos). Optional authenticated artwork requests are separate from search: exact normalized title/year matches, unique exact TV matches, collection rejection, smallest configured TMDB poster size, six-hour shared memory cache. Artwork absence/errors never block search. Live Matrix match returned w92; another encoding reused the cache in 3ms. Names without a movie year and collection names returned no artwork.
+
+Successful Apple search additions move focus to the query and select its text; narrow layouts dismiss release details first. Typing the next query clears prior contextual year/season/episode filters. Failures remain in detail. In-app notices sit at the bottom; iOS foreground system notifications are suppressed to avoid a second banner over search. tvOS retains its remote-friendly detail behavior.
+
+Validation: targeted Rust search tests (2), cargo check, signed server build and Mac/iOS/tvOS builds passed. Mac build 90 installed; mobile build 90 published and HTTPS IPA checksum verified. Builds include concurrent worktree subtitle changes, which are not included in this search commit. Post-add keyboard/selection behavior still needs interactive device verification.
+
+Operational incident: deploying server at 04:32:59 restarted the daemon and interrupted active mobile playback. HLS Manager::new clears cached packages on restart, invalidating open playback URLs. At 04:37 both LAN and Tailscale library/torrent/events/playback endpoints returned HTTP 200 in under 0.1s. No further daemon restarts while user is watching. Follow-up: preserve ready HLS packages across restart or transparently reprepare/retry, and avoid active-session interruption during deployments.

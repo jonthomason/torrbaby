@@ -67,11 +67,18 @@ fn array(value: &Value) -> &[Value] {
     value.as_array().map(Vec::as_slice).unwrap_or(&[])
 }
 
+#[derive(Default)]
+struct SearchArtworkCache {
+    size: Option<String>,
+    entries: std::collections::HashMap<String, (std::time::Instant, Value)>,
+}
+
 pub struct Metadata {
     client: reqwest::Client,
     token: PathBuf,
     host: Mutex<String>,
     cache: Mutex<std::collections::HashMap<String, Value>>,
+    search_artwork: Mutex<SearchArtworkCache>,
 }
 impl Metadata {
     pub fn new(directory: &Path) -> Result<Self> {
@@ -83,6 +90,7 @@ impl Metadata {
             token: directory.join("tmdb.token"),
             host: Mutex::new("api.tmdb.org".to_owned()),
             cache: Mutex::new(std::collections::HashMap::new()),
+            search_artwork: Mutex::new(SearchArtworkCache::default()),
         })
     }
     pub fn configured(&self) -> bool {
@@ -168,6 +176,64 @@ impl Metadata {
         file.sync_all()?;
         std::fs::rename(temporary, &self.token)?;
         Ok(())
+    }
+    /// Small posters for visible search rows. Never enrich or mutate the library.
+    pub async fn search_artwork(&self, name: &str) -> Result<Value> {
+        use base64::Engine;
+        if !self.configured() { return Ok(json!({"data":null})); }
+        anyhow::ensure!(name.len() <= 4096, "Release name too long");
+        let (query, year, kind) = parse_name(name);
+        // Movie titles without a release year and collections are too ambiguous.
+        if query.is_empty() || (kind == "movie" && year.is_empty())
+            || Regex::new(r"(?i)\b(collection|trilogy|anthology|\d+[ -]+\d+[ ._-]+pack)\b").unwrap().is_match(name) {
+            return Ok(json!({"data":null}));
+        }
+        let key = format!("{kind}:{}:{year}", normalized(&query));
+        // Serializes lookups and coalesces duplicate releases of the same title.
+        // This separate lock does not delay torrent searches or library requests.
+        let mut cache = self.search_artwork.lock().await;
+        if let Some((at, value)) = cache.entries.get(&key) {
+            if at.elapsed() < Duration::from_secs(6 * 3600) { return Ok(value.clone()); }
+        }
+        let mut parameters = vec![("query", query.as_str()), ("language", "en-US"), ("include_adult", "false")];
+        if !year.is_empty() { parameters.push((if kind == "movie" { "year" } else { "first_air_date_year" }, year.as_str())); }
+        let data = self.request(&format!("search/{kind}"), &parameters).await?;
+        let exact = array(&data["results"]).iter().filter(|hit| {
+            let title = hit.get("title").or(hit.get("name")).and_then(Value::as_str).unwrap_or("");
+            let original = hit.get("original_title").or(hit.get("original_name")).and_then(Value::as_str).unwrap_or("");
+            let date = hit.get("release_date").or(hit.get("first_air_date")).and_then(Value::as_str).unwrap_or("");
+            (normalized(&query) == normalized(title) || normalized(&query) == normalized(original))
+                && (year.is_empty() || date.get(..4) == Some(year.as_str()))
+        }).collect::<Vec<_>>();
+        let mut result = json!({"data":null});
+        if data["total_pages"].as_u64().unwrap_or(1) <= 1 && exact.len() == 1 {
+            if let Some(path) = exact[0]["poster_path"].as_str().filter(|p|
+                p.starts_with('/') && p.len() < 256 && !p.contains("..")
+                    && p.chars().all(|c| c.is_ascii_alphanumeric() || "/._-".contains(c))) {
+                if cache.size.is_none() {
+                    let config = self.request("configuration", &[]).await?;
+                    cache.size = array(&config["images"]["poster_sizes"]).iter()
+                        .filter_map(Value::as_str)
+                        .filter_map(|size| Some((size.strip_prefix('w')?.parse::<u32>().ok()?, size)))
+                        .min_by_key(|(width, _)| *width).map(|(_, size)| size.to_owned());
+                }
+                if let Some(size) = &cache.size {
+                    let mut response = self.client.get(format!("https://image.tmdb.org/t/p/{size}{path}"))
+                        .send().await?.error_for_status()?;
+                    let mut bytes = Vec::new();
+                    while let Some(chunk) = response.chunk().await? {
+                        anyhow::ensure!(bytes.len() + chunk.len() <= 512 * 1024, "Thumbnail too large");
+                        bytes.extend_from_slice(&chunk);
+                    }
+                    result = json!({"data":base64::engine::general_purpose::STANDARD.encode(bytes),
+                        "provider":"TMDB","provider_id":exact[0]["id"],"size":size,
+                        "confidence":if year.is_empty() {"exact_unique_title"} else {"exact_title_year"}});
+                }
+            }
+        }
+        if cache.entries.len() >= 128 { cache.entries.clear(); }
+        cache.entries.insert(key, (std::time::Instant::now(), result.clone()));
+        Ok(result)
     }
     pub async fn search(&self, name: &str) -> Result<Value> {
         let (query, year, kind) = parse_name(name);

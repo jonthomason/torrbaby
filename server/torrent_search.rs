@@ -600,7 +600,7 @@ fn hints(name: &str) -> Hints {
     });
     static AUDIO: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
-            r"(?i)\b(AAC|AC3|EAC3|DTS(?:[ ._-]HD)?|TrueHD|Atmos|FLAC|DDP?(?:[ .]?[257]\.1)?)\b",
+            r"(?i)\b(AAC(?:[ .]?[257]\.[01])?|E[ ._-]?AC[ ._-]?3|AC[ ._-]?3|DTS(?:[ ._-]HD)?(?:[ ._-]MA)?|TrueHD|Atmos|FLAC|DDP?(?:[ .]?[257]\.1)?)\b",
         )
         .unwrap()
     });
@@ -754,6 +754,8 @@ mod tests {
         assert!(right.match_score > sequel.match_score);
         assert_eq!(right.hints.episode, Some(3));
         assert_eq!(right.hints.audio, vec!["DDP5.1"]);
+        assert_eq!(hints("Film.2020.AAC2.0.E-AC-3.TrueHD.Atmos").audio,
+            vec!["AAC2.0", "E-AC-3", "TRUEHD", "ATMOS"]);
         let url = reqwest::Url::parse(&right.magnet).unwrap();
         assert_eq!(url.scheme(), "magnet");
         assert!(right.magnet.starts_with("magnet:?xt=urn:btih:"));

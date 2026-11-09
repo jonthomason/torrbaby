@@ -246,7 +246,7 @@ struct RootView: View {
                 torrentDraft = TorrentDraft(magnet: canonicalMagnet(url.absoluteString))
             }
         }
-        .overlay(alignment: .top) {
+        .overlay(alignment: .bottom) {
             NoticeBanner { hash in
                 var next = Location(section: selection)
                 if let torrent = store.torrents.first(where: { $0.id == hash }) {
@@ -254,7 +254,7 @@ struct RootView: View {
                 }
                 next.path.append(hash)
                 navigate(next)
-            }.padding(.top, 12)
+            }.padding(.bottom, 12)
         }
         .alert("Couldn’t complete that action", isPresented: Binding(get: { store.actionError != nil }, set: { if !$0 { store.actionError = nil } })) {
             Button("OK") { store.actionError = nil }
