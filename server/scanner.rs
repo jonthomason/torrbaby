@@ -12,6 +12,45 @@ use std::{
 pub static EPISODE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:^|[^a-z0-9])s(\d{1,2})[ ._-]*e(\d{1,3})(?:[^0-9]|$)|(?:^|[^0-9])(\d{1,2})x(\d{2})(?:[^0-9]|$)").unwrap()
 });
+/// Nonstandard episode names require explicit series-pack context and an episode title.
+/// The release's numbers may be DVD order, so resolve by title against provider metadata.
+pub fn named_episode(path: &Path) -> Option<(String, String, String)> {
+    let stem = path.file_stem()?.to_str()?;
+    if EPISODE.is_match(stem) { return None; }
+    static MARKER: LazyLock<Regex> = LazyLock::new(||
+        Regex::new(r"(?i)\s+-\s+(?:episode[ ._-]+\d+|pilot[ ._-]+film)(?:\s|$)").unwrap());
+    static NUMBER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\d+[ ._-]+").unwrap());
+    let marker = MARKER.find(stem)?;
+    let prefix = NUMBER.replace(&stem[..marker.start()], "");
+    for folder in path.ancestors().skip(1).take(3) {
+        let Some(query) = folder.file_name().and_then(|n| n.to_str()) else { continue; };
+        if !crate::metadata::SERIES_PACK.is_match(query) { continue; }
+        let (series, _, _) = crate::metadata::parse_name(query);
+        if series.is_empty() { continue; }
+        let Some(prefix_head) = prefix.get(..series.len()) else { continue; };
+        if !prefix_head.eq_ignore_ascii_case(&series) { continue; }
+        let rest = &prefix[series.len()..];
+        if !rest.starts_with([' ', '.', '_', '-']) { continue; }
+        let title = rest.trim_matches([' ', '.', '_', '-']);
+        if !title.is_empty() { return Some((series, query.to_owned(), title.to_owned())); }
+    }
+    None
+}
+
+/// Do not infer provider episode numbers from release-pack numbering.
+pub fn resolve_episode_title(asset: &mut Value, entity: &Value) {
+    if entity["kind"] != "tv" { return; }
+    let Some(title) = asset["episode_title"].as_str() else { return; };
+    let normalize = |s: &str| s.chars().filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase).collect::<String>();
+    let matches: Vec<_> = entity["episodes"].as_array().into_iter().flatten()
+        .filter(|e| e["title"].as_str().is_some_and(|s| normalize(s) == normalize(title))).collect();
+    if matches.len() == 1 {
+        asset["season"] = matches[0]["season"].clone();
+        asset["episode"] = matches[0]["episode"].clone();
+    }
+}
+
 pub fn video(path: &Path) -> bool {
     path.extension()
         .and_then(|x| x.to_str())
@@ -165,7 +204,14 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
         if let Some(previous) = previous {
             asset["added_at"] = previous["added_at"].clone();
         }
-        if let Some(capture) = EPISODE.captures(&name) {
+        if asset["confirmed"] != true {
+            if let Some((series, query, title)) = named_episode(&path) {
+                asset["series_name"] = json!(series);
+                asset["series_query"] = json!(query);
+                asset["episode_title"] = json!(title);
+            }
+        }
+        if let Some(capture) = EPISODE.captures(&name).filter(|_| asset["confirmed"] != true) {
             let season = capture
                 .get(1)
                 .or(capture.get(3))
@@ -209,4 +255,58 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
         assets.push(asset);
     }
     Inventory { assets, errors }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn complete_series_is_tv_but_movie_collections_stay_movies() {
+        let parse = crate::metadata::parse_name;
+        assert_eq!(parse("Firefly Complete Series - Sci-Fi 2002-2003 Eng Subs 1080p [H264-mp4]"),
+            ("Firefly".into(), "2002".into(), "tv"));
+        assert_eq!(parse("Firefly.Complete.TV.Series.2002.1080p").2, "tv");
+        assert_eq!(parse("Serenity (2005) 1080p").2, "movie");
+        assert_eq!(parse("Alien Complete Collection 1979").2, "movie");
+        assert_eq!(parse("The Complete Works 2001").2, "movie");
+    }
+    #[test]
+    fn named_pack_episodes_use_titles_not_release_numbers() {
+        let root = "/Movies/Firefly Complete Series 2002-2003/";
+        for (file, expected) in [
+            ("00 Firefly Serenity - Pilot Film 2002.mp4", "Serenity"),
+            ("03 Firefly Shindig - Episode 03 2002.mp4", "Shindig"),
+            ("05 Firefly Our Mrs Reynolds - Episode 05 2002.mp4", "Our Mrs Reynolds"),
+            ("10 Firefly Trash - Episode 10 2003.mp4", "Trash"),
+        ] {
+            let (series, query, title) = named_episode(Path::new(&format!("{root}{file}"))).unwrap();
+            assert_eq!(series, "Firefly");
+            assert_eq!(crate::metadata::parse_name(&query).2, "tv");
+            assert_eq!(title, expected);
+        }
+        assert!(named_episode(Path::new("/Movies/Serenity (2005).mp4")).is_none());
+        assert!(named_episode(Path::new(&format!("{root}Serenity (2005).mp4"))).is_none());
+        assert!(named_episode(Path::new("/Movies/Collection/01 Firefly Trash - Episode 10.mp4")).is_none());
+        assert!(named_episode(Path::new(&format!("{root}Firefly S01E11 Serenity.mkv"))).is_none());
+    }
+    #[test]
+    fn provider_order_and_specials_are_resolved_without_guessing() {
+        let entity = json!({"kind":"tv","episodes":[
+            {"title":"Serenity","season":1,"episode":11},
+            {"title":"Shindig","season":1,"episode":6},
+            {"title":"Our Mrs. Reynolds","season":1,"episode":3},
+            {"title":"Trash","season":0,"episode":1}
+        ]});
+        for (title, season, episode) in [("Serenity",1,11),("Shindig",1,6),("Our Mrs Reynolds",1,3),("Trash",0,1)] {
+            let mut a = json!({"episode_title":title});
+            resolve_episode_title(&mut a,&entity);
+            assert_eq!(a["season"],season);
+            assert_eq!(a["episode"],episode);
+        }
+        for episodes in [json!([]),json!([{"title":"Serenity","season":1,"episode":1},{"title":"Serenity","season":2,"episode":1}])] {
+            let mut a = json!({"episode_title":"Serenity"});
+            resolve_episode_title(&mut a,&json!({"kind":"tv","episodes":episodes}));
+            assert!(a.get("episode").is_none());
+        }
+    }
 }

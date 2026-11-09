@@ -1561,6 +1561,19 @@ async fn scan_library(s: &Service) -> Result<()> {
                             asset[key] = value.clone();
                         }
                     }
+                    // Metadata matching can finish while the filesystem scan is running.
+                    // Keep explicit mappings and episode titles resolved against the provider.
+                    if current["confirmed"] == true
+                        || (current["episode_title"].is_string()
+                            && current["entity_id"].is_string()
+                            && current["season"].is_number())
+                    {
+                        for key in ["season", "episode"] {
+                            if let Some(value) = current.get(key) {
+                                asset[key] = value.clone();
+                            }
+                        }
+                    }
                 }
                 tx.execute(
                     "INSERT OR REPLACE INTO library_assets VALUES(?,?)",
@@ -1587,6 +1600,7 @@ fn save_match(s: &Service, id: &str, entity: Value, confirmed: bool) -> Result<(
     if asset["confirmed"] == true && !confirmed {
         return Ok(());
     }
+    crate::scanner::resolve_episode_title(&mut asset, &entity);
     let entity_id = entity["id"].as_str().context("Invalid metadata identity")?;
     asset["entity_id"] = json!(entity_id);
     asset["matched_at"] = json!(now());
@@ -1699,8 +1713,9 @@ async fn collect_metadata(s: &Service) -> Result<()> {
         }
         let id = text(&asset, "id")?;
         let path = std::path::Path::new(text(&asset, "path")?);
-        let mut name = asset["series_name"]
+        let mut name = asset["series_query"]
             .as_str()
+            .or(asset["series_name"].as_str())
             .map(str::to_owned)
             .unwrap_or_else(|| {
                 path.file_stem()

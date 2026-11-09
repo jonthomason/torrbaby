@@ -13,6 +13,9 @@ static YEAR: LazyLock<Regex> =
 static SEASON: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:^|[^a-z0-9])(?:s\d{1,2}(?:[ ._-]*e\d{1,3})?|season[ ._-]*\d{1,2}|\d{1,2}x\d{2})(?:[^a-z0-9]|$)").unwrap()
 });
+pub static SERIES_PACK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\bcomplete[ ._-]+(?:tv[ ._-]+)?series\b").unwrap()
+});
 static TECHNICAL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?i)\b(?:complete|collection|trilogy|1080p|2160p|720p|bluray|webrip|web-dl|hdtv)\b",
@@ -44,7 +47,7 @@ pub fn parse_name(name: &str) -> (String, String, &'static str) {
             .to_owned(),
         year.and_then(|c| c.get(1).map(|m| m.as_str().to_owned()))
             .unwrap_or_default(),
-        if season.is_some() { "tv" } else { "movie" },
+        if season.is_some() || SERIES_PACK.is_match(&name) { "tv" } else { "movie" },
     )
 }
 fn normalized(value: &str) -> String {
