@@ -41,7 +41,7 @@ impl Database {
         let mut titles = BTreeMap::<String, Value>::new();
         let assets = self.documents("assets")?;
         for asset in &assets {
-            if asset["available"] != true || asset["role"] == "extra" {
+            if asset["available"] != true || asset["complete"] != true || asset["role"] == "extra" {
                 continue;
             }
             let id = asset["id"].as_str().context("Invalid asset ID")?;
@@ -103,7 +103,7 @@ impl Database {
         }
         for asset in assets
             .iter()
-            .filter(|a| a["available"] == true && a["role"] == "extra")
+            .filter(|a| a["available"] == true && a["complete"] == true && a["role"] == "extra")
         {
             let Some(parent) = asset["parent_title_id"].as_str() else {
                 continue;

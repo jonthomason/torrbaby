@@ -67,6 +67,13 @@ pub struct Inventory {
     pub errors: Vec<String>,
 }
 
+fn package_complete(files: &[Value]) -> bool {
+    !files.is_empty() && files.iter().all(|file| {
+        file["length"].as_u64().is_some_and(|length|
+            file["bytes_completed"].as_u64() == Some(length))
+    })
+}
+
 pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inventory {
     let mut candidates: HashMap<PathBuf, Value> = HashMap::new();
     let mut errors = Vec::new();
@@ -75,6 +82,17 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
             continue;
         };
         if let Some(files) = torrent["files"].as_array() {
+            let package_complete = package_complete(files) && files.iter().all(|file| {
+                let Some(name) = file["name"].as_str() else { return false; };
+                let relative = Path::new(name);
+                if !relative.components().all(|p|matches!(p,std::path::Component::Normal(_))) { return false; }
+                let mut full = PathBuf::from(root);
+                for part in relative.components() {
+                    full.push(part);
+                    if full.is_symlink() { return false; }
+                }
+                fs::metadata(full).is_ok_and(|m| m.is_file() && Some(m.len()) == file["length"].as_u64())
+            });
             for (index, file) in files.iter().enumerate() {
                 let Some(name) = file["name"].as_str() else {
                     continue;
@@ -91,7 +109,7 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
                     continue;
                 }
                 candidates.insert(path,json!({"torrent_hash":torrent["hash_string"],"torrent_present":true,"file_index":index,
-                    "size":file["length"],"complete":file["length"].as_u64().unwrap_or(0)>0 && file["bytes_completed"]==file["length"],
+                    "size":file["length"],"complete":package_complete && file["length"].as_u64().unwrap_or(0)>0 && file["bytes_completed"]==file["length"],
                     "added_at":torrent["added_date"],"torrent_name":torrent["name"]}));
             }
         }
