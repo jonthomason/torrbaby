@@ -114,6 +114,9 @@ struct RootView: View {
                 }
             }
         }
+        #if os(macOS)
+        .focusedSceneValue(\.addTorrent, { incomingMagnet = ""; showAdd = true })
+        #endif
         .sheet(isPresented: $showConnect) { ConnectionView() }
         .sheet(isPresented: $showAdd) { AddTorrentView(initialMagnet: incomingMagnet) }
         .onOpenURL { url in
@@ -141,6 +144,9 @@ struct TorrentListView: View {
     @EnvironmentObject var store: Store
     let section: Section
     @State private var search = ""
+    #if os(macOS)
+    @FocusState private var searchFocused: Bool
+    #endif
     @State private var removing: Torrent?
     @AppStorage("compactTorrentView") private var compact = false
     var filtered: [Torrent] {
@@ -213,6 +219,10 @@ struct TorrentListView: View {
             }.padding(24).frame(maxWidth: 1200).frame(maxWidth: .infinity)
         }
         .searchable(text: $search, prompt: "Find a torrent")
+        #if os(macOS)
+        .searchFocused($searchFocused)
+        .focusedSceneValue(\.searchContent, { searchFocused = true })
+        #endif
         .sheet(item: $removing) { RemoveTorrentView(torrent: $0) }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

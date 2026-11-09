@@ -23,12 +23,13 @@ struct TorrbabyApp: App {
         #if os(macOS)
         .defaultSize(width: 1180, height: 820)
         .commands {
-            CommandGroup(after: .newItem) {
-                Button("Refresh") { Task { await store.refresh() } }.keyboardShortcut("r")
-            }
+            TorrbabyCommands(store: store)
         }
         #endif
         #if os(macOS)
+        Settings {
+            MacSettingsView().environmentObject(store).tint(Theme.mint).preferredColorScheme(.dark)
+        }
         MenuBarExtra(isInserted: $showMenuBarRates) {
             TransferMenu(store: store)
         } label: {
@@ -84,9 +85,54 @@ private struct TransferMenu: View {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)
         }
+        SettingsLink()
         Button("Refresh") { Task { await store.refresh() } }.disabled(!store.configured)
         Divider()
         Button("Quit Torrbaby") { NSApp.terminate(nil) }
+    }
+}
+#endif
+
+#if os(macOS)
+private struct AddTorrentCommandKey: FocusedValueKey { typealias Value = () -> Void }
+private struct SearchCommandKey: FocusedValueKey { typealias Value = () -> Void }
+extension FocusedValues {
+    var addTorrent: (() -> Void)? {
+        get { self[AddTorrentCommandKey.self] }
+        set { self[AddTorrentCommandKey.self] = newValue }
+    }
+    var searchContent: (() -> Void)? {
+        get { self[SearchCommandKey.self] }
+        set { self[SearchCommandKey.self] = newValue }
+    }
+}
+private struct TorrbabyCommands: Commands {
+    @ObservedObject var store: Store
+    @FocusedValue(\.addTorrent) private var addTorrent
+    @FocusedValue(\.searchContent) private var searchContent
+    var body: some Commands {
+        CommandGroup(after: .newItem) {
+            Button("Add Torrent…") { addTorrent?() }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .disabled(addTorrent == nil || !store.connected)
+        }
+        CommandGroup(after: .textEditing) {
+            Button("Find…") { searchContent?() }.keyboardShortcut("f")
+                .disabled(searchContent == nil)
+        }
+        CommandGroup(after: .toolbar) {
+            Button("Refresh") { Task { await store.refresh() } }.keyboardShortcut("r")
+                .disabled(!store.configured)
+        }
+        SidebarCommands()
+    }
+}
+private struct MacSettingsView: View {
+    @State private var showConnect = false
+    var body: some View {
+        SettingsView(showConnect: $showConnect)
+            .frame(width: 600, height: 700)
+            .sheet(isPresented: $showConnect) { ConnectionView() }
     }
 }
 #endif

@@ -78,6 +78,9 @@ struct LibraryBrowser: View {
     @EnvironmentObject var store: Store
     var kind: String? = nil
     @State private var search = ""
+    #if os(macOS)
+    @FocusState private var searchFocused: Bool
+    #endif
     @State private var genre = "All genres"
     @State private var order = "Recently added"
     var titles: [LibraryTitle] {
@@ -139,6 +142,10 @@ struct LibraryBrowser: View {
             }.padding(24)
         }.background(Theme.canvas)
         .searchable(text: $search, prompt: "Search movies and TV shows")
+        #if os(macOS)
+        .searchFocused($searchFocused)
+        .focusedSceneValue(\.searchContent, { searchFocused = true })
+        #endif
     }
     @ViewBuilder func shelf(_ name: String, _ items: [LibraryTitle]) -> some View {
         if !items.isEmpty {
