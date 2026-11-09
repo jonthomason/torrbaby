@@ -270,8 +270,7 @@ struct ConnectionView: View {
             VStack(alignment: .leading, spacing: 24) {
                 Image(systemName: "arrow.down.forward.and.arrow.up.backward.circle.fill").font(.system(size: 55)).foregroundStyle(Theme.mint)
                 VStack(alignment: .leading, spacing: 9) {
-                    Text("Meet your server.").font(.system(size: 30, weight: .bold, design: .rounded))
-                    Text("Connect to Torrbaby on your private network. Your downloads stay right where they belong.").foregroundStyle(Theme.muted)
+                    Text("Connect to Torrbaby").font(.system(size: 30, weight: .bold, design: .rounded))
                 }
                 VStack(alignment: .leading, spacing: 14) {
                     Text("SERVER ADDRESS").font(.caption2.weight(.semibold)).tracking(1.5).foregroundStyle(Theme.muted)
