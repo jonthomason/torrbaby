@@ -7,6 +7,7 @@ mod organizer;
 mod pairing;
 mod scanner;
 mod storage;
+mod subtitles;
 mod telemetry;
 mod transmission;
 use anyhow::Result;
@@ -25,6 +26,11 @@ struct Arguments {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Translate a bounded JSON cue batch from stdin using installed Apple models.
+    TranslateSubtitles {
+        #[arg(long)]
+        helper: Option<PathBuf>,
+    },
     /// Run the standalone server and background library/organization workers.
     Serve {
         #[arg(long)]
@@ -96,6 +102,16 @@ fn check_folder(path: &Path) -> io::Result<(usize, bool)> {
 #[tokio::main]
 async fn main() -> Result<()> {
     match Arguments::parse().command {
+        Command::TranslateSubtitles { helper } => {
+            let helper = helper
+                .unwrap_or(std::env::current_exe()?.with_file_name("torrbaby-subtitle-translator"));
+            let mut input = Vec::new();
+            io::stdin().take(1_048_577).read_to_end(&mut input)?;
+            anyhow::ensure!(input.len() <= 1_048_576, "Subtitle batch too large");
+            let request = serde_json::from_slice(&input)?;
+            let response = subtitles::translate(&helper, request).await?;
+            println!("{}", serde_json::to_string(&response)?);
+        }
         Command::Serve { config } => {
             let settings = config::Config::load(&config)?;
             let database = config::expand(&settings.state_file)?.with_extension("sqlite3");

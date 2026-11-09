@@ -297,3 +297,20 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
 - Not bundled or wired into Rust yet. Next: server-owned text extraction,
   normalization, process timeout/cancellation, translation cache and native-player
   selectable subtitle delivery. This does not mean captions are already available.
+
+## Follow-up: Rust translation process boundary
+
+- `server/subtitles.rs` now validates and invokes the helper with bounded input
+  (1 MiB), bounded output (4 MiB), a 120-second deadline, explicit kill/reap on
+  errors, and kill-on-drop for cancellation. It checks protocol version and exact
+  ordered cue IDs before returning translated text. No arbitrary helper error text
+  is surfaced to logs.
+- `torrbaby translate-subtitles [--helper PATH]` reads one JSON request from stdin.
+  Default helper is adjacent to the Rust executable. `scripts/build_server.sh`
+  now compiles and signs the Swift helper before signing the outer server app.
+- `cargo check --locked`, `cargo build --locked`, shell syntax and diff checks passed.
+  Actual Rust CLI -> SSH bridge -> Diamond helper translated a cue successfully;
+  an intentionally wrong response cue ID was rejected. Timeout/cancellation logic
+  is implemented but has not been exercised in a timing smoke check yet.
+- No production deployment and no HTTP/client subtitle feature yet. Do not confuse
+  working translation infrastructure with end-to-end translated captions.

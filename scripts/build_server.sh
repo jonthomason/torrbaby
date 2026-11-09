@@ -18,6 +18,11 @@ for SIZE in 16 32 128 256 512; do
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/TorrbabyServer.icns"
 cp "$ROOT/target/release/torrbaby" "$APP/Contents/MacOS/torrbaby"
+swiftc -parse-as-library -O -target "$(uname -m)-apple-macos26.0" \
+    "$ROOT/helpers/SubtitleTranslator.swift" \
+    -o "$APP/Contents/MacOS/torrbaby-subtitle-translator"
+codesign --force --options runtime --sign "$MAC_SIGNING_IDENTITY" \
+    "$APP/Contents/MacOS/torrbaby-subtitle-translator"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

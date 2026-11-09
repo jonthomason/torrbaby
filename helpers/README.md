@@ -1,8 +1,8 @@
 # Subtitle translation bridge
 
 `SubtitleTranslator.swift` bridges the Rust server to Apple's on-device Translation
-framework on macOS 26+. It is not yet connected to the server or shipped in the
-server bundle. It never downloads language models; the requested pair must already
+framework on macOS 26+. The server build script includes and signs it; Rust's
+`translate-subtitles` CLI invokes it. It never downloads language models; the requested pair must already
 be installed on Diamond.
 
 Compile and sign using the same Developer ID identity as Torrbaby Server:
@@ -26,5 +26,11 @@ Limits: 1 MiB input, 128 cues, unique nonempty IDs up to 128 UTF-8 bytes, nonbla
 text up to 16 KiB per cue. Invalid requests fail before invoking Translation.
 
 Rust must own timings, parsing/normalization, markup handling, batching, caching,
-process timeout/cancellation, and native-player subtitle delivery. Feed plain cue
+and native-player subtitle delivery. The Rust process boundary enforces a 120-second
+timeout, 4 MiB response limit, kill-on-cancellation, and exact ordered cue identities.
+Feed plain cue
 text only. A helper response alone does not make subtitles available in the app.
+
+From a built server bundle, pipe the request into `torrbaby translate-subtitles`.
+For development, specify `--helper /path/to/torrbaby-subtitle-translator`.
+No HTTP translation endpoint or player subtitle integration exists yet.
