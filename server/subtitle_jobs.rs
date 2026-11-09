@@ -262,6 +262,8 @@ impl Manager {
             job.state = "running".into();
             self.save(&job)?;
             let mut cues = crate::native_subtitles::extract(&job.input, job.track).await?;
+            let timings: Vec<_> = cues.iter().map(|cue| (cue.start_ms, cue.end_ms)).collect();
+            ensure!(!cues.is_empty(), "No subtitle cues extracted");
             job.total_cues = cues.len();
             let checkpoint = self.root.join(format!("{}.progress",job.id));
             if let (Some(source), Some(target)) = (job.source.clone(), job.target.clone()) {
@@ -298,6 +300,10 @@ impl Manager {
                 revision(&job.input)? == job.revision,
                 "Media changed during subtitle preparation"
             );
+            ensure!(cues.len() == timings.len() && cues.iter().zip(&timings).all(|(cue, timing)|
+                (cue.start_ms, cue.end_ms) == *timing && cue.end_ms > cue.start_ms
+                && !cue.text.trim().is_empty() && !cue.text.contains('\0') && cue.text.len() <= 16_384),
+                "Subtitle validation failed: timing or text changed unexpectedly");
             let output = crate::subtitles::webvtt(&cues);
             ensure!(output.len() <= 16_777_216, "Subtitle output too large");
             let pending = self

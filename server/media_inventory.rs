@@ -30,10 +30,9 @@ fn language(track: &Value) -> Option<&'static str> {
 
 pub async fn tick(s: &Service) -> Result<()> {
     if !s.effective_config()?.background_subtitles { return Ok(()); }
-    let (mut assets, watching) = {
+    let mut assets = {
         let db = s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
-        let watching: bool = db.connection.query_row("SELECT EXISTS(SELECT 1 FROM playback p JOIN playback_sessions s ON s.id=p.active_session WHERE s.ended=0 AND p.last_played>?)", [now()-90.0], |r|r.get(0))?;
-        (db.documents("assets")?, watching)
+        db.documents("assets")?
     };
     assets.retain(|a| a["available"]==true && a["complete"]==true);
     assets.sort_by(|a,b| b["added_at"].as_f64().unwrap_or(0.0).total_cmp(&a["added_at"].as_f64().unwrap_or(0.0)));
@@ -49,7 +48,7 @@ pub async fn tick(s: &Service) -> Result<()> {
         };
         if info["retry_after"].as_f64().is_some_and(|t| t>now()) { continue; }
         if info["state"] == "pending" || info["state"] == "failed" {
-            if inspected || watching { continue; }
+            if inspected { continue; }
             inspected=true;
             let input = match crate::api::media_file(s,id,0).await { Ok(p)=>p, Err(_)=>continue };
             match crate::native_subtitles::tracks(&input).await {
@@ -93,7 +92,7 @@ pub async fn tick(s: &Service) -> Result<()> {
             let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
             save(&db,id,&revision,&info)?;
         }
-        if watching || !jobs.is_empty() || s.subtitle_jobs.busy() { continue; }
+        if !jobs.is_empty() || s.subtitle_jobs.busy() { continue; }
         let tracks=info["subtitle_tracks"].as_array().context("Invalid track inventory")?;
         // Existing Chinese is already available; never translate over it. Unknown
         // languages and bitmap tracks require no guessing and no OCR.
@@ -120,10 +119,29 @@ pub fn summary(db: &Database, jobs: &crate::subtitle_jobs::Manager) -> Result<Va
     let mut translated=0usize;
     let mut failed=0usize;
     let mut current=Value::Null;
+    let mut queue=Vec::new();
     for asset in db.documents("assets")? {
         if asset["available"]!=true || asset["complete"]!=true { continue; }
         let Some(id)=asset["id"].as_str() else {continue};
         let info=cached(db,id)?;
+        let title=asset["path"].as_str().and_then(|p|Path::new(p).file_stem()).and_then(|s|s.to_str()).unwrap_or(id);
+        let tracks=info["subtitle_tracks"].as_array().cloned().unwrap_or_default();
+        let has=|lang| tracks.iter().any(|t|language(t)==Some(lang) && t["text_extractable"]==true);
+        let source=if !has("zh-Hans") {Some(("en","zh-Hans"))} else if !has("en") {Some(("zh-Hans","en"))} else {None};
+        let eligible=source.filter(|(lang,_)|tracks.iter().any(|t|language(t)==Some(*lang) && t["extraction_supported"]==true && t["forced"]!=true));
+        let mut listed=false;
+        for job_id in info["jobs"].as_array().into_iter().flatten() {
+            if let Ok(mut job)=jobs.status(job_id.as_str().unwrap_or("")) {
+                job["title"]=json!(title);
+                queue.push(job);
+                listed=true;
+            }
+        }
+        if !listed && (eligible.is_some() || info["state"]!="ready") {
+            queue.push(json!({"id":id,"asset_id":id,"title":title,
+                "state":if info["state"]=="failed" || info["preparation_state"]=="failed" {"failed"} else if info["state"]=="pending" {"scanning"} else {"queued"},
+                "target":eligible.map(|(_,target)|target),"error":info["error"],"completed_cues":0,"total_cues":0}));
+        }
         if info["state"]=="ready" { scanned+=1; }
         let mut ready=false;
         for job_id in info["jobs"].as_array().into_iter().flatten() {
@@ -139,6 +157,6 @@ pub fn summary(db: &Database, jobs: &crate::subtitle_jobs::Manager) -> Result<Va
         if ready {translated+=1;}
         if info["preparation_state"]=="failed" && info["jobs"].as_array().is_none_or(|v|v.is_empty()) {failed+=1;}
     }
-    let watching: bool=db.connection.query_row("SELECT EXISTS(SELECT 1 FROM playback p JOIN playback_sessions s ON s.id=p.active_session WHERE s.ended=0 AND p.last_played>?)",[now()-90.0],|r|r.get(0))?;
-    Ok(json!({"scanned":scanned,"translated":translated,"failed":failed,"waiting_for_idle":watching,"current":current}))
+
+    Ok(json!({"scanned":scanned,"translated":translated,"failed":failed,"waiting_for_idle":false,"current":current,"queue":queue}))
 }

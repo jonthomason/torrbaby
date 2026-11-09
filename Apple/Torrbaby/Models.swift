@@ -91,7 +91,17 @@ struct Job: Codable, Identifiable {
     let destination: String?
     var id: String { hash }
 }
+struct SubtitleQueueItem: Codable, Identifiable {
+    let id: String
+    let title: String
+    let state: String
+    let target: String?
+    let error: String?
+    let completedCues: Int
+    let totalCues: Int
+}
 struct SubtitlePreparation: Codable {
+    let queue: [SubtitleQueueItem]?
     struct Current: Codable { let assetId: String; let language: String; let completedCues: Int; let totalCues: Int }
     let scanned: Int
     let translated: Int

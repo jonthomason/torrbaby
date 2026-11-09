@@ -3,7 +3,7 @@ import SwiftUI
 import Charts
 
 enum Section: String, CaseIterable, Identifiable {
-    case downloads = "Downloads", library = "Home", movies = "Movies", shows = "TV Shows", active = "Downloading", seeding = "Seeding", complete = "Complete", attention = "Not progressing", automation = "Automation", settings = "Settings"
+    case downloads = "Downloads", library = "Home", movies = "Movies", shows = "TV Shows", active = "Downloading", seeding = "Seeding", complete = "Complete", subtitles = "Subtitles", attention = "Not progressing", automation = "Automation", settings = "Settings"
     var id: String { rawValue }
     var icon: String {
         switch self {
@@ -11,6 +11,7 @@ enum Section: String, CaseIterable, Identifiable {
         case .movies: return "film"
         case .shows: return "tv"
         case .active: return "waveform.path"
+        case .subtitles: return "captions.bubble"
         case .complete: return "checkmark.circle"
         case .seeding: return "arrow.up.circle"
         case .attention: return "exclamationmark.circle"
@@ -20,6 +21,47 @@ enum Section: String, CaseIterable, Identifiable {
         }
     }
 
+}
+
+struct SubtitleQueueView: View {
+    @EnvironmentObject var store: Store
+    private let groups = [("Working", ["running"]), ("Waiting", ["queued", "scanning", "interrupted"]), ("Finished", ["ready"]), ("Needs attention", ["failed", "stale", "expired"])]
+    var body: some View {
+        List {
+            if store.status?.settings.backgroundSubtitles == false {
+                Label("Automatic subtitles paused", systemImage: "pause.circle")
+            } else if store.status?.subtitlePreparation?.waitingForIdle == true {
+                Label("Waiting for playback to finish", systemImage: "play.circle")
+            }
+            if let preparation = store.status?.subtitlePreparation {
+                ForEach(groups, id: \.0) { group in
+                    let items = (preparation.queue ?? []).filter { group.1.contains($0.state) }
+                    if !items.isEmpty {
+                        SwiftUI.Section("\(group.0) · \(items.count)") {
+                            ForEach(items) { item in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(item.title).font(.headline).lineLimit(2)
+                                    HStack {
+                                        Label(item.target == nil ? "Extracting" : (item.target == "en" ? "English" : "简体中文"), systemImage: "captions.bubble")
+                                        Spacer()
+                                        Text(item.state == "scanning" ? "Checking languages" : item.state.capitalized)
+                                    }.font(.caption).foregroundStyle(.secondary)
+                                    if item.totalCues > 0 && item.state != "ready" {
+                                        ProgressView(value: Double(item.completedCues), total: Double(item.totalCues))
+                                        Text("\(item.completedCues) / \(item.totalCues)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                                    }
+                                    if let error = item.error { Text(error).font(.caption).foregroundStyle(.orange) }
+                                }.padding(.vertical, 6)
+                            }
+                        }
+                    }
+                }
+                if preparation.queue?.isEmpty != false { Text("No subtitle jobs").foregroundStyle(.secondary) }
+            } else { ProgressView("Loading subtitles…") }
+        }
+        .navigationTitle("Subtitles")
+        .refreshable { await store.refresh() }
+    }
 }
 
 private struct TorrentDraft: Identifiable {
@@ -82,7 +124,7 @@ struct RootView: View {
                         }
                     }
                     SwiftUI.Section("Torrents") {
-                        ForEach([Section.active, .seeding, .complete, .attention]) { section in
+                        ForEach([Section.active, .seeding, .complete, .subtitles, .attention]) { section in
                             Label(section.rawValue, systemImage: section.icon).padding(.vertical, 5).tag(section)
                         }
                     }
@@ -107,6 +149,7 @@ struct RootView: View {
             NavigationStack(path: Binding(get: { location.path }, set: { navigate(Location(section: selection, path: $0)) })) {
                 Group {
                     if selection == .downloads { DownloadsView() }
+                    else if selection == .subtitles { SubtitleQueueView() }
                     else if selection == .automation { AutomationView() }
                     else if selection == .settings { SettingsView(showConnect: $showConnect) }
                     else if selection == .library || selection == nil { LibraryBrowser(showDownloads: { navigate(Location(section: .downloads)) }) }
