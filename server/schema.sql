@@ -1,0 +1,13 @@
+PRAGMA journal_mode=WAL;
+PRAGMA synchronous=FULL;
+PRAGMA foreign_keys=ON;
+        CREATE TABLE IF NOT EXISTS organizer_state (id INTEGER PRIMARY KEY CHECK(id=1), document TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS clients (id TEXT PRIMARY KEY, name TEXT NOT NULL, platform TEXT NOT NULL, created REAL NOT NULL, last_seen REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS media (id TEXT PRIMARY KEY, torrent_hash TEXT NOT NULL, file_index INTEGER NOT NULL, name TEXT NOT NULL, length INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS playback (media_id TEXT PRIMARY KEY REFERENCES media(id), position REAL NOT NULL DEFAULT 0, duration REAL NOT NULL DEFAULT 0, watched INTEGER NOT NULL DEFAULT 0, last_played REAL NOT NULL DEFAULT 0, client_id TEXT REFERENCES clients(id), active_session TEXT);
+        CREATE TABLE IF NOT EXISTS playback_sessions (id TEXT PRIMARY KEY, media_id TEXT NOT NULL REFERENCES media(id), client_id TEXT NOT NULL REFERENCES clients(id), started REAL NOT NULL, sequence INTEGER NOT NULL DEFAULT -1, ended INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS transfer_rates (time INTEGER PRIMARY KEY, download REAL NOT NULL, upload REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS metadata (hash TEXT PRIMARY KEY, document TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS library_assets (id TEXT PRIMARY KEY, document TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS library_entities (id TEXT PRIMARY KEY, document TEXT NOT NULL);
+        PRAGMA user_version=4;

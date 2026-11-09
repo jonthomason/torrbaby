@@ -1,0 +1,33 @@
+[package]
+name = "torrbaby"
+version = "0.3.0"
+edition = "2024"
+license = "MIT"
+description = "A standalone private media server and Transmission manager"
+
+[[bin]]
+name = "torrbaby"
+path = "server/main.rs"
+
+[profile.release]
+lto = "thin"
+strip = true
+
+[dependencies]
+futures-util = "0.3.34"
+anyhow = "1.0.104"
+axum = "0.8.9"
+base64 = "0.23.1"
+clap = { version = "4.6.7", features = ["derive", "env"] }
+hmac = "0.13.0"
+regex = "1.13.1"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+tokio = { version = "1.54.1", features = ["full"] }
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
+uuid = { version = "1.29.2", features = ["v4"] }
+
