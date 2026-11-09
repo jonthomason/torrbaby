@@ -835,3 +835,9 @@ User reports iPad left/right correctly skip 15 seconds but Space does not play/p
 - Signed daemon deployed backup rust-20261109-183543 from isolated source archive plus media_inventory/subtitle_jobs changes only, excluding unrelated scanner/api/metadata/remux edits. Production returns queue172 entries; active job progressed24→48/617 during UI validation.
 - Mac and iOS74 builds passed; Mac installed/launched and CUA verified Subtitles page with live progress. Mobile OTA74 published SHA d999b31c460fae93d932d4e8da5c8cd2a9ca72728d5a7d406db358de9e0bdc2e. No TV74 build yet; TV dedicated queue view still pending.
 - Source videos remain untouched; current caption delivery writes separate HLS/cache outputs and client catches preparation failure to use original playback. New Rust remux remains CLI-only. Actual subtitle-enabled packaged playback validation still needed; structural VTT checks do not prove visual/sync acceptance.
+
+## Subtitle queue completeness follow-up
+
+- Aliens direct extraction succeeded1515cues; original and translated jobs explicitly requeued through authenticated API. AI review remains deferred.
+- Found queue/status omitted manually prepared jobs because it read only inventory job IDs. Added bounded job-directory status enumeration and used it for queue, ready/failed counts, active progress. Stale/expired revisions excluded; source paths are not returned. cargo check and diff check passed. Not deployed yet.
+- Live generated Chinese MP4 caption package acceptance started using check-live-caption-package.py (private script, no credentials printed). Session98674 is running; poll before restarting daemon because HLS cache is reset on restart. Native harness checks AVPlayer readiness and English/Chinese selection without touching watched history. This is not visual/timing acceptance.

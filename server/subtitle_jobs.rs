@@ -133,6 +133,20 @@ impl Manager {
             "path":if job.state=="ready" {Some(format!("/v1/subtitle-jobs/{id}.vtt"))} else {None}}),
         )
     }
+    /// Include manually requested and recovered work as well as background jobs.
+    pub fn all_statuses(&self) -> Result<Vec<Value>> {
+        let mut result = Vec::new();
+        for entry in fs::read_dir(&self.root)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(id) = name.to_str().and_then(|n| n.strip_suffix(".json")).filter(|id| valid(id)) else { continue; };
+            if let Ok(status) = self.status(id) {
+                if status["state"] != "stale" && status["state"] != "expired" { result.push(status); }
+            }
+        }
+        result.sort_by(|a,b| a["id"].as_str().cmp(&b["id"].as_str()));
+        Ok(result)
+    }
     pub fn artifact(&self, id: &str) -> Result<String> {
         ensure!(
             self.status(id)?["state"] == "ready",

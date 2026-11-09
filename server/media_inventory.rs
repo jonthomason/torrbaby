@@ -120,6 +120,7 @@ pub fn summary(db: &Database, jobs: &crate::subtitle_jobs::Manager) -> Result<Va
     let mut failed=0usize;
     let mut current=Value::Null;
     let mut queue=Vec::new();
+    let statuses=jobs.all_statuses()?;
     for asset in db.documents("assets")? {
         if asset["available"]!=true || asset["complete"]!=true { continue; }
         let Some(id)=asset["id"].as_str() else {continue};
@@ -130,12 +131,11 @@ pub fn summary(db: &Database, jobs: &crate::subtitle_jobs::Manager) -> Result<Va
         let source=if !has("zh-Hans") {Some(("en","zh-Hans"))} else if !has("en") {Some(("zh-Hans","en"))} else {None};
         let eligible=source.filter(|(lang,_)|tracks.iter().any(|t|language(t)==Some(*lang) && t["extraction_supported"]==true && t["forced"]!=true));
         let mut listed=false;
-        for job_id in info["jobs"].as_array().into_iter().flatten() {
-            if let Ok(mut job)=jobs.status(job_id.as_str().unwrap_or("")) {
-                job["title"]=json!(title);
-                queue.push(job);
-                listed=true;
-            }
+        for status in statuses.iter().filter(|job|job["asset_id"]==id) {
+            let mut job=status.clone();
+            job["title"]=json!(title);
+            queue.push(job);
+            listed=true;
         }
         if !listed && (eligible.is_some() || info["state"]!="ready") {
             queue.push(json!({"id":id,"asset_id":id,"title":title,
@@ -144,18 +144,16 @@ pub fn summary(db: &Database, jobs: &crate::subtitle_jobs::Manager) -> Result<Va
         }
         if info["state"]=="ready" { scanned+=1; }
         let mut ready=false;
-        for job_id in info["jobs"].as_array().into_iter().flatten() {
-            if let Ok(job)=jobs.status(job_id.as_str().unwrap_or("")) {
-                if job["target"].is_null() {continue;}
-                if job["state"]=="ready" {ready=true;}
-                if job["state"]=="failed" {failed+=1;}
-                if job["state"]=="running" {
-                    current=json!({"asset_id":id,"language":job["target"],"completed_cues":job["completed_cues"],"total_cues":job["total_cues"]});
-                }
+        for job in statuses.iter().filter(|job|job["asset_id"]==id) {
+            if job["target"].is_null() {continue;}
+            if job["state"]=="ready" {ready=true;}
+            if job["state"]=="failed" {failed+=1;}
+            if job["state"]=="running" {
+                current=json!({"asset_id":id,"language":job["target"],"completed_cues":job["completed_cues"],"total_cues":job["total_cues"]});
             }
         }
         if ready {translated+=1;}
-        if info["preparation_state"]=="failed" && info["jobs"].as_array().is_none_or(|v|v.is_empty()) {failed+=1;}
+        if !listed && info["preparation_state"]=="failed" {failed+=1;}
     }
 
     Ok(json!({"scanned":scanned,"translated":translated,"failed":failed,"waiting_for_idle":false,"current":current,"queue":queue}))
