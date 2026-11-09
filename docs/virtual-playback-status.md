@@ -1,6 +1,6 @@
 # Priority: virtual native playback
 
-Active goal: play MKV and inject generated English/Chinese subtitles without
+Achieved goal: play supported MKV and inject generated English/Chinese subtitles without
 rewriting the entire movie. Client startup, seeking, and playback should have
 minimal visible performance impact. Use bounded Diamond concurrency and keep
 index construction/subtitle assembly off request-serving threads.
@@ -107,3 +107,12 @@ bootstrap in separate SSH invocations; immediate bootstrap in the same SSH
 process failed even with short retries. The latest complete-bundle backup is
 rust-20261110-064605 (this backup contains the incomplete bundle; for helper
 recovery use rust-20261110-063832 or rust-20261110-062811).
+
+Final acceptance: native MKV and MP4 playback with generated subtitles, native
+PiP, full offline Apple download/playback, bounded persistent metadata, and live
+server/client releases are verified. Mark the persistent virtual-playback goal
+complete. Catalog indexing continues in Diamond's daemon. At final check: 48
+ready jobs, one running, no preparation_version=3 failures; 38 old failures await
+normal retry. Translation verified advancing from 32 to 256 of 486 cues after
+helper recovery. Broader codec coverage and physical-device soak testing remain
+follow-up work, not a claim of universal Matroska compatibility.
