@@ -87,3 +87,23 @@ native PiP. No overlay subtitle renderer. Apple's subtitle handler must be `sbtl
 
 Parallel profile/library-lifecycle work remains uncommitted in the shared worktree
 and is excluded from the clean release snapshot. Do not deploy the entire tree.
+
+## Final bundle recovery and deployment guard
+
+The first lacing/AAC deployments mistakenly used the CLI experiment bundle, which
+contained only torrbaby and omitted the three Swift helpers. Playback worked but
+translation jobs failed with "Start subtitle translator". Restored the complete
+signed bundle from the known-good backup, retaining the tested new Rust binary.
+The complete bundle is local-state/virtual-mp4/full-server/Torrbaby Server.app.
+Production signature verification and authenticated stream checks pass. Three
+failed jobs re-admitted directly; remaining 18 returned to the normal ordered
+queue with their retry delay cleared. Confirmed the translation helper running
+and reporting cue progress again. No source media was modified.
+
+Always run scripts/verify_server_bundle.sh before deployment, including for
+experimental bundles. It requires the translator, extractor, and segmenter as
+well as the Rust binary and verifies the complete signature. Keep bootout and
+bootstrap in separate SSH invocations; immediate bootstrap in the same SSH
+process failed even with short retries. The latest complete-bundle backup is
+rust-20261110-064605 (this backup contains the incomplete bundle; for helper
+recovery use rust-20261110-063832 or rust-20261110-062811).
