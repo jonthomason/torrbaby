@@ -16,6 +16,51 @@ fn open(path: &Path) -> Result<MatroskaFile<BufReader<File>>> {
     MatroskaFile::open(BufReader::new(file)).context("Read Matroska container")
 }
 
+/// Codec inventory and timing statistics only; never emit compressed payloads or dialogue.
+pub fn inspect(path: &Path, frame_limit: usize) -> Result<Value> {
+    use std::collections::BTreeMap;
+    ensure!(frame_limit <= 100_000, "Frame sample limit is 100000");
+    let mut file = open(path)?;
+    ensure!(file.tracks().len() <= 256, "Too many tracks");
+    let scale = file.info().timestamp_scale().get();
+    let tracks: Vec<_> = file.tracks().iter().map(|t| json!({
+        "track": t.track_number().get(), "kind": format!("{:?}",t.track_type()),
+        "codec": t.codec_id(), "enabled":t.flag_enabled(), "default":t.flag_default(),
+        "language":t.language_bcp47().or(t.language()),
+        "default_duration_ns":t.default_duration().map(|n|n.get()),
+        "codec_delay_ns":t.codec_delay(), "codec_private_bytes":t.codec_private().map(|d|d.len()).unwrap_or(0),
+        "encoded":t.content_encodings().is_some(),
+        "video":t.video().map(|v|json!({"width":v.pixel_width().get(),"height":v.pixel_height().get()})),
+        "audio":t.audio().map(|a|json!({"sample_rate":a.sampling_frequency(),"channels":a.channels().get(),"bit_depth":a.bit_depth().map(|n|n.get())}))
+    })).collect();
+    #[derive(Default, serde::Serialize)]
+    struct Timing {
+        frames: usize, bytes: u64, first_pts_ns: Option<u64>, last_pts_ns: Option<u64>,
+        min_pts_ns: Option<u64>, max_pts_ns: Option<u64>, reordered: usize,
+        explicit_duration: usize, keyframes: usize,
+    }
+    let mut timing: BTreeMap<u64,Timing> = BTreeMap::new();
+    let mut frame = Frame::default();
+    let start = Instant::now();
+    let mut sampled = 0;
+    while sampled < frame_limit && file.next_frame(&mut frame)? {
+        ensure!(start.elapsed() < Duration::from_secs(30), "Timing sample timed out");
+        ensure!(frame.data.len() <= 64 * 1024 * 1024, "Media frame too large");
+        sampled += 1;
+        let pts = frame.timestamp.checked_mul(scale).context("Timestamp overflow")?;
+        let stats = timing.entry(frame.track).or_default();
+        if stats.last_pts_ns.is_some_and(|previous| previous > pts) { stats.reordered += 1; }
+        stats.frames += 1; stats.bytes += frame.data.len() as u64;
+        stats.first_pts_ns.get_or_insert(pts); stats.last_pts_ns = Some(pts);
+        stats.min_pts_ns = Some(stats.min_pts_ns.map_or(pts, |p|p.min(pts)));
+        stats.max_pts_ns = Some(stats.max_pts_ns.map_or(pts, |p|p.max(pts)));
+        stats.explicit_duration += usize::from(frame.duration.is_some());
+        stats.keyframes += usize::from(frame.is_keyframe == Some(true));
+    }
+    Ok(json!({"container":"matroska","timestamp_scale_ns":scale,"tracks":tracks,
+        "sampled_frames":sampled,"timing":timing}))
+}
+
 pub fn tracks(path: &Path) -> Result<Value> {
     let file = open(path)?;
     let tracks: Vec<_> = file
@@ -31,7 +76,9 @@ pub fn tracks(path: &Path) -> Result<Value> {
             "encoded":t.content_encodings().is_some()})
         })
         .collect();
-    Ok(json!({"container":"matroska","tracks":tracks}))
+    let audio: Vec<_> = file.tracks().iter().filter(|t| t.track_type() == TrackType::Audio)
+        .map(|t| json!({"track":t.track_number().get(),"codec":t.codec_id(),"language":t.language_bcp47().or(t.language())})).collect();
+    Ok(json!({"container":"matroska","tracks":tracks,"audio_tracks":audio}))
 }
 
 pub fn extract(path: &Path, track: u64) -> Result<Vec<TimedCue>> {

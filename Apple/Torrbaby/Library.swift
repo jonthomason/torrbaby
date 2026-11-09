@@ -93,6 +93,43 @@ struct LibraryAsset: Decodable, Identifiable {
     let duration: Double
     let watched: Bool
     let lastPlayed: Double
+    var mediaInfo: MediaTrackInfo? = nil
+}
+
+struct MediaTrackInfo: Decodable {
+    struct Track: Decodable { let language: String? }
+    struct Prepared: Decodable { let id: String; let language: String?; let generated: Bool; let state: String }
+    let state: String
+    let audioTracks: [Track]
+    let subtitleTracks: [Track]
+    let prepared: [Prepared]
+}
+struct MediaLanguagesView: View {
+    let info: MediaTrackInfo?
+    private func name(_ code: String?) -> String {
+        guard let code, code != "und", !code.isEmpty else { return "Unknown" }
+        let normalized = ["eng":"en", "zho":"zh", "chi":"zh", "jpn":"ja", "spa":"es", "fra":"fr", "fre":"fr", "deu":"de" ][code] ?? code
+        return Locale.current.localizedString(forIdentifier: normalized) ?? code
+    }
+    var body: some View {
+        if let info, info.state == "ready" {
+            VStack(alignment: .leading, spacing: 8) {
+                if !info.audioTracks.isEmpty {
+                    Label(Array(Set(info.audioTracks.map { name($0.language) })).sorted().joined(separator: " · "), systemImage: "speaker.wave.2")
+                }
+                if !info.subtitleTracks.isEmpty {
+                    Label(Array(Set(info.subtitleTracks.map { name($0.language) })).sorted().joined(separator: " · "), systemImage: "captions.bubble")
+                }
+                ForEach(info.prepared.filter { $0.generated && $0.state == "ready" }, id: \.id) { track in
+                    HStack(spacing: 8) {
+                        Label(name(track.language), systemImage: "captions.bubble.fill")
+                        Text("Translated").font(.caption.bold()).padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(.purple.opacity(0.2), in: Capsule())
+                    }.foregroundStyle(.purple)
+                }
+            }.font(.callout).foregroundStyle(.secondary)
+        }
+    }
 }
 
 struct LibraryArtwork: View {
@@ -276,6 +313,9 @@ struct LibraryDetail: View {
                             Text(preparation.isEmpty ? "Preparing playback…" : preparation).font(.caption)
                             Button("Cancel") { playbackTask?.cancel() }
                         }
+                    }
+                    if let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
+                        MediaLanguagesView(info: asset.mediaInfo)
                     }
                     Button { showSubtitles = true } label: { Label("Subtitles", systemImage: "captions.bubble") }
                         .sheet(isPresented: $showSubtitles) { SubtitlePreferencesView(titleID: title.id) }

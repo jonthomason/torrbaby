@@ -8,7 +8,8 @@ struct TimedText: Codable { let start_ms: UInt64; let end_ms: UInt64; let text: 
         do {
             guard (2...3).contains(CommandLine.arguments.count) else { throw ExtractionFailure(message: "Expected input and optional track ID") }
             let asset = AVURLAsset(url: URL(fileURLWithPath: CommandLine.arguments[1]))
-            let tracks = try await asset.load(.tracks).filter { $0.mediaType == .subtitle || $0.mediaType == .text || $0.mediaType == .closedCaption }
+            let allTracks = try await asset.load(.tracks)
+            let tracks = allTracks.filter { $0.mediaType == .subtitle || $0.mediaType == .text || $0.mediaType == .closedCaption }
             guard tracks.count <= 256 else { throw ExtractionFailure(message: "Too many subtitle tracks") }
             if CommandLine.arguments.count == 2 {
                 var entries: [[String: Any]] = []
@@ -20,7 +21,16 @@ struct TimedText: Codable { let start_ms: UInt64; let end_ms: UInt64; let text: 
                     let language = tag ?? code
                     entries.append(["track": track.trackID, "codec": supported ? "tx3g" : "unsupported", "language": language as Any? ?? NSNull(), "name": NSNull(), "forced": false, "hearing_impaired": false, "text_extractable": supported, "extraction_supported": supported, "encoded": false])
                 }
-                FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject: ["container": "mp4", "tracks": entries]))
+                var audio: [[String: Any]] = []
+                for track in allTracks where track.mediaType == .audio {
+                    let tag = try await track.load(.extendedLanguageTag)
+                    let code = try await track.load(.languageCode)
+                    let formats = try await track.load(.formatDescriptions)
+                    let format = formats.first.map { CMFormatDescriptionGetMediaSubType($0) } ?? 0
+                    let codec = String(bytes: [UInt8((format >> 24) & 255), UInt8((format >> 16) & 255), UInt8((format >> 8) & 255), UInt8(format & 255)], encoding: .ascii) ?? "unknown"
+                    audio.append(["track": track.trackID, "codec": codec, "language": (tag ?? code) as Any? ?? NSNull()])
+                }
+                FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject: ["container": "mp4", "tracks": entries, "audio_tracks": audio]))
             } else {
                 guard let id = Int32(CommandLine.arguments[2]), let track = tracks.first(where: { $0.trackID == id }) else { throw ExtractionFailure(message: "Subtitle track missing") }
                 let formats = try await track.load(.formatDescriptions)

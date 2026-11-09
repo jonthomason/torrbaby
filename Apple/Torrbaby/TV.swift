@@ -229,6 +229,9 @@ private struct TVMediaDetail: View {
                                 Button("Cancel") { playbackTask?.cancel() }
                             }
                         }
+                        if let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
+                            MediaLanguagesView(info: asset.mediaInfo)
+                        }
                         Button("Subtitles") { showSubtitlePreferences = true }
                             .sheet(isPresented: $showSubtitlePreferences) { SubtitlePreferencesView(titleID: title.id) }
                         if !title.summary.isEmpty {

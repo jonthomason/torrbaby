@@ -31,7 +31,7 @@ pub struct Manager {
     pending: Mutex<HashSet<String>>,
     gate: tokio::sync::Semaphore,
 }
-fn revision(path: &Path) -> Result<String> {
+pub(crate) fn revision(path: &Path) -> Result<String> {
     let m = path.metadata()?;
     ensure!(m.is_file(), "Media is not a file");
     Ok(format!(
@@ -84,6 +84,9 @@ impl Manager {
             pending: Mutex::new(HashSet::new()),
             gate: tokio::sync::Semaphore::new(1),
         }))
+    }
+    pub fn busy(&self) -> bool {
+        self.pending.lock().map(|p| !p.is_empty()).unwrap_or(true)
     }
     fn read(&self, id: &str) -> Result<Job> {
         ensure!(valid(id), "Invalid subtitle job ID");
@@ -225,9 +228,10 @@ impl Manager {
         entries.sort();
         let mut count = entries.len() + pending.len();
         for (_, id) in entries {
-            if bytes < 496 * 1024 * 1024 && count < 256 {
+            if bytes < 496 * 1024 * 1024 && count < 4096 {
                 break;
             }
+            if self.read(&id).is_ok_and(|job| job.state == "ready") { continue; }
             for ext in ["json", "vtt"] {
                 let path = self.root.join(format!("{id}.{ext}"));
                 if path.exists() {
@@ -238,7 +242,7 @@ impl Manager {
             }
             count = count.saturating_sub(1);
         }
-        ensure!(bytes < 496 * 1024 * 1024, "Subtitle cache is full");
+        ensure!(bytes < 496 * 1024 * 1024 && count < 4096, "Subtitle storage is full");
         Ok(())
     }
     async fn run(self: Arc<Self>, mut job: Job) {

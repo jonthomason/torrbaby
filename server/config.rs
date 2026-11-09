@@ -15,6 +15,8 @@ pub struct Config {
     pub trusted_lan_cidrs: Vec<String>,
     #[serde(default)]
     pub advertise_lan: bool,
+    #[serde(default = "background_subtitles_default")]
+    pub background_subtitles: bool,
     pub token_file: String,
     pub state_file: String,
     pub transmission_url: String,
@@ -89,3 +91,5 @@ impl Config {
         Ok(token.to_owned())
     }
 }
+
+fn background_subtitles_default() -> bool { true }

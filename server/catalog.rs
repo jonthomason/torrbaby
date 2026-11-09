@@ -93,7 +93,7 @@ impl Database {
                 .cloned()
                 .unwrap_or(json!({}));
             title["assets"].as_array_mut().unwrap().push(json!({
-                "id":id,"role":"main","name":episode["title"].as_str().unwrap_or(if kind=="movie"{name}else{&fallback}),
+                "id":id,"media_info":crate::media_inventory::cached(self,id)?,"role":"main","name":episode["title"].as_str().unwrap_or(if kind=="movie"{name}else{&fallback}),
                 "season":asset["season"],"episode":asset["episode"],"summary":episode["summary"].as_str().unwrap_or(""),
                 "airdate":episode["airdate"],"thumbnail":episode["thumbnail"],"duration_minutes":episode.get("duration_minutes").unwrap_or(&entity["duration_minutes"]),
                 "complete":asset["complete"],"size":asset["size"],"position":progress["position"].as_f64().unwrap_or(0.0),

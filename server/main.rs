@@ -6,6 +6,7 @@ mod hls;
 mod lan;
 mod matroska;
 mod media_packaging;
+mod media_inventory;
 mod metadata;
 mod native_subtitles;
 mod offline;
@@ -44,6 +45,13 @@ enum Command {
         helper: Option<PathBuf>,
         #[arg(long, default_value_t = 536_870_912)]
         max_bytes: u64,
+    },
+    /// Inspect Matroska codecs and a bounded sample of frame timing without decoding.
+    InspectMatroska {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long, default_value_t = 0)]
+        frames: usize,
     },
     /// List embedded Matroska subtitle tracks, or extract one as WebVTT.
     MatroskaSubtitles {
@@ -154,6 +162,9 @@ async fn main() -> Result<()> {
                 .unwrap_or(std::env::current_exe()?.with_file_name("torrbaby-media-segmenter"));
             media_packaging::package(&input, &output, &helper, max_bytes).await?;
             println!("Media packaging complete");
+        }
+        Command::InspectMatroska { input, frames } => {
+            println!("{}", serde_json::to_string_pretty(&matroska::inspect(&input, frames)?)?);
         }
         Command::MatroskaSubtitles {
             input,

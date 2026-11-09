@@ -33,7 +33,7 @@ pub struct Service {
     metadata: crate::metadata::Metadata,
     metadata_lock: tokio::sync::Mutex<()>,
     pub(crate) mutation_lock: tokio::sync::Mutex<()>,
-    subtitle_jobs: Arc<crate::subtitle_jobs::Manager>,
+    pub(crate) subtitle_jobs: Arc<crate::subtitle_jobs::Manager>,
     hls: Arc<crate::hls::Manager>,
     lan_limiter: crate::lan::Limiter,
 }
@@ -218,6 +218,17 @@ pub async fn serve(
                     eprintln!("Metadata collection: {error}");
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        }));
+    }
+    if !preview {
+        let background = service.clone();
+        workers.push(tokio::spawn(async move {
+            loop {
+                if let Err(error) = crate::media_inventory::tick(&background).await {
+                    eprintln!("Background subtitles: {error}");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(20)).await;
             }
         }));
     }
@@ -573,6 +584,13 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             return crate::offline::shared_progress(&db, id);
         }
     }
+    if method == Method::GET {
+        if let Some(id) = path.strip_prefix("/v1/library/assets/").and_then(|p| p.strip_suffix("/media-info")) {
+            let db = s.db.lock().map_err(|_|anyhow::anyhow!("Database lock failed"))?;
+            db.asset(id)?;
+            return crate::media_inventory::cached(&db, id);
+        }
+    }
     if method == Method::POST && path == "/v1/playback/offline" {
         let mut db =
             s.db.lock()
@@ -696,10 +714,10 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             let patch = body.as_object().context("Expected settings object")?;
             if patch.is_empty()
                 || patch.keys().any(|k| {
-                    !["paused", "poll_seconds", "source", "movies", "tv"].contains(&k.as_str())
+                    !["paused", "poll_seconds", "source", "movies", "tv", "background_subtitles"].contains(&k.as_str())
                 })
             {
-                bail!("Allowed settings: paused, poll_seconds, source, movies, tv");
+                bail!("Allowed settings: paused, poll_seconds, source, movies, tv, background_subtitles");
             }
             for (key, value) in patch {
                 config[key] = value.clone();
@@ -726,7 +744,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             s.event("settings_changed", json!({"settings":body}))?;
         }
         return Ok(
-            json!({"paused":config["paused"],"poll_seconds":config["poll_seconds"],"source":config["source"],"movies":config["movies"],"tv":config["tv"]}),
+            json!({"background_subtitles":config["background_subtitles"],"paused":config["paused"],"poll_seconds":config["poll_seconds"],"source":config["source"],"movies":config["movies"],"tv":config["tv"]}),
         );
     }
     if method == Method::POST && path == "/v1/torrents" {
@@ -945,7 +963,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             let state = db.state()?;
             let config = effective.as_ref().context("Missing settings")?;
             Ok(json!({"version":env!("CARGO_PKG_VERSION"),"uptime_seconds":s.started.elapsed().as_secs(),
-                "settings":{"source":config.source,"movies":config.movies,"tv":config.tv,"poll_seconds":config.poll_seconds,"paused":s.preview || config.paused},
+                "settings":{"background_subtitles":config.background_subtitles,"source":config.source,"movies":config.movies,"tv":config.tv,"poll_seconds":config.poll_seconds,"paused":s.preview || config.paused},
                 "last_poll":state["last_poll"],"last_error":if s.preview { json!("Migration preview: organizer not enabled") } else {state["last_error"].clone()},"pending_scans":if state["library_scan"]["scanning"] == true {1} else {0},"scan_error":state["library_scan"]["error"],"jobs":state["jobs"]}))
         }
         ("GET","/v1/events") => Ok(db.state()?["events"].take()),
@@ -1000,7 +1018,7 @@ pub(crate) fn checked_path(root: &std::path::Path, relative: &str) -> Result<Pat
     Ok(path)
 }
 
-async fn media_file(s: &Service, hash: &str, index: u64) -> Result<PathBuf> {
+pub(crate) async fn media_file(s: &Service, hash: &str, index: u64) -> Result<PathBuf> {
     if hash.starts_with("asset-") {
         if index != 0 {
             bail!("Invalid asset file index");
@@ -1747,7 +1765,7 @@ impl Service {
             .map_err(|_| anyhow::anyhow!("Database lock failed"))?
             .state()?;
         let mut config = serde_json::to_value(&self.config)?;
-        for key in ["paused", "poll_seconds", "source", "movies", "tv"] {
+        for key in ["paused", "poll_seconds", "source", "movies", "tv", "background_subtitles"] {
             if let Some(value) = state["settings"].get(key) {
                 config[key] = value.clone();
             }

@@ -32,7 +32,7 @@ impl Database {
         let connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_secs(10))?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version > 8 {
+        if version > 9 {
             bail!("Database is newer than this server supports");
         }
         connection.execute_batch(include_str!("schema.sql"))?;

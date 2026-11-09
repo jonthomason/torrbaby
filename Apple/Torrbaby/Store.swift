@@ -355,12 +355,17 @@ extension Store {
                     if let existing = tracks.first(where: { $0.normalizedLanguage == target }) {
                         translatedBody = ["track": existing.track, "source": target]
                     } else {
-                        guard let language = source.normalizedLanguage else { throw APIError(message: "The subtitle language couldn’t be identified.") }
-                        progress("Translating subtitles…")
-                        translatedBody = ["track": source.track, "source": language, "target": target]
+                        let ready: MediaTrackInfo = try await request("GET", base + "/media-info")
+                        guard let translated = ready.prepared.first(where: { $0.language == target && $0.generated && $0.state == "ready" }) else {
+                            throw APIError(message: "Translated subtitles are not ready yet. The server prepares them in the background.")
+                        }
+                        ids.append(translated.id)
+                        translatedBody = [:]
                     }
-                    let job: Job = try await request("POST", base + "/subtitles/prepare", body: translatedBody)
-                    ids.append(try await wait(job, route: "/v1/subtitle-jobs/").id)
+                    if !translatedBody.isEmpty {
+                        let job: Job = try await request("POST", base + "/subtitles/prepare", body: translatedBody)
+                        ids.append(try await wait(job, route: "/v1/subtitle-jobs/").id)
+                    }
                 }
                 progress("Preparing playback…")
                 let package: Job = try await request("POST", base + "/hls", body: ["subtitle_jobs": ids])
