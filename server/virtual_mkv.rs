@@ -160,6 +160,10 @@ impl Reader {
             );
             end = at + len;
         }
+        ensure!(
+            metadata_revision(&original.metadata()?) == index.source_revision,
+            "Source replaced during open"
+        );
         Ok(Self {
             source: original,
             metadata,
@@ -167,11 +171,18 @@ impl Reader {
             position: 0,
         })
     }
+    pub fn validate_source(&self) -> std::io::Result<()> {
+        if metadata_revision(&self.source.metadata()?) != self.index.source_revision {
+            return Err(std::io::Error::other("Media changed during playback"));
+        }
+        Ok(())
+    }
     pub fn len(&self) -> u64 {
         self.index.size
     }
     pub fn read_at(&self, mut at: u64, mut output: &mut [u8]) -> std::io::Result<usize> {
         use std::os::unix::fs::FileExt;
+        self.validate_source()?;
         let requested = output
             .len()
             .min(self.index.size.saturating_sub(at) as usize);
@@ -234,86 +245,22 @@ impl std::io::Seek for Reader {
     }
 }
 
-/// Isolated, loopback-only diagnostic server. Never replaces the running daemon.
 pub async fn serve(source: &Path, directory: &Path, port: u16) -> Result<()> {
-    use axum::{
-        Router,
-        body::Body,
-        extract::State,
-        http::{HeaderMap, StatusCode},
-        response::IntoResponse,
-        routing::get,
-    };
-    async fn response(
-        State(reader): State<Arc<Reader>>,
-        headers: HeaderMap,
-    ) -> axum::response::Response {
-        let size = reader.len();
-        let range = headers.get("range").and_then(|v| v.to_str().ok());
-        let parsed = (|| -> Option<(u64, u64)> {
-            let Some(value) = range else {
-                return Some((0, size.checked_sub(1)?));
-            };
-            let (a, b) = value.strip_prefix("bytes=")?.split_once('-')?;
-            if a.is_empty() {
-                let n = b.parse::<u64>().ok()?;
-                return (n > 0).then_some((size.saturating_sub(n), size - 1));
-            }
-            let start = a.parse::<u64>().ok()?;
-            let end = if b.is_empty() {
-                size - 1
-            } else {
-                b.parse::<u64>().ok()?.min(size - 1)
-            };
-            (start <= end && start < size).then_some((start, end))
-        })();
-        let Some((start, end)) = parsed else {
-            return (
-                StatusCode::RANGE_NOT_SATISFIABLE,
-                [("content-range", format!("bytes */{size}"))],
-            )
-                .into_response();
-        };
-        let stream = futures_util::stream::try_unfold(
-            (reader, start, end + 1),
-            |(reader, at, end)| async move {
-                if at == end {
-                    return Ok::<_, std::io::Error>(None);
-                }
-                let count = (end - at).min(256 * 1024) as usize;
-                let next_reader = reader.clone();
-                let bytes = tokio::task::spawn_blocking(move || {
-                    let mut bytes = vec![0; count];
-                    let n = next_reader.read_at(at, &mut bytes)?;
-                    if n != count {
-                        return Err(std::io::Error::other("Truncated virtual media"));
-                    }
-                    Ok::<_, std::io::Error>(bytes)
-                })
-                .await
-                .map_err(std::io::Error::other)??;
-                Ok(Some((bytes, (reader, at + count as u64, end))))
-            },
-        );
-        let mut result = axum::http::Response::builder()
-            .status(if range.is_some() { 206 } else { 200 })
-            .header("content-type", "video/mp4")
-            .header("accept-ranges", "bytes")
-            .header("content-length", (end - start + 1).to_string());
-        if range.is_some() {
-            result = result.header("content-range", format!("bytes {start}-{end}/{size}"));
-        }
-        result.body(Body::from_stream(stream)).unwrap()
-    }
-    let reader = Arc::new(Reader::open(source, directory)?);
-    let app = Router::new()
-        .route("/movie.mp4", get(response))
-        .with_state(reader);
-    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await?;
-    println!(
-        "Virtual MP4 diagnostic server: http://127.0.0.1:{}/movie.mp4",
-        listener.local_addr()?.port()
-    );
-    axum::serve(listener, app).await?;
-    Ok(())
+    let source =
+        crate::virtual_captions::Source::Indexed(Arc::new(Reader::open(source, directory)?));
+    crate::virtual_captions::serve(crate::virtual_captions::Reader::new(source, &[])?, port).await
+}
+
+fn metadata_revision(m: &fs::Metadata) -> String {
+    use std::os::unix::fs::MetadataExt;
+    format!(
+        "{}:{}:{}:{}:{}:{}:{}",
+        m.dev(),
+        m.ino(),
+        m.len(),
+        m.mtime(),
+        m.mtime_nsec(),
+        m.ctime(),
+        m.ctime_nsec()
+    )
 }

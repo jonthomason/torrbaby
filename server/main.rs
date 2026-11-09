@@ -15,6 +15,8 @@ mod organizer;
 mod pairing;
 mod remux;
 mod virtual_mkv;
+mod virtual_media;
+mod virtual_captions;
 mod scanner;
 mod storage;
 mod subtitle_jobs;
@@ -62,6 +64,13 @@ enum Command {
         #[arg(long)] input: PathBuf,
         #[arg(long)] index: PathBuf,
         #[arg(long, default_value_t = 18770)] port: u16,
+    },
+    /// Isolated native subtitle playback proof with a JSON array of caption artifacts.
+    ServeCaptionedMedia {
+        #[arg(long)] input: PathBuf,
+        #[arg(long)] index: Option<PathBuf>,
+        #[arg(long)] captions: PathBuf,
+        #[arg(long, default_value_t = 18769)] port: u16,
     },
     /// Development-only Matroska to MP4 passthrough; not production playback.
     RemuxMatroska {
@@ -224,6 +233,11 @@ async fn main() -> Result<()> {
         }
         Command::ServeIndexedMatroska { input, index, port } => {
             virtual_mkv::serve(&input, &index, port).await?;
+        }
+        Command::ServeCaptionedMedia { input, index, captions, port } => {
+            let source=if let Some(index)=index { virtual_captions::Source::Indexed(std::sync::Arc::new(virtual_mkv::Reader::open(&input,&index)?)) } else { virtual_captions::Source::file(&input)? };
+            let tracks: Vec<virtual_captions::Caption>=serde_json::from_slice(&std::fs::read(captions)?)?;
+            virtual_captions::serve(virtual_captions::Reader::new(source,&tracks)?,port).await?;
         }
         Command::RemuxMatroska {
             input,

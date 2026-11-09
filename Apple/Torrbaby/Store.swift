@@ -333,75 +333,55 @@ final class Store: ObservableObject {
 }
 
 extension Store {
-    /// Use native HLS renditions when a subtitle preference requires text delivery.
+    /// Request native virtual MP4 tracks without copying the audiovisual stream.
     func mediaPlaybackLink(asset: LibraryAsset, titleID: String, progress: @escaping (String) -> Void = { _ in }) async throws -> PlaybackLink {
         let serverAtStart = server
         let base = "/v1/library/assets/\(asset.id)"
         var body: [String: Any] = ["client_id": clientId]
+        var ids: [String] = []
+        progress("Preparing playback…")
+        struct Track: Decodable {
+            let track: Int; let codec: String; let language: String?; let extractionSupported: Bool
+        }
+        struct Inventory: Decodable { let embeddedTracks: [Track] }
+        struct Job: Decodable { let id: String; let state: String; let error: String? }
+        func wait(_ job: Job, route: String) async throws -> Job {
+            var result = job
+            let deadline = Date().addingTimeInterval(1200)
+            while result.state == "queued" || result.state == "running" || result.state == "preparing" {
+                try Task.checkCancellation()
+                guard self.server == serverAtStart else { throw CancellationError() }
+                guard Date() < deadline else { throw APIError(message: "Playback is still preparing. Try again shortly.") }
+                try await Task.sleep(for: .milliseconds(500))
+                result = try await self.request("GET", route + result.id)
+            }
+            guard result.state == "ready" else { throw APIError(message: result.error ?? "Playback couldn’t be prepared.") }
+            return result
+        }
         do {
-            let preferences: SubtitlePreferenceResponse = try await request("GET", deviceSubtitlePath)
-            if preferences.effective.enabled {
-                progress("Preparing subtitles…")
-                struct Track: Decodable {
-                    let track: Int; let codec: String; let language: String?; let extractionSupported: Bool
-                    var normalizedLanguage: String? {
-                        let code = (language ?? "").lowercased()
-                        if code == "eng" || code.hasPrefix("en") { return "en" }
-                        if code == "zho" || code == "chi" || code.hasPrefix("zh") { return "zh-Hans" }
-                        return nil
-                    }
-                }
-                struct Inventory: Decodable { let embeddedTracks: [Track] }
-                struct Job: Decodable { let id: String; let state: String; let error: String? }
+            // Ready sidecar and translated jobs do not require embedded captions.
+            // Include every ready language even when the device starts with subtitles Off.
+            let ready: MediaTrackInfo = try await request("GET", base + "/media-info")
+            ids = Array(Set(ready.prepared.filter { $0.state == "ready" }.map(\.id))).sorted()
+            if ids.isEmpty {
                 let inventory: Inventory = try await request("GET", base + "/subtitles")
-                let tracks = inventory.embeddedTracks.filter { $0.extractionSupported && $0.codec == "tx3g" }
-                guard let source = tracks.first(where: { $0.normalizedLanguage != nil }) ?? tracks.first else {
-                    throw APIError(message: "Translated subtitles aren’t available for this file yet.")
+                if let source = inventory.embeddedTracks.first(where: { $0.extractionSupported }) {
+                    var originalBody: [String: Any] = ["track": source.track]
+                    let language = (source.language ?? "").lowercased()
+                    if language == "eng" || language.hasPrefix("en") { originalBody["source"] = "en" }
+                    else if language == "zho" || language == "chi" || language.hasPrefix("zh") { originalBody["source"] = "zh-Hans" }
+                    let original: Job = try await request("POST", base + "/subtitles/prepare", body: originalBody)
+                    ids.append(try await wait(original, route: "/v1/subtitle-jobs/").id)
                 }
-                func wait(_ job: Job, route: String) async throws -> Job {
-                    var result = job
-                    let deadline = Date().addingTimeInterval(1200)
-                    while result.state == "queued" || result.state == "running" || result.state == "preparing" {
-                        try Task.checkCancellation()
-                        guard self.server == serverAtStart else { throw CancellationError() }
-                        guard Date() < deadline else { throw APIError(message: "Subtitles are still preparing. Try again shortly.") }
-                        try await Task.sleep(for: .seconds(2))
-                        result = try await self.request("GET", route + result.id)
-                    }
-                    guard result.state == "ready" else { throw APIError(message: result.error ?? "Subtitles couldn’t be prepared.") }
-                    return result
-                }
-                var originalBody: [String: Any] = ["track": source.track]
-                if let language = source.normalizedLanguage { originalBody["source"] = language }
-                let original: Job = try await request("POST", base + "/subtitles/prepare", body: originalBody)
-                let readyOriginal = try await wait(original, route: "/v1/subtitle-jobs/")
-                var ids = [readyOriginal.id]
-                let target = preferences.effective.language
-                if target != "original" && target != source.normalizedLanguage {
-                    var translatedBody: [String: Any]
-                    if let existing = tracks.first(where: { $0.normalizedLanguage == target }) {
-                        translatedBody = ["track": existing.track, "source": target]
-                    } else {
-                        let ready: MediaTrackInfo = try await request("GET", base + "/media-info")
-                        guard let translated = ready.prepared.first(where: { $0.language == target && $0.generated && $0.state == "ready" }) else {
-                            throw APIError(message: "Translated subtitles are not ready yet. The server prepares them in the background.")
-                        }
-                        ids.append(translated.id)
-                        translatedBody = [:]
-                    }
-                    if !translatedBody.isEmpty {
-                        let job: Job = try await request("POST", base + "/subtitles/prepare", body: translatedBody)
-                        ids.append(try await wait(job, route: "/v1/subtitle-jobs/").id)
-                    }
-                }
-                progress("Preparing playback…")
-                let package: Job = try await request("POST", base + "/hls", body: ["subtitle_jobs": ids])
-                body["hls_job"] = try await wait(package, route: "/v1/hls-jobs/").id
             }
         } catch {
             try Task.checkCancellation()
             guard server == serverAtStart else { throw CancellationError() }
             notify("Subtitles unavailable", detail: error.localizedDescription)
+        }
+        let prepared: Job = try await request("POST", base + "/virtual-mp4", body: ["subtitle_jobs": ids])
+        if prepared.state != "direct" {
+            body["virtual_job"] = try await wait(prepared, route: "/v1/virtual-jobs/").id
         }
         try Task.checkCancellation()
         guard server == serverAtStart else { throw CancellationError() }

@@ -81,7 +81,7 @@ final class ProbeController: UIViewController, AVPlayerViewControllerDelegate {
         note("Ready: \(item.status == .readyToPlay), \(String(format: "%.2f", Date().timeIntervalSince(began)))s")
         if let error = item.error { note(error.localizedDescription) }
         // Pause in the first subtitle cue for visual inspection.
-        let sought = await video.player!.seek(to: CMTime(seconds: 50, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        let sought = await video.player!.seek(to: CMTime(seconds: 82, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         note("Seek to first cue: \(sought)")
         selectLanguage()
         video.player?.play()

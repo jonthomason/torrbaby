@@ -35,6 +35,7 @@ pub struct Service {
     pub(crate) mutation_lock: tokio::sync::Mutex<()>,
     pub(crate) subtitle_jobs: Arc<crate::subtitle_jobs::Manager>,
     hls: Arc<crate::hls::Manager>,
+    virtual_media: Arc<crate::virtual_media::Manager>,
     lan_limiter: crate::lan::Limiter,
     torrent_search: crate::torrent_search::Search,
 }
@@ -137,6 +138,7 @@ pub async fn serve(
         )?,
         metadata_lock: tokio::sync::Mutex::new(()),
         mutation_lock: tokio::sync::Mutex::new(()),
+        virtual_media: crate::virtual_media::Manager::new(database.parent().context("Missing data directory")?)?,
         hls: crate::hls::Manager::new(database.parent().context("Missing data directory")?)?,
         subtitle_jobs: crate::subtitle_jobs::Manager::new(
             database.parent().context("Missing data directory")?,
@@ -540,6 +542,27 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             json!({"platform":"android","build":body["build"],"stages":stages}),
         )?;
         return Ok(json!({"accepted":true}));
+    }
+    if method == Method::GET {
+        if let Some(id) = path.strip_prefix("/v1/virtual-jobs/") { return s.virtual_media.status(id); }
+    }
+    if method == Method::POST {
+        if let Some(id) = path.strip_prefix("/v1/library/assets/").and_then(|p| p.strip_suffix("/virtual-mp4")) {
+            let input = media_file(s, id, 0).await?;
+            let mut captions=Vec::new();
+            if let Some(ids)=body.get("subtitle_jobs") {
+                let ids=ids.as_array().context("Invalid subtitle jobs")?;
+                anyhow::ensure!(ids.len()<=8,"Too many subtitles");
+                for value in ids { let job=value.as_str().context("Invalid subtitle job")?;let status=s.subtitle_jobs.status(job)?;
+                    anyhow::ensure!(status["asset_id"]==id && status["state"]=="ready","Subtitle does not belong to this title");
+                    captions.push(crate::virtual_captions::Caption {id:job.into(),language:status["target"].as_str().or(status["source"].as_str()).unwrap_or("und").into(),text:s.subtitle_jobs.artifact(job)?});
+                }
+            }
+            if captions.is_empty() && !input.extension().is_some_and(|e|e.eq_ignore_ascii_case("mkv")) {
+                return Ok(json!({"state":"direct", "id":""}));
+            }
+            return s.virtual_media.prepare(id, input, captions);
+        }
     }
     if method == Method::GET {
         if let Some(id) = path.strip_prefix("/v1/hls-jobs/") {
@@ -1243,6 +1266,14 @@ async fn playback_link(s: &Service, hash: &str, body: &Value) -> Result<Value> {
         ));
         result["expires"] = json!(expires);
     }
+    if let Some(id) = body.get("virtual_job") {
+        let id = id.as_str().context("Invalid virtual media job")?;
+        anyhow::ensure!(body.get("hls_job").is_none(), "Choose one playback container");
+        let _ = s.virtual_media.reader(id, hash, &path).await?;
+        let key = format!("virtual:{hash}:{id}");
+        result["path"] = json!(format!("/v1/stream/{hash}/{index}?virtual={id}&expires={expires}&sig={}", signature(&s.token, &key, index, expires)));
+        result["container"] = json!("mp4");
+    }
     if let Some(client) = body.get("client_id") {
         let mut db =
             s.db.lock()
@@ -1301,10 +1332,15 @@ async fn stream(
         .collect();
     let mut mac = <Hmac<sha2::Sha256> as hmac::KeyInit>::new_from_slice(s.token.as_bytes())
         .expect("HMAC key");
-    mac.update(format!("{}:{index}:{expires}", parts[2]).as_bytes());
+    let signed_key = if let Some(id) = query.get("virtual") { format!("virtual:{}:{id}", parts[2]) } else {parts[2].to_owned()};
+    mac.update(format!("{signed_key}:{index}:{expires}").as_bytes());
     mac.verify_slice(&decoded?)
         .map_err(|_| anyhow::anyhow!("Invalid playback signature"))?;
     let path = media_file(s, parts[2], index).await?;
+    if let Some(id) = query.get("virtual") {
+        let reader = s.virtual_media.reader(id, parts[2], &path).await?;
+        return virtual_response(reader, id, method, headers).await;
+    }
     file_response(&path, method, headers).await
 }
 
@@ -1471,6 +1507,70 @@ async fn file_response(
                 Ok(Some((buffer, (file, remaining - count as u64))))
             },
         );
+        axum::body::Body::from_stream(chunks)
+    };
+    Ok(response.body(body)?)
+}
+
+async fn virtual_response(
+    reader: Arc<crate::virtual_captions::Reader>,
+    id: &str,
+    method: &Method,
+    headers: &HeaderMap,
+) -> Result<Response> {
+    let size = reader.len();
+    let revision = format!("\"{id}\"");
+    if let Some(condition) = headers.get("if-match") {
+        let condition = condition.to_str()?;
+        if condition != "*" && !condition.split(',').any(|value| value.trim() == revision) {
+            return Ok(Response::builder()
+                .status(412)
+                .header("ETag", &revision)
+                .header("Cache-Control", "private, no-store")
+                .body(axum::body::Body::empty())?);
+        }
+    }
+    let mut range = headers.get("range").map(|h| h.to_str()).transpose()?;
+    if let Some(condition) = headers.get("if-range") {
+        if condition.to_str()? != revision {
+            range = None;
+        }
+    }
+    let selected = byte_range(range, size);
+    if selected.is_err() {
+        return Ok(Response::builder()
+            .status(416)
+            .header("ETag", &revision)
+            .header("Content-Range", format!("bytes */{size}"))
+            .body(axum::body::Body::empty())?);
+    }
+    let (start, end) = selected?;
+    let mut response = Response::builder()
+        .status(if range.is_some() { 206 } else { 200 })
+        .header("Accept-Ranges", "bytes")
+        .header("X-Torrbaby-Source", "virtual-mp4")
+        .header("Cache-Control", "private, no-store")
+        .header("Content-Length", end - start + 1)
+        .header("ETag", &revision)
+        .header("Content-Type", "video/mp4");
+    if range.is_some() {
+        response = response.header("Content-Range", format!("bytes {start}-{end}/{size}"));
+    }
+    let body = if method == Method::HEAD {
+        axum::body::Body::empty()
+    } else {
+        let chunks = futures_util::stream::try_unfold((reader, start, end + 1), |(reader, at, end)| async move {
+            if at == end { return Ok::<_, std::io::Error>(None); }
+            let count = (end - at).min(256 * 1024) as usize;
+            let source = reader.clone();
+            let data = tokio::task::spawn_blocking(move || {
+                let mut data = vec![0; count];
+                let n = source.read_at(at, &mut data)?;
+                if n != count { return Err(std::io::Error::other("Virtual media ended early")); }
+                Ok::<_, std::io::Error>(data)
+            }).await.map_err(std::io::Error::other)??;
+            Ok(Some((data, (reader, at + count as u64, end))))
+        });
         axum::body::Body::from_stream(chunks)
     };
     Ok(response.body(body)?)
