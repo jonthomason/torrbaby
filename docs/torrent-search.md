@@ -59,3 +59,22 @@ TCL confirmed build 20 installed through PACKAGEINFO. Android 21 adds a small
 search-state fix: old results cannot open while a new query is pending, preventing
 a disabled Search button on return. Build 21 is published with verified HTTPS
 checksum; Apple remains 84. Native window inspection is still unavailable.
+
+## Completion audit — 2026-11-09
+
+| Requirement | Evidence | Status |
+| --- | --- | --- |
+| Keyword searches across TPB and other sources | Live Diamond TPB/CSV results; Nyaa optional adapter | Verified |
+| Smart contextual matching | Title/year/season/episode scoring, pack ranges, duplicate hashes; targeted tests | Verified |
+| List results and load magnets | Client implementations compile; live API add paused, zero downloaded bytes, remove | API verified; UI acceptance pending |
+| Further audio/details/file inspection | Source descriptions, language fields, release tags, TPB live seven-file listing | API verified; UI acceptance pending |
+| All supported clients | Apple 84 macOS/iOS/tvOS builds; Android 21; HTTPS OTA hashes; TCL installed 20 | Delivery verified; UI acceptance pending |
+| Commit/push | 75085bb and predecessors on codex/subtitles | Verified |
+
+Desktop automation has returned `cgWindowNotFound` on three consecutive goal
+turns, for both Torrbaby and Finder. The outstanding user question asks whether
+the Mac is locked; this is not established as the cause. No pending build or
+installer process needs restarting. The goal is blocked on client UI access,
+not complete. Resume by checking an accessible desktop, then verify search,
+open details, paused addition and return navigation on Mac/mobile/TV clients.
+Android 21 is on OTA; TCL currently has confirmed build 20.
