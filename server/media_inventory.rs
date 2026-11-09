@@ -28,14 +28,56 @@ fn language(track: &Value) -> Option<&'static str> {
     else { None }
 }
 
+fn priorities(db: &Database) -> Result<std::collections::HashMap<String, i64>> {
+    let mut statement = db.connection.prepare("SELECT asset_id,priority FROM subtitle_priorities")?;
+    Ok(statement.query_map([], |row| Ok((row.get(0)?,row.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+pub fn prioritize(db: &Database, id: &str) -> Result<Value> {
+    let asset = db.asset(id)?;
+    anyhow::ensure!(asset["available"] == true && asset["complete"] == true,
+        "Wait for this download to finish before preparing subtitles");
+    db.connection.execute("INSERT INTO subtitle_priorities(asset_id,priority) VALUES(?,(SELECT COALESCE(MAX(priority),0)+1 FROM subtitle_priorities)) ON CONFLICT(asset_id) DO UPDATE SET priority=excluded.priority", [id])?;
+    Ok(json!({"accepted":true}))
+}
+
+fn group_key(asset: &Value) -> String {
+    asset["entity_id"].as_str().or(asset["series_name"].as_str()).or(asset["id"].as_str()).unwrap_or("").to_owned()
+}
+fn queue_assets(db: &Database) -> Result<Vec<Value>> {
+    let entities: std::collections::HashMap<String,Value> = db.documents("entities")?.into_iter()
+        .filter_map(|e| e["id"].as_str().map(str::to_owned).map(|id|(id,e))).collect();
+    let mut assets=db.documents("assets")?;
+    for a in &mut assets {
+        a["queue_title"]=a["entity_id"].as_str().and_then(|id|entities.get(id)).map(|e|e["title"].clone())
+            .unwrap_or_else(||a["series_name"].clone());
+    }
+    Ok(assets)
+}
+fn order_assets(assets: &mut [Value], priorities: &std::collections::HashMap<String,i64>) {
+    let mut groups=std::collections::HashMap::<String,i64>::new();
+    for a in assets.iter() {
+        let priority=*priorities.get(a["id"].as_str().unwrap_or("")).unwrap_or(&0);
+        let entry=groups.entry(group_key(a)).or_default(); *entry=(*entry).max(priority);
+    }
+    let title=|a:&Value|a["queue_title"].as_str().or(a["series_name"].as_str()).or(a["id"].as_str()).unwrap_or("").to_lowercase();
+    assets.sort_by(|a,b| groups[&group_key(b)].cmp(&groups[&group_key(a)])
+        .then_with(||title(a).cmp(&title(b)))
+        .then_with(||group_key(a).cmp(&group_key(b)))
+        .then_with(||a["season"].as_u64().unwrap_or(0).cmp(&b["season"].as_u64().unwrap_or(0)))
+        .then_with(||a["episode"].as_u64().unwrap_or(0).cmp(&b["episode"].as_u64().unwrap_or(0)))
+        .then_with(||a["id"].as_str().cmp(&b["id"].as_str())));
+}
+
 pub async fn tick(s: &Service) -> Result<()> {
     if !s.effective_config()?.background_subtitles { return Ok(()); }
-    let mut assets = {
+    let (mut assets, priorities) = {
         let db = s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
-        db.documents("assets")?
+        (queue_assets(&db)?, priorities(&db)?)
     };
     assets.retain(|a| a["available"]==true && a["complete"]==true);
-    assets.sort_by(|a,b| b["added_at"].as_f64().unwrap_or(0.0).total_cmp(&a["added_at"].as_f64().unwrap_or(0.0)));
+    order_assets(&mut assets, &priorities);
     let mut inspected = false;
     for asset in assets {
         let Some(id) = asset["id"].as_str() else { continue; };
@@ -121,7 +163,10 @@ pub fn summary(db: &Database, jobs: &crate::subtitle_jobs::Manager) -> Result<Va
     let mut current=Value::Null;
     let mut queue=Vec::new();
     let statuses=jobs.all_statuses()?;
-    for asset in db.documents("assets")? {
+    let priorities = priorities(db)?;
+    let mut assets = queue_assets(db)?;
+    order_assets(&mut assets, &priorities);
+    for asset in assets {
         if asset["available"]!=true || asset["complete"]!=true { continue; }
         let Some(id)=asset["id"].as_str() else {continue};
         let info=cached(db,id)?;
@@ -157,4 +202,47 @@ pub fn summary(db: &Database, jobs: &crate::subtitle_jobs::Manager) -> Result<Va
     }
 
     Ok(json!({"scanned":scanned,"translated":translated,"failed":failed,"waiting_for_idle":false,"current":current,"queue":queue}))
+}
+
+#[cfg(test)]
+mod priority_tests {
+    use super::*;
+    #[test]
+    fn shows_stay_together_in_episode_order_and_priority_moves_the_show() {
+        let mut assets=vec![
+            json!({"id":"a2","entity_id":"A","queue_title":"Alpha","season":1,"episode":2}),
+            json!({"id":"b2","entity_id":"B","queue_title":"Beta","season":2,"episode":1}),
+            json!({"id":"a1","entity_id":"A","queue_title":"Alpha","season":1,"episode":1}),
+            json!({"id":"b1","entity_id":"B","queue_title":"Beta","season":1,"episode":1})];
+        let mut priorities=std::collections::HashMap::new();
+        order_assets(&mut assets,&priorities);
+        assert_eq!(assets.iter().map(|a|a["id"].as_str().unwrap()).collect::<Vec<_>>(),vec!["a1","a2","b1","b2"]);
+        priorities.insert("b2".into(),1);
+        order_assets(&mut assets,&priorities);
+        assert_eq!(assets.iter().map(|a|a["id"].as_str().unwrap()).collect::<Vec<_>>(),vec!["b1","b2","a1","a2"]);
+    }
+    #[test]
+    fn clicked_items_move_to_front_and_order_is_persistent() -> Result<()> {
+        let db = Database { connection: rusqlite::Connection::open_in_memory()? };
+        db.connection.execute_batch(include_str!("schema.sql"))?;
+        let mut assets = vec![json!({"id":"old","added_at":1,"available":true,"complete":true}),
+            json!({"id":"new","added_at":2,"available":true,"complete":true})];
+        for a in &assets { db.connection.execute("INSERT INTO library_assets VALUES(?,?)",
+            rusqlite::params![a["id"].as_str().unwrap(),a.to_string()])?; }
+        order_assets(&mut assets,&priorities(&db)?);
+        assert_eq!(assets[0]["id"],"new");
+        prioritize(&db,"old")?;
+        order_assets(&mut assets,&priorities(&db)?);
+        assert_eq!(assets[0]["id"],"old");
+        prioritize(&db,"new")?;
+        prioritize(&db,"old")?;
+        order_assets(&mut assets,&priorities(&db)?);
+        assert_eq!(assets[0]["id"],"old");
+        assert_eq!(priorities(&db)?.len(),2);
+        assert!(prioritize(&db,"missing").is_err());
+        db.connection.execute("INSERT INTO library_assets VALUES('partial',?)",
+            [json!({"id":"partial","available":true,"complete":false}).to_string()])?;
+        assert!(prioritize(&db,"partial").is_err());
+        Ok(())
+    }
 }

@@ -93,6 +93,7 @@ struct Job: Codable, Identifiable {
 }
 struct SubtitleQueueItem: Codable, Identifiable {
     let id: String
+    let assetId: String?
     let title: String
     let state: String
     let target: String?

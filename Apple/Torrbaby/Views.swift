@@ -52,6 +52,13 @@ struct SubtitleQueueView: View {
                                     }
                                     if let error = item.error { Text(error).font(.caption).foregroundStyle(.orange) }
                                 }.padding(.vertical, 6)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                                .onTapGesture { prioritize(item) }
+                                .accessibilityAction(named: "Prioritize subtitles") { prioritize(item) }
+                                #if os(macOS)
+                                .help(item.state == "ready" || item.state == "running" ? "" : "Click to prioritize this title in the subtitle queue")
+                                #endif
                             }
                         }
                     }
@@ -61,6 +68,15 @@ struct SubtitleQueueView: View {
         }
         .navigationTitle("Subtitles")
         .refreshable { await store.refresh() }
+    }
+    private func prioritize(_ item: SubtitleQueueItem) {
+        guard item.state != "ready", item.state != "running",
+              let asset = item.assetId else { return }
+        store.perform {
+            try await store.send("POST", "/v1/library/assets/\(asset)/subtitles/prioritize")
+            store.notify("Title prioritized", detail: "Starts after the current subtitle job.")
+            await store.refresh()
+        }
     }
 }
 

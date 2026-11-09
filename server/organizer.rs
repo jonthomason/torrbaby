@@ -136,13 +136,20 @@ pub async fn action(s: &Service, hash: &str, action: &str, body: &Value) -> Resu
             "torrent_remove_requested",
             json!({"hash":hash,"delete_data":delete}),
         )?;
-        let result = s
-            .rpc
-            .call(
-                "torrent_remove",
-                json!({"ids":[hash],"delete_local_data":delete}),
-            )
-            .await?;
+        let response = s.rpc.call("torrent_remove", json!({"ids":[hash],"delete_local_data":delete})).await;
+        // Transmission may finish removal after the HTTP response times out.
+        // Reconcile by identity without issuing another destructive request.
+        s.invalidate_torrents();
+        let result = match response {
+            Ok(result) => result,
+            Err(error) => {
+                let state = s.rpc.call("torrent_get", json!({"ids":[hash],"fields":["hash_string"]})).await;
+                match state {
+                    Ok(state) if state["torrents"].as_array().is_some_and(|items|items.is_empty()) => json!({"reconciled":true}),
+                    _ => return Err(error.context("Could not confirm torrent removal; refresh the torrent list before retrying")),
+                }
+            }
+        };
         save_job(
             s,
             hash,

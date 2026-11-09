@@ -29,6 +29,7 @@ public class MainActivity extends Activity {
   private String collectionName = "", restoreShelf = "";
   private ArrayList<String> collectionIds = new ArrayList<>();
   private JSONArray torrents;
+  private final Map<String, Long> removedTorrents = new HashMap<>();
   private String torrentCategory = "Downloading";
   private boolean torrentsLoading, torrentStale;
   private long torrentUpdated;
@@ -75,7 +76,7 @@ public class MainActivity extends Activity {
     }
     if (api == null) discover("");
     else {
-      art = new Art(api);
+      art = new Art(this, api);
       load();
     }
   }
@@ -176,17 +177,36 @@ public class MainActivity extends Activity {
     }
     io.execute(
         () -> {
+          Api requested = api;
+          BrowseCache cache = new BrowseCache(this, requested);
+          if (library == null) {
+            try {
+              byte[] saved = cache.read("library", 0);
+              if (saved != null) {
+                JSONObject snapshot = new JSONObject(new String(saved, java.nio.charset.StandardCharsets.UTF_8));
+                Library cached = Library.parse(snapshot);
+                runOnUiThread(() -> {
+                  if (isDestroyed() || api != requested || library != null) return;
+                  library = cached; librarySnapshot = snapshot.toString(); render();
+                });
+              }
+            } catch (Exception ignored) {}
+          }
           try {
-            api.register();
-            ProgressQueue.flush(this, api);
-            Library result = Library.parse(api.request("GET", "/v1/library", null));
+            JSONObject response = requested.request("GET", "/v1/library", null);
+            Library result = Library.parse(response);
             runOnUiThread(
                 () -> {
                   if (isDestroyed()) return;
                   loading = false;
+                  if (api != requested) return;
                   library = result;
+                  librarySnapshot = response.toString();
                   render();
                 });
+            cache.write("library", response.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            // History synchronization must not delay the first library frame.
+            try { requested.register(); ProgressQueue.flush(this, requested); } catch (Exception ignored) {}
           } catch (Exception e) {
             runOnUiThread(
                 () -> {
@@ -685,7 +705,7 @@ public class MainActivity extends Activity {
   }
 
   private void torrentScreen() {
-    torrentActions = new TorrentActions(this, api, io, this::fetchTorrents);
+    torrentActions = new TorrentActions(this, api, io, this::fetchTorrents, this::torrentRemoved);
     Ui.pad(content, 35, 16);
     LinearLayout controls = Ui.row(this);
     for (String category : new String[] {"Downloading", "Seeding", "Complete"}) {
@@ -867,6 +887,25 @@ public class MainActivity extends Activity {
     return n + " B";
   }
 
+  private JSONArray visibleTorrents(JSONArray incoming) {
+    long now = SystemClock.elapsedRealtime();
+    removedTorrents.entrySet().removeIf(entry -> entry.getValue() < now);
+    JSONArray visible = new JSONArray();
+    if (incoming != null) for (int i = 0; i < incoming.length(); i++) {
+      JSONObject item = incoming.optJSONObject(i);
+      if (item != null && !removedTorrents.containsKey(item.optString("hash_string").toLowerCase(Locale.ROOT))) visible.put(item);
+    }
+    return visible;
+  }
+
+  private void torrentRemoved(String hash) {
+    if (hash == null) { removedTorrents.clear(); return; }
+    if (hash.isEmpty()) return;
+    removedTorrents.put(hash.toLowerCase(Locale.ROOT), SystemClock.elapsedRealtime() + 60000);
+    torrents = visibleTorrents(torrents);
+    if (section.equals("Torrents") && detailId.isEmpty()) render();
+  }
+
   private void fetchTorrents() {
     if (torrentsLoading) return;
     torrentsLoading = true;
@@ -879,7 +918,7 @@ public class MainActivity extends Activity {
                 () -> {
                   torrentsLoading = false;
                   if (requested != api || isDestroyed()) return;
-                  torrents = result;
+                  torrents = visibleTorrents(result);
                   torrentStale = false;
                   torrentUpdated = System.currentTimeMillis();
                   if (section.equals("Torrents") && !isDestroyed()) {
@@ -936,6 +975,7 @@ public class MainActivity extends Activity {
           try {
             JSONObject response = requested.request("GET", "/v1/library", null);
             String snapshot = response.toString();
+            new BrowseCache(this, requested).write("library", snapshot.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             Library updated = Library.parse(response);
             runOnUiThread(
                 () -> {
@@ -974,8 +1014,17 @@ public class MainActivity extends Activity {
     if (asset == null) return;
     for (String line : MediaLanguages.lines(asset.mediaInfo)) {
       Ui.gap(parent, compact ? 4 : 7);
-      Ui.add(parent, Ui.text(this, line, compact ? 12 : 14,
-          line.endsWith("Generated translation") ? 0xffc5afff : Ui.MUTED), -1, -2);
+      TextView text = Ui.text(this, line, compact ? 12 : 14, Ui.MUTED);
+      android.text.SpannableString styled = new android.text.SpannableString(line);
+      for (int i = 0; i < line.length(); i++) if (line.charAt(i) == '\uFFFC') {
+        android.graphics.drawable.Drawable icon = getDrawable(R.drawable.torrbaby_icon);
+        int size = Ui.dp(this, compact ? 14 : 18);
+        icon.setBounds(0, 0, size, size);
+        styled.setSpan(new android.text.style.ImageSpan(icon, android.text.style.ImageSpan.ALIGN_BASELINE), i, i + 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+      }
+      text.setText(styled);
+      text.setContentDescription(line.replace("\uFFFC", "generated subtitles"));
+      Ui.add(parent, text, -1, -2);
     }
   }
 
@@ -1365,7 +1414,7 @@ public class MainActivity extends Activity {
 
                     if (art != null) art.close();
                     api = connected;
-                    art = new Art(api);
+                    art = new Art(this, api);
                     library = result;
                     section = "Home";
                     detailId = "";

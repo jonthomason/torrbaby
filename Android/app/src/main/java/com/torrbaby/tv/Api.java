@@ -70,7 +70,7 @@ final class Api {
   private Object requestValue(String method, String path, JSONObject body) throws Exception {
     HttpURLConnection c = (HttpURLConnection) new URL(url(path)).openConnection();
     c.setConnectTimeout(8000);
-    c.setReadTimeout(15000);
+    c.setReadTimeout(path.endsWith("/remove") && method.equals("POST") ? 90000 : 15000);
     c.setRequestMethod(method);
     c.setInstanceFollowRedirects(false);
     c.setRequestProperty("Accept", "application/json");

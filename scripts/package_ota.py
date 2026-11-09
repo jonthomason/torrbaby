@@ -63,6 +63,14 @@ def main():
     atomic(directory / "build.json", json.dumps(metadata, indent=2).encode())
     install = "itms-services://?action=download-manifest&url=" + urllib.parse.quote(base + "/builds/" + tag + "/manifest.plist", safe="")
     html = '''<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Torrbaby</title><style>body{background:#101820;color:#eef5f3;font:17px -apple-system,BlinkMacSystemFont,sans-serif;max-width:520px;margin:12vh auto;padding:24px}h1{font-size:44px;letter-spacing:-2px}p{line-height:1.6;color:#afbdc5}.button{display:block;background:#70e8c2;color:#10221c;text-align:center;padding:17px;border-radius:14px;font-weight:650;text-decoration:none;margin:28px 0}small{color:#8fa0ac}a{color:#70e8c2}</style><h1>torrbaby</h1><p>A home for your downloads.</p><a class="button" href="''' + escape(install, quote=True) + '''">Install on iPhone or iPad</a><p>Build ''' + escape(build) + ''' · ''' + escape(info["CFBundleShortVersionString"]) + '''</p><p>Open this page in Safari on a registered device with Tailscale connected. This is a development-signed build; Developer Mode may be required.</p><p>After installing, choose Scan connection code. On an already linked Mac, iPhone or iPad, open Settings → Link a device to show the QR code. Credentials are never included in this download.</p><small>MIT licensed · <a href="https://github.com/jonthomason/torrbaby">Source code</a></small></html>'''
+    android_metadata = destination / "android.json"
+    if android_metadata.exists():
+        android = json.loads(android_metadata.read_text())
+        artifact = android["artifact"]
+        if not artifact.startswith("android/") or ".." in artifact or not (destination / artifact).is_file():
+            raise ValueError("Invalid Android artifact")
+        android_link = '<a class="button" href="' + escape(base + "/" + artifact, quote=True) + '">Download for Android TV</a><p>Android build ' + escape(str(android["build"])) + ' · ' + escape(android["version"]) + '</p>'
+        html = html.replace("<small>", android_link + "<small>", 1)
     atomic(destination / "current.json", json.dumps(metadata, indent=2).encode())
     atomic(destination / "manifest.plist", plistlib.dumps(manifest))
     atomic(destination / "index.html", html.encode())

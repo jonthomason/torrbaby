@@ -18,4 +18,5 @@ PRAGMA foreign_keys=ON;
         CREATE TABLE IF NOT EXISTS offline_progress_events (client_id TEXT NOT NULL REFERENCES clients(id), event_id TEXT NOT NULL, response TEXT NOT NULL, received REAL NOT NULL, PRIMARY KEY(client_id,event_id));
         CREATE TABLE IF NOT EXISTS subtitle_preferences (scope TEXT PRIMARY KEY, document TEXT NOT NULL, updated REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS media_inventory (asset_id TEXT PRIMARY KEY, revision TEXT NOT NULL, document TEXT NOT NULL, updated REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS subtitle_priorities (asset_id TEXT PRIMARY KEY, priority INTEGER NOT NULL);
         PRAGMA user_version=9;

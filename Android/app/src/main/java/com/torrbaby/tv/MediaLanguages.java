@@ -5,6 +5,19 @@ import org.json.*;
 
 /** The shared per-asset media_info contract; generated tracks are ready jobs only. */
 final class MediaLanguages {
+  static void numberDuplicates(List<String> labels) {
+    Map<String, Integer> totals = new HashMap<>(), counts = new HashMap<>();
+    for (String label : labels) totals.put(label, totals.getOrDefault(label, 0) + 1);
+    for (int i = 0; i < labels.size(); i++) {
+      String label = labels.get(i);
+      if (totals.get(label) > 1) {
+        int number = counts.getOrDefault(label, 0) + 1;
+        counts.put(label, number);
+        labels.set(i, label + " track " + number);
+      }
+    }
+  }
+
   static String name(String code) {
     if (code == null || code.isEmpty() || code.equals("und") || code.equals("null")) return "Unknown";
     String tag = code.toLowerCase(Locale.ROOT).replace('_', '-');
@@ -27,7 +40,10 @@ final class MediaLanguages {
     JSONArray tracks = info.optJSONArray(key);
     if (tracks != null) for (int i = 0; i < tracks.length(); i++) {
       JSONObject track = tracks.optJSONObject(i);
-      if (track != null) names.add(name(track.optString("language", "und")));
+      if (track != null) {
+        String language = name(track.optString("language", "und"));
+        if (!language.equals("Unknown")) names.add(language);
+      }
     }
     return names.isEmpty() ? "None" : String.join(" · ", names);
   }
@@ -40,7 +56,7 @@ final class MediaLanguages {
       return lines;
     }
     lines.add("Audio  ·  " + tracks(info, "audio_tracks"));
-    lines.add("Subtitles  ·  " + tracks(info, "subtitle_tracks"));
+    String nativeLanguages = tracks(info, "subtitle_tracks");
     TreeSet<String> generated = new TreeSet<>();
     JSONArray prepared = info.optJSONArray("prepared");
     if (prepared != null) for (int i = 0; i < prepared.length(); i++) {
@@ -48,7 +64,10 @@ final class MediaLanguages {
       if (track != null && track.optBoolean("generated") && track.optString("state").equals("ready"))
         generated.add(name(track.optString("language", "und")));
     }
-    for (String language : generated) lines.add(language + "  ·  Generated translation");
+    List<String> subtitles = new ArrayList<>();
+    if (!nativeLanguages.equals("None")) subtitles.add(nativeLanguages);
+    for (String language : generated) if (!language.equals("Unknown")) subtitles.add(language + " \uFFFC");
+    lines.add("Subtitles  ·  " + (subtitles.isEmpty() ? "None" : String.join(" · ", subtitles)));
     return lines;
   }
 }

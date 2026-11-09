@@ -9,9 +9,10 @@ import java.lang.ref.WeakReference;
 import java.util.*;
 import java.util.concurrent.*;
 
-/** Artwork only: bounded memory, coalesced requests, no disk/video cache. */
+/** Artwork only: bounded memory/disk cache, coalesced requests, no video cache. */
 final class Art {
   private final Api api;
+  private final BrowseCache disk;
   private final ExecutorService pool = Executors.newFixedThreadPool(3);
   private final Handler main = new Handler(Looper.getMainLooper());
   private final Map<String, List<WeakReference<ImageView>>> waiting = new HashMap<>();
@@ -22,8 +23,9 @@ final class Art {
         }
       };
 
-  Art(Api a) {
+  Art(android.content.Context context, Api a) {
     api = a;
+    disk = new BrowseCache(context, a);
   }
 
   void load(ImageView view, String id, String variant) {
@@ -49,11 +51,11 @@ final class Art {
         () -> {
           Bitmap result = null;
           try {
-            byte[] raw =
-                Base64.decode(
-                    api.request("GET", "/v1/library/artwork/" + Api.part(id) + "/" + variant, null)
-                        .getString("data"),
-                    Base64.DEFAULT);
+            byte[] raw = disk.read("art/" + key, 7L * 24 * 60 * 60 * 1000);
+            if (raw == null) {
+              raw = Base64.decode(api.request("GET", "/v1/library/artwork/" + Api.part(id) + "/" + variant, null).getString("data"), Base64.DEFAULT);
+              disk.write("art/" + key, raw);
+            }
             BitmapFactory.Options o = new BitmapFactory.Options();
             o.inJustDecodeBounds = true;
             BitmapFactory.decodeByteArray(raw, 0, raw.length, o);

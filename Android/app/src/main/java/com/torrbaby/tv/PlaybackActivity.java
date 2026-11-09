@@ -80,19 +80,8 @@ public class PlaybackActivity extends Activity {
               JSONArray tracks = inventory.optJSONArray("tracks");
               if (tracks == null) tracks = new JSONArray();
               try {
-                JSONObject prepared =
-                    PreparedSubtitles.prepare(
-                        api::request,
-                        id,
-                        subtitlePreferences,
-                        inventory,
-                        text ->
-                            main.post(
-                                () -> {
-                                  if (!cancelled) opening.setText(text);
-                                }),
-                        () -> cancelled);
-                if (prepared != null) tracks.put(prepared);
+                JSONArray prepared = PreparedSubtitles.ready(api::request, id, () -> cancelled);
+                for (int i = 0; i < prepared.length(); i++) tracks.put(prepared.getJSONObject(i));
               } catch (CancellationException e) {
                 return;
               } catch (Exception e) {
@@ -312,6 +301,7 @@ public class PlaybackActivity extends Activity {
         }
       }
     if (type == C.TRACK_TYPE_TEXT) {
+      MediaLanguages.numberDuplicates(labels);
       List<Integer> order = new ArrayList<>();
       for (int i = 1; i < labels.size(); i++) order.add(i);
       order.sort((a, b) -> {

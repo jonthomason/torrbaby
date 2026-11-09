@@ -114,14 +114,22 @@ struct MediaLanguagesView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let info, info.state == "ready" {
-                languageRow("Audio", icon: "speaker.wave.2", languages: info.audioTracks.map { name($0.language) })
-                languageRow("Subtitles", icon: "captions.bubble", languages: info.subtitleTracks.map { name($0.language) })
-                ForEach(info.prepared.filter { $0.generated && $0.state == "ready" }, id: \.id) { track in
-                    HStack(spacing: 8) {
-                        Label(name(track.language), systemImage: "captions.bubble.fill")
-                        Text("Generated").font(.caption.bold()).padding(.horizontal, 8).padding(.vertical, 3)
-                            .background(.purple.opacity(0.2), in: Capsule())
-                    }.foregroundStyle(.purple)
+                languageRow("Audio", icon: "speaker.wave.2", languages: info.audioTracks.map { name($0.language) }.filter { $0 != "Unknown" })
+                VStack(alignment: .leading, spacing: 3) {
+                    Label("Subtitles", systemImage: "captions.bubble").font(.caption.weight(.semibold))
+                    let original = Array(Set(info.subtitleTracks.map { name($0.language) }.filter { $0 != "Unknown" })).sorted()
+                    let generated = info.prepared.filter { $0.generated && $0.state == "ready" }
+                    HStack(spacing: 6) {
+                        if !original.isEmpty { Text(original.joined(separator: " · ")) }
+                        ForEach(Array(generated.enumerated()), id: \.element.id) { index, track in
+                            if !original.isEmpty || index > 0 { Text("·") }
+                            Text(name(track.language))
+                            Image("TorrbabyLogo").resizable().frame(width: 18, height: 18)
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                                .accessibilityLabel("Generated subtitles")
+                        }
+                        if original.isEmpty && generated.isEmpty { Text("None") }
+                    }
                 }
             } else {
                 Label(info?.state == "failed" ? "Languages unavailable" : "Checking languages…", systemImage: "captions.bubble")

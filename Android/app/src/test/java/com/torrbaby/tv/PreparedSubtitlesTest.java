@@ -1,76 +1,34 @@
 package com.torrbaby.tv;
 
 import static org.junit.Assert.*;
-
 import java.util.concurrent.CancellationException;
 import org.json.*;
 import org.junit.Test;
 
 public class PreparedSubtitlesTest {
-  private JSONObject prefs() throws Exception {
-    return new JSONObject("{\"enabled\":true,\"language\":\"zh-Hans\"}");
+  @Test public void readyGeneratedLanguagesAreAvailableWithoutPreferences() throws Exception {
+    JSONArray result = PreparedSubtitles.ready((method, path, body) -> {
+      assertEquals("GET", method);
+      assertEquals("/v1/library/assets/asset-1/media-info", path);
+      assertNull(body);
+      return new JSONObject("{\"prepared\":["
+          + "{\"generated\":true,\"state\":\"ready\",\"language\":\"zh-Hans\",\"path\":\"/chinese.vtt\"},"
+          + "{\"generated\":true,\"state\":\"ready\",\"language\":\"en\",\"path\":\"/english.vtt\"}]}");
+    }, "asset-1", () -> false);
+    assertEquals(2, result.length());
+    assertEquals("zh-Hans", result.getJSONObject(0).getString("language"));
+    assertTrue(result.getJSONObject(0).getString("name").contains("Generated"));
   }
-
-  private JSONObject tracks() throws Exception {
-    return new JSONObject(
-        "{\"embedded_tracks\":[{\"track\":2,\"language\":\"eng\",\"extraction_supported\":true}]}");
+  @Test public void excludesOriginalsUnfinishedAndDuplicatePaths() throws Exception {
+    JSONArray result = PreparedSubtitles.ready((m,p,b) -> new JSONObject("{\"prepared\":["
+        + "{\"generated\":false,\"state\":\"ready\",\"path\":\"/original.vtt\"},"
+        + "{\"generated\":true,\"state\":\"running\",\"path\":\"/pending.vtt\"},"
+        + "{\"generated\":true,\"state\":\"ready\",\"language\":\"zh-Hans\",\"path\":\"/ready.vtt\"},"
+        + "{\"generated\":true,\"state\":\"ready\",\"language\":\"zh-Hans\",\"path\":\"/ready.vtt\"}]}"),
+        "asset-1", () -> false);
+    assertEquals(1,result.length());
   }
-
-  @Test
-  public void translatesUsingSharedJobContract() throws Exception {
-    JSONObject result =
-        PreparedSubtitles.prepare(
-            (method, path, body) -> {
-              assertEquals("POST", method);
-              assertTrue(path.endsWith("/subtitles/prepare"));
-              assertEquals(2, body.getInt("track"));
-              assertEquals("en", body.getString("source"));
-              assertEquals("zh-Hans", body.getString("target"));
-              return new JSONObject("{\"state\":\"ready\",\"path\":\"/v1/subtitle-jobs/job.vtt\"}");
-            },
-            "asset-1",
-            prefs(),
-            tracks(),
-            s -> {},
-            () -> false);
-    assertEquals("zh-Hans", result.getString("language"));
-  }
-
-  @Test
-  public void existingTargetNeedsNoJob() throws Exception {
-    JSONObject inventory = tracks();
-    inventory.put("tracks", new JSONArray("[{\"language\":\"zho\"}]"));
-    assertNull(
-        PreparedSubtitles.prepare(
-            (m, p, b) -> {
-              fail("Must not start duplicate translation");
-              return null;
-            },
-            "asset-1",
-            prefs(),
-            inventory,
-            s -> {},
-            () -> false));
-  }
-
-  @Test(expected = CancellationException.class)
-  public void cancellationPreventsJob() throws Exception {
-    PreparedSubtitles.prepare(
-        (m, p, b) -> {
-          fail("Must not create a job after cancellation");
-          return null;
-        },
-        "asset-1",
-        prefs(),
-        tracks(),
-        s -> {},
-        () -> true);
-  }
-
-  @Test
-  public void languageAliases() {
-    assertEquals("en", PreparedSubtitles.language("eng"));
-    assertEquals("zh-Hans", PreparedSubtitles.language("zh-CN"));
-    assertEquals("", PreparedSubtitles.language("fr"));
+  @Test(expected=CancellationException.class) public void cancellationPreventsRequest() throws Exception {
+    PreparedSubtitles.ready((m,p,b) -> { fail("Cancelled request"); return null; }, "asset-1", () -> true);
   }
 }

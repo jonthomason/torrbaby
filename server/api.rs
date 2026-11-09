@@ -584,6 +584,13 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             return crate::offline::shared_progress(&db, id);
         }
     }
+    if method == Method::POST {
+        if let Some(id) = path.strip_prefix("/v1/library/assets/")
+            .and_then(|p| p.strip_suffix("/subtitles/prioritize")) {
+            let db = s.db.lock().map_err(|_|anyhow::anyhow!("Database lock failed"))?;
+            return crate::media_inventory::prioritize(&db, id);
+        }
+    }
     if method == Method::GET {
         if let Some(id) = path.strip_prefix("/v1/library/assets/").and_then(|p| p.strip_suffix("/media-info")) {
             let db = s.db.lock().map_err(|_|anyhow::anyhow!("Database lock failed"))?;

@@ -13,13 +13,15 @@ final class TorrentActions {
   private final Api api;
   private final Executor io;
   private final Runnable changed;
+  private final java.util.function.Consumer<String> removed;
   private boolean busy;
 
-  TorrentActions(Activity activity, Api api, Executor io, Runnable changed) {
+  TorrentActions(Activity activity, Api api, Executor io, Runnable changed, java.util.function.Consumer<String> removed) {
     this.activity = activity;
     this.api = api;
     this.io = io;
     this.changed = changed;
+    this.removed = removed;
   }
 
   void menu(JSONObject item) {
@@ -289,6 +291,8 @@ final class TorrentActions {
   private void send(String method, String path, JSONObject body) {
     if (busy) return;
     busy = true;
+    final boolean removing = path.endsWith("/remove");
+    if (removing) Toast.makeText(activity, "Removing torrent…", Toast.LENGTH_SHORT).show();
     io.execute(
         () -> {
           try {
@@ -297,16 +301,43 @@ final class TorrentActions {
                 () -> {
                   busy = false;
                   if (!activity.isDestroyed()) {
-                    Toast.makeText(activity, "Server updated", Toast.LENGTH_SHORT).show();
+                    if (removing) removed.accept(body.optString("confirm_hash"));
+                    else if (method.equals("POST") && path.equals("/v1/torrents")) removed.accept(null);
+                    Toast.makeText(activity, removing ? "Torrent removed" : "Server updated", Toast.LENGTH_SHORT).show();
                     changed.run();
                   }
                 });
           } catch (Exception e) {
-            activity.runOnUiThread(
-                () -> {
-                  busy = false;
-                  error(MainActivity.message(e));
-                });
+            // A response timeout does not mean Transmission rejected the removal.
+            // Read back state; never repeat the destructive request automatically.
+            boolean absent = false;
+            boolean checked = false;
+            if (removing && !(e instanceof Api.AuthException)) {
+              try {
+                String hash = body.optString("confirm_hash");
+                Thread.sleep(1500);
+                JSONArray torrents = api.array("/v1/torrents");
+                absent = !hash.isEmpty();
+                for (int i = 0; i < torrents.length(); i++)
+                  if (hash.equalsIgnoreCase(torrents.getJSONObject(i).optString("hash_string"))) absent = false;
+                checked = true;
+              } catch (Exception ignored) {}
+            }
+            final boolean removed = absent;
+            final String message = removing
+                ? (checked ? "The torrent is still listed. Refresh in a moment to check whether removal finished."
+                    : "Couldn’t confirm removal. Reconnect and refresh the torrent list before trying again.")
+                : (e instanceof java.net.SocketTimeoutException ? "The server is taking longer than expected. Refresh to check the result." : MainActivity.message(e));
+            activity.runOnUiThread(() -> {
+              busy = false;
+              if (activity.isDestroyed()) return;
+              if (removed) {
+                this.removed.accept(body.optString("confirm_hash"));
+                Toast.makeText(activity, "Torrent removed", Toast.LENGTH_SHORT).show();
+              }
+              else error(message);
+              changed.run();
+            });
           }
         });
   }
