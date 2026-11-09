@@ -1,0 +1,28 @@
+#!/bin/bash
+# Apple tooling only. Signing configuration stays in environment/local files.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PLATFORM="${1:-ios}"
+BUILD_NUMBER="${TORRBABY_BUILD_NUMBER:-$(git -C "$ROOT" rev-list --count HEAD)}"
+OUTPUT="${TORRBABY_BUILD_ROOT:-$ROOT/local-state/apple}"
+mkdir -p "$OUTPUT"
+ARGS=(-project "$ROOT/Apple/Torrbaby.xcodeproj" -scheme Torrbaby -configuration Release -derivedDataPath "$OUTPUT/$PLATFORM" "CURRENT_PROJECT_VERSION=$BUILD_NUMBER")
+if [[ "$PLATFORM" == ios ]]; then
+    : "${DEVELOPMENT_TEAM:?Set DEVELOPMENT_TEAM to your Apple Developer team ID}"
+    ARGS+=(-destination 'generic/platform=iOS' "DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM" -allowProvisioningUpdates)
+    if [[ -n "${ASC_KEY_PATH:-}" ]]; then
+        ARGS+=(-authenticationKeyPath "$ASC_KEY_PATH" -authenticationKeyID "${ASC_KEY_ID:?}" -authenticationKeyIssuerID "${ASC_ISSUER_ID:?}")
+    fi
+elif [[ "$PLATFORM" == macos ]]; then
+    ARGS+=(-destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO)
+else
+    echo 'Usage: build_apple.sh ios|macos' >&2; exit 2
+fi
+xcodebuild "${ARGS[@]}" build > "$OUTPUT/$PLATFORM-build.log" 2>&1 || { tail -30 "$OUTPUT/$PLATFORM-build.log"; exit 1; }
+if [[ "$PLATFORM" == macos ]]; then
+    APP="$OUTPUT/macos/Build/Products/Release/Torrbaby.app"
+    codesign --force --deep --options runtime --sign "${MAC_SIGNING_IDENTITY:--}" "$APP"
+else
+    APP="$OUTPUT/ios/Build/Products/Release-iphoneos/Torrbaby.app"
+fi
+printf 'Built: %s\n' "$APP"

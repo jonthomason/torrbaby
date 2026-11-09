@@ -131,20 +131,52 @@ class RPC:
 class Plex:
     def __init__(self, config):
         self.config = config
+        self.part_cache = {}
+        self.part_cache_time = 0
 
-    def request(self, path):
+    def open(self, path, extra_headers=None):
         c = self.config
         if c.get("plex_token_file"):
             token = expanded(c["plex_token_file"]).read_text().strip()
         else:
             with expanded(c["plex_preferences"]).open("rb") as f:
                 token = plistlib.load(f)["PlexOnlineToken"]
-        req = urllib.request.Request(c["plex_url"].rstrip("/") + path, headers={"X-Plex-Token": token})
+        headers = {"X-Plex-Token": token}
+        headers.update(extra_headers or {})
+        req = urllib.request.Request(c["plex_url"].rstrip("/") + path, headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=20) as r:
-                return r.read()
+            return urllib.request.urlopen(req, timeout=20)
         except urllib.error.HTTPError as e:
             raise RuntimeError("Plex HTTP " + str(e.code)) from None
+
+    def request(self, path):
+        with self.open(path) as response:
+            return response.read()
+
+    def original(self, path, start, end, size):
+        # Plex already owns authorized access to indexed media. This endpoint is
+        # its original file, never a transcode/decision endpoint.
+        if time.time() - self.part_cache_time > 60 or str(path) not in self.part_cache:
+            parts = {}
+            sections = ET.fromstring(self.request("/library/sections"))
+            for section in sections.findall("Directory"):
+                if section.get("type") not in ("movie", "show"):
+                    continue
+                type_ = "4" if section.get("type") == "show" else "1"
+                root = ET.fromstring(self.request("/library/sections/" + section.attrib["key"] + "/all?type=" + type_))
+                for part in root.findall(".//Part"):
+                    if part.get("file") and part.get("key", "").startswith("/library/parts/"):
+                        parts[part.attrib["file"]] = part.attrib["key"]
+            self.part_cache, self.part_cache_time = parts, time.time()
+        key = self.part_cache.get(str(path))
+        if not key:
+            raise ValueError("Server volume access is denied and Plex has not indexed this file yet. Scan Plex or grant volume access to Torrbaby's Python process.")
+        response = self.open(key, {"Range": "bytes=%s-%s" % (start, end)})
+        expected = "bytes %s-%s/%s" % (start, end, size)
+        if response.status != 206 or response.headers.get("Content-Range") != expected:
+            response.close()
+            raise RuntimeError("Plex did not return the expected original-file byte range")
+        return response
 
     def scan(self, roots):
         sections = ET.fromstring(self.request("/library/sections"))
@@ -460,11 +492,6 @@ class Service:
         path = checked_path(t["download_dir"], f["name"])
         if not path.is_file() or path.stat().st_size != f["length"]:
             raise ValueError("File is unavailable or has changed")
-        try:
-            with path.open("rb"):
-                pass
-        except PermissionError:
-            raise ValueError("Torrbaby cannot read this volume. On the server, allow its Python process access to removable volumes in macOS Privacy & Security settings.") from None
         return path
 
 
@@ -548,28 +575,38 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(401, {"error": "Invalid or expired playback URL"})
             with self.server.service.lock:
                 path = self.server.service.media_file(parts[2], int(parts[3]))
+                size = path.stat().st_size
+            try:
+                start, end = byte_range(self.headers.get("Range"), size)
+            except ValueError:
+                self.send_response(416)
+                self.send_header("Content-Range", "bytes */%s" % size)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            source = "filesystem"
+            try:
                 file = path.open("rb")
+            except PermissionError:
+                if not self.server.service.config.get("plex_stream_fallback", True):
+                    raise
+                with self.server.service.lock:
+                    file = self.server.service.plex.original(path, start, end, size)
+                source = "plex-original"
             with file:
-                size = os.fstat(file.fileno()).st_size
-                try:
-                    start, end = byte_range(self.headers.get("Range"), size)
-                except ValueError:
-                    self.send_response(416)
-                    self.send_header("Content-Range", "bytes */%s" % size)
-                    self.send_header("Content-Length", "0")
-                    self.end_headers()
-                    return
                 partial = bool(self.headers.get("Range"))
                 self.send_response(206 if partial else 200)
                 self.send_header("Content-Type", mimetypes.guess_type(str(path))[0] or "application/octet-stream")
                 self.send_header("Accept-Ranges", "bytes")
+                self.send_header("X-Torrbaby-Source", source)
                 self.send_header("Content-Length", str(end - start + 1))
                 self.send_header("Cache-Control", "private, no-store")
                 if partial:
                     self.send_header("Content-Range", "bytes %s-%s/%s" % (start, end, size))
                 self.end_headers()
                 if not head:
-                    file.seek(start)
+                    if source == "filesystem":
+                        file.seek(start)
                     remaining = end - start + 1
                     while remaining:
                         chunk = file.read(min(1024 * 1024, remaining))

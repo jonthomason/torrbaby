@@ -121,7 +121,7 @@ struct TorrentDetail: View {
             defer { loadingPlayback = false }
             do {
                 let link: PlaybackLink = try await store.request("POST", "/v1/torrents/\(t.id)/play", body: ["file_index": index])
-                playback = Playback(url: try store.endpoint(link.path), name: link.name)
+                playback = Playback(url: try store.endpoint(link.path), name: t.displayName)
             } catch { store.actionError = error.localizedDescription }
         }
     }

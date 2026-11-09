@@ -175,10 +175,95 @@ python3 -m py_compile torrbaby.py scripts/install.py
 Tests use temporary files and fake RPC/Plex backends, plus a real local HTTP
 server for API authentication checks. They do not touch your media library.
 
-Roadmap: a native SwiftUI management app for iOS, iPadOS and macOS consuming this
-API, then a separate streaming feasibility prototype using Apple's native
-`AVPlayerViewController` / `AVPlayerView`. No streaming, transcoding or UI
-framework is bundled into the daemon.
+The shared SwiftUI client in `Apple/` runs on iOS, iPadOS and macOS. Playback uses
+Apple's native `AVPlayerViewController` / `AVPlayerView`. The daemon serves original file bytes with HTTP range support; it never transcodes.
 
 Protocol references: [Transmission 4.1 RPC](https://github.com/transmission/transmission/blob/4.1.4/docs/rpc-spec.md),
 [Plex scan commands](https://support.plex.tv/articles/201638786-plex-media-server-url-commands/).
+
+
+## Native apps
+
+Open `Apple/Torrbaby.xcodeproj` and select the shared **Torrbaby** scheme. There
+are no Swift package dependencies. The same target builds a universal iPhone/iPad
+app and a native Mac app. Minimum versions: iOS/iPadOS 18 and macOS 15.
+
+The app provides torrent search, live transfer status, active/download/seeding
+filters, a persistent compact layout toggle, and a **Not progressing** page.
+The latter shows Transmission-reported stalls, errors, and active downloads with
+zero download rate and no reported activity for five minutes; newly added or
+manually paused torrents are not marked unproductive merely for being idle.
+Details include files, pause/resume, verification, reannounce, reviewed renaming,
+organization retry/ignore and explicit removal with a separate delete-files choice.
+Automation activity, pending Plex scans and folder/poll settings are remote.
+
+In **Connection settings**, enter your private server URL and API token, or import
+a JSON file containing `server` and `token`. Tokens go into the device's Keychain;
+they are never bundled, published or stored in ordinary preferences. There are
+no hardcoded credentials or server addresses in the app. HTTP is enabled for
+private Tailscale endpoints; use HTTPS outside an encrypted private network.
+The Debug build optionally reads a one-use `TORRBABY_BOOTSTRAP_FILE` for local
+smoke tests; Release builds contain no such import path.
+
+On macOS, **Settings → Magnet links → Use Torrbaby for magnet links** requests the
+system default-handler change. Registering the app alone does not intentionally
+replace an existing default. Magnet links open the Add Torrent review screen;
+they are not automatically downloaded. The same URL handler is present on iOS.
+
+### Native playback prototype
+
+`POST /v1/torrents/{hash}/play` with `{"file_index": 0}` returns a relative `path`
+and expiry. Resolve it against the server URL and give it to Apple's player.
+The URL grants six hours of read-only access to that one torrent file; it does
+not include the management token. `GET` and `HEAD` support single byte ranges,
+including suffix ranges, with 206/416 responses. Expired or altered URLs fail.
+URLs are not logged with their query strings. Treat playback URLs as private.
+
+When macOS blocks direct volume reads, the daemon can fall back to Plex's
+**original-file** `/library/parts/…` endpoint after matching the exact filesystem
+path in Plex's library. It validates the returned byte range and size. This does
+not use Plex's transcoding or playback UI, and Plex credentials stay server-side.
+The fallback requires the file to be indexed in Plex. Set
+`plex_stream_fallback: false` in server configuration to disable it.
+
+The player has no separate title/Done frame. On iOS/iPadOS, titles are supplied as native player metadata. macOS AVPlayerView
+does not expose the same title overlay, so no custom title overlay is added. Apple's controls handle playback, seeking, fullscreen, audio/subtitles
+and Picture in Picture as supported by the platform/file. Left/Right arrows skip
+15 seconds; Escape dismisses windowed playback on Mac (native fullscreen exits
+first), and iOS sheets can be swiped down. Unsupported formats produce an error.
+AVFoundation chooses the platform decoder; the app does not implement a decoder
+or guarantee hardware decoding for every format. No incomplete-file streaming,
+transcoding, separate subtitle loading or playback-history sync is implemented.
+
+### Signed builds and OTA
+
+No App Store Connect app record is required for registered-device development or
+ad hoc distribution. You need an Apple Developer team, signing certificate and
+profile covering each device. The current workflow supports development-signed
+OTA, matching an existing private OTA host. Developer Mode may be required.
+App Store Connect records are needed later only if you choose TestFlight or the
+App Store. iPhone/iPad share a universal app; a macOS platform can be added later.
+See [Apple's registered-device distribution guide](https://help.apple.com/xcode/mac/current/en.lproj/dev7ccaf4d3c.html).
+
+```sh
+export DEVELOPMENT_TEAM=YOUR_TEAM_ID
+# Optional ASC_KEY_PATH, ASC_KEY_ID, ASC_ISSUER_ID for noninteractive provisioning.
+bash scripts/build_apple.sh ios
+python3 scripts/package_ota.py \
+  --app local-state/apple/ios/Build/Products/Release-iphoneos/Torrbaby.app \
+  --publish-dir /path/to/existing/https-root/torrbaby \
+  --base-url https://your-private-host/torrbaby \
+  --device REGISTERED_DEVICE_UDID
+```
+
+The packager verifies signatures, identity, universal device families, profile
+expiry and device coverage. IPA and manifest live in an immutable build folder;
+the installer page switches atomically. It does not alter the host configuration
+or neighboring apps. Keep the HTTPS host reachable from the installing device.
+Provisioning profiles expire, so rebuild before the displayed expiration date.
+
+For a Mac build, use `bash scripts/build_apple.sh macos` and set
+`MAC_SIGNING_IDENTITY` to your Developer ID identity for distribution (defaults to
+local ad hoc signing). Notarize externally before broad downloaded distribution.
+Build numbers default to the commit count; override `TORRBABY_BUILD_NUMBER` when
+needed. All generated output is ignored by Git.

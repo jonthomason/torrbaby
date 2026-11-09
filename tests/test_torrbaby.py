@@ -285,6 +285,7 @@ class ProtocolTests(unittest.TestCase):
             self.assertTrue(rpc.call("session_get")["ok"])
             self.assertEqual(mock.call_count, 2)
             self.assertEqual(rpc.headers["X-Transmission-Session-Id"], "session")
+            error.close()
         class ErrorResponse(Response):
             def read(self):
                 return b'{"error":{"message":"bad request"}}'
