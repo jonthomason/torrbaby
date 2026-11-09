@@ -23,6 +23,19 @@ struct LibraryTitle: Decodable, Identifiable {
     let assets: [LibraryAsset]
     var playable: [LibraryAsset] { assets.filter { $0.complete && $0.role != "extra" }.sorted { ($0.season ?? 0, $0.episode ?? 0, $0.name ?? "") < ($1.season ?? 0, $1.episode ?? 0, $1.name ?? "") } }
     var resume: LibraryAsset? { playable.filter { !$0.watched && $0.position > 0 }.max { $0.lastPlayed < $1.lastPlayed } }
+    /// Pick the next numbered episode before checking availability, so a download
+    /// in progress cannot silently make autoplay skip an episode.
+    func nextEpisode(after assetID: String) -> LibraryAsset? {
+        guard kind == "tv", let current = assets.first(where: { $0.id == assetID }),
+              current.role != "extra", let season = current.season, let episode = current.episode else { return nil }
+        return assets.filter {
+            guard $0.role != "extra", let nextSeason = $0.season, let nextEpisode = $0.episode else { return false }
+            return (nextSeason == season && nextEpisode == episode + 1)
+                || (nextSeason == season + 1 && nextEpisode == 1 && season > 0
+                    && !assets.contains { $0.role != "extra" && $0.season == season && ($0.episode ?? 0) > episode })
+        }.sorted { ($0.season ?? 0, $0.episode ?? 0, ($0.complete ? 0 : 1), $0.id) < ($1.season ?? 0, $1.episode ?? 0, ($1.complete ? 0 : 1), $1.id) }.first
+    }
+
 }
 struct LibraryAsset: Decodable, Identifiable {
     let id: String

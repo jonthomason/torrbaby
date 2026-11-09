@@ -33,6 +33,8 @@ final class PlaybackModel: ObservableObject {
     @Published var error: String?
     @Published var title: String
     @Published var endMessage: String?
+    @Published var preparingNext = false
+    private var nextEpisodeTask: Task<Void, Never>?
     private var subtitleController: SubtitlePlaybackController?
     private var observation: NSKeyValueObservation?
     private var timeObserver: Any?
@@ -86,10 +88,13 @@ final class PlaybackModel: ObservableObject {
         #endif
         player.replaceCurrentItem(with: item)
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self, !self.finished, self.playback.id == playbackID else { return }
+            MainActor.assumeIsolated {
+              self?.nextEpisodeTask = Task { @MainActor [weak self] in
+                guard let self, !self.finished, self.resumed, self.playback.id == playbackID else { return }
                 let progressSaved = self.report(ended: true, reachedEnd: true)
-                #if !os(tvOS)
+                #if os(tvOS)
+                await self.advanceTVEpisode()
+                #else
                 let queue = DownloadQueue.shared
                 let episode = queue.isEpisode(self.playback)
                 if self.playback.localDownloadID != nil || episode {
@@ -104,6 +109,7 @@ final class PlaybackModel: ObservableObject {
                     }
                 }
                 #endif
+              }
             }
         }
         observation = item.observe(\.status, options: [.new, .initial]) { [weak self] item, _ in
@@ -122,6 +128,34 @@ final class PlaybackModel: ObservableObject {
             }
         }
     }
+    #if os(tvOS)
+    private func advanceTVEpisode() async {
+        guard let titleID = playback.libraryTitleID, let assetID = playback.libraryAssetID,
+              let title = store.library?.titles.first(where: { $0.id == titleID }), title.kind == "tv",
+              let current = title.assets.first(where: { $0.id == assetID }), current.episode != nil, current.role != "extra" else { return }
+        resumed = false
+        player.replaceCurrentItem(with: nil)
+        guard let next = title.nextEpisode(after: assetID), next.complete else {
+            endMessage = "Next episode unavailable"
+            return
+        }
+        preparingNext = true
+        defer { preparingNext = false }
+        let server = store.server
+        do {
+            await store.flushProgress()
+            try Task.checkCancellation()
+            try await store.registerClient()
+            let link = try await store.mediaPlaybackLink(asset: next, titleID: titleID)
+            guard !finished, !Task.isCancelled, store.server == server else { return }
+            load(Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0,
+                          url: try store.endpoint(link.path), name: next.name ?? title.title,
+                          libraryAssetID: next.id, libraryTitleID: titleID))
+        } catch {
+            if !finished, !Task.isCancelled { endMessage = "Next episode unavailable" }
+        }
+    }
+    #endif
     private func start() {
         guard !starting, !finished else { return }
         starting = true
@@ -152,6 +186,7 @@ final class PlaybackModel: ObservableObject {
         return true
     }
     func stop() {
+        nextEpisodeTask?.cancel(); nextEpisodeTask = nil
         player.pause()
         report(ended: true)
         finished = true
@@ -292,7 +327,9 @@ struct PlayerScreen: View {
     }
     var body: some View {
         Group {
-            if let error = model.error {
+            if model.preparingNext {
+                ProgressView("Next episode…").tint(.white)
+            } else if let error = model.error {
                 ContentUnavailableView {
                     Label("This file couldn’t play", systemImage: "play.slash")
                 } description: {
