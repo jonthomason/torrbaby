@@ -3,6 +3,7 @@ mod api;
 mod catalog;
 mod config;
 mod metadata;
+mod organizer;
 mod scanner;
 mod storage;
 mod telemetry;

@@ -1,11 +1,11 @@
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Config {
     pub listen_host: String,
     pub listen_port: u16,
@@ -33,8 +33,13 @@ impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let config: Self = serde_json::from_slice(&fs::read(path).context("Read configuration")?)
             .context("Invalid configuration")?;
-        if !config.poll_seconds.is_finite() || config.poll_seconds < 5.0 {
-            bail!("poll_seconds must be at least 5");
+        config.validate()?;
+        Ok(config)
+    }
+    pub fn validate(&self) -> Result<()> {
+        let config = self;
+        if !config.poll_seconds.is_finite() || !(5.0..=3600.0).contains(&config.poll_seconds) {
+            bail!("poll_seconds must be between 5 and 3600");
         }
         let roots = [&config.source, &config.movies, &config.tv];
         for (index, root) in roots.iter().enumerate() {
@@ -52,7 +57,7 @@ impl Config {
                 }
             }
         }
-        Ok(config)
+        Ok(())
     }
 
     pub fn token(&self) -> Result<String> {

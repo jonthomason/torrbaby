@@ -1,11 +1,12 @@
 # Torrbaby
 
-A small, private Transmission companion. It sorts completed torrents into Movies
-or TV, preserves seeding by moving through Transmission, requests Plex scans,
-and exposes an authenticated HTTP API for native apps and a CLI.
+A personal media server and Transmission companion, with native Apple apps.
+It organizes downloads while preserving seeding and exposes an authenticated HTTP
+API and CLI. MIT licensed.
 
-MIT licensed. Python 3.9+ standard library only. No third-party packages, bundled
-Transmission source, metadata API keys, or hardcoded server addresses.
+The deployed legacy server currently uses Python and Plex. Its Rust replacement
+is under active development and has no Plex integration; see the migration status
+below before choosing which server to run.
 
 ## Active development goal
 
@@ -27,9 +28,20 @@ an alternate port before replacing the live service. Back up the database and
 retain the old executable/configuration for rollback. Do not run two organizers
 against the live library at once.
 
-The Rust binary currently provides `check-access --media-root PATH` to test
-directory enumeration and sample file reads. It is not yet the replacement
-daemon. Dependencies and build requirements will be documented as the port lands.
+The Rust binary provides `preview --config PATH --database COPY --listen ADDRESS`,
+`check-access --media-root PATH`, `check-transmission --config PATH`, and an
+API client (`request METHOD PATH --token-file PATH`). Build with `cargo build --locked`.
+The preview serves the filesystem catalog, direct range streaming, TMDB metadata
+and artwork, shared playback state, transfer history and smoothed ETAs. It also
+supports torrent actions, watched status and persisted settings through the API.
+**Explicit torrent actions in a preview affect its configured Transmission server**;
+only automatic organization is disabled. Use an isolated RPC fixture for mutation
+checks. Never point a preview at the live database.
+
+The move/rename workflow is being ported with Transmission responsible for file
+changes and filesystem verification before marking work complete. Automatic
+organization, automatic naming and production launchd cutover are not yet enabled.
+The legacy server remains live until that work and compatibility checks pass.
 
 Turn the shared Diamond daemon into a **standalone media server with no Plex
 dependency**. Scan and persist metadata for every movie and TV episode, apply

@@ -1,0 +1,462 @@
+use crate::{
+    api::{Service, checked_path},
+    config::Config,
+    scanner::video,
+    storage::now,
+};
+use anyhow::{Context, Result, bail};
+use serde_json::{Value, json};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
+fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
+    value[key]
+        .as_str()
+        .with_context(|| format!("Missing {key}"))
+}
+fn files(t: &Value) -> Result<&[Value]> {
+    t["files"]
+        .as_array()
+        .map(Vec::as_slice)
+        .context("Missing torrent files")
+}
+pub fn complete(t: &Value) -> bool {
+    t["metadata_percent_complete"].as_f64() == Some(1.0)
+        && t["percent_done"].as_f64() == Some(1.0)
+        && t["left_until_done"].as_u64() == Some(0)
+        && t["error"].as_u64() == Some(0)
+        && matches!(t["status"].as_u64(), Some(0 | 5 | 6))
+        && files(t)
+            .map(|f| !f.is_empty() && f.iter().all(|f| f["bytes_completed"] == f["length"]))
+            .unwrap_or(false)
+}
+pub async fn torrents(s: &Service) -> Result<Vec<Value>> {
+    Ok(s.rpc
+        .call("torrent_get", json!({"fields":crate::transmission::FIELDS}))
+        .await?["torrents"]
+        .as_array()
+        .context("Invalid torrent response")?
+        .clone())
+}
+pub async fn torrent(s: &Service, hash: &str) -> Result<Value> {
+    if hash.len() != 40 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+        bail!("Use a full 40-character torrent hash");
+    }
+    let mut result = s
+        .rpc
+        .call(
+            "torrent_get",
+            json!({"ids":[hash],"fields":crate::transmission::FIELDS}),
+        )
+        .await?;
+    let values = result["torrents"]
+        .as_array_mut()
+        .context("Invalid torrent response")?;
+    if values.len() != 1 {
+        bail!("Torrent not found");
+    }
+    Ok(values.remove(0))
+}
+fn managed(config: &Config, root: &Path) -> bool {
+    [&config.source, &config.movies, &config.tv]
+        .iter()
+        .any(|p| root == Path::new(p))
+}
+fn owned(t: &Value) -> Result<HashSet<PathBuf>> {
+    files(t)?
+        .iter()
+        .map(|f| checked_path(Path::new(text(t, "download_dir")?), text(f, "name")?))
+        .collect()
+}
+fn job(s: &Service, hash: &str) -> Result<Value> {
+    Ok(s.db
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Database lock failed"))?
+        .state()?["jobs"][hash]
+        .clone())
+}
+fn save_job(s: &Service, hash: &str, value: Value) -> Result<()> {
+    s.change_state(|state| {
+        if !state["jobs"].is_object() {
+            state["jobs"] = json!({});
+        }
+        state["jobs"][hash] = value;
+    })
+}
+
+pub async fn action(s: &Service, hash: &str, action: &str, body: &Value) -> Result<Value> {
+    let _guard = s.mutation_lock.lock().await;
+    let normalized = hash.to_ascii_lowercase();
+    let hash = normalized.as_str();
+    let t = torrent(s, hash).await?;
+    let method = match action {
+        "start" => Some("torrent_start"),
+        "stop" => Some("torrent_stop"),
+        "verify" => Some("torrent_verify"),
+        "reannounce" => Some("torrent_reannounce"),
+        _ => None,
+    };
+    if let Some(method) = method {
+        let result = s.rpc.call(method, json!({"ids":[hash]})).await?;
+        s.event(&format!("torrent_{action}"), json!({"hash":hash}))?;
+        s.invalidate_torrents();
+        return Ok(result);
+    }
+    if action == "rename" {
+        return rename(s, hash, text(body, "path")?, text(body, "name")?).await;
+    }
+    if action == "remove" {
+        let delete = match body.get("delete_data") {
+            None => false,
+            Some(v) => v.as_bool().context("delete_data must be boolean")?,
+        };
+        if delete
+            && body["confirm_hash"]
+                .as_str()
+                .map(str::to_ascii_lowercase)
+                .as_deref()
+                != Some(hash)
+        {
+            bail!("Deleting data requires matching confirm_hash");
+        }
+        if delete {
+            let config = s.effective_config()?;
+            if !managed(&config, Path::new(text(&t, "download_dir")?)) {
+                bail!("Data deletion is restricted to managed roots");
+            }
+            let own = owned(&t)?;
+            for other in torrents(s).await? {
+                if other["hash_string"] != hash && !own.is_disjoint(&owned(&other)?) {
+                    bail!("Cannot delete shared torrent files");
+                }
+            }
+        }
+        s.event(
+            "torrent_remove_requested",
+            json!({"hash":hash,"delete_data":delete}),
+        )?;
+        let result = s
+            .rpc
+            .call(
+                "torrent_remove",
+                json!({"ids":[hash],"delete_local_data":delete}),
+            )
+            .await?;
+        save_job(
+            s,
+            hash,
+            json!({"hash":hash,"name":t["name"],"phase":"ignored"}),
+        )?;
+        s.event("torrent_removed", json!({"hash":hash,"delete_data":delete}))?;
+        s.invalidate_torrents();
+        return Ok(result);
+    }
+    if action == "retry" || action == "ignore" {
+        let mut previous = job(s, hash)?;
+        if action == "ignore" {
+            if previous["phase"] == "moving" {
+                bail!("Cannot cancel an in-flight Transmission move");
+            }
+            previous = json!({"hash":hash,"name":t["name"],"phase":"ignored"});
+        } else if previous["phase"] == "moving" {
+            previous["attempted"] = json!(0);
+            previous["error"] = Value::Null;
+        } else {
+            previous = Value::Null;
+        }
+        save_job(s, hash, previous)?;
+        s.event(&format!("job_{action}"), json!({"hash":hash}))?;
+        return Ok(json!({"accepted":true}));
+    }
+    bail!("Unknown torrent action")
+}
+
+pub async fn add(s: &Service, body: &Value) -> Result<Value> {
+    use base64::Engine;
+    if body
+        .as_object()
+        .context("Expected object")?
+        .keys()
+        .any(|k| !["magnet", "metainfo", "paused"].contains(&k.as_str()))
+    {
+        bail!("Allowed fields: magnet, metainfo, paused");
+    }
+    let magnet = body["magnet"].as_str().filter(|v| !v.is_empty());
+    let metainfo = body["metainfo"].as_str().filter(|v| !v.is_empty());
+    if magnet.is_some() == metainfo.is_some() {
+        bail!("Provide either magnet or metainfo");
+    }
+    let config = s.effective_config()?;
+    let paused = match body.get("paused") {
+        None => false,
+        Some(v) => v.as_bool().context("paused must be boolean")?,
+    };
+    let mut params = json!({"download_dir":config.source,"paused":paused});
+    if let Some(magnet) = magnet {
+        if !magnet.starts_with("magnet:?") {
+            bail!("Expected a magnet link");
+        }
+        params["filename"] = json!(magnet);
+    } else if let Some(metainfo) = metainfo {
+        base64::engine::general_purpose::STANDARD.decode(metainfo)?;
+        params["metainfo"] = json!(metainfo);
+    }
+    let _guard = s.mutation_lock.lock().await;
+    let result = s.rpc.call("torrent_add", params).await?;
+    s.event("torrent_added", json!({"result":result}))?;
+    s.invalidate_torrents();
+    Ok(result)
+}
+
+/// Caller holds mutation_lock, including for automated renames.
+pub async fn rename(s: &Service, hash: &str, path: &str, name: &str) -> Result<Value> {
+    let t = torrent(s, hash).await?;
+    if !complete(&t) {
+        bail!("Rename requires a complete torrent");
+    }
+    let config = s.effective_config()?;
+    let root = Path::new(text(&t, "download_dir")?);
+    if !managed(&config, root) {
+        bail!("Torrent is outside managed roots");
+    }
+    if job(s, hash)?["phase"] == "moving" {
+        bail!("Wait for the current move to finish");
+    }
+    if name.is_empty()
+        || [".", ".."].contains(&name)
+        || name.contains(['/', '\\', '\0'])
+        || name.len() > 255
+    {
+        bail!("New name must be a single filesystem component");
+    }
+    let old = checked_path(root, path)?;
+    if !files(&t)?.iter().any(|f| {
+        f["name"]
+            .as_str()
+            .map(|p| p == path || p.starts_with(&format!("{path}/")))
+            .unwrap_or(false)
+    }) {
+        bail!("Path is not owned by this torrent");
+    }
+    if !old.exists() {
+        bail!("Path does not exist");
+    }
+    if old.is_file()
+        && old.extension().map(|x| x.to_ascii_lowercase())
+            != Path::new(name).extension().map(|x| x.to_ascii_lowercase())
+    {
+        bail!("Keep the file extension");
+    }
+    let relative = Path::new(path).parent().unwrap_or(Path::new("")).join(name);
+    let relative = relative.to_str().context("Invalid rename path")?;
+    let new = checked_path(root, relative)?;
+    if new.symlink_metadata().is_ok() {
+        bail!("Rename destination already exists");
+    }
+    for other in torrents(s).await? {
+        if other["hash_string"] != hash
+            && owned(&other)?
+                .iter()
+                .any(|p| p == &old || p.starts_with(&old))
+        {
+            bail!("Path is shared by another torrent");
+        }
+    }
+    s.event(
+        "rename_requested",
+        json!({"hash":hash,"path":path,"name":name}),
+    )?;
+    s.rpc
+        .call(
+            "torrent_rename_path",
+            json!({"ids":[hash],"path":path,"name":name}),
+        )
+        .await?;
+    s.invalidate_torrents();
+    let refreshed = torrent(s, hash).await?;
+    if !new.exists()
+        || old.exists()
+        || !files(&refreshed)?.iter().any(|f| {
+            f["name"]
+                .as_str()
+                .map(|p| p == relative || p.starts_with(&format!("{relative}/")))
+                .unwrap_or(false)
+        })
+    {
+        bail!("Rename requested but verification failed; inspect before retrying");
+    }
+    s.event(
+        "rename_verified",
+        json!({"hash":hash,"path":path,"name":name}),
+    )?;
+    Ok(refreshed)
+}
+
+fn plan(config: &Config, t: &Value) -> Result<Option<Value>> {
+    if t["download_dir"] != config.source || !complete(t) {
+        return Ok(None);
+    }
+    if !files(t)?.iter().any(|f| {
+        f["name"]
+            .as_str()
+            .map(|p| video(Path::new(p)))
+            .unwrap_or(false)
+    }) {
+        return Ok(None);
+    }
+    let is_tv = crate::metadata::parse_name(t["name"].as_str().unwrap_or("")).2 == "tv"
+        || files(t)?
+            .iter()
+            .any(|f| crate::metadata::parse_name(f["name"].as_str().unwrap_or("")).2 == "tv");
+    let destination = if is_tv { &config.tv } else { &config.movies };
+    let source = Path::new(&config.source);
+    let dest = Path::new(destination);
+    if !source.is_dir() || !dest.is_dir() {
+        bail!("Library volume/directory unavailable");
+    }
+    for file in files(t)? {
+        let path = text(file, "name")?;
+        let original = checked_path(source, path)?;
+        checked_path(dest, path)?;
+        if !original.is_file() || Some(original.metadata()?.len()) != file["length"].as_u64() {
+            bail!("Source file missing or size differs: {path}");
+        }
+        let top = Path::new(path)
+            .components()
+            .next()
+            .context("Empty path")?
+            .as_os_str()
+            .to_str()
+            .context("Invalid path")?;
+        if checked_path(dest, top)?.symlink_metadata().is_ok() {
+            bail!("Destination already exists: {top}");
+        }
+    }
+    Ok(Some(
+        json!({"hash":t["hash_string"],"name":t["name"],"category":if is_tv{"tv"}else{"movies"},"source":config.source,"destination":destination,"files":t["files"],"phase":"moving","created":now(),"attempted":0}),
+    ))
+}
+
+pub async fn tick(s: &Service) -> Result<()> {
+    let config = s.effective_config()?;
+    if config.paused {
+        return Ok(());
+    }
+    let _guard = s.mutation_lock.lock().await;
+    let all = torrents(s).await?;
+    s.change_state(|state| {
+        state["last_poll"] = json!(now());
+        state["last_error"] = Value::Null;
+    })?;
+    for t in &all {
+        let hash = text(t, "hash_string")?;
+        let previous = job(s, hash)?;
+        if ["done", "ignored"].contains(&previous["phase"].as_str().unwrap_or("")) {
+            continue;
+        }
+        if let Err(error) = advance(s, &config, t, &all, previous.clone()).await {
+            let mut current = job(s, hash)?;
+            if current.is_null() {
+                current = json!({"hash":hash,"name":t["name"],"phase":"blocked"});
+            }
+            if current["error"] != error.to_string() {
+                current["error"] = json!(error.to_string());
+                save_job(s, hash, current)?;
+                s.event("job_error", json!({"hash":hash,"error":error.to_string()}))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn advance(
+    s: &Service,
+    config: &Config,
+    t: &Value,
+    all: &[Value],
+    mut job: Value,
+) -> Result<()> {
+    let hash = text(t, "hash_string")?;
+    if job.is_null() || job["phase"] == "blocked" {
+        let Some(new) = plan(config, t)? else {
+            return Ok(());
+        };
+        let own = owned(t)?;
+        for other in all {
+            if other["hash_string"] != hash && !own.is_disjoint(&owned(other)?) {
+                bail!("Source files are shared by another torrent");
+            }
+        }
+        job = new;
+        save_job(s, hash, job.clone())?;
+    }
+    let source = PathBuf::from(text(&job, "source")?);
+    let destination = PathBuf::from(text(&job, "destination")?);
+    let payload = job["files"].as_array().context("Missing job files")?;
+    let mut moved = t["download_dir"] == job["destination"] && complete(t);
+    if moved {
+        for file in payload {
+            let name = text(file, "name")?;
+            let target = checked_path(&destination, name)?;
+            if !target.is_file()
+                || Some(target.metadata()?.len()) != file["length"].as_u64()
+                || checked_path(&source, name)?.exists()
+            {
+                moved = false;
+                break;
+            }
+        }
+    }
+    if moved {
+        job["phase"] = json!("done");
+        job["finished"] = json!(now());
+        job["error"] = Value::Null;
+        save_job(s, hash, job)?;
+        s.event(
+            "move_verified",
+            json!({"hash":hash,"destination":destination}),
+        )?;
+        return Ok(());
+    }
+    if now() - job["attempted"].as_f64().unwrap_or(0.0) < 300.0 {
+        return Ok(());
+    }
+    if t["download_dir"] != job["source"] {
+        bail!("Move awaiting verification; torrent location changed");
+    }
+    if !complete(t) {
+        bail!("Torrent no longer complete; move deferred");
+    }
+    for file in payload {
+        let name = text(file, "name")?;
+        let original = checked_path(&source, name)?;
+        if !original.is_file() || Some(original.metadata()?.len()) != file["length"].as_u64() {
+            bail!("Move awaiting verification; source changed");
+        }
+        let top = Path::new(name)
+            .components()
+            .next()
+            .context("Empty file path")?
+            .as_os_str()
+            .to_str()
+            .context("Invalid file path")?;
+        if checked_path(&destination, top)?.symlink_metadata().is_ok() {
+            bail!("Move awaiting verification; destination exists");
+        }
+    }
+    job["attempted"] = json!(now());
+    save_job(s, hash, job)?;
+    s.event(
+        "move_requested",
+        json!({"hash":hash,"destination":destination}),
+    )?;
+    s.rpc
+        .call(
+            "torrent_set_location",
+            json!({"ids":[hash],"location":destination,"move":true}),
+        )
+        .await?;
+    s.invalidate_torrents();
+    Ok(())
+}

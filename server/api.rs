@@ -20,10 +20,10 @@ use std::{
 };
 
 pub struct Service {
-    config: Config,
+    pub(crate) config: Config,
     token: String,
-    db: Mutex<Database>,
-    rpc: Transmission,
+    pub(crate) db: Mutex<Database>,
+    pub(crate) rpc: Transmission,
     started: Instant,
     torrents: Mutex<Option<(Instant, Vec<Value>)>>,
     data_dir: PathBuf,
@@ -31,6 +31,7 @@ pub struct Service {
     scan_lock: tokio::sync::Mutex<()>,
     metadata: crate::metadata::Metadata,
     metadata_lock: tokio::sync::Mutex<()>,
+    pub(crate) mutation_lock: tokio::sync::Mutex<()>,
 }
 
 // Keep unimplemented routes explicit during the port; never silently report success.
@@ -66,6 +67,7 @@ pub async fn serve(config_path: PathBuf, database: PathBuf, listen: String) -> R
                 .context("Database needs a parent directory")?,
         )?,
         metadata_lock: tokio::sync::Mutex::new(()),
+        mutation_lock: tokio::sync::Mutex::new(()),
     });
     let sampling_service = service.clone();
     let cached_entities = service
@@ -190,6 +192,112 @@ fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
 }
 
 async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> Result<Value> {
+    if path == "/v1/settings" && (method == Method::GET || method == Method::PATCH) {
+        let _guard = s.mutation_lock.lock().await;
+        let mut config = serde_json::to_value(s.effective_config()?)?;
+        if method == Method::PATCH {
+            let patch = body.as_object().context("Expected settings object")?;
+            if patch.is_empty()
+                || patch.keys().any(|k| {
+                    !["paused", "poll_seconds", "source", "movies", "tv"].contains(&k.as_str())
+                })
+            {
+                bail!("Allowed settings: paused, poll_seconds, source, movies, tv");
+            }
+            for (key, value) in patch {
+                config[key] = value.clone();
+            }
+            let updated: Config = serde_json::from_value(config.clone())?;
+            updated.validate()?;
+            for key in ["source", "movies", "tv"] {
+                if let Some(value) = patch.get(key) {
+                    if !std::path::Path::new(value.as_str().context("Folder must be text")?)
+                        .is_dir()
+                    {
+                        bail!("Media directory does not exist or is inaccessible");
+                    }
+                }
+            }
+            s.change_state(|state| {
+                if !state["settings"].is_object() {
+                    state["settings"] = json!({});
+                }
+                for (key, value) in patch {
+                    state["settings"][key] = value.clone();
+                }
+            })?;
+            s.event("settings_changed", json!({"settings":body}))?;
+        }
+        return Ok(
+            json!({"paused":config["paused"],"poll_seconds":config["poll_seconds"],"source":config["source"],"movies":config["movies"],"tv":config["tv"]}),
+        );
+    }
+    if method == Method::POST && path == "/v1/torrents" {
+        return crate::organizer::add(s, &body).await;
+    }
+    if method == Method::POST {
+        if let Some(id) = path
+            .strip_prefix("/v1/library/assets/")
+            .and_then(|p| p.strip_suffix("/watched"))
+        {
+            let watched = body["watched"]
+                .as_bool()
+                .context("watched must be boolean")?;
+            let mut db =
+                s.db.lock()
+                    .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
+            let asset = db.asset(id)?;
+            let hash = asset["torrent_hash"].as_str().unwrap_or(id);
+            return db.mark(
+                hash,
+                asset["file_index"].as_u64().unwrap_or(0),
+                std::path::Path::new(text(&asset, "path")?)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_str()
+                    .context("Invalid filename")?,
+                asset["size"].as_u64().context("Invalid file size")?,
+                watched,
+            );
+        }
+        if let Some((hash, action)) = path
+            .strip_prefix("/v1/torrents/")
+            .and_then(|p| p.split_once('/'))
+        {
+            if action == "watched" {
+                let index = body["file_index"].as_u64().context("Invalid file index")?;
+                let watched = body["watched"]
+                    .as_bool()
+                    .context("watched must be boolean")?;
+                let path = torrent_media_file(s, hash, index).await?;
+                return s
+                    .db
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("Database lock failed"))?
+                    .mark(
+                        &hash.to_ascii_lowercase(),
+                        index,
+                        &path.file_name().unwrap_or_default().to_string_lossy(),
+                        path.metadata()?.len(),
+                        watched,
+                    );
+            }
+            if [
+                "start",
+                "stop",
+                "verify",
+                "reannounce",
+                "rename",
+                "remove",
+                "retry",
+                "ignore",
+            ]
+            .contains(&action)
+            {
+                return crate::organizer::action(s, hash, action, &body).await;
+            }
+        }
+    }
     if method == Method::GET && path == "/v1/providers" {
         return Ok(json!({"tmdb_configured":s.metadata.configured()}));
     }
@@ -303,6 +411,11 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             .await?["torrents"]
             .take());
     }
+    let effective = if path == "/v1/status" {
+        Some(s.effective_config()?)
+    } else {
+        None
+    };
     // No lock is held across an await. SQLite operations remain short and transactional.
     let mut db =
         s.db.lock()
@@ -320,8 +433,9 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
         ("GET","/v1/library/matches") => Ok(json!(db.documents("assets")?.into_iter().filter(|a|a["available"]==true && a["status"]!="matched" && a["role"]!="extra").collect::<Vec<_>>())),
         ("GET","/v1/status") => {
             let state = db.state()?;
+            let config = effective.as_ref().context("Missing settings")?;
             Ok(json!({"version":env!("CARGO_PKG_VERSION"),"uptime_seconds":s.started.elapsed().as_secs(),
-                "settings":{"source":s.config.source,"movies":s.config.movies,"tv":s.config.tv,"poll_seconds":s.config.poll_seconds,"paused":true},
+                "settings":{"source":config.source,"movies":config.movies,"tv":config.tv,"poll_seconds":config.poll_seconds,"paused":true},
                 "last_poll":null,"last_error":"Migration preview: organizer not enabled","pending_scans":0,"scan_error":null,"jobs":state["jobs"]}))
         }
         ("GET","/v1/events") => Ok(db.state()?["events"].take()),
@@ -352,10 +466,11 @@ fn signature(token: &str, hash: &str, index: u64, expires: u64) -> String {
         .collect()
 }
 
-fn checked_path(root: &std::path::Path, relative: &str) -> Result<PathBuf> {
+pub(crate) fn checked_path(root: &std::path::Path, relative: &str) -> Result<PathBuf> {
     use std::path::Component;
     let relative = std::path::Path::new(relative);
-    if relative.is_absolute()
+    if relative.as_os_str().is_empty()
+        || relative.is_absolute()
         || relative
             .components()
             .any(|c| !matches!(c, Component::Normal(_)))
@@ -389,7 +504,8 @@ async fn media_file(s: &Service, hash: &str, index: u64) -> Result<PathBuf> {
         }
         let path = PathBuf::from(text(&asset, "path")?);
         let mut allowed = None;
-        for root in [&s.config.source, &s.config.movies, &s.config.tv] {
+        let config = s.effective_config()?;
+        for root in [&config.source, &config.movies, &config.tv] {
             if let Ok(relative) = path.strip_prefix(root) {
                 allowed = Some(checked_path(
                     std::path::Path::new(root),
@@ -433,7 +549,8 @@ async fn torrent_media_file(s: &Service, hash: &str, index: u64) -> Result<PathB
         .and_then(|a| a.first())
         .context("Torrent not found")?;
     let root = std::path::Path::new(text(torrent, "download_dir")?);
-    if ![&s.config.source, &s.config.movies, &s.config.tv]
+    let config = s.effective_config()?;
+    if ![&config.source, &config.movies, &config.tv]
         .iter()
         .any(|p| root == std::path::Path::new(p))
     {
@@ -747,7 +864,7 @@ async fn scan_library(s: &Service) -> Result<()> {
         Ok(value) => value["torrents"].as_array().cloned().unwrap_or_default(),
         Err(_) => Vec::new(), // Filesystem discovery still works when Transmission is unavailable.
     };
-    let config = s.config.clone();
+    let config = s.effective_config()?;
     let result =
         tokio::task::spawn_blocking(move || crate::scanner::inventory(&config, old, torrents))
             .await;
@@ -911,4 +1028,51 @@ async fn collect_metadata(s: &Service) -> Result<()> {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }
     Ok(())
+}
+
+impl Service {
+    pub(crate) fn effective_config(&self) -> Result<Config> {
+        let state = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Database lock failed"))?
+            .state()?;
+        let mut config = serde_json::to_value(&self.config)?;
+        for key in ["paused", "poll_seconds", "source", "movies", "tv"] {
+            if let Some(value) = state["settings"].get(key) {
+                config[key] = value.clone();
+            }
+        }
+        let config: Config = serde_json::from_value(config)?;
+        config.validate()?;
+        Ok(config)
+    }
+    pub(crate) fn change_state(&self, change: impl FnOnce(&mut Value)) -> Result<()> {
+        let mut db = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
+        let mut state = db.state()?;
+        change(&mut state);
+        db.save_state(&state)
+    }
+    pub(crate) fn event(&self, kind: &str, mut data: Value) -> Result<()> {
+        data["kind"] = json!(kind);
+        data["time"] = json!(now());
+        self.change_state(|state| {
+            if !state["events"].is_array() {
+                state["events"] = json!([]);
+            }
+            let events = state["events"].as_array_mut().unwrap();
+            events.push(data);
+            if events.len() > 1000 {
+                events.drain(..events.len() - 1000);
+            }
+        })
+    }
+    pub(crate) fn invalidate_torrents(&self) {
+        if let Ok(mut cache) = self.torrents.lock() {
+            *cache = None;
+        }
+    }
 }
