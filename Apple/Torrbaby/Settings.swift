@@ -98,10 +98,15 @@ struct SettingsView: View {
     @State private var tmdbToken = ""
     @State private var tmdbSaved = false
     @State private var showPairing = false
+    @State private var showSubtitles = false
     var body: some View {
         Form {
             SwiftUI.Section("Torrbaby") {
                 Text(AppRelease.description).monospacedDigit()
+            }
+            SwiftUI.Section("Playback") {
+                Button("Default subtitles") { showSubtitles = true }
+                    .sheet(isPresented: $showSubtitles) { SubtitlePreferencesView() }
             }
             SwiftUI.Section("Connection") {
                 LabeledContent("Server", value: store.server.isEmpty ? "Not configured" : store.server)

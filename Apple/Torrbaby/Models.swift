@@ -237,3 +237,21 @@ enum AppRelease {
         return "Version \(version) · Build \(build)"
     }
 }
+
+struct SubtitlePreferences: Codable, Equatable {
+    var enabled = false
+    var language = "original"
+    var font = "default"
+    var sizePercent = 100
+    var textOpacity = 100
+    var backgroundOpacity = 0
+    var body: [String: Any] {
+        ["enabled": enabled, "language": language, "font": font, "size_percent": sizePercent,
+         "text_opacity": textOpacity, "background_opacity": backgroundOpacity]
+    }
+}
+struct SubtitlePreferenceResponse: Decodable {
+    let defaults: SubtitlePreferences
+    let effective: SubtitlePreferences
+    let overridden: Bool
+}

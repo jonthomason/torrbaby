@@ -2,6 +2,23 @@ import SwiftUI
 import AVKit
 
 @MainActor
+private enum PlaybackSpeeds {
+    static let rates: [Float] = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
+    static var options: [AVPlaybackSpeed] {
+        zip(rates, ["0.5×", "0.75×", "1×", "1.25×", "1.5×", "1.75×", "2×"])
+            .map { AVPlaybackSpeed(rate: $0.0, localizedName: $0.1) }
+    }
+    static var preferred: Float {
+        let rate = UserDefaults.standard.float(forKey: "playback.speed")
+        return rates.contains(rate) ? rate : 1
+    }
+    static func remember(_ rate: Float) {
+        guard rates.contains(rate) else { return }
+        UserDefaults.standard.set(rate, forKey: "playback.speed")
+    }
+}
+
+@MainActor
 func skip(_ player: AVPlayer, seconds: Double) {
     let current = player.currentTime().seconds
     guard current.isFinite else { return }
@@ -16,9 +33,11 @@ final class PlaybackModel: ObservableObject {
     @Published var error: String?
     @Published var title: String
     @Published var endMessage: String?
+    private var subtitleController: SubtitlePlaybackController?
     private var observation: NSKeyValueObservation?
     private var timeObserver: Any?
     private var rateObservation: NSKeyValueObservation?
+    private var speedObservation: NSKeyValueObservation?
     private var endObserver: NSObjectProtocol?
     private var sequence = 0
     private var starting = false
@@ -31,6 +50,7 @@ final class PlaybackModel: ObservableObject {
         self.store = store
         self.title = playback.name
         player = AVPlayer()
+        player.defaultRate = PlaybackSpeeds.preferred
         load(playback)
         #if os(iOS) || os(tvOS)
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
@@ -42,10 +62,15 @@ final class PlaybackModel: ObservableObject {
         rateObservation = player.observe(\.rate, options: [.new]) { [weak self] _, _ in
             Task { @MainActor [weak self] in self?.report() }
         }
+        speedObservation = player.observe(\.defaultRate, options: [.new]) { player, _ in
+            let rate = player.defaultRate
+            Task { @MainActor in PlaybackSpeeds.remember(rate) }
+        }
     }
     private func load(_ next: Playback) {
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         observation = nil
+        subtitleController?.stop(); subtitleController = nil
         playback = next; title = next.name; error = nil; endMessage = nil
         sequence = 0; starting = false; resumed = false
         let url = playback.url
@@ -85,6 +110,9 @@ final class PlaybackModel: ObservableObject {
             if item.status == .readyToPlay {
                 Task { @MainActor [weak self] in
                     guard let self, self.player.currentItem === item else { return }
+                    if self.subtitleController == nil {
+                        self.subtitleController = SubtitlePlaybackController(item: item, titleID: self.playback.libraryTitleID, store: self.store)
+                    }
                     self.start()
                 }
             }
@@ -129,6 +157,7 @@ final class PlaybackModel: ObservableObject {
         finished = true
         if let timeObserver { player.removeTimeObserver(timeObserver); self.timeObserver = nil }
         rateObservation = nil
+        speedObservation = nil
         observation = nil
         if let endObserver { NotificationCenter.default.removeObserver(endObserver); self.endObserver = nil }
     }
@@ -183,6 +212,7 @@ struct NativePlayer: NSViewRepresentable {
         let view = AVPlayerView()
         view.player = player
         view.controlsStyle = .floating
+        view.speeds = PlaybackSpeeds.options
         view.showsFullScreenToggleButton = true
         view.allowsPictureInPicturePlayback = true
         DispatchQueue.main.async { [weak view, weak coordinator = context.coordinator] in
@@ -243,6 +273,7 @@ struct NativePlayer: UIViewControllerRepresentable {
         view.player = player
         view.close = close
         view.showsPlaybackControls = true
+        view.speeds = PlaybackSpeeds.options
         view.allowsPictureInPicturePlayback = true
         return view
     }
@@ -294,5 +325,137 @@ struct PlayerScreen: View {
         #endif
         .onChange(of: scenePhase) { _, _ in model.report() }
         .onDisappear { model.stop() }
+    }
+}
+
+
+/// Native subtitle rendering and native selection UI remain owned by AVKit.
+@MainActor
+final class SubtitlePlaybackController {
+    private var task: Task<Void, Never>?
+    private var observer: NSObjectProtocol?
+    private var lastOption: AVMediaSelectionOption?
+    private var preferences = SubtitlePreferences()
+    private var stopped = false
+    init(item: AVPlayerItem, titleID: String?, store: Store) {
+        task = Task { [weak self, weak item] in
+            guard let self, let item else { return }
+            let path = titleID.map { "/v1/library/titles/\($0)/subtitle-preferences" } ?? "/v1/subtitle-preferences"
+            do {
+                let response: SubtitlePreferenceResponse = try await store.request("GET", path, timeout: 5)
+                guard !Task.isCancelled, !self.stopped else { return }
+                self.preferences = response.effective
+                let p = response.effective
+                let fonts = ["default": kCMTextMarkupGenericFontName_Default, "serif": kCMTextMarkupGenericFontName_Serif,
+                             "sans-serif": kCMTextMarkupGenericFontName_SansSerif, "monospace": kCMTextMarkupGenericFontName_Monospace]
+                let attributes: [String: Any] = [
+                    kCMTextMarkupAttribute_RelativeFontSize as String: p.sizePercent,
+                    kCMTextMarkupAttribute_GenericFontFamilyName as String: fonts[p.font] ?? kCMTextMarkupGenericFontName_Default,
+                    kCMTextMarkupAttribute_ForegroundColorARGB as String: [Double(p.textOpacity) / 100, 1, 1, 1],
+                    kCMTextMarkupAttribute_BackgroundColorARGB as String: [Double(p.backgroundOpacity) / 100, 0, 0, 0]
+                ]
+                if let rule = AVTextStyleRule(textMarkupAttributes: attributes) { item.textStyleRules = [rule] }
+                guard let group = try await item.asset.loadMediaSelectionGroup(for: .legible), !self.stopped else { return }
+                let option: AVMediaSelectionOption?
+                if !p.enabled { option = nil }
+                else if p.language == "original" { option = group.defaultOption ?? group.options.first }
+                else {
+                    option = AVMediaSelectionGroup.mediaSelectionOptions(from: group.options, with: Locale(identifier: p.language)).first
+                }
+                item.select(option, in: group)
+                self.lastOption = option
+                guard let titleID else { return }
+                self.observer = NotificationCenter.default.addObserver(forName: AVPlayerItem.mediaSelectionDidChangeNotification, object: item, queue: .main) { [weak self, weak item] _ in
+                    Task { @MainActor [weak self, weak item] in
+                        guard let self, let item, !self.stopped else { return }
+                        let selected = item.currentMediaSelection.selectedMediaOption(in: group)
+                        guard selected != self.lastOption else { return }
+                        self.lastOption = selected
+                        self.preferences.enabled = selected != nil
+                        if let selected {
+                            let language = selected.extendedLanguageTag ?? selected.locale?.identifier ?? ""
+                            if language.hasPrefix("zh") { self.preferences.language = "zh-Hans" }
+                            else if language.hasPrefix("en") { self.preferences.language = "en" }
+                            else { self.preferences.language = "original" }
+                        }
+                        do { try await store.send("PUT", "/v1/library/titles/\(titleID)/subtitle-preferences", body: self.preferences.body) }
+                        catch { store.actionError = "Couldn’t save subtitle preference: " + error.localizedDescription }
+                    }
+                }
+            } catch {
+                // Preserve AVKit defaults when disconnected or using an older server.
+            }
+        }
+    }
+    func stop() {
+        stopped = true; task?.cancel(); task = nil
+        if let observer { NotificationCenter.default.removeObserver(observer); self.observer = nil }
+    }
+}
+
+struct SubtitlePreferencesView: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.dismiss) private var dismiss
+    var titleID: String? = nil
+    @State private var preferences = SubtitlePreferences()
+    @State private var loaded = false
+    @State private var saving = false
+    @State private var overridden = false
+    @State private var error: String?
+    private var path: String { titleID.map { "/v1/library/titles/\($0)/subtitle-preferences" } ?? "/v1/subtitle-preferences" }
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let error { Text(error).foregroundStyle(.orange) }
+                SwiftUI.Section {
+                    Toggle("Subtitles", isOn: $preferences.enabled)
+                    Picker("Language", selection: $preferences.language) {
+                        Text("Original").tag("original")
+                        Text("English").tag("en")
+                        Text("简体中文").tag("zh-Hans")
+                    }
+                    Picker("Font", selection: $preferences.font) {
+                        Text("Default").tag("default")
+                        Text("Sans serif").tag("sans-serif")
+                        Text("Serif").tag("serif")
+                        Text("Monospace").tag("monospace")
+                    }
+                    Picker("Size", selection: $preferences.sizePercent) {
+                        ForEach(Array(stride(from: 50, through: 200, by: 10)), id: \.self) { Text("\($0)%").tag($0) }
+                    }
+                    Picker("Text opacity", selection: $preferences.textOpacity) {
+                        ForEach(Array(stride(from: 0, through: 100, by: 10)), id: \.self) { Text("\($0)%").tag($0) }
+                    }
+                    Picker("Background opacity", selection: $preferences.backgroundOpacity) {
+                        ForEach(Array(stride(from: 0, through: 100, by: 10)), id: \.self) { Text("\($0)%").tag($0) }
+                    }
+                }.disabled(!loaded || saving)
+                if titleID != nil {
+                    Button("Use defaults") { save(reset: true) }.disabled(!loaded || !overridden || saving)
+                }
+            }.navigationTitle(titleID == nil ? "Default subtitles" : "Subtitles")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Save") { save(reset: false) }.disabled(!loaded || saving) }
+            }
+        }.task {
+            do {
+                let response: SubtitlePreferenceResponse = try await store.request("GET", path)
+                preferences = response.effective; overridden = response.overridden; loaded = true
+            } catch { self.error = error.localizedDescription }
+        }
+        #if os(macOS)
+        .frame(width: 500, height: 470)
+        #endif
+    }
+    private func save(reset: Bool) {
+        saving = true; error = nil
+        Task {
+            defer { saving = false }
+            do {
+                try await store.send(reset ? "DELETE" : "PUT", path, body: reset ? [:] : preferences.body)
+                dismiss()
+            } catch { self.error = error.localizedDescription }
+        }
     }
 }

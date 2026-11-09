@@ -192,6 +192,7 @@ struct LibraryDetail: View {
     @State private var season: Int = -1
     @State private var playback: Playback?
     @State private var loading = false
+    @State private var showSubtitles = false
     var title: LibraryTitle? { store.library?.titles.first { $0.id == titleID } }
     var body: some View {
         ScrollView {
@@ -211,6 +212,8 @@ struct LibraryDetail: View {
                             #endif
                         }
                     }
+                    Button { showSubtitles = true } label: { Label("Subtitles", systemImage: "captions.bubble") }
+                        .sheet(isPresented: $showSubtitles) { SubtitlePreferencesView(titleID: title.id) }
                     Text(title.summary).font(.body).lineSpacing(5).frame(maxWidth: 900, alignment: .leading)
                     if title.kind == "tv" {
                         let seasons = Array(Set(title.assets.compactMap(\.season))).sorted()

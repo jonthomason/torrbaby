@@ -7,6 +7,7 @@ struct TVRootView: View {
     @State private var server = ""
     @State private var token = ""
     @State private var settings = false
+    @State private var showSubtitles = false
     var body: some View {
         NavigationStack {
             if !store.configured || settings {
@@ -36,6 +37,8 @@ struct TVRootView: View {
                         Text(AppRelease.description).font(.headline).monospacedDigit().foregroundStyle(.secondary)
                         Image("TorrbabyLogo").resizable().frame(width: 120, height: 120)
                         Label(store.connected ? "Connected" : "Offline", systemImage: store.connected ? "checkmark.circle" : "wifi.slash")
+                        Button("Default subtitles") { showSubtitles = true }
+                            .sheet(isPresented: $showSubtitles) { SubtitlePreferencesView() }
                         Button("Connection settings") { settings = true }
                     }.tabItem { Label("Settings", systemImage: "gearshape") }
                 }
@@ -131,6 +134,7 @@ private struct TVMediaDetail: View {
     @State private var season: Int?
     @State private var playback: Playback?
     @State private var loading = false
+    @State private var showSubtitlePreferences = false
     private var title: LibraryTitle? { store.library?.titles.first { $0.id == titleID } }
     var body: some View {
         ScrollView {
@@ -151,6 +155,8 @@ private struct TVMediaDetail: View {
                         }.padding(.horizontal, 90).padding(.bottom, 50).frame(maxWidth: 1350, alignment: .leading)
                     }.frame(height: 650)
                     VStack(alignment: .leading, spacing: 38) {
+                        Button("Subtitles") { showSubtitlePreferences = true }
+                            .sheet(isPresented: $showSubtitlePreferences) { SubtitlePreferencesView(titleID: title.id) }
                         if !title.summary.isEmpty {
                             Text(title.summary).font(.system(size: 27)).lineSpacing(7).frame(maxWidth: 1300, alignment: .leading)
                         }
