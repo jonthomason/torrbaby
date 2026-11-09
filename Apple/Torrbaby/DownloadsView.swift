@@ -9,6 +9,7 @@ struct DownloadsView: View {
     #endif
     @State private var playback: Playback?
     @State private var settings = false
+    @State private var preparing = false
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -39,7 +40,7 @@ struct DownloadsView: View {
                         }
                         Spacer(minLength: 8)
                         if item.state == .ready {
-                            Button { play(item.id) } label: { Image(systemName: "play.circle.fill").font(.title) }.help("Play download")
+                            Button { play(item.id) } label: { Image(systemName: "play.circle.fill").font(.title) }.help("Play download").disabled(preparing)
                         } else if item.state == .transferring || item.state == .queued {
                             Button { queue.pause(item.id) } label: { Image(systemName: "pause.circle").font(.title2) }.help("Pause download")
                         } else {
@@ -59,12 +60,17 @@ struct DownloadsView: View {
         #endif
     }
     private func play(_ id: UUID) {
-        guard let item = queue.playback(id) else { return }
-        #if os(macOS)
-        openWindow(value: item)
-        #else
-        playback = item
-        #endif
+        guard !preparing else { return }
+        preparing = true
+        Task {
+            defer { preparing = false }
+            guard let item = await queue.preparePlayback(id) else { return }
+            #if os(macOS)
+            openWindow(value: item)
+            #else
+            playback = item
+            #endif
+        }
     }
 }
 

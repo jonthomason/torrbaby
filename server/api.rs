@@ -351,6 +351,20 @@ fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
 }
 
 async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> Result<Value> {
+    if method == Method::GET {
+        if let Some(id) = path
+            .strip_prefix("/v1/library/assets/")
+            .and_then(|p| p.strip_suffix("/progress"))
+        {
+            if !id.starts_with("asset-") || id.contains('/') {
+                bail!("Invalid asset ID");
+            }
+            let db =
+                s.db.lock()
+                    .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
+            return crate::offline::shared_progress(&db, id);
+        }
+    }
     if method == Method::POST && path == "/v1/playback/offline" {
         let mut db =
             s.db.lock()

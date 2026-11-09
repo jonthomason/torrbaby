@@ -238,6 +238,20 @@ final class DownloadStorage {
         guard let item = items.first(where: { $0.id == id }), item.progressEventID == eventID else { return }
         try update(id) { $0.progressNeedsSync = false }
     }
+    func importProgress(_ id: UUID, position: Double, duration: Double, watched: Bool, recordedAt: Date) throws {
+        guard position.isFinite, duration.isFinite, duration >= 0, position >= 0,
+              position <= duration + 2, recordedAt.timeIntervalSince1970.isFinite,
+              recordedAt.timeIntervalSince1970 > 0,
+              let item = items.first(where: { $0.id == id }),
+              recordedAt > (item.progressRecordedAt ?? .distantPast) else { return }
+        try update(id) {
+            $0.position = min(position, duration); $0.duration = duration; $0.watched = watched
+            $0.progressRecordedAt = recordedAt
+            $0.progressNeedsSync = false; $0.progressEventID = nil
+            // Watching elsewhere must never trigger deletion of this local copy.
+            $0.playbackFinished = false
+        }
+    }
     /// Called only after the native player's did-play-to-end event and after releasing its file.
     func removeAfterPlayback(_ id: UUID) throws {
         guard let item = items.first(where: { $0.id == id }), item.playbackFinished,

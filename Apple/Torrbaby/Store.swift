@@ -185,8 +185,9 @@ final class Store: ObservableObject {
         else { throw APIError(message: "Enter a server URL such as http://your-server:8765.") }
         return url
     }
-    func request<T: Decodable>(_ method: String, _ path: String, body: [String: Any]? = nil) async throws -> T {
+    func request<T: Decodable>(_ method: String, _ path: String, body: [String: Any]? = nil, timeout: TimeInterval? = nil) async throws -> T {
         var request = URLRequest(url: try endpoint(path))
+        if let timeout { request.timeoutInterval = timeout }
         request.httpMethod = method
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         if let body {

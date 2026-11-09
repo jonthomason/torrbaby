@@ -5,6 +5,23 @@ use rusqlite::{OptionalExtension, params};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+pub fn shared_progress(db: &Database, id: &str) -> Result<Value> {
+    let asset = db.asset(id)?;
+    let hash = asset["torrent_hash"].as_str().unwrap_or(id);
+    let index = asset["file_index"].as_u64().unwrap_or(0);
+    let media = format!("{hash}:{index}");
+    let row: Option<(f64, f64, bool, f64)> = db
+        .connection
+        .query_row(
+            "SELECT position,duration,watched,last_played FROM playback WHERE media_id=?",
+            [&media],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()?;
+    let (position, duration, watched, last_played) = row.unwrap_or((0.0, 0.0, false, 0.0));
+    Ok(json!({"position":position,"duration":duration,"watched":watched,"last_played":last_played}))
+}
+
 #[derive(Deserialize)]
 struct Progress {
     event_id: String,

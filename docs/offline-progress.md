@@ -34,8 +34,14 @@ Ordering currently uses device wall-clock observation time. More than five minut
 in the future is rejected; smaller positive skew is clamped to server receive time.
 Devices need reasonably correct clocks. Receipts currently persist indefinitely;
 retention/compaction remains future work. This is not a vector-clock reconciliation
-protocol. Downloaded copies still need to import newer shared positions before
-local playback; upload alone does not finish bidirectional offline sync.
+protocol. Before playing a downloaded copy while connected, the app reads
+`GET /v1/library/assets/{asset-id}/progress` with a three-second request timeout.
+A strictly newer shared observation updates the local resume position and
+supersedes older pending reports. A failed request falls back to local progress.
+Imported watched state never triggers local deletion. Library Play prefers a
+ready download, as does same-season next-episode playback. This still needs
+physical-device acceptance checks; native background transfers and clock skew
+remain material limits.
 
 Validation: temporary HTTP fixture covers authentication, retry deduplication,
 newer/stale ordering, active playback deferral/retry, completion, future time rejection

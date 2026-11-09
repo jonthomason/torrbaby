@@ -253,6 +253,18 @@ struct LibraryDetail: View {
         Task {
             defer { loading = false }
             do {
+                #if !os(tvOS)
+                let downloads = DownloadQueue.shared
+                if let id = downloads.readyDownload(assetID: asset.id, server: store.server),
+                   let local = await downloads.preparePlayback(id) {
+                    #if os(macOS)
+                    openWindow(value: local)
+                    #else
+                    playback = local
+                    #endif
+                    return
+                }
+                #endif
                 await store.flushProgress()
                 try await store.registerClient()
                 let link: PlaybackLink = try await store.request("POST", "/v1/library/assets/\(asset.id)/play", body: ["client_id":store.clientId])

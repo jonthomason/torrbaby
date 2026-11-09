@@ -392,3 +392,24 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
   backup before deployment; rolling back to an older binary requires its DB backup.
 - Mac and iOS Simulator builds passed for offline sync. Per-item sync failures are
   isolated so a removed catalog asset does not block other pending reports.
+
+## Follow-up: shared resume pull and local-first Library Play
+
+- Authenticated GET `/v1/library/assets/{id}/progress` returns shared position,
+  duration, watched and last_played without requiring media filesystem access.
+- DownloadQueue.preparePlayback fetches it only when connected to that download's
+  server, with a 3-second request timeout, and falls back to the saved local
+  position on errors. Storage imports strictly newer observations only; newer
+  local reports remain pending. Imported watched never sets playbackFinished,
+  so it cannot trigger delete-after-local-playback.
+- Library Play now prefers a ready local copy. Downloads Play and same-season
+  local next-episode playback use preparePlayback as well. Downloads Play prevents
+  duplicate button actions while preparing. This does not add offline library
+  artwork/metadata browsing or cross-season episode ordering.
+- Rust, Mac and iOS Simulator builds passed. Extended HTTP smoke verified progress
+  read authentication/content. Swift import smoke verified older shared progress
+  cannot overwrite newer local progress, newer shared progress supersedes local
+  pending state, and shared watched does not delete a local copy. Saved as
+  local-state/checkpoints/2026-11-09/torrbaby-storage-import-smoke.swift.
+- All still on WIP branch; no app installation/OTA or Diamond deployment. Physical
+  disconnected/reconnected device acceptance remains pending.
