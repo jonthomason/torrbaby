@@ -749,3 +749,13 @@ User reports iPad left/right correctly skip 15 seconds but Space does not play/p
 - Interrupted-job recovery fixture session13461 completed successfully: persisted running job re-admitted after restart, translation helper invoked once more, ready generated status restored. No new process needs polling.
 - Live Diamond later shows10inventoried files, real Chinese translation still running,0new generated tags indexed yet. Do not claim whole-catalog completion or real newtranslation finished. Daemon owns this work and continues after session. Existing subtitle helper was proven on realMP4 earlier; this newworker runtime proof currently admission+ongoing processing.
 - OTAHTTPS current.json verified70. All appbuilds70alreadyinstalled/published as above. Commit includes inspector + inventoryworker + schema9 + UIlabels + prepared-target playback; Android untouched/untracked.
+
+## Build71 / durable translation batches and progress controls
+
+- User clarified background means Diamond daemon, not AI session. This is implemented in the production Rust service and runs independently of clients/session.
+- Per-eight-cue atomic checkpoints preserve translations across interruption; timing/source validation before reuse. Status exposes completed/total cues and catalog summary. Settings on Mac/iOS/tvOS adds automatic-preparation toggle and progress/counts.
+- Actual first Chinese output verified: 1,906 cues, all original timing lines preserved, Chinese text present. Focused 24-cue interruption fixture passed: restart resumed saved batch without translating first batch twice, finished 24/24 and removed checkpoint.
+- Mac/iOS/tvOS simulator71 builds succeeded; signed Mac installed, mobile published and HTTPS current.json verified71, TVsim installed/launched. IPA SHA e50663d024bb55bacfe6d91e924a733b1983aad61155f481223a11e3e639d84a. Rust deployed with backup rust-20261109-172737.
+- Latest live API: 50 scanned, 1 translated, 0 failed; next Chinese job 1296/1619 cues. Catalog processing continues on Diamond.
+- Visual inspection unavailable: CUA cgWindowNotFound for installed Mac and Device Hub. Mac process at correct installed path was running; do not claim visual acceptance.
+- Android remains untouched/untracked. Persistent goal remains incomplete: MKV native remux/delivery, offline generated captions, profiles, physicalTV pairing and broader backlog still pending.

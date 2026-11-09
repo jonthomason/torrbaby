@@ -44,3 +44,15 @@ Native MP4 subtitle playback works; MKV caption generation is useful preparation
 but MKV remux is still required for native Apple delivery. Offline downloads do
 not yet bundle the generated captions. These remain active work, not completed
 format support.
+
+## Progress and restart recovery (build 71)
+
+Translations checkpoint after every eight cues using an atomic cache-file rename.
+On restart, the worker validates cue timing and resumes at the saved batch; ready
+output removes the checkpoint. A focused 24-cue interruption check verified that
+the first saved batch was not translated twice. Source files remain unchanged.
+
+`GET /v1/status` includes `subtitle_preparation`: scanned/translated/failed counts,
+waiting_for_idle, and current asset/language/completed_cues/total_cues. Apple
+Settings now shows this progress and an automatic-preparation toggle on Mac, iOS
+and tvOS. Disabling admission lets the current job finish.

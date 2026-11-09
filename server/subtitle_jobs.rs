@@ -24,7 +24,16 @@ struct Job {
     state: String,
     updated: f64,
     error: Option<String>,
+    #[serde(default)]
+    completed_cues: usize,
+    #[serde(default)]
+    total_cues: usize,
 }
+
+#[derive(Deserialize)]
+struct Progress { completed: usize, cues: Vec<crate::subtitles::TimedCue> }
+#[derive(Serialize)]
+struct ProgressRef<'a> { completed: usize, cues: &'a [crate::subtitles::TimedCue] }
 
 pub struct Manager {
     root: PathBuf,
@@ -68,7 +77,8 @@ impl Manager {
                 continue;
             };
             if name
-                .strip_suffix(".vtt.tmp")
+                .strip_suffix(".progress.tmp")
+                .or_else(|| name.strip_suffix(".vtt.tmp"))
                 .or_else(|| name.strip_suffix(".json.tmp"))
                 .is_some_and(valid)
             {
@@ -119,7 +129,7 @@ impl Manager {
         }
         Ok(
             json!({"id":job.id,"asset_id":job.asset_id,"state":job.state,"error":job.error,
-            "track":job.track,"source":job.source,"target":job.target,
+            "track":job.track,"source":job.source,"target":job.target,"completed_cues":job.completed_cues,"total_cues":job.total_cues,
             "path":if job.state=="ready" {Some(format!("/v1/subtitle-jobs/{id}.vtt"))} else {None}}),
         )
     }
@@ -195,6 +205,7 @@ impl Manager {
                 state: "queued".into(),
                 updated: crate::storage::now(),
                 error: None,
+                completed_cues: 0, total_cues: 0,
             };
             self.save(&job)?;
             pending.insert(id.clone());
@@ -232,7 +243,7 @@ impl Manager {
                 break;
             }
             if self.read(&id).is_ok_and(|job| job.state == "ready") { continue; }
-            for ext in ["json", "vtt"] {
+            for ext in ["json", "vtt", "progress"] {
                 let path = self.root.join(format!("{id}.{ext}"));
                 if path.exists() {
                     let size = path.metadata()?.len();
@@ -251,11 +262,38 @@ impl Manager {
             job.state = "running".into();
             self.save(&job)?;
             let mut cues = crate::native_subtitles::extract(&job.input, job.track).await?;
-            if let (Some(source), Some(target)) = (&job.source, &job.target) {
-                let helper =
-                    std::env::current_exe()?.with_file_name("torrbaby-subtitle-translator");
-                crate::subtitles::translate_cues(&helper, source, target, &mut cues).await?;
-            }
+            job.total_cues = cues.len();
+            let checkpoint = self.root.join(format!("{}.progress",job.id));
+            if let (Some(source), Some(target)) = (job.source.clone(), job.target.clone()) {
+                if let Ok(data) = fs::read(&checkpoint) {
+                    if data.len() <= 16_777_216 {
+                        if let Ok(saved) = serde_json::from_slice::<Progress>(&data) {
+                            if saved.completed <= cues.len() && saved.cues.len() == cues.len()
+                                && saved.cues.iter().zip(&cues).all(|(a,b)| a.start_ms==b.start_ms && a.end_ms==b.end_ms && !a.text.trim().is_empty() && a.text.len()<=16_384) {
+                                for (cue, translated) in cues.iter_mut().zip(saved.cues).take(saved.completed) { cue.text=translated.text; }
+                                job.completed_cues=saved.completed;
+                            }
+                        }
+                    }
+                }
+                self.save(&job)?;
+                let helper = std::env::current_exe()?.with_file_name("torrbaby-subtitle-translator");
+                while job.completed_cues < cues.len() {
+                    let end=(job.completed_cues+8).min(cues.len());
+                    crate::subtitles::translate_cues(&helper,&source,&target,&mut cues[job.completed_cues..end]).await?;
+                    job.completed_cues=end;
+                    let progress=serde_json::to_vec(&ProgressRef {completed:end,cues:&cues})?;
+                    ensure!(progress.len()<=16_777_216,"Subtitle checkpoint too large");
+                    let used=fs::read_dir(&self.root)?.try_fold(0u64, |sum, entry| -> Result<u64> { Ok(sum.saturating_add(entry?.metadata()?.len())) })?;
+                    ensure!(used.saturating_add(progress.len() as u64)<=512*1024*1024,"Subtitle storage is full");
+                    let temporary=self.root.join(format!("{}.progress.tmp",job.id));
+                    fs::write(&temporary,progress)?;
+                    fs::rename(temporary,&checkpoint)?;
+                    job.updated=crate::storage::now();
+                    self.save(&job)?;
+                }
+            } else { job.completed_cues = cues.len(); }
+
             ensure!(
                 revision(&job.input)? == job.revision,
                 "Media changed during subtitle preparation"
@@ -270,6 +308,7 @@ impl Manager {
             let temporary = self.root.join(format!("{}.vtt.tmp", job.id));
             fs::write(&temporary, output)?;
             fs::rename(temporary, self.root.join(format!("{}.vtt", job.id)))?;
+            if checkpoint.exists() { fs::remove_file(checkpoint)?; }
             Ok::<(), anyhow::Error>(())
         };
         let result = tokio::time::timeout(Duration::from_secs(1200), result).await;

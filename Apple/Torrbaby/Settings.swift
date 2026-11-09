@@ -1,5 +1,5 @@
-#if !os(tvOS)
 import SwiftUI
+#if !os(tvOS)
 import UniformTypeIdentifiers
 #if os(iOS)
 import UserNotifications
@@ -107,6 +107,9 @@ struct SettingsView: View {
             SwiftUI.Section("Playback") {
                 Button("Default subtitles") { showSubtitles = true }
                     .sheet(isPresented: $showSubtitles) { SubtitlePreferencesView() }
+            }
+            SwiftUI.Section("Translations") {
+                BackgroundSubtitlesView()
             }
             SwiftUI.Section("Connection") {
                 LabeledContent("Server", value: store.server.isEmpty ? "Not configured" : store.server)
@@ -405,3 +408,30 @@ struct DeviceNameRow: View {
 }
 
 #endif
+
+
+struct BackgroundSubtitlesView: View {
+    @EnvironmentObject var store: Store
+    var body: some View {
+        if let status = store.status {
+            Toggle("Prepare translations automatically", isOn: Binding(
+                get: { status.settings.backgroundSubtitles ?? true },
+                set: { enabled in store.perform { try await store.send("PATCH", "/v1/settings", body: ["background_subtitles": enabled]) } }
+            )).disabled(store.busy)
+            if let preparation = status.subtitlePreparation {
+                Text("\(preparation.translated) translated · \(preparation.scanned) scanned").font(.callout).foregroundStyle(.secondary)
+                if let job = preparation.current {
+                    let asset = store.library?.titles.flatMap(\.assets).first { $0.id == job.assetId }
+                    Text(asset?.name ?? "Translating subtitles…").lineLimit(2)
+                    if job.totalCues > 0 {
+                        ProgressView(value: Double(job.completedCues), total: Double(job.totalCues))
+                        Text("\(Int(Double(job.completedCues) / Double(job.totalCues) * 100))%").monospacedDigit().font(.caption)
+                    }
+                } else if preparation.waitingForIdle && status.settings.backgroundSubtitles != false {
+                    Text("Resumes after playback").foregroundStyle(.secondary)
+                }
+                if preparation.failed > 0 { Text("\(preparation.failed) awaiting retry").foregroundStyle(.secondary) }
+            }
+        }
+    }
+}

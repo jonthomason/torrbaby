@@ -76,6 +76,7 @@ struct Torrent: Codable, Identifiable, Hashable {
 }
 
 struct DaemonSettings: Codable {
+    var backgroundSubtitles: Bool?
     var paused: Bool
     var pollSeconds: Double
     var source: String
@@ -90,7 +91,16 @@ struct Job: Codable, Identifiable {
     let destination: String?
     var id: String { hash }
 }
+struct SubtitlePreparation: Codable {
+    struct Current: Codable { let assetId: String; let language: String; let completedCues: Int; let totalCues: Int }
+    let scanned: Int
+    let translated: Int
+    let failed: Int
+    let waitingForIdle: Bool
+    let current: Current?
+}
 struct DaemonStatus: Codable {
+    let subtitlePreparation: SubtitlePreparation?
     let version: String
     let uptimeSeconds: Int
     let settings: DaemonSettings

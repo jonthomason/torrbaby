@@ -105,6 +105,7 @@ struct TVRootView: View {
                         Label(store.connected ? "Connected" : "Offline", systemImage: store.connected ? "checkmark.circle" : "wifi.slash")
                         Button("Default subtitles") { showSubtitles = true }
                             .sheet(isPresented: $showSubtitles) { SubtitlePreferencesView() }
+                        BackgroundSubtitlesView().frame(maxWidth: 850)
                         Button("Connection settings") { settings = true }
                     }.tabItem { Label("Settings", systemImage: "gearshape") }
                 }

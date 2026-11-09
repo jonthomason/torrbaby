@@ -114,3 +114,31 @@ pub async fn tick(s: &Service) -> Result<()> {
     }
     Ok(())
 }
+
+pub fn summary(db: &Database, jobs: &crate::subtitle_jobs::Manager) -> Result<Value> {
+    let mut scanned=0usize;
+    let mut translated=0usize;
+    let mut failed=0usize;
+    let mut current=Value::Null;
+    for asset in db.documents("assets")? {
+        if asset["available"]!=true || asset["complete"]!=true { continue; }
+        let Some(id)=asset["id"].as_str() else {continue};
+        let info=cached(db,id)?;
+        if info["state"]=="ready" { scanned+=1; }
+        let mut ready=false;
+        for job_id in info["jobs"].as_array().into_iter().flatten() {
+            if let Ok(job)=jobs.status(job_id.as_str().unwrap_or("")) {
+                if job["target"].is_null() {continue;}
+                if job["state"]=="ready" {ready=true;}
+                if job["state"]=="failed" {failed+=1;}
+                if job["state"]=="running" {
+                    current=json!({"asset_id":id,"language":job["target"],"completed_cues":job["completed_cues"],"total_cues":job["total_cues"]});
+                }
+            }
+        }
+        if ready {translated+=1;}
+        if info["preparation_state"]=="failed" && info["jobs"].as_array().is_none_or(|v|v.is_empty()) {failed+=1;}
+    }
+    let watching: bool=db.connection.query_row("SELECT EXISTS(SELECT 1 FROM playback p JOIN playback_sessions s ON s.id=p.active_session WHERE s.ended=0 AND p.last_played>?)",[now()-90.0],|r|r.get(0))?;
+    Ok(json!({"scanned":scanned,"translated":translated,"failed":failed,"waiting_for_idle":watching,"current":current}))
+}
