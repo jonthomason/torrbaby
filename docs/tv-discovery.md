@@ -23,4 +23,14 @@ Implementation plan for tvOS and Android TV:
 - Profiles remain a separate lightweight feature: mobile usually remembers one;
   shared TVs offer easy switching.
 
-This is a recorded requirement, not implemented discovery or LAN authorization yet.
+Implemented in build66: tvOS browses Bonjour and automatically registers the first
+server when unconfigured. An address-only fallback remains for routed networks.
+Diamond advertises _torrbaby._tcp and listens on 192.168.1.44:8765 alongside its
+existing Tailnet listener. Only socket peers in 192.168.1.0/24 may bootstrap a
+device credential. Forwarded headers confer no trust; normal APIs remain authenticated.
+Registration is limited to ten attempts per peer per minute and 256 stored devices.
+
+Verified: simulator compilation, live Bonjour resolution, both listeners require
+API credentials, Tailnet registration with a spoofed LAN header is rejected, and
+isolated registration/credential/rate-limit smoke checks. Physical Apple TV discovery
+and discovery across slate-seven are still unverified. Android adoption is pending.

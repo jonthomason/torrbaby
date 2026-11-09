@@ -1,30 +1,91 @@
 #if os(tvOS)
 import SwiftUI
 
+@MainActor
+private final class TVDiscovery: NSObject, ObservableObject, @preconcurrency NetServiceBrowserDelegate, @preconcurrency NetServiceDelegate {
+    @Published var addresses: [String] = []
+    private let browser = NetServiceBrowser()
+    private var services: [NetService] = []
+    func start() {
+        browser.delegate = self
+        browser.searchForServices(ofType: "_torrbaby._tcp.", inDomain: "local.")
+    }
+    func stop() { browser.stop(); services.forEach { $0.stop() }; services.removeAll() }
+    func netServiceBrowser(_ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool) {
+        services.append(service); service.delegate = self; service.resolve(withTimeout: 10)
+    }
+    func netServiceDidResolveAddress(_ sender: NetService) {
+        guard let host = sender.hostName, sender.port > 0 else { return }
+        var parts = URLComponents(); parts.scheme = "http"; parts.host = host; parts.port = sender.port
+        if let value = parts.url?.absoluteString, !addresses.contains(value) { addresses.append(value) }
+    }
+}
+
+private struct TVConnectionView: View {
+    @EnvironmentObject var store: Store
+    @StateObject private var discovery = TVDiscovery()
+    @State private var address = ""
+    @State private var manual = false
+    @State private var busy = false
+    @State private var error: String?
+    @State private var attempted: Set<String> = []
+    var done: () -> Void
+    var body: some View {
+        VStack(spacing: 28) {
+            Image("TorrbabyLogo").resizable().frame(width: 120, height: 120).clipShape(RoundedRectangle(cornerRadius: 24))
+            Text("Welcome home").font(.largeTitle.bold())
+            if busy { ProgressView("Connecting…") }
+            else { Label("Finding your library…", systemImage: "wifi") }
+            if let error { Text(error).font(.callout).foregroundStyle(.orange) }
+            ForEach(discovery.addresses, id: \.self) { value in
+                Button(value) { Task { await connect(value) } }.disabled(busy)
+            }
+            Button("Enter server address") { manual.toggle() }
+            if manual {
+                TextField("http://diamond.local:8765", text: $address)
+                Button("Connect") { Task { await connect(address) } }.disabled(busy || address.isEmpty)
+            }
+            if store.configured { Button("Back to library", action: done) }
+            Text(AppRelease.description).font(.caption).foregroundStyle(.secondary)
+        }.frame(maxWidth: 850)
+        .onAppear { discovery.start() }
+        .onDisappear { discovery.stop() }
+        .task(id: discovery.addresses) {
+            guard !store.configured, let first = discovery.addresses.first, !attempted.contains(first) else { return }
+            attempted.insert(first); await connect(first)
+        }
+    }
+    private func connect(_ value: String) async {
+        guard !busy else { return }; busy = true; error = nil
+        defer { busy = false }
+        do {
+            let base = value.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            guard let url = URL(string: base + "/v1/lan/register"), ["http", "https"].contains(url.scheme ?? ""), url.host != nil else { throw URLError(.badURL) }
+            var request = URLRequest(url: url); request.httpMethod = "POST"; request.timeoutInterval = 15
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["name": store.defaultClientName, "platform": "tvOS"])
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.userAuthenticationRequired) }
+            struct Registration: Decodable { let client_id: String; let token: String }
+            let registration = try JSONDecoder().decode(Registration.self, from: data)
+            try Credentials.save(registration.client_id, account: "client-id")
+            try Credentials.save(registration.token)
+            store.clientId = registration.client_id; store.server = base; store.token = registration.token
+            await store.connect()
+            if store.connected { done() } else { error = "Couldn’t open this library. Try again." }
+        } catch { self.error = "Couldn’t connect. Check that your TV and server are on the same network." }
+    }
+}
+
 struct TVRootView: View {
     @EnvironmentObject var store: Store
     @Environment(\.scenePhase) var phase
-    @State private var server = ""
-    @State private var token = ""
     @State private var settings = false
     @State private var showSubtitles = false
     var body: some View {
         NavigationStack {
             if !store.configured || settings {
-                VStack(alignment: .leading, spacing: 24) {
-                    Image("TorrbabyLogo").resizable().frame(width: 110, height: 110)
-                        .clipShape(RoundedRectangle(cornerRadius: 22)).accessibilityHidden(true)
-                    Text(AppRelease.description).font(.headline).foregroundStyle(.secondary)
-                    Text("Meet your server.").font(.largeTitle.bold())
-                    TextField("Server URL", text: $server)
-                    SecureField("API token", text: $token)
-                    Button("Connect") {
-                        store.server = server; store.token = token
-                        Task { await store.connect(); if store.connected { settings = false } }
-                    }
-                    if let error = store.connectionError { Text(error).foregroundStyle(.orange) }
-                    if store.configured { Button("Back to library") { settings = false } }
-                }.frame(maxWidth: 900).onAppear { server = store.server; token = store.token }
+                TVConnectionView { settings = false }
             } else {
                 TabView {
                     TVLibraryView(kind: nil).tabItem { Label("Home", systemImage: "house") }

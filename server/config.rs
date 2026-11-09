@@ -9,6 +9,12 @@ use std::{
 pub struct Config {
     pub listen_host: String,
     pub listen_port: u16,
+    #[serde(default)]
+    pub lan_listen_host: Option<String>,
+    #[serde(default)]
+    pub trusted_lan_cidrs: Vec<String>,
+    #[serde(default)]
+    pub advertise_lan: bool,
     pub token_file: String,
     pub state_file: String,
     pub transmission_url: String,
@@ -38,6 +44,20 @@ impl Config {
     }
     pub fn validate(&self) -> Result<()> {
         let config = self;
+        for range in &config.trusted_lan_cidrs {
+            crate::lan::network(range)?;
+        }
+        if let Some(host) = &config.lan_listen_host {
+            let ip: std::net::Ipv4Addr = host
+                .parse()
+                .context("LAN listener must be an IPv4 address")?;
+            if !ip.is_private() && !ip.is_loopback() {
+                bail!("LAN listener must use a private local address");
+            }
+        }
+        if config.advertise_lan && config.lan_listen_host.is_none() {
+            bail!("LAN advertisement needs a LAN listener");
+        }
         if !config.poll_seconds.is_finite() || !(5.0..=3600.0).contains(&config.poll_seconds) {
             bail!("poll_seconds must be between 5 and 3600");
         }

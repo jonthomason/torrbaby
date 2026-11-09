@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{DefaultBodyLimit, OriginalUri, State},
+    extract::{ConnectInfo, DefaultBodyLimit, OriginalUri, State},
     http::{HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::any,
@@ -35,6 +35,7 @@ pub struct Service {
     pub(crate) mutation_lock: tokio::sync::Mutex<()>,
     subtitle_jobs: Arc<crate::subtitle_jobs::Manager>,
     hls: Arc<crate::hls::Manager>,
+    lan_limiter: crate::lan::Limiter,
 }
 
 // Keep unimplemented routes explicit during the port; never silently report success.
@@ -56,6 +57,41 @@ pub async fn serve(
     }
     // Bind before starting workers: a second server must never organize files.
     let listener = tokio::net::TcpListener::bind(&listen).await?;
+    let lan_listener = if !preview {
+        if let Some(host) = &config.lan_listen_host {
+            let address = format!("{host}:{}", config.listen_port);
+            if address != listen {
+                Some(tokio::net::TcpListener::bind(address).await?)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let mut advertisement = if !preview && config.advertise_lan {
+        Some(
+            tokio::process::Command::new("/usr/bin/dns-sd")
+                .args([
+                    "-R",
+                    "Torrbaby",
+                    "_torrbaby._tcp",
+                    "local.",
+                    &config.listen_port.to_string(),
+                    "api=1",
+                ])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .spawn()
+                .context("Advertise Torrbaby on LAN")?,
+        )
+    } else {
+        None
+    };
     if let Some(parent) = database.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -75,6 +111,7 @@ pub async fn serve(
         .try_lock()
         .context("Another Torrbaby server owns this database")?;
     let service = Arc::new(Service {
+        lan_limiter: crate::lan::Limiter::default(),
         token: config.token()?,
         rpc: Transmission::new(&config)?,
         db: Mutex::new(Database::open(&database, None)?),
@@ -197,14 +234,33 @@ pub async fn serve(
             "enabled"
         }
     );
-    axum::serve(listener, router)
-        .with_graceful_shutdown(async {
-            let mut terminate =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                    .expect("Install termination handler");
-            tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
+    let lan_task = lan_listener.map(|listener| {
+        let router = router.clone();
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
         })
-        .await?;
+    });
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("Install termination handler");
+        tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
+    })
+    .await?;
+    if let Some(task) = lan_task {
+        task.abort();
+    }
+    if let Some(child) = &mut advertisement {
+        let _ = child.kill().await;
+    }
     sampler.abort();
     for worker in workers {
         worker.abort();
@@ -217,14 +273,44 @@ pub async fn serve(
 async fn dispatch(
     State(s): State<Arc<Service>>,
     OriginalUri(uri): OriginalUri,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     method: Method,
     headers: HeaderMap,
     bytes: Bytes,
 ) -> Response {
+    if uri.path() == "/v1/lan/register" {
+        if method != Method::POST || !crate::lan::trusted(peer.ip(), &s.config.trusted_lan_cidrs) {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error":"Automatic connection is available on the trusted LAN only"})),
+            )
+                .into_response();
+        }
+        let result = (|| -> Result<Value> {
+            s.lan_limiter.admit(peer.ip())?;
+            let body: Value = serde_json::from_slice(&bytes)?;
+            let mut db =
+                s.db.lock()
+                    .map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+            crate::lan::register(&mut db, &body)
+        })();
+        return match result {
+            Ok(value) => ([("Cache-Control", "no-store")], Json(value)).into_response(),
+            Err(error) => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error":error.to_string()})),
+            )
+                .into_response(),
+        };
+    }
     if uri.path().starts_with("/v1/hls/") {
         return match hls_response(&s, &uri, &method, &headers).await {
             Ok(response) => response,
-            Err(error) => (StatusCode::BAD_REQUEST, Json(json!({"error":error.to_string()}))).into_response(),
+            Err(error) => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error":error.to_string()})),
+            )
+                .into_response(),
         };
     }
     if uri.path().starts_with("/v1/stream/") {
@@ -403,19 +489,35 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
         }
     }
     if method == Method::POST {
-        if let Some(id) = path.strip_prefix("/v1/library/assets/").and_then(|p|p.strip_suffix("/hls")) {
-            let input = media_file(s,id,0).await?;
-            let ids = body["subtitle_jobs"].as_array().context("subtitle_jobs must be an array")?;
-            anyhow::ensure!(ids.len()<=8,"Too many subtitle tracks");
+        if let Some(id) = path
+            .strip_prefix("/v1/library/assets/")
+            .and_then(|p| p.strip_suffix("/hls"))
+        {
+            let input = media_file(s, id, 0).await?;
+            let ids = body["subtitle_jobs"]
+                .as_array()
+                .context("subtitle_jobs must be an array")?;
+            anyhow::ensure!(ids.len() <= 8, "Too many subtitle tracks");
             let mut captions = Vec::new();
             for value in ids {
                 let job_id = value.as_str().context("Invalid subtitle job")?;
                 let status = s.subtitle_jobs.status(job_id)?;
-                anyhow::ensure!(status["asset_id"]==id && status["state"]=="ready","Subtitles do not belong to this media or are not ready");
-                let language = status["target"].as_str().or(status["source"].as_str()).unwrap_or("und").to_owned();
-                captions.push(crate::hls::Caption{id:job_id.into(),language,text:s.subtitle_jobs.artifact(job_id)?});
+                anyhow::ensure!(
+                    status["asset_id"] == id && status["state"] == "ready",
+                    "Subtitles do not belong to this media or are not ready"
+                );
+                let language = status["target"]
+                    .as_str()
+                    .or(status["source"].as_str())
+                    .unwrap_or("und")
+                    .to_owned();
+                captions.push(crate::hls::Caption {
+                    id: job_id.into(),
+                    language,
+                    text: s.subtitle_jobs.artifact(job_id)?,
+                });
             }
-            return s.hls.prepare(id,input,captions);
+            return s.hls.prepare(id, input, captions);
         }
     }
 
@@ -488,7 +590,8 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             let media = media_file(s, id, 0).await?;
             let sidecar_media = media.clone();
             let tracks =
-                tokio::task::spawn_blocking(move || crate::subtitles::discover(&sidecar_media)).await??;
+                tokio::task::spawn_blocking(move || crate::subtitles::discover(&sidecar_media))
+                    .await??;
             let tracks: Vec<_> = tracks
                 .into_iter()
                 .map(|track| {
@@ -822,7 +925,10 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             return Ok(json!(db.torrent_rates(hash)?));
         }
     }
-    if let Some(title) = path.strip_prefix("/v1/library/titles/").and_then(|p| p.strip_suffix("/subtitle-preferences")) {
+    if let Some(title) = path
+        .strip_prefix("/v1/library/titles/")
+        .and_then(|p| p.strip_suffix("/subtitle-preferences"))
+    {
         return match method.as_str() {
             "GET" => db.subtitle_preferences(Some(title)),
             "PUT" => db.save_subtitle_preferences(Some(title), body),
@@ -1003,10 +1109,18 @@ async fn playback_link(s: &Service, hash: &str, body: &Value) -> Result<Value> {
     let mut result = json!({"path":format!("/v1/stream/{hash}/{index}?expires={expires}&sig={}",signature(&s.token,hash,index,expires)),"expires":expires,"name":path.file_name().unwrap_or_default().to_string_lossy()});
     if let Some(id) = body.get("hls_job") {
         let id = id.as_str().context("Invalid HLS job")?;
-        anyhow::ensure!(s.hls.asset(id)?==hash && s.hls.status(id)?["state"]=="ready","HLS package is not ready for this asset");
-        let expires=s.hls.status(id)?["expires"].as_u64().context("Invalid HLS expiry")?;
-        result["path"]=json!(format!("/v1/hls/{id}/media.m3u8?expires={expires}&sig={}",signature(&s.token,&format!("hls-{id}"),0,expires)));
-        result["expires"]=json!(expires);
+        anyhow::ensure!(
+            s.hls.asset(id)? == hash && s.hls.status(id)?["state"] == "ready",
+            "HLS package is not ready for this asset"
+        );
+        let expires = s.hls.status(id)?["expires"]
+            .as_u64()
+            .context("Invalid HLS expiry")?;
+        result["path"] = json!(format!(
+            "/v1/hls/{id}/media.m3u8?expires={expires}&sig={}",
+            signature(&s.token, &format!("hls-{id}"), 0, expires)
+        ));
+        result["expires"] = json!(expires);
     }
     if let Some(client) = body.get("client_id") {
         let mut db =
@@ -1073,29 +1187,58 @@ async fn stream(
     file_response(&path, method, headers).await
 }
 
-async fn hls_response(s:&Service,uri:&axum::http::Uri,method:&Method,headers:&HeaderMap)->Result<Response> {
+async fn hls_response(
+    s: &Service,
+    uri: &axum::http::Uri,
+    method: &Method,
+    headers: &HeaderMap,
+) -> Result<Response> {
     use hmac::{Hmac, Mac};
-    anyhow::ensure!(method==Method::GET || method==Method::HEAD,"Invalid HLS method");
-    let tail=uri.path().strip_prefix("/v1/hls/").context("Invalid HLS route")?;
-    let (id,name)=tail.split_once('/').context("Invalid HLS path")?;
-    let parsed=reqwest::Url::parse(&format!("http://localhost{uri}"))?;
-    let query:std::collections::HashMap<_,_>=parsed.query_pairs().into_owned().collect();
-    let expires:u64=query.get("expires").context("Missing expiry")?.parse()?;
-    let sig=query.get("sig").context("Missing signature")?;
-    anyhow::ensure!(expires>now() as u64 && sig.len()==64,"Expired HLS URL");
-    let decoded:Result<Vec<u8>>=(0..64).step_by(2).map(|i|Ok(u8::from_str_radix(sig.get(i..i+2).context("Invalid signature")?,16)?)).collect();
-    let mut mac=<Hmac<sha2::Sha256> as hmac::KeyInit>::new_from_slice(s.token.as_bytes()).expect("HMAC key");
+    anyhow::ensure!(
+        method == Method::GET || method == Method::HEAD,
+        "Invalid HLS method"
+    );
+    let tail = uri
+        .path()
+        .strip_prefix("/v1/hls/")
+        .context("Invalid HLS route")?;
+    let (id, name) = tail.split_once('/').context("Invalid HLS path")?;
+    let parsed = reqwest::Url::parse(&format!("http://localhost{uri}"))?;
+    let query: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+    let expires: u64 = query.get("expires").context("Missing expiry")?.parse()?;
+    let sig = query.get("sig").context("Missing signature")?;
+    anyhow::ensure!(expires > now() as u64 && sig.len() == 64, "Expired HLS URL");
+    let decoded: Result<Vec<u8>> = (0..64)
+        .step_by(2)
+        .map(|i| {
+            Ok(u8::from_str_radix(
+                sig.get(i..i + 2).context("Invalid signature")?,
+                16,
+            )?)
+        })
+        .collect();
+    let mut mac = <Hmac<sha2::Sha256> as hmac::KeyInit>::new_from_slice(s.token.as_bytes())
+        .expect("HMAC key");
     mac.update(format!("hls-{id}:0:{expires}").as_bytes());
-    mac.verify_slice(&decoded?).map_err(|_|anyhow::anyhow!("Invalid HLS signature"))?;
-    let asset=s.hls.asset(id)?;
-    media_file(s,&asset,0).await?;
-    let path=s.hls.file(id,name)?;
-    if path.extension().is_some_and(|s|s=="m3u8") {
-        let text=tokio::fs::read_to_string(path).await?;
-        let text=crate::hls::signed_playlist(&text,&format!("expires={expires}&sig={sig}"));
-        return Ok(Response::builder().header("Content-Type","application/vnd.apple.mpegurl").header("Cache-Control","private, no-store").header("Content-Length",text.len()).body(if method==Method::HEAD{axum::body::Body::empty()}else{axum::body::Body::from(text)})?);
+    mac.verify_slice(&decoded?)
+        .map_err(|_| anyhow::anyhow!("Invalid HLS signature"))?;
+    let asset = s.hls.asset(id)?;
+    media_file(s, &asset, 0).await?;
+    let path = s.hls.file(id, name)?;
+    if path.extension().is_some_and(|s| s == "m3u8") {
+        let text = tokio::fs::read_to_string(path).await?;
+        let text = crate::hls::signed_playlist(&text, &format!("expires={expires}&sig={sig}"));
+        return Ok(Response::builder()
+            .header("Content-Type", "application/vnd.apple.mpegurl")
+            .header("Cache-Control", "private, no-store")
+            .header("Content-Length", text.len())
+            .body(if method == Method::HEAD {
+                axum::body::Body::empty()
+            } else {
+                axum::body::Body::from(text)
+            })?);
     }
-    file_response(&path,method,headers).await
+    file_response(&path, method, headers).await
 }
 
 // File-system revision validator, not a content checksum. Includes inode and nanosecond
