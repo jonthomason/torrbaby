@@ -5,6 +5,9 @@ struct TorrbabyApp: App {
     @StateObject private var store = Store()
     var body: some Scene {
         WindowGroup {
+            #if os(tvOS)
+            TVRootView().environmentObject(store).tint(Theme.mint).preferredColorScheme(.dark)
+            #else
             RootView()
                 .environmentObject(store)
                 .tint(Theme.mint)
@@ -12,6 +15,7 @@ struct TorrbabyApp: App {
                 #if os(macOS)
                 .frame(minWidth: 900, minHeight: 640)
                 #endif
+            #endif
         }
         #if os(macOS)
         .defaultSize(width: 1180, height: 820)

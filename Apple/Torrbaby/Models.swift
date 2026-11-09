@@ -145,3 +145,28 @@ struct TransferSample: Codable, Identifiable {
     var id: Double { time }
     var date: Date { Date(timeIntervalSince1970: time) }
 }
+
+struct MediaMetadata: Codable, Identifiable {
+    let hash: String
+    let status: String
+    let selected: MetadataCandidate?
+    let candidates: [MetadataCandidate]
+    let error: String?
+    var id: String { hash }
+}
+struct MetadataCandidate: Codable {
+    let provider: String
+    let title: String
+    let year: String
+    let genres: [String]
+    let contentRating: String?
+    let durationMinutes: Double?
+    let summary: String?
+    let thumbnail: String?
+    let sourceUrl: String?
+    let episodes: [MetadataEpisode]
+}
+struct MetadataEpisode: Codable {
+    let title: String?
+    let durationMinutes: Double?
+}

@@ -29,7 +29,7 @@ final class PlaybackModel: ObservableObject {
         let url = playback.url
         let title = playback.name
         let item = AVPlayerItem(url: url)
-        #if os(iOS)
+        #if os(iOS) || os(tvOS)
         let metadata = AVMutableMetadataItem()
         metadata.identifier = .commonIdentifierTitle
         metadata.value = title as NSString
@@ -46,7 +46,7 @@ final class PlaybackModel: ObservableObject {
                 Task { @MainActor [weak self] in self?.error = message }
             }
         }
-        #if os(iOS)
+        #if os(iOS) || os(tvOS)
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         try? AVAudioSession.sharedInstance().setActive(true)
         #endif
@@ -219,7 +219,9 @@ struct PlayerScreen: View {
             }
         }
         .background(.black)
+        #if !os(tvOS)
         .presentationBackground(.black)
+        #endif
         #if os(macOS)
         .frame(minWidth: 480, minHeight: 270)
         .ignoresSafeArea()

@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 import Security
-#if os(iOS)
+#if os(iOS) || os(tvOS)
 import UIKit
 #endif
 
@@ -32,6 +32,7 @@ enum Credentials {
 
 @MainActor
 final class Store: ObservableObject {
+    @Published var metadata: [MediaMetadata] = []
     @Published var transferHistory: [TransferSample] = []
     private var lastHistoryFetch = Date.distantPast
     @Published var clients: [ClientDevice] = []
@@ -53,6 +54,8 @@ final class Store: ObservableObject {
     var clientPlatform: String {
         #if os(macOS)
         return "macOS"
+        #elseif os(tvOS)
+        return "tvOS"
         #else
         return UIDevice.current.userInterfaceIdiom == .pad ? "iPadOS" : "iOS"
         #endif
@@ -186,6 +189,7 @@ final class Store: ObservableObject {
             history = try await request("GET", "/v1/playback")
             if Date().timeIntervalSince(lastHistoryFetch) >= 30 {
                 transferHistory = try await request("GET", "/v1/rates")
+                metadata = try await request("GET", "/v1/metadata")
                 lastHistoryFetch = Date()
             }
             await flushProgress()
@@ -201,7 +205,7 @@ final class Store: ObservableObject {
         busy = true
         Task {
             defer { busy = false }
-            do { try await operation(); await refresh() }
+            do { try await operation(); lastHistoryFetch = .distantPast; await refresh() }
             catch { actionError = error.localizedDescription }
         }
     }

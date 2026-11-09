@@ -29,7 +29,8 @@ class Database:
         CREATE TABLE IF NOT EXISTS playback (media_id TEXT PRIMARY KEY REFERENCES media(id), position REAL NOT NULL DEFAULT 0, duration REAL NOT NULL DEFAULT 0, watched INTEGER NOT NULL DEFAULT 0, last_played REAL NOT NULL DEFAULT 0, client_id TEXT REFERENCES clients(id), active_session TEXT);
         CREATE TABLE IF NOT EXISTS playback_sessions (id TEXT PRIMARY KEY, media_id TEXT NOT NULL REFERENCES media(id), client_id TEXT NOT NULL REFERENCES clients(id), started REAL NOT NULL, sequence INTEGER NOT NULL DEFAULT -1, ended INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS transfer_rates (time INTEGER PRIMARY KEY, download REAL NOT NULL, upload REAL NOT NULL);
-        PRAGMA user_version=2;
+        CREATE TABLE IF NOT EXISTS metadata (hash TEXT PRIMARY KEY, document TEXT NOT NULL);
+        PRAGMA user_version=3;
         ''')
         self.conn.commit()
         self.path.chmod(0o600)
@@ -59,7 +60,7 @@ class Database:
             raise ValueError("client_id must be a UUID") from None
         if not isinstance(name, str) or not name.strip() or len(name) > 80:
             raise ValueError("Client name must contain 1–80 characters")
-        if platform not in ("macOS", "iOS", "iPadOS", "CLI", "other"):
+        if platform not in ("macOS", "iOS", "iPadOS", "tvOS", "CLI", "other"):
             raise ValueError("Unknown client platform")
         now = time.time()
         with self.lock, self.conn:
@@ -143,3 +144,18 @@ class Database:
     def rates(self):
         with self.lock:
             return [dict(r) for r in self.conn.execute("SELECT CAST(time/60 AS INTEGER)*60 AS time, AVG(download) AS download, AVG(upload) AS upload FROM transfer_rates WHERE time>=? GROUP BY CAST(time/60 AS INTEGER) ORDER BY time", (int(time.time()) - 86400,))]
+
+    def metadata(self):
+        with self.lock:
+            return [json.loads(r[0]) for r in self.conn.execute("SELECT document FROM metadata")]
+
+    def save_metadata(self, value):
+        with self.lock, self.conn:
+            old = self.conn.execute("SELECT document FROM metadata WHERE hash=?", (value['hash'],)).fetchone()
+            if old and json.loads(old[0]).get('confirmed') and not value.get('confirmed'):
+                return
+            self.conn.execute("INSERT OR REPLACE INTO metadata VALUES(?,?)", (value['hash'], json.dumps(value, ensure_ascii=False)))
+
+    def refresh_metadata(self, hash_):
+        with self.lock, self.conn:
+            self.conn.execute("DELETE FROM metadata WHERE hash=?", (hash_,))

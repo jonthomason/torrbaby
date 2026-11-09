@@ -1,3 +1,4 @@
+#if !os(tvOS)
 import SwiftUI
 
 struct TorrentDetail: View {
@@ -23,6 +24,7 @@ struct TorrentDetail: View {
                                 Text("\(bytes(t.size)) · \(t.files.count) files").font(.caption).foregroundStyle(Theme.muted)
                             }
                         }
+                        MetadataCard(torrent: t)
                         if t.error != 0 { Label(t.errorString, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange) }
                         Card {
                             VStack(alignment: .leading, spacing: 16) {
@@ -292,3 +294,63 @@ struct TorrentFileRow: View {
         }.padding(16).background(Theme.panel, in: RoundedRectangle(cornerRadius: 13))
     }
 }
+
+struct MetadataCard: View {
+    @EnvironmentObject var store: Store
+    let torrent: Torrent
+    var record: MediaMetadata? { store.metadata.first { $0.hash == torrent.id } }
+    var body: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Library metadata", systemImage: "text.book.closed").font(.headline)
+                if let selected = record?.selected {
+                    MetadataArtwork(hash: torrent.id, thumbnail: selected.thumbnail)
+                    Text(selected.title + (selected.year.isEmpty ? "" : " (" + selected.year + ")")).font(.title3.weight(.semibold))
+                    Text(selected.genres.joined(separator: " · ")).foregroundStyle(Theme.muted)
+                    HStack {
+                        if let rating = selected.contentRating { Text(rating) }
+                        if let minutes = selected.durationMinutes, minutes > 0 { Text("\(Int(minutes)) min") }
+                        if !selected.episodes.isEmpty { Text("\(selected.episodes.count) episode/file records") }
+                    }.font(.caption)
+                    if let summary = selected.summary, !summary.isEmpty { Text(summary).font(.callout).lineLimit(5) }
+                    if let link = selected.sourceUrl, let url = URL(string: link) { Link("Source: " + selected.provider, destination: url).font(.caption) }
+                    else { Text("Source: " + selected.provider).font(.caption).foregroundStyle(Theme.muted) }
+                } else {
+                    Text(record?.status == "review" ? "Choose the right title" : record?.status == "no_match" ? "No confident match yet" : record?.status == "error" ? "Lookup will retry" : "Metadata is being gathered on Diamond")
+                        .foregroundStyle(Theme.muted)
+                    if let record {
+                        ForEach(Array(record.candidates.enumerated()), id: \.offset) { index, candidate in
+                            Button(candidate.title + " (" + candidate.year + ") · " + candidate.provider) {
+                                store.action(torrent, "metadata-select", body: ["candidate": index])
+                            }.buttonStyle(.bordered)
+                        }
+                    }
+                }
+                Button("Look up again") { store.action(torrent, "metadata-refresh") }.font(.caption)
+            }
+        }
+    }
+}
+
+struct MetadataArtwork: View {
+    @EnvironmentObject var store: Store
+    let hash: String
+    let thumbnail: String?
+    @State private var image: Image?
+    struct Payload: Decodable { let data: String? }
+    var body: some View {
+        Group {
+            if let image { image.resizable().scaledToFit().frame(maxHeight: 180).clipShape(RoundedRectangle(cornerRadius: 8)) }
+        }.task(id: thumbnail) {
+            guard thumbnail != nil else { image = nil; return }
+            guard let payload: Payload = try? await store.request("GET", "/v1/torrents/" + hash + "/artwork"),
+                  let encoded = payload.data, let data = Data(base64Encoded: encoded) else { return }
+            #if os(macOS)
+            if let native = NSImage(data: data) { image = Image(nsImage: native) }
+            #else
+            if let native = UIImage(data: data) { image = Image(uiImage: native) }
+            #endif
+        }
+    }
+}
+#endif

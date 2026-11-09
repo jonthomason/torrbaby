@@ -1,3 +1,4 @@
+#if !os(tvOS)
 import SwiftUI
 import Charts
 
@@ -291,7 +292,7 @@ struct TransferHistoryView: View {
                     Text("1h").tag(1)
                     Text("6h").tag(6)
                     Text("24h").tag(24)
-                }.pickerStyle(.segmented).frame(width: 150)
+                }.pickerStyle(.segmented).frame(width: 150, height: 24)
             }.foregroundStyle(Theme.muted)
             Chart(samples) { sample in
                 LineMark(x: .value("Time", sample.date), y: .value("Bytes/sec", sample.download))
@@ -318,3 +319,5 @@ struct TransferHistoryView: View {
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
     }
 }
+
+#endif

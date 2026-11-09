@@ -86,6 +86,8 @@
 			<dict>
 				<key>ASSETCATALOG_COMPILER_APPICON_NAME</key>
 				<string>AppIcon</string>
+				<key>ASSETCATALOG_COMPILER_APPICON_NAME[sdk=appletv*]</key>
+				<string></string>
 				<key>CODE_SIGN_STYLE</key>
 				<string>Automatic</string>
 				<key>COMBINE_HIDPI_IMAGES</key>
@@ -108,6 +110,8 @@
 				<string>0.2.0</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>org.torrbaby.ios</string>
+				<key>PRODUCT_BUNDLE_IDENTIFIER[sdk=appletv*]</key>
+				<string>org.torrbaby.tv</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]</key>
 				<string>org.torrbaby.mac</string>
 				<key>PRODUCT_NAME</key>
@@ -115,7 +119,7 @@
 				<key>SDKROOT</key>
 				<string>auto</string>
 				<key>SUPPORTED_PLATFORMS</key>
-				<string>iphoneos iphonesimulator macosx</string>
+				<string>iphoneos iphonesimulator macosx appletvos appletvsimulator</string>
 				<key>SWIFT_EMIT_LOC_STRINGS</key>
 				<string>YES</string>
 				<key>SWIFT_OPTIMIZATION_LEVEL</key>
@@ -124,6 +128,10 @@
 				<string>5.0</string>
 				<key>TARGETED_DEVICE_FAMILY</key>
 				<string>1,2</string>
+				<key>TARGETED_DEVICE_FAMILY[sdk=appletv*]</key>
+				<string>3</string>
+				<key>TVOS_DEPLOYMENT_TARGET</key>
+				<string>18.0</string>
 			</dict>
 			<key>isa</key>
 			<string>XCBuildConfiguration</string>
@@ -136,6 +144,17 @@
 			<string>91B0C263E7F578CAA54EF22C</string>
 			<key>isa</key>
 			<string>PBXBuildFile</string>
+		</dict>
+		<key>1ECEF93D7B95A72C85B1364D</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>TV.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
 		</dict>
 		<key>3685E330EC5277A9DD5661C6</key>
 		<dict>
@@ -171,6 +190,7 @@
 				<string>D9971AA8CEDEB53072ACC646</string>
 				<string>91B0C263E7F578CAA54EF22C</string>
 				<string>0991948DBEFEC33CC776D59D</string>
+				<string>1ECEF93D7B95A72C85B1364D</string>
 				<string>A9BCA438417D62B8BB39B2EE</string>
 				<string>3685E330EC5277A9DD5661C6</string>
 			</array>
@@ -192,6 +212,13 @@
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
 		</dict>
+		<key>49253D63F8B5038EF11A07DE</key>
+		<dict>
+			<key>fileRef</key>
+			<string>1ECEF93D7B95A72C85B1364D</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+		</dict>
 		<key>4A65F154EF0D30B3C788EBB8</key>
 		<dict>
 			<key>fileRef</key>
@@ -205,6 +232,8 @@
 			<dict>
 				<key>ASSETCATALOG_COMPILER_APPICON_NAME</key>
 				<string>AppIcon</string>
+				<key>ASSETCATALOG_COMPILER_APPICON_NAME[sdk=appletv*]</key>
+				<string></string>
 				<key>CODE_SIGN_STYLE</key>
 				<string>Automatic</string>
 				<key>COMBINE_HIDPI_IMAGES</key>
@@ -227,6 +256,8 @@
 				<string>0.2.0</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>org.torrbaby.ios</string>
+				<key>PRODUCT_BUNDLE_IDENTIFIER[sdk=appletv*]</key>
+				<string>org.torrbaby.tv</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]</key>
 				<string>org.torrbaby.mac</string>
 				<key>PRODUCT_NAME</key>
@@ -234,7 +265,7 @@
 				<key>SDKROOT</key>
 				<string>auto</string>
 				<key>SUPPORTED_PLATFORMS</key>
-				<string>iphoneos iphonesimulator macosx</string>
+				<string>iphoneos iphonesimulator macosx appletvos appletvsimulator</string>
 				<key>SWIFT_ACTIVE_COMPILATION_CONDITIONS</key>
 				<string>DEBUG</string>
 				<key>SWIFT_EMIT_LOC_STRINGS</key>
@@ -245,6 +276,10 @@
 				<string>5.0</string>
 				<key>TARGETED_DEVICE_FAMILY</key>
 				<string>1,2</string>
+				<key>TARGETED_DEVICE_FAMILY[sdk=appletv*]</key>
+				<string>3</string>
+				<key>TVOS_DEPLOYMENT_TARGET</key>
+				<string>18.0</string>
 			</dict>
 			<key>isa</key>
 			<string>XCBuildConfiguration</string>
@@ -391,6 +426,7 @@
 				<string>6EA70B4B366A3E62187E0B8F</string>
 				<string>1E2C8407FF9F846813DB5507</string>
 				<string>5CC0D972A739984FFFBD4091</string>
+				<string>49253D63F8B5038EF11A07DE</string>
 				<string>D7693334FE5864081CBB4379</string>
 			</array>
 			<key>isa</key>

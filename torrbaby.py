@@ -23,6 +23,7 @@ import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from storage import Database
+from metadata import MetadataCollector
 
 VERSION = "0.2.0"
 TV = re.compile(r"(?<![a-z0-9])(?:s\d{1,2}(?:[ ._-]*e\d{1,3})?(?!\d|[a-df-z])|season[ ._-]*\d{1,2}\b|\d{1,2}x\d{2}\b)", re.I)
@@ -214,6 +215,7 @@ class Service:
         self.last_poll = None
         self.last_error = None
         self.started = time.time()
+        self.metadata_collector = MetadataCollector(self)
 
     def save(self):
         self.db.save_state(self.state)
@@ -335,8 +337,12 @@ class Service:
                 torrents = self.rpc.torrents()
                 self.last_poll = time.time()
                 self.last_error = None
+                metadata = {m["hash"]: m for m in self.db.metadata()}
                 for t in torrents:
                     h = t["hash_string"]
+                    record = metadata.get(h)
+                    if record and record.get("selected") and complete(t) and Path(t["download_dir"]) != Path(self.config["source"]):
+                        self.auto_rename(t, record)
                     job = self.state["jobs"].get(h)
                     if job and job["phase"] in ("done", "ignored"):
                         continue
@@ -387,6 +393,74 @@ class Service:
                 "settings": self.settings(), "last_poll": self.last_poll, "last_error": self.last_error,
                 "pending_scans": len(self.state["scans"]), "scan_error": self.state.get("scan_error"),
                 "jobs": self.state["jobs"]}
+
+    def auto_rename(self, torrent, record):
+        if record.get("auto_renamed") or time.time() - record.get("rename_attempted", 0) < 600:
+            return
+        selected = record["selected"]
+        if not (record.get("confirmed") or selected.get("match_confidence") in ("exact_plex_title_year", "exact_title_year", "exact_unique_title")):
+            return
+        videos = [(i, f) for i, f in enumerate(torrent["files"]) if Path(f["name"]).suffix.lower() in VIDEO]
+        kind = classify(torrent)
+        if kind == "movies" and len(videos) != 1:
+            record["rename_note"] = "Collection or multiple video files: review naming manually"
+            self.db.save_metadata(record)
+            return
+        title = re.sub(r'[/\\:\x00]', ' - ', selected['title']).strip(' .')
+        if not title: return
+        base = title + (' (' + str(selected['year']) + ')' if selected.get('year') else '')
+        roots = sorted({PurePosixPath(f['name']).parts[0] for f in torrent['files']})
+        if len(roots) != 1: return
+        record['rename_attempted'] = time.time()
+        self.db.save_metadata(record)
+        try:
+            root = roots[0]
+            is_file = len(torrent['files']) == 1 and root == torrent['files'][0]['name']
+            if kind == 'tv':
+                seasons = sorted({int(m.group(1)) for f in torrent['files'] for m in re.finditer(r'(?i)\bS(\d{1,2})(?:E|\b|[._ -])', f['name'])})
+                if not seasons: return
+                if is_file:
+                    episode = re.search(r'(?i)S(\d{1,2})[ ._-]*E(\d{1,3})(?!\d)', root)
+                    if not episode: return
+                    suffix = ' - S%02dE%02d' % (int(episode.group(1)), int(episode.group(2)))
+                else:
+                    suffix = ' - S%02d' % seasons[0] + ('-S%02d' % seasons[-1] if len(seasons) > 1 else '')
+                new_root = base + suffix + (Path(root).suffix if is_file else '')
+            else:
+                new_root = base + (Path(root).suffix if is_file else '')
+            if new_root != root:
+                self.rename(torrent['hash_string'], root, new_root)
+            # File indexes survive every Transmission rename and remain playback IDs.
+            for index, _ in videos:
+                current = self.torrent(torrent['hash_string'])
+                file = current['files'][index]
+                path = file['name']
+                target = base
+                if kind == 'tv':
+                    match = re.search(r'(?i)S(\d{1,2})[ ._-]*E(\d{1,3})(?!\d)', path)
+                    if not match: continue
+                    season, episode = int(match.group(1)), int(match.group(2))
+                    # Multi-episode releases need a separate naming policy.
+                    if re.search(r'(?i)E\d+[ ._-]*E\d+', path): continue
+                    entry = next((e for e in selected.get('episodes', []) if str(e.get('season')) == str(season) and str(e.get('episode')) == str(episode)), None)
+                    target += ' - S%02dE%02d' % (season, episode)
+                    if entry and entry.get('title'):
+                        target += ' - ' + re.sub(r'[/\\:\x00]', ' - ', entry['title']).strip(' .')
+                old_stem = str(PurePosixPath(path).with_suffix(''))
+                target_name = target + Path(path).suffix
+                if PurePosixPath(path).name != target_name:
+                    self.rename(torrent['hash_string'], path, target_name)
+                    # Keep matching text sidecars discoverable by Plex/native subtitle work.
+                    for sidecar in current['files']:
+                        side = sidecar['name']
+                        if side.startswith(old_stem + '.') and Path(side).suffix.lower() in ('.srt', '.ass', '.ssa', '.vtt'):
+                            self.rename(torrent['hash_string'], side, target + side[len(old_stem):])
+            record.update(auto_renamed=True, rename_error=None)
+            self.event('metadata_rename_complete', hash=torrent['hash_string'], title=selected['title'])
+        except Exception as error:
+            record['rename_error'] = str(error)
+            self.event('metadata_rename_deferred', hash=torrent['hash_string'], error=str(error))
+        self.db.save_metadata(record)
 
     def rename(self, hash_, path, name):
         t = self.torrent(hash_)
@@ -667,6 +741,12 @@ class Handler(BaseHTTPRequestHandler):
                     result = s.update_settings(body)
                 elif method == "GET" and parts == ["v1", "events"]:
                     result = s.state["events"]
+                elif method == "POST" and parts == ["v1", "providers", "tmdb"]:
+                    result = s.metadata_collector.configure_tmdb(body.get("token"))
+                elif method == "GET" and parts == ["v1", "providers"]:
+                    result = {"tmdb_configured": s.metadata_collector.token_path.exists()}
+                elif method == "GET" and parts == ["v1", "metadata"]:
+                    result = s.db.metadata()
                 elif method == "GET" and parts == ["v1", "rates"]:
                     result = s.db.rates()
                 elif method == "GET" and parts == ["v1", "clients"]:
@@ -691,8 +771,23 @@ class Handler(BaseHTTPRequestHandler):
                     s.flush_scans()
                     result = {"pending_scans": len(s.state["scans"]), "error": s.state.get("scan_error")}
                 elif len(parts) in (3, 4) and parts[:2] == ["v1", "torrents"]:
-                    if method == "GET" and len(parts) == 3:
+                    if method == "GET" and len(parts) == 4 and parts[3] == "artwork":
+                        result = s.metadata_collector.artwork(parts[2])
+                    elif method == "GET" and len(parts) == 3:
                         result = s.torrent(parts[2])
+                    elif method == "POST" and len(parts) == 4 and parts[3] == "metadata-refresh":
+                        s.torrent(parts[2])
+                        s.db.refresh_metadata(parts[2])
+                        result = {"accepted": True}
+                    elif method == "POST" and len(parts) == 4 and parts[3] == "metadata-select":
+                        records = [m for m in s.db.metadata() if m["hash"] == parts[2]]
+                        if not records: raise ValueError("No metadata candidates yet")
+                        record = records[0]
+                        index = body.get("candidate")
+                        if type(index) is not int or not 0 <= index < len(record["candidates"]): raise ValueError("Invalid candidate")
+                        record.update(selected=s.metadata_collector.enrich(record["candidates"][index]), status="matched", confirmed=True)
+                        s.db.save_metadata(record)
+                        result = record
                     elif method == "POST" and len(parts) == 4 and parts[3] == "lookup":
                         result = lookup_names(s.torrent(parts[2]))
                     elif method == "POST" and len(parts) == 4 and parts[3] == "play":
@@ -773,6 +868,8 @@ def serve(config_path):
         server.token, server.service = token, service
         worker = threading.Thread(target=service.run, daemon=True)
         worker.start()
+        metadata_worker = threading.Thread(target=service.metadata_collector.run, daemon=True)
+        metadata_worker.start()
         def shutdown(*_):
             service.stop.set()
             service.wake.set()

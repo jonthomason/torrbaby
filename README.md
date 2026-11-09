@@ -314,3 +314,52 @@ No subtitle extraction, translation or appearance controls are implemented yet.
 Bundle IDs are `org.torrbaby.ios` (iPhone and iPad) and `org.torrbaby.mac` (macOS). Both use the same shared Swift sources and display name.
 
 Transfer graphs offer 1h, 6h and 24h ranges, using server-wide Transmission rates. Diamond samples every 30 seconds even when organization is paused and retains 25 hours in SQLite. `GET /v1/rates` returns one-minute averages for the last 24 hours; history begins at deployment and is not reconstructed retroactively.
+
+
+### Metadata on Diamond
+
+The daemon gathers metadata while downloads run and stores candidates and selected
+records in SQLite. It checks existing Plex file matches, TVmaze's keyless show and
+episode API, and Apple's keyless movie search. It does not use Apple's promotional
+artwork as library artwork. Posters from Plex and TVmaze are cached on Diamond.
+
+In Settings, save a TMDB API Read Access Token or API key to enable richer movie/TV
+records, genres, US content ratings, runtime, posters, available logos and episode
+lists. The credential is stored in `tmdb.token` beside the database with mode 0600;
+clients never receive it. TMDB is free for noncommercial use with attribution.
+Metadata, images and their provider terms remain separate from our MIT source code.
+TVmaze attribution: <https://www.tvmaze.com/api> (CC BY-SA).
+TMDB: <https://www.themoviedb.org/>. This product uses the TMDB API but is not
+endorsed or certified by TMDB. Missing fields remain missing; ratings are not
+inferred from a numeric audience score. Episode ordering follows provider numbering.
+
+High-confidence exact title/year matches and explicitly confirmed choices are
+renamed automatically only after completion and movement out of Downloads.
+Transmission handles every root/file/sidecar rename and Plex scans follow. Movie
+collections, shared paths, collisions and unclear episode numbering remain for
+review. Pausing automation also pauses renaming. Metadata never overwrites media.
+Collection decomposition and moving episodes into newly created season folders
+are future work; this version preserves torrent structure and gives episode files
+canonical names when their season/episode markers are unambiguous.
+
+API: `GET /v1/metadata`, `GET /v1/providers`, `POST /v1/providers/tmdb` with `token`,
+`POST /v1/torrents/{hash}/metadata-refresh`, `POST /v1/torrents/{hash}/metadata-select`
+with candidate index, and authenticated `GET /v1/torrents/{hash}/artwork`.
+
+### Apple TV prototype
+
+The shared project also builds for tvOS 18+, with bundle ID `org.torrbaby.tv`.
+Its first screen is a remote-friendly library and file chooser; playback uses
+AVPlayerViewController and the same shared playback history. Enter the server and
+API token in Settings using the Apple TV/iPhone keyboard. It currently uses simple
+placeholder movie cards; polished artwork browsing and TV torrent controls are
+future work.
+
+Build with `DEVELOPMENT_TEAM=YOUR_TEAM scripts/build_apple.sh tvos`. Pair the Apple TV
+in Xcode/Device Hub while it is on the same network: on the TV open Settings →
+Remotes and Devices → Remote App and Devices, then pair using its displayed code.
+Install/run the development build through Xcode or `xcrun devicectl device install
+app --device DEVICE_ID PATH_TO_APP`. No App Store Connect record is needed for
+this direct development route. Safari-style OTA installation links are not the
+Apple TV delivery path. TestFlight is an optional later route and requires an App
+Store Connect record and uploaded build.

@@ -1,3 +1,4 @@
+#if !os(tvOS)
 import SwiftUI
 import UniformTypeIdentifiers
 #if os(macOS)
@@ -88,12 +89,27 @@ struct SettingsView: View {
     @State private var interval = 30.0
     @State private var saved = false
     @State private var magnetStatus: String?
+    @State private var tmdbToken = ""
+    @State private var tmdbSaved = false
     var body: some View {
         Form {
             SwiftUI.Section("Connection") {
                 LabeledContent("Server", value: store.server.isEmpty ? "Not configured" : store.server)
                 if let status = store.status { LabeledContent("Daemon", value: "Torrbaby \(status.version)") }
                 Button("Edit connection") { showConnect = true }
+            }
+            SwiftUI.Section("Metadata") {
+                SecureField("TMDB API key or Read Access Token", text: $tmdbToken)
+                Button(tmdbSaved ? "Saved on Diamond" : "Save TMDB credential on Diamond") {
+                    store.perform {
+                        try await store.send("POST", "/v1/providers/tmdb", body: ["token": tmdbToken])
+                        tmdbToken = ""
+                        tmdbSaved = true
+                    }
+                }.disabled(tmdbToken.isEmpty || store.busy)
+                Text("TVmaze and your Plex library work without a new key. TMDB adds richer movie and TV metadata, artwork and ratings. Credentials stay on your server.").font(.caption).foregroundStyle(.secondary)
+                Link("Get a free TMDB API key", destination: URL(string: "https://www.themoviedb.org/settings/api")!)
+                Text("This product uses the TMDB API but is not endorsed or certified by TMDB.").font(.caption2).foregroundStyle(.secondary)
             }
             SwiftUI.Section("Devices") {
                 ForEach(store.clients) { client in
@@ -267,3 +283,5 @@ struct DeviceNameRow: View {
         .onChange(of: client.name) { _, value in name = value }
     }
 }
+
+#endif
