@@ -13,27 +13,13 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
         var appeared: (() -> Void)?
         override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); appeared?() }
     }
-    final class PlayerController: AVPlayerViewController {
+    final class PlayerController: KeyboardPlayerController {
         var disappeared: (() -> Void)?
-        var close: (() -> Void)?
         override func viewDidDisappear(_ animated: Bool) {
             super.viewDidDisappear(animated)
             disappeared?()
         }
-        override var canBecomeFirstResponder: Bool { true }
-        override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); becomeFirstResponder() }
-        override var keyCommands: [UIKeyCommand]? {
-            let keys = [
-                UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(closePlayer)),
-                UIKeyCommand(input: UIKeyCommand.inputLeftArrow, modifierFlags: [], action: #selector(skipBack)),
-                UIKeyCommand(input: UIKeyCommand.inputRightArrow, modifierFlags: [], action: #selector(skipForward))
-            ]
-            keys.forEach { $0.wantsPriorityOverSystemBehavior = true }
-            return keys
-        }
-        @objc private func closePlayer() { close?() }
-        @objc private func skipBack() { if let player { skip(player, seconds: -15) } }
-        @objc private func skipForward() { if let player { skip(player, seconds: 15) } }
+
     }
     @MainActor
     final class Coordinator: NSObject, AVPlayerViewControllerDelegate {

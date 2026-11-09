@@ -594,3 +594,22 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
 
 - Queued subtitle jobs and embedded track inspection now implemented/documented in helpers/README.md. cargo build --locked passed; temporary subtitle-jobs smoke passed including embedded discovery, authorization, deduplication, VTT timing, restart reuse, revision invalidation. Not deployed to Diamond; player subtitle selection still pending.
 - Device Hub troubleshooting: user was on simulated TV home screen, Capture Keyboard off. Opened Torrbaby using Right then Select on bottom remote; app loaded live library. Enabled toolbar Capture Keyboard; verified Down, Return (open detail), Escape (Back). Hold Escape releases keyboard capture per visible Device Hub hint. Left running on library with capture enabled. TV home icon remains placeholder and needs proper tvOS assets.
+
+## Next: mobile hardware-keyboard audit (user priority)
+
+User reports iPad left/right correctly skip 15 seconds but Space does not play/pause. Finish current live subtitle verification, then fix Space and audit essential mobile playback/navigation shortcuts with Magic Keyboard as the normal iPad setup. Verify actual key dispatch, avoid intercepting typing in text fields; keep native Apple player controls. Audit Escape/back/dismiss, arrows, Space, Return/select and standard search/settings/navigation where appropriate. No custom player chrome requested.
+
+## Live subtitle deployment (2026-11-09 15:24)
+
+- Deployed signed Rust source through 68b60da to Diamond; backup: ~/Library/Application Support/Torrbaby/backups/rust-20261109-152415 (bundle + SQLite). No schema change. Library remained 59 titles / 186 complete assets at pre-deployment check.
+- Authenticated live inspection correctly reported unsupported VOBSUB and supported ASS/UTF8 tracks. English ASS original prepared successfully from 305265910-byte completed asset: 686 cues, 48111 WebVTT bytes. No dialogue logged.
+- Chinese job still running at this checkpoint; helper PID54153 was confirmed active. Job IDs in ignored local-state/checkpoints/2026-11-09/live-subtitle-job.json, original timing-only baseline in live-subtitle-timings.json. Poll these exact job IDs; do not resubmit/restart merely because translation takes time.
+- Player integration remains pending: native AVPlayer WebVTT selection requires appropriate delivery (e.g. HLS subtitle rendition); producing WebVTT alone is not playback integration.
+- Keyboard audit finding: MobilePlayerPresentation.PlayerController and KeyboardPlayerController each override keyCommands with only left/right/Escape, dropping inherited AVKit commands and omitting Space. Consolidate shared controller, retain non-overridden native commands, add explicit Space play/pause using timeControlStatus (including waiting). Broader iOS app Command shortcuts currently largely macOS-only. Native Return/Tab/focus should remain system-owned.
+
+- Live Chinese subtitle job completed successfully: 51156-byte WebVTT, 686 cue timings exactly equal to original, Chinese text present. This verifies preparation/translation on Diamond, not semantic translation quality or AVPlayer subtitle selection.
+
+## Mobile build 57 / subtitle selector priority
+
+- Build57 iOS release + iOS simulator compiled. Published to Mac Miyu Install; IPA SHA256 e0abe0e2f2197dacb8511616953b071983648a1fe27a6e203c4c2436faac21af. Space play/pause explicitly registered in shared KeyboardPlayerController, using timeControlStatus; mobile wrapper now subclasses it. Native non-overridden keyCommands preserved and discovery labels added. Physical Magic Keyboard verification pending; full audit in docs/hardware-keyboard.md.
+- User cannot see subtitle selector on tvOS. Explained translated WebVTT output is NOT yet native-player delivery. Make native selectable original/translated subtitle renditions next playback priority. Do not claim completed translation jobs imply visible captions. Native player may show original tracks only when detected in delivered media.

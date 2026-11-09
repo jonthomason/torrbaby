@@ -205,18 +205,31 @@ struct NativePlayer: NSViewRepresentable {
     static func dismantleNSView(_ view: AVPlayerView, coordinator: Coordinator) { coordinator.stop(); view.player = nil }
 }
 #else
-final class KeyboardPlayerController: AVPlayerViewController {
+class KeyboardPlayerController: AVPlayerViewController {
     var close: (() -> Void)?
     override var canBecomeFirstResponder: Bool { true }
     override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); becomeFirstResponder() }
     override var keyCommands: [UIKeyCommand]? {
         let commands = [
+            UIKeyCommand(input: " ", modifierFlags: [], action: #selector(togglePlayback)),
             UIKeyCommand(input: UIKeyCommand.inputLeftArrow, modifierFlags: [], action: #selector(back)),
             UIKeyCommand(input: UIKeyCommand.inputRightArrow, modifierFlags: [], action: #selector(forward)),
             UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(exitPlayer))
         ]
-        commands.forEach { $0.wantsPriorityOverSystemBehavior = true }
-        return commands
+        let titles = ["Play/Pause", "Skip back 15 seconds", "Skip forward 15 seconds", "Close player"]
+        for (command, title) in zip(commands, titles) {
+            command.wantsPriorityOverSystemBehavior = true
+            command.discoverabilityTitle = title
+        }
+        // Preserve AVKit's other commands instead of replacing its entire list.
+        let inherited = (super.keyCommands ?? []).filter { original in
+            !commands.contains { $0.input == original.input && $0.modifierFlags == original.modifierFlags }
+        }
+        return commands + inherited
+    }
+    @objc private func togglePlayback() {
+        guard let player else { return }
+        if player.timeControlStatus == .paused { player.play() } else { player.pause() }
     }
     @objc private func back() { if let player { skip(player, seconds: -15) } }
     @objc private func forward() { if let player { skip(player, seconds: 15) } }
