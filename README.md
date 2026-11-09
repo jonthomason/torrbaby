@@ -9,6 +9,28 @@ Transmission source, metadata API keys, or hardcoded server addresses.
 
 ## Active development goal
 
+The server is now being ported to **Rust**, replacing the Python runtime before
+further server feature development. The deployed Python daemon remains in place
+only until the Rust replacement is ready. Preserve the HTTP API, configuration,
+SQLite records, client identities, watch history, and Transmission seeding state.
+The migration must not require clients to reconnect or reset their libraries.
+
+The server remains headless: an authenticated API and CLI, with browsing and
+administration in the native macOS, iOS/iPadOS, and tvOS apps. No web UI is part
+of this goal. A Diamond-hosted web UI is deferred until there is a concrete need.
+
+Port order: configuration and SQLite persistence; Transmission RPC and actions;
+authenticated HTTP and original-file range streaming; shared playback state;
+filesystem catalog, TMDB metadata and artwork; safe naming and automation;
+signed macOS installation and launchd cutover. Validate on a database copy and
+an alternate port before replacing the live service. Back up the database and
+retain the old executable/configuration for rollback. Do not run two organizers
+against the live library at once.
+
+The Rust binary currently provides `check-access --media-root PATH` to test
+directory enumeration and sample file reads. It is not yet the replacement
+daemon. Dependencies and build requirements will be documented as the port lands.
+
 Turn the shared Diamond daemon into a **standalone media server with no Plex
 dependency**. Scan and persist metadata for every movie and TV episode, apply
 correct names for high-confidence matches while preserving Transmission seeding,
