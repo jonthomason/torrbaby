@@ -71,3 +71,29 @@ names are excluded. Language tags are filename hints, not content detection;
 `zh` does not imply Simplified Chinese. These routes currently serve original
 language only; translation jobs/cache and signed native-player delivery remain
 separate pending work. Directory scanning and parsing run off the async executor.
+
+## Embedded Matroska text tracks (development CLI)
+
+`matroska-subtitles --input movie.mkv` lists subtitle track numbers, codec,
+language, forced/SDH flags, and whether this extractor supports them.
+`matroska-subtitles --input movie.mkv --track NUMBER` emits normalized WebVTT.
+
+Uses `matroska-demuxer` 0.8.1 (Zlib OR MIT OR Apache-2.0, no additional dependency
+crates); Torrbaby can remain MIT licensed. Build-time notices include its license
+files. The [Matroska codec mapping](https://www.matroska.org/technical/codec_specs.html)
+defines subtitle block payloads and ASS/SSA event fields.
+
+Supported now: S_TEXT/UTF8, S_TEXT/ASS, S_TEXT/SSA without content encodings.
+ASS/SSA drawing commands and override styling are removed; timing and dialogue
+remain. Bitmap tracks are listed but never OCR'd. WebVTT-in-Matroska is identified
+as text but not yet extracted. MP4 embedded subtitles remain separate work.
+Explicit cue duration is required; the extractor does not guess missing timing.
+Timestamp scale and codec delay are applied before emitting millisecond timings.
+
+This is a read-only development CLI, not yet called by the HTTP server. Extraction
+currently scans all frames (including audio/video), with a 180-second loop deadline,
+5 million frames, 100,000 cues and 8 MiB normalized text limits. The third-party
+parser can allocate frame/metadata buffers before those checks; these are not a
+complete memory/CPU sandbox. Automatic library jobs need subprocess resource
+limits, cancellation, revision-aware caching and concurrency limits before wiring
+this into the daemon. Player/HLS subtitle selection is still pending.

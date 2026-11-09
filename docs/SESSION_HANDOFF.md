@@ -505,3 +505,30 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
 - Main fast-forwarded to the reviewed feature branch. Earlier WIP warnings remain
   historical; this is now an early released Downloads feature with limitations
   listed in docs/release-notes.md. Full persistent goal is NOT complete.
+
+## Follow-up: embedded Matroska text extraction on codex/subtitles
+
+- Current branch `codex/subtitles`, based on main release54. Added pinned
+  matroska-demuxer0.8.1 with Zlib OR MIT OR Apache2 license; no transitive crates.
+  Existing notice generator includes its license texts successfully.
+- New CLI `matroska-subtitles --input FILE` lists tracks; adding `--track NUMBER`
+  extracts UTF8/ASS/SSA text as WebVTT. Applies timestamp scale and codec delay;
+  retains overlaps; requires explicit durations. ASS/SSA styling/vector drawings
+  discarded; bitmap tracks unsupported, no OCR. MP4 extraction pending.
+- Synthetic EBML fixture passed non-default timestamp scaling, overlap, text
+  normalization, ASS dialogue/comma/line-break handling and vector removal,
+  bitmap rejection and missing-duration rejection. Saved scratch script:
+  local-state/checkpoints/2026-11-09/torrbaby-matroska-smoke.py.
+- Actual Diamond catalog counted62 completedMKV and118MP4. First six smallest MKVs
+  had VobSub image subtitles; seventh had ASS. The signed inspection bundle in
+  /tmp successfully extracted686 cues /48111UTF8 bytes from the305265910-byte MKV.
+  No media files changed; actual dialogue was not printed to transcript or saved.
+- Read-only inspection used a separately staged signed app under
+  /tmp/torrbaby-subtitle-inspect.* on Diamond. Production server was NOT replaced.
+  Script saved as local-state/checkpoints/2026-11-09/inspect-matroska-diamond.sh.
+- Rust debug/release signed bundle builds passed. Automatic HTTP jobs are NOT
+  wired: third-party frame allocations need subprocess resource limits, caching,
+  cancellation and concurrency control. See helpers/README.md. Current local
+  server bundle now includes unreleased Matroska code; don't deploy accidentally.
+- Installed Mac54/OTA54 and production schema7 APIs unchanged. Persistent full
+  objective remains active; native translated captions are not implemented yet.

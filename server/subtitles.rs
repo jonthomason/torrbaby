@@ -116,6 +116,22 @@ pub struct TimedCue {
     pub text: String,
 }
 
+pub fn plain_text(raw: &str) -> String {
+    static FORMATTING: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)</?(?:i|b|u|font)(?:\s[^>]*)?>").unwrap()
+    });
+    FORMATTING
+        .replace_all(raw, "")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&nbsp;", " ")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+}
+
 pub fn parse_srt(input: &str) -> Result<Vec<TimedCue>> {
     ensure!(
         input.len() <= 8_388_608 && !input.contains('\0'),
@@ -125,7 +141,6 @@ pub fn parse_srt(input: &str) -> Result<Vec<TimedCue>> {
         .trim_start_matches('\u{feff}')
         .replace("\r\n", "\n")
         .replace('\r', "\n");
-    let formatting = regex::Regex::new(r"(?i)</?(?:i|b|u|font)(?:\s[^>]*)?>").unwrap();
     let mut cues = Vec::new();
     let mut block = Vec::new();
     for line in normalized.lines().chain(std::iter::once("")) {
@@ -162,14 +177,7 @@ pub fn parse_srt(input: &str) -> Result<Vec<TimedCue>> {
         ensure!(raw.len() <= 16_384, "Subtitle cue too large");
         // Flatten common formatting before translation. Unknown markup remains
         // literal text and is escaped when writing WebVTT, never executed as markup.
-        let text = formatting
-            .replace_all(&raw, "")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&nbsp;", " ")
-            .replace("&quot;", "\"")
-            .replace("&apos;", "'")
-            .replace("&amp;", "&");
+        let text = plain_text(&raw);
         ensure!(!text.trim().is_empty(), "Empty subtitle text");
         cues.push(TimedCue {
             start_ms,

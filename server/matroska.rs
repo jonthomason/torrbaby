@@ -1,0 +1,148 @@
+//! Read-only Matroska subtitle inspection/extraction. No codecs or OCR required.
+use crate::subtitles::TimedCue;
+use anyhow::{Context, Result, ensure};
+use matroska_demuxer::{Frame, MatroskaFile, TrackType};
+use serde_json::{Value, json};
+use std::{
+    fs::File,
+    io::BufReader,
+    path::Path,
+    time::{Duration, Instant},
+};
+
+fn open(path: &Path) -> Result<MatroskaFile<BufReader<File>>> {
+    let file = File::open(path)?;
+    ensure!(file.metadata()?.is_file(), "Expected a regular media file");
+    MatroskaFile::open(BufReader::new(file)).context("Read Matroska container")
+}
+
+pub fn tracks(path: &Path) -> Result<Value> {
+    let file = open(path)?;
+    let tracks: Vec<_> = file
+        .tracks()
+        .iter()
+        .filter(|t| t.track_type() == TrackType::Subtitle)
+        .map(|t| {
+            json!({"track":t.track_number().get(),"codec":t.codec_id(),
+            "name":t.name(),"language":t.language_bcp47().or(t.language()),
+            "forced":t.flag_forced(),"hearing_impaired":t.flag_hearing_impaired(),
+            "text_extractable":(["S_TEXT/UTF8","S_TEXT/ASS","S_TEXT/SSA","S_TEXT/WEBVTT"].contains(&t.codec_id())),
+            "extraction_supported":(["S_TEXT/UTF8","S_TEXT/ASS","S_TEXT/SSA"].contains(&t.codec_id())) && t.content_encodings().is_none(),
+            "encoded":t.content_encodings().is_some()})
+        })
+        .collect();
+    Ok(json!({"container":"matroska","tracks":tracks}))
+}
+
+pub fn extract(path: &Path, track: u64) -> Result<Vec<TimedCue>> {
+    let started = Instant::now();
+    let mut file = open(path)?;
+    let metadata = file
+        .tracks()
+        .iter()
+        .find(|t| t.track_number().get() == track)
+        .context("Subtitle track not found")?;
+    ensure!(
+        metadata.track_type() == TrackType::Subtitle
+            && ["S_TEXT/UTF8", "S_TEXT/ASS", "S_TEXT/SSA"].contains(&metadata.codec_id()),
+        "This extractor supports Matroska UTF-8, ASS and SSA text subtitles"
+    );
+    ensure!(
+        metadata.content_encodings().is_none(),
+        "Encoded subtitle tracks are not supported"
+    );
+    let styled = metadata.codec_id() != "S_TEXT/UTF8";
+    let delay = metadata.codec_delay().unwrap_or(0);
+    let scale = file.info().timestamp_scale().get();
+    let mut frame = Frame::default();
+    let mut cues = Vec::new();
+    let mut frames = 0usize;
+    let mut text_bytes = 0usize;
+    while file.next_frame(&mut frame)? {
+        frames += 1;
+        ensure!(
+            frames <= 5_000_000 && started.elapsed() < Duration::from_secs(180),
+            "Subtitle extraction scan limit exceeded"
+        );
+        if frame.track != track {
+            continue;
+        }
+        ensure!(frame.data.len() <= 16_384, "Subtitle cue too large");
+        let text = std::str::from_utf8(&frame.data).context("Invalid UTF-8 subtitle text")?;
+        if text.trim().is_empty() {
+            continue;
+        }
+        ensure!(!text.contains('\0'), "Invalid subtitle text");
+        let text = if styled {
+            ass_text(text)?
+        } else {
+            crate::subtitles::plain_text(text)
+        };
+        if text.trim().is_empty() {
+            continue;
+        }
+        let duration = frame
+            .duration
+            .context("Subtitle cue has no explicit duration")?;
+        let start_ns = frame
+            .timestamp
+            .checked_mul(scale)
+            .context("Subtitle timestamp overflow")?;
+        let end_ns = frame
+            .timestamp
+            .checked_add(duration)
+            .and_then(|t| t.checked_mul(scale))
+            .context("Subtitle timestamp overflow")?;
+        let start_ms = start_ns.saturating_sub(delay) / 1_000_000;
+        let end_ms = end_ns.saturating_sub(delay) / 1_000_000;
+        ensure!(end_ms > start_ms, "Invalid subtitle interval");
+        text_bytes += text.len();
+        ensure!(
+            cues.len() < 100_000 && text_bytes <= 8_388_608,
+            "Subtitle track too large"
+        );
+        cues.push(TimedCue {
+            start_ms,
+            end_ms,
+            text,
+        });
+    }
+    ensure!(!cues.is_empty(), "Subtitle track has no text cues");
+    cues.sort_by_key(|cue| cue.start_ms);
+    Ok(cues)
+}
+
+// Matroska stores ASS/SSA event fields as ReadOrder, Layer, Style, Name,
+// MarginL, MarginR, MarginV, Effect, Text. Keep dialogue, not vector drawings.
+fn ass_text(packet: &str) -> Result<String> {
+    use std::sync::LazyLock;
+    static OVERRIDE: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"\{[^}]*\}").unwrap());
+    static DRAWING: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"\\p(\d+)").unwrap());
+    let text = packet
+        .splitn(9, ',')
+        .nth(8)
+        .context("Invalid ASS subtitle event")?;
+    let mut result = String::new();
+    let mut drawing = false;
+    let mut offset = 0;
+    for tag in OVERRIDE.find_iter(text) {
+        if !drawing {
+            result.push_str(&text[offset..tag.start()]);
+        }
+        for mode in DRAWING.captures_iter(tag.as_str()) {
+            drawing = &mode[1] != "0";
+        }
+        offset = tag.end();
+    }
+    if !drawing {
+        result.push_str(&text[offset..]);
+    }
+    Ok(crate::subtitles::plain_text(
+        &result
+            .replace("\\N", "\n")
+            .replace("\\n", "\n")
+            .replace("\\h", " "),
+    ))
+}

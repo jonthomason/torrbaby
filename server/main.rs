@@ -2,6 +2,7 @@
 mod api;
 mod catalog;
 mod config;
+mod matroska;
 mod metadata;
 mod offline;
 mod organizer;
@@ -27,6 +28,13 @@ struct Arguments {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// List embedded Matroska subtitle tracks, or extract one as WebVTT.
+    MatroskaSubtitles {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        track: Option<u64>,
+    },
     /// Convert UTF-8 SRT subtitles to WebVTT, optionally translating their text.
     PrepareSubtitles {
         #[arg(long)]
@@ -114,6 +122,13 @@ fn check_folder(path: &Path) -> io::Result<(usize, bool)> {
 #[tokio::main]
 async fn main() -> Result<()> {
     match Arguments::parse().command {
+        Command::MatroskaSubtitles { input, track } => {
+            if let Some(track) = track {
+                print!("{}", subtitles::webvtt(&matroska::extract(&input, track)?));
+            } else {
+                println!("{}", serde_json::to_string(&matroska::tracks(&input)?)?);
+            }
+        }
         Command::PrepareSubtitles {
             input,
             source,
