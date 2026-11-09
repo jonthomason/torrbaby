@@ -40,7 +40,7 @@ impl Database {
             .collect();
         let mut titles = BTreeMap::<String, Value>::new();
         for asset in self.documents("assets")? {
-            if asset["available"] != true {
+            if asset["available"] != true || asset["role"] == "extra" {
                 continue;
             }
             let id = asset["id"].as_str().context("Invalid asset ID")?;
@@ -102,6 +102,10 @@ impl Database {
         }
         let mut titles: Vec<_> = titles.into_values().collect();
         titles.sort_by_key(|v| v["title"].as_str().unwrap_or("").to_lowercase());
-        Ok(json!({"titles":titles,"last_scan":null,"scanning":false,"error":null}))
+        let state = self.state()?;
+        let scan = &state["library_scan"];
+        Ok(
+            json!({"titles":titles,"last_scan":scan["last_scan"],"scanning":scan["scanning"].as_bool().unwrap_or(false),"error":scan["error"]}),
+        )
     }
 }

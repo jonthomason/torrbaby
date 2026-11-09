@@ -2,6 +2,8 @@
 mod api;
 mod catalog;
 mod config;
+mod metadata;
+mod scanner;
 mod storage;
 mod telemetry;
 mod transmission;

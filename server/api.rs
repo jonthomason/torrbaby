@@ -28,6 +28,9 @@ pub struct Service {
     torrents: Mutex<Option<(Instant, Vec<Value>)>>,
     data_dir: PathBuf,
     http: reqwest::Client,
+    scan_lock: tokio::sync::Mutex<()>,
+    metadata: crate::metadata::Metadata,
+    metadata_lock: tokio::sync::Mutex<()>,
 }
 
 // Keep unimplemented routes explicit during the port; never silently report success.
@@ -56,8 +59,21 @@ pub async fn serve(config_path: PathBuf, database: PathBuf, listen: String) -> R
             .timeout(std::time::Duration::from_secs(20))
             .redirect(reqwest::redirect::Policy::none())
             .build()?,
+        scan_lock: tokio::sync::Mutex::new(()),
+        metadata: crate::metadata::Metadata::new(
+            database
+                .parent()
+                .context("Database needs a parent directory")?,
+        )?,
+        metadata_lock: tokio::sync::Mutex::new(()),
     });
     let sampling_service = service.clone();
+    let cached_entities = service
+        .db
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Database lock failed"))?
+        .documents("entities")?;
+    service.metadata.seed_cache(cached_entities).await;
     let sampler = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -173,7 +189,54 @@ fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
         .with_context(|| format!("{key} must be text"))
 }
 
-async fn handle(s: &Service, method: &Method, path: &str, body: Value) -> Result<Value> {
+async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> Result<Value> {
+    if method == Method::GET && path == "/v1/providers" {
+        return Ok(json!({"tmdb_configured":s.metadata.configured()}));
+    }
+    if method == Method::POST && path == "/v1/library/search" {
+        return s.metadata.search(text(&body, "query")?).await;
+    }
+    if method == Method::POST && path == "/v1/providers/tmdb" {
+        s.metadata.configure(text(&body, "token")?).await?;
+        return Ok(json!({"configured":true}));
+    }
+    if method == Method::POST && path == "/v1/library/metadata-refresh" {
+        let service = s.clone();
+        tokio::spawn(async move {
+            if let Err(error) = collect_metadata(&service).await {
+                eprintln!("Metadata collection: {error}");
+            }
+        });
+        return Ok(json!({"accepted":true}));
+    }
+    if method == Method::POST {
+        if let Some(id) = path
+            .strip_prefix("/v1/library/assets/")
+            .and_then(|p| p.strip_suffix("/match"))
+        {
+            let asset =
+                s.db.lock()
+                    .map_err(|_| anyhow::anyhow!("Database lock failed"))?
+                    .asset(id)?;
+            let index = body["candidate"].as_u64().context("Invalid candidate")?;
+            let candidate = asset["candidates"]
+                .as_array()
+                .and_then(|a| a.get(index as usize))
+                .context("Invalid candidate")?;
+            let entity = s.metadata.enrich(candidate).await?;
+            save_match(s, id, entity, true)?;
+            return Ok(json!({"accepted":true}));
+        }
+    }
+    if method == Method::POST && path == "/v1/library/scan" {
+        let service = s.clone();
+        tokio::spawn(async move {
+            if let Err(error) = scan_library(&service).await {
+                eprintln!("Library scan: {error}");
+            }
+        });
+        return Ok(json!({"accepted":true}));
+    }
     if method == Method::GET {
         if let Some(route) = path.strip_prefix("/v1/library/artwork/") {
             let (id, variant) = route.rsplit_once('/').context("Missing artwork variant")?;
@@ -254,6 +317,7 @@ async fn handle(s: &Service, method: &Method, path: &str, body: Value) -> Result
     }
     match (method.as_str(),path) {
         ("GET","/v1/library") => db.catalog(),
+        ("GET","/v1/library/matches") => Ok(json!(db.documents("assets")?.into_iter().filter(|a|a["available"]==true && a["status"]!="matched" && a["role"]!="extra").collect::<Vec<_>>())),
         ("GET","/v1/status") => {
             let state = db.state()?;
             Ok(json!({"version":env!("CARGO_PKG_VERSION"),"uptime_seconds":s.started.elapsed().as_secs(),
@@ -659,4 +723,192 @@ async fn artwork(s: &Service, id: &str, variant: &str) -> Result<Value> {
         bail!("Artwork too large");
     }
     Ok(json!({"data":base64::engine::general_purpose::STANDARD.encode(bytes)}))
+}
+
+async fn scan_library(s: &Service) -> Result<()> {
+    let Ok(_guard) = s.scan_lock.try_lock() else {
+        return Ok(());
+    };
+    let old = {
+        let mut db =
+            s.db.lock()
+                .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
+        let mut state = db.state()?;
+        state["library_scan"] =
+            json!({"scanning":true,"last_scan":state["library_scan"]["last_scan"],"error":null});
+        db.save_state(&state)?;
+        db.documents("assets")?
+    };
+    let torrents = match s
+        .rpc
+        .call("torrent_get", json!({"fields":crate::transmission::FIELDS}))
+        .await
+    {
+        Ok(value) => value["torrents"].as_array().cloned().unwrap_or_default(),
+        Err(_) => Vec::new(), // Filesystem discovery still works when Transmission is unavailable.
+    };
+    let config = s.config.clone();
+    let result =
+        tokio::task::spawn_blocking(move || crate::scanner::inventory(&config, old, torrents))
+            .await;
+    let mut db =
+        s.db.lock()
+            .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
+    let mut state = db.state()?;
+    match result {
+        Ok(inventory) => {
+            let tx = db.connection.transaction()?;
+            for mut asset in inventory.assets {
+                use rusqlite::OptionalExtension;
+                let id = asset["id"].as_str().context("Invalid asset ID")?.to_owned();
+                let current: Option<String> = tx
+                    .query_row(
+                        "SELECT document FROM library_assets WHERE id=?",
+                        [&id],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                if let Some(current) = current {
+                    let current: Value = serde_json::from_str(&current)?;
+                    for key in [
+                        "entity_id",
+                        "status",
+                        "candidates",
+                        "confirmed",
+                        "matched_at",
+                        "error",
+                    ] {
+                        if let Some(value) = current.get(key) {
+                            asset[key] = value.clone();
+                        }
+                    }
+                }
+                tx.execute(
+                    "INSERT OR REPLACE INTO library_assets VALUES(?,?)",
+                    rusqlite::params![id, asset.to_string()],
+                )?;
+            }
+            tx.commit()?;
+            state["library_scan"] = json!({"scanning":false,"last_scan":now(),"error":if inventory.errors.is_empty(){None}else{Some(inventory.errors.join("\n"))}});
+        }
+        Err(error) => {
+            state["library_scan"] = json!({"scanning":false,"last_scan":state["library_scan"]["last_scan"],"error":error.to_string()})
+        }
+    }
+    db.save_state(&state)?;
+    Ok(())
+}
+
+fn save_match(s: &Service, id: &str, entity: Value, confirmed: bool) -> Result<()> {
+    let mut db =
+        s.db.lock()
+            .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
+    let mut asset = db.asset(id)?;
+    if asset["confirmed"] == true && !confirmed {
+        return Ok(());
+    }
+    let entity_id = entity["id"].as_str().context("Invalid metadata identity")?;
+    asset["entity_id"] = json!(entity_id);
+    asset["matched_at"] = json!(now());
+    asset["status"] = json!("matched");
+    asset["error"] = Value::Null;
+    if confirmed {
+        asset["confirmed"] = json!(true);
+    }
+    let tx = db.connection.transaction()?;
+    tx.execute(
+        "INSERT OR REPLACE INTO library_entities VALUES(?,?)",
+        rusqlite::params![entity_id, entity.to_string()],
+    )?;
+    tx.execute(
+        "INSERT OR REPLACE INTO library_assets VALUES(?,?)",
+        rusqlite::params![id, asset.to_string()],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+async fn collect_metadata(s: &Service) -> Result<()> {
+    if !s.metadata.configured() {
+        return Ok(());
+    }
+    let Ok(_guard) = s.metadata_lock.try_lock() else {
+        return Ok(());
+    };
+    let assets =
+        s.db.lock()
+            .map_err(|_| anyhow::anyhow!("Database lock failed"))?
+            .documents("assets")?;
+    for asset in assets {
+        if asset["available"] != true || asset["role"] == "extra" || asset["confirmed"] == true {
+            continue;
+        }
+        let age = now() - asset["matched_at"].as_f64().unwrap_or(0.0);
+        if age
+            < if asset["entity_id"].is_string() {
+                86400.0
+            } else {
+                900.0
+            }
+        {
+            continue;
+        }
+        let id = text(&asset, "id")?;
+        let path = std::path::Path::new(text(&asset, "path")?);
+        let mut name = asset["series_name"]
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                path.file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            });
+        if let Some(season) = asset["season"].as_u64() {
+            if !crate::scanner::EPISODE.is_match(&name) {
+                name += &format!(
+                    " S{season:02}E{:02}",
+                    asset["episode"].as_u64().unwrap_or(0)
+                );
+            }
+        }
+        let result = s.metadata.search(&name).await;
+        match result {
+            Ok(result) => {
+                if result["selected"].is_object() {
+                    save_match(s, id, result["selected"].clone(), false)?;
+                } else {
+                    let db =
+                        s.db.lock()
+                            .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
+                    let mut current = db.asset(id)?;
+                    if current["confirmed"] != true {
+                        current["status"] = result["status"].clone();
+                        current["candidates"] = result["candidates"].clone();
+                        current["matched_at"] = json!(now());
+                        db.connection.execute(
+                            "UPDATE library_assets SET document=? WHERE id=?",
+                            rusqlite::params![current.to_string(), id],
+                        )?;
+                    }
+                }
+            }
+            Err(error) => {
+                let db =
+                    s.db.lock()
+                        .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
+                let mut current = db.asset(id)?;
+                if current["confirmed"] != true {
+                    current["error"] = json!(error.to_string());
+                    current["matched_at"] = json!(now());
+                    db.connection.execute(
+                        "UPDATE library_assets SET document=? WHERE id=?",
+                        rusqlite::params![current.to_string(), id],
+                    )?;
+                }
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    Ok(())
 }
