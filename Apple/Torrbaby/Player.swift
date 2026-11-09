@@ -15,7 +15,19 @@ final class PlaybackModel: ObservableObject {
     let player: AVPlayer
     @Published var error: String?
     private var observation: NSKeyValueObservation?
-    init(url: URL, title: String) {
+    private var timeObserver: Any?
+    private var rateObservation: NSKeyValueObservation?
+    private var sequence = 0
+    private var starting = false
+    private var resumed = false
+    private var finished = false
+    private let playback: Playback
+    private let store: Store
+    init(playback: Playback, store: Store) {
+        self.playback = playback
+        self.store = store
+        let url = playback.url
+        let title = playback.name
         let item = AVPlayerItem(url: url)
         #if os(iOS)
         let metadata = AVMutableMetadataItem()
@@ -26,6 +38,9 @@ final class PlaybackModel: ObservableObject {
         #endif
         player = AVPlayer(playerItem: item)
         observation = item.observe(\.status, options: [.new, .initial]) { [weak self] item, _ in
+            if item.status == .readyToPlay {
+                Task { @MainActor [weak self] in self?.start() }
+            }
             if item.status == .failed {
                 let message = item.error?.localizedDescription ?? "Apple's player cannot open this file."
                 Task { @MainActor [weak self] in self?.error = message }
@@ -35,7 +50,41 @@ final class PlaybackModel: ObservableObject {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         try? AVAudioSession.sharedInstance().setActive(true)
         #endif
-        player.play()
+        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 5, preferredTimescale: 600), queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.report() }
+        }
+        rateObservation = player.observe(\.rate, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in self?.report() }
+        }
+    }
+    private func start() {
+        guard !starting, !finished else { return }
+        starting = true
+        if playback.resumePosition > 0 {
+            player.seek(to: CMTime(seconds: playback.resumePosition, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, !self.finished else { return }
+                    self.resumed = true
+                    self.player.play()
+                }
+            }
+        } else { resumed = true; player.play() }
+    }
+    func report(ended: Bool = false) {
+        guard resumed, !finished, let session = playback.sessionId else { return }
+        let duration = player.currentItem?.duration.seconds ?? 0
+        let position = player.currentTime().seconds
+        guard duration.isFinite, duration > 0, position.isFinite else { return }
+        sequence += 1
+        store.reportProgress(sessionId: session, sequence: sequence, position: position, duration: duration, ended: ended)
+    }
+    func stop() {
+        player.pause()
+        report(ended: true)
+        finished = true
+        if let timeObserver { player.removeTimeObserver(timeObserver); self.timeObserver = nil }
+        rateObservation = nil
+        observation = nil
     }
 }
 
@@ -105,9 +154,10 @@ struct PlayerScreen: View {
     let playback: Playback
     @StateObject private var model: PlaybackModel
     @Environment(\.dismiss) private var dismiss
-    init(playback: Playback) {
+    @Environment(\.scenePhase) private var scenePhase
+    init(playback: Playback, store: Store) {
         self.playback = playback
-        _model = StateObject(wrappedValue: PlaybackModel(url: playback.url, title: playback.name))
+        _model = StateObject(wrappedValue: PlaybackModel(playback: playback, store: store))
     }
     var body: some View {
         Group {
@@ -131,6 +181,7 @@ struct PlayerScreen: View {
         #else
         .ignoresSafeArea()
         #endif
-        .onDisappear { model.player.pause() }
+        .onChange(of: scenePhase) { _, _ in model.report() }
+        .onDisappear { model.stop() }
     }
 }

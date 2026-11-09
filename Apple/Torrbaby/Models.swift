@@ -109,13 +109,28 @@ struct NameCandidate: Codable, Identifiable {
     let path: String?
     var id: String { (sourceUrl ?? title) + year }
 }
+struct ClientDevice: Codable, Identifiable {
+    let id: String
+    let name: String
+    let platform: String
+}
+struct PlaybackHistory: Codable, Identifiable {
+    let id: String
+    let position: Double
+    let duration: Double
+    let watched: Bool
+}
 struct PlaybackLink: Codable {
+    let sessionId: String?
+    let resumePosition: Double?
     let path: String
     let name: String
     let expires: Double
 }
 struct Playback: Identifiable {
     let id = UUID()
+    let sessionId: String?
+    let resumePosition: Double
     let url: URL
     let name: String
 }

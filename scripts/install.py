@@ -28,7 +28,7 @@ home = Path.home()
 base = home / "Library/Application Support/Torrbaby"
 app = base / "app"
 app.mkdir(parents=True, exist_ok=True)
-for filename in ("torrbaby.py", "README.md", "LICENSE", "config.example.json"):
+for filename in ("torrbaby.py", "storage.py", "README.md", "LICENSE", "config.example.json"):
     shutil.copy2(str(source / filename), str(app / filename))
 config_path = base / "config.json"
 if not config_path.exists():

@@ -61,20 +61,7 @@ struct TorrentDetail: View {
                                 Text("Original quality · Native player").font(.caption2).foregroundStyle(Theme.muted)
                             }
                             ForEach(Array(t.files.enumerated()), id: \.offset) { index, file in
-                                HStack(spacing: 12) {
-                                    Image(systemName: file.isVideo ? "play.rectangle" : "doc").foregroundStyle(file.isVideo ? Theme.mint : Theme.muted)
-                                    VStack(alignment: .leading, spacing: 5) {
-                                        Text(file.name).font(.callout).textSelection(.enabled)
-                                        Text(bytes(file.length) + (file.complete ? "" : " · Incomplete")).font(.caption).foregroundStyle(Theme.muted)
-                                    }
-                                    Spacer()
-                                    if file.isVideo && file.complete {
-                                        Button { play(t, index) } label: { Image(systemName: "play.fill").padding(5) }
-                                            .buttonStyle(.bordered).help("Play original file")
-                                            .accessibilityLabel("Play \(file.name)")
-                                            .disabled(loadingPlayback || !store.connected)
-                                    }
-                                }.padding(16).background(Theme.panel, in: RoundedRectangle(cornerRadius: 13))
+                                TorrentFileRow(torrent: t, index: index, file: file, loading: loadingPlayback) { play(t, index) }
                             }
                         }
                         Card {
@@ -94,7 +81,7 @@ struct TorrentDetail: View {
             }
         }
         .navigationTitle("Torrent details")
-        .sheet(item: $playback) { PlayerScreen(playback: $0) }
+        .sheet(item: $playback) { PlayerScreen(playback: $0, store: store) }
     }
     @ViewBuilder func transferStats(_ t: Torrent) -> some View {
         Label(rate(t.rateDownload), systemImage: "arrow.down").foregroundStyle(Theme.mint)
@@ -120,8 +107,10 @@ struct TorrentDetail: View {
         Task {
             defer { loadingPlayback = false }
             do {
-                let link: PlaybackLink = try await store.request("POST", "/v1/torrents/\(t.id)/play", body: ["file_index": index])
-                playback = Playback(url: try store.endpoint(link.path), name: t.displayName)
+                await store.flushProgress()
+                try await store.registerClient()
+                let link: PlaybackLink = try await store.request("POST", "/v1/torrents/\(t.id)/play", body: ["file_index": index, "client_id": store.clientId])
+                playback = Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0, url: try store.endpoint(link.path), name: t.displayName)
             } catch { store.actionError = error.localizedDescription }
         }
     }
@@ -238,5 +227,52 @@ struct RenameView: View {
     }
     var paths: [String] {
         Array(Set(torrent.files.map { $0.name.components(separatedBy: "/").first ?? $0.name } + torrent.files.map(\.name))).sorted()
+    }
+}
+
+struct PlaybackStatusButton: View {
+    @EnvironmentObject var store: Store
+    let torrent: Torrent
+    let index: Int
+    var history: PlaybackHistory? {
+        let key = torrent.id + ":" + String(index)
+        return store.history.first { $0.id == key }
+    }
+    var body: some View {
+        Menu {
+            Button(history?.watched == true ? "Mark unwatched" : "Mark watched") {
+                store.action(torrent, "watched", body: ["file_index": index, "watched": history?.watched != true])
+            }
+        } label: {
+            if history?.watched == true { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.mint) }
+            else if let history, history.position > 0 { Text("\(Int(history.position / 60)) min").font(.caption) }
+            else { Image(systemName: "circle") }
+        }.help("Playback history")
+    }
+}
+
+struct TorrentFileRow: View {
+    @EnvironmentObject var store: Store
+    let torrent: Torrent
+    let index: Int
+    let file: TorrentFile
+    let loading: Bool
+    let play: () -> Void
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: file.isVideo ? "play.rectangle" : "doc").foregroundStyle(file.isVideo ? Theme.mint : Theme.muted)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(file.name).font(.callout).textSelection(.enabled)
+                Text(bytes(file.length) + (file.complete ? "" : " · Incomplete")).font(.caption).foregroundStyle(Theme.muted)
+            }
+            Spacer()
+            if file.isVideo && file.complete {
+                PlaybackStatusButton(torrent: torrent, index: index)
+                Button(action: play) { Image(systemName: "play.fill").padding(5) }
+                    .buttonStyle(.bordered).help("Play or resume original file")
+                    .accessibilityLabel("Play \(file.name)")
+                    .disabled(loading || !store.connected)
+            }
+        }.padding(16).background(Theme.panel, in: RoundedRectangle(cornerRadius: 13))
     }
 }

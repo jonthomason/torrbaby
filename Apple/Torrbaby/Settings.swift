@@ -95,6 +95,12 @@ struct SettingsView: View {
                 if let status = store.status { LabeledContent("Daemon", value: "Torrbaby \(status.version)") }
                 Button("Edit connection") { showConnect = true }
             }
+            SwiftUI.Section("Devices") {
+                ForEach(store.clients) { client in
+                    DeviceNameRow(client: client, isCurrent: client.id == store.clientId)
+                }
+                Text("Playback progress is shared across your devices. Each installation has its own stable ID.").font(.caption).foregroundStyle(.secondary)
+            }
             SwiftUI.Section("Automation") {
                 if let status = store.status {
                     Toggle("Organize completed downloads", isOn: Binding(get: { !status.settings.paused }, set: { _ in store.toggleAutomation() })).disabled(store.busy)
@@ -242,5 +248,22 @@ struct AddTorrentView: View {
         #if os(macOS)
         .frame(width: 540, height: 390)
         #endif
+    }
+}
+
+struct DeviceNameRow: View {
+    @EnvironmentObject var store: Store
+    let client: ClientDevice
+    let isCurrent: Bool
+    @State private var name = ""
+    var body: some View {
+        HStack {
+            TextField(client.platform, text: $name)
+            if isCurrent { Text("This device").font(.caption).foregroundStyle(.secondary) }
+            Button("Save") {
+                store.perform { try await store.send("PATCH", "/v1/clients/" + client.id, body: ["name": name]) }
+            }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || name == client.name || store.busy)
+        }.onAppear { name = client.name }
+        .onChange(of: client.name) { _, value in name = value }
     }
 }

@@ -73,6 +73,7 @@ class SorterTests(unittest.TestCase):
         self.s = tb.Service(self.config, self.rpc, self.plex)
 
     def tearDown(self):
+        self.s.db.close()
         self.tmp.cleanup()
 
     def test_classification(self):
@@ -95,6 +96,7 @@ class SorterTests(unittest.TestCase):
         self.assertEqual(self.rpc.calls[0], ("torrent_set_location", {"ids": [HASH], "location": self.config["movies"], "move": True}))
         self.assertFalse(self.plex.calls)
         restarted = tb.Service(self.config, self.rpc, self.plex)
+        self.addCleanup(restarted.db.close)
         restarted.tick()
         self.assertEqual(restarted.state["jobs"][HASH]["phase"], "done")
         self.assertEqual(len(self.plex.calls), 1)
@@ -109,6 +111,7 @@ class SorterTests(unittest.TestCase):
         self.s.tick()
         self.assertEqual(self.s.state["scan_error"], "Plex offline")
         restarted = tb.Service(self.config, self.rpc, self.plex)
+        self.addCleanup(restarted.db.close)
         self.plex.fail = False
         restarted.tick()
         self.assertFalse(restarted.state["scans"])
@@ -146,6 +149,7 @@ class SorterTests(unittest.TestCase):
     def test_pause_and_settings_survive_restart(self):
         self.s.update_settings({"paused": True, "poll_seconds": 5})
         restarted = tb.Service(self.config, self.rpc, self.plex)
+        self.addCleanup(restarted.db.close)
         restarted.tick()
         self.assertFalse(self.rpc.calls)
         self.assertEqual(restarted.settings()["poll_seconds"], 5)
@@ -220,6 +224,20 @@ class SorterTests(unittest.TestCase):
             req = urllib.request.Request(url + "/v1/settings", b'{"paused":true}', headers, method="PATCH")
             with urllib.request.urlopen(req) as r:
                 self.assertTrue(json.load(r)["paused"])
+            def call(method, path, body=None):
+                data = json.dumps(body).encode() if body is not None else None
+                with urllib.request.urlopen(urllib.request.Request(url + path, data, headers, method=method)) as response:
+                    return json.load(response)
+            client = "12345678-1234-1234-1234-123456789abc"
+            call("POST", "/v1/clients", {"client_id": client, "name": "Mac", "platform": "macOS"})
+            call("PATCH", "/v1/clients/" + client, {"name": "Office"})
+            self.assertEqual(call("GET", "/v1/clients")[0]["name"], "Office")
+            link = call("POST", "/v1/torrents/" + HASH + "/play", {"file_index": 0, "client_id": client})
+            self.assertEqual(link["resume_position"], 0)
+            call("POST", "/v1/playback/progress", {"session_id": link["session_id"], "sequence": 0, "position": 20, "duration": 100})
+            self.assertEqual(call("GET", "/v1/playback")[0]["position"], 20)
+            call("POST", "/v1/torrents/" + HASH + "/watched", {"file_index": 0, "watched": True})
+            self.assertTrue(call("GET", "/v1/playback")[0]["watched"])
             req = urllib.request.Request(url + "/v1/status", headers=dict(headers, Origin="https://example.com"))
             with self.assertRaises(urllib.error.HTTPError) as e:
                 urllib.request.urlopen(req)

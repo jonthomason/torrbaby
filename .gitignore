@@ -17,3 +17,7 @@ local-state/
 *.p12
 *.env
 connection*.json
+
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm

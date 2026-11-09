@@ -59,7 +59,7 @@ configuration/state on upgrades, and restarts only Torrbaby's LaunchAgent:
 - `~/Library/Application Support/Torrbaby/app/`: application code
 - `~/Library/Application Support/Torrbaby/config.json`: server configuration
 - `~/Library/Application Support/Torrbaby/api.token`: private bearer token
-- `~/Library/Application Support/Torrbaby/state.json`: settings, jobs and recent events
+- `~/Library/Application Support/Torrbaby/state.sqlite3`: settings, jobs, recent events, devices and playback history. An existing `state.json` is imported once and retained as a migration backup
 - `~/Library/Application Support/Torrbaby/torrbaby.log`: rotating operation log
 - `~/Library/LaunchAgents/org.torrbaby.daemon.plist`: per-user service
 
@@ -71,7 +71,7 @@ Plex are independent services. For Linux or a different supervisor, copy
 python3 torrbaby.py serve --config /path/to/config.json
 ```
 
-Only one process may own a state file. Back up configuration and state when
+Only one process may own a state file. Stop Torrbaby before copying its SQLite database, or use SQLite’s online backup API so WAL transactions are included. Back up configuration and state when
 upgrading. To stop/uninstall the macOS service without deleting media:
 
 ```sh
@@ -233,7 +233,7 @@ and Picture in Picture as supported by the platform/file. Left/Right arrows skip
 first), and iOS sheets can be swiped down. Unsupported formats produce an error.
 AVFoundation chooses the platform decoder; the app does not implement a decoder
 or guarantee hardware decoding for every format. No incomplete-file streaming,
-transcoding, separate subtitle loading or playback-history sync is implemented.
+transcoding or separate subtitle loading is implemented.
 
 ### Signed builds and OTA
 
@@ -267,3 +267,46 @@ For a Mac build, use `bash scripts/build_apple.sh macos` and set
 local ad hoc signing). Notarize externally before broad downloaded distribution.
 Build numbers default to the commit count; override `TORRBABY_BUILD_NUMBER` when
 needed. All generated output is ignored by Git.
+
+
+### Shared playback and devices
+
+Diamond owns the SQLite playback history. Each app installation stores a UUID in
+its local Keychain and registers with a default host/device name. Settings lists
+registered devices and allows renaming any of them. On iOS, the system may supply
+a generic device name; rename it in the app if desired. A shared API token grants
+control of the personal library; device IDs are identifiers, not credentials.
+
+Playback automatically resumes an unfinished file. Apps report every five seconds,
+on pause, on scene changes and on dismissal, retaining unsent reports locally for
+retry. A newly started session supersedes older sessions for the same file;
+sequence numbers reject out-of-order updates. Reaching 95% marks the file watched.
+Watched files start from the beginning. The status menu beside each file can mark
+it watched or unwatched; marking unwatched resets its position. Torrent hash plus
+file index identifies a file across Transmission moves and renames. Removing and
+re-adding a differently packaged torrent does not automatically merge its history.
+
+All controls are available through the same bearer-authenticated API and CLI:
+
+- `GET /v1/clients`; `POST /v1/clients` with `client_id` (UUID), `name`, `platform`.
+- `PATCH /v1/clients/{id}` with `name`.
+- `GET /v1/playback` returns shared positions, watched status and last device.
+- `POST /v1/torrents/{hash}/play` accepts `file_index` and optional registered
+  `client_id`; returns `session_id`, `media_id`, `resume_position` with the stream URL.
+- `POST /v1/playback/progress` with `session_id`, increasing integer `sequence`,
+  `position`, `duration` (seconds), and optional `ended` boolean.
+- `POST /v1/torrents/{hash}/watched` with `file_index` and `watched` boolean.
+
+### Subtitle roadmap
+
+The next subtitle milestone is text-extractable embedded tracks and text sidecar
+files. Diamond will extract, normalize, translate into Chinese or English and cache WebVTT,
+preserving timing and originals. Original and translated tracks should remain
+selectable through Apple’s native player. No OCR, image-based subtitle conversion
+or burned-in subtitle processing is planned. Translation model/provider selection
+and a compatible native subtitle delivery path are still to be implemented.
+
+App-controlled font, size, text opacity and background opacity should use Apple’s
+native renderer. Apple’s `AVPlayerItem.textStyleRules` applies only to WebVTT, so
+these controls cannot restyle every existing embedded subtitle format directly.
+No subtitle extraction, translation or appearance controls are implemented yet.

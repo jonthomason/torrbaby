@@ -22,7 +22,9 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "0.1.0"
+from storage import Database
+
+VERSION = "0.2.0"
 TV = re.compile(r"(?<![a-z0-9])(?:s\d{1,2}(?:[ ._-]*e\d{1,3})?(?!\d|[a-df-z])|season[ ._-]*\d{1,2}\b|\d{1,2}x\d{2}\b)", re.I)
 VIDEO = {".mkv", ".mp4", ".m4v", ".avi", ".mov", ".mpg", ".mpeg", ".ts", ".m2ts", ".wmv", ".webm"}
 FIELDS = ["hash_string", "name", "status", "error", "error_string", "percent_done", "metadata_percent_complete", "left_until_done", "download_dir", "files", "file_stats", "rate_download", "rate_upload", "eta", "upload_ratio", "added_date", "activity_date", "peers_connected", "peers_sending_to_us", "downloaded_ever", "uploaded_ever", "labels", "is_stalled"]
@@ -200,7 +202,8 @@ class Service:
         validate_config(config)
         self.config = config.copy()
         self.path = expanded(config["state_file"])
-        self.state = json.loads(self.path.read_text()) if self.path.exists() else {"jobs": {}, "events": [], "settings": {}, "scans": []}
+        self.db = Database(expanded(config.get("database_file", str(self.path.with_suffix(".sqlite3")))), self.path)
+        self.state = self.db.load_state()
         self.config.update(self.state.get("settings", {}))
         validate_config(self.config)
         self.rpc = rpc or RPC(config)
@@ -213,7 +216,7 @@ class Service:
         self.started = time.time()
 
     def save(self):
-        atomic_json(self.path, self.state)
+        self.db.save_state(self.state)
 
     def event(self, kind, **data):
         item = dict(time=time.time(), kind=kind, **data)
@@ -652,6 +655,16 @@ class Handler(BaseHTTPRequestHandler):
                     result = s.update_settings(body)
                 elif method == "GET" and parts == ["v1", "events"]:
                     result = s.state["events"]
+                elif method == "GET" and parts == ["v1", "clients"]:
+                    result = s.db.clients()
+                elif method == "POST" and parts == ["v1", "clients"]:
+                    result = s.db.register(body.get("client_id"), body.get("name"), body.get("platform"))
+                elif method == "PATCH" and len(parts) == 3 and parts[:2] == ["v1", "clients"]:
+                    result = s.db.rename_client(parts[2], body.get("name"))
+                elif method == "GET" and parts == ["v1", "playback"]:
+                    result = s.db.history()
+                elif method == "POST" and parts == ["v1", "playback", "progress"]:
+                    result = s.db.progress(body.get("session_id"), body.get("sequence"), body.get("position"), body.get("duration"), body.get("ended", False))
                 elif method == "GET" and parts == ["v1", "torrents"]:
                     result = s.rpc.torrents()
                 elif method == "POST" and parts == ["v1", "torrents"]:
@@ -675,6 +688,12 @@ class Handler(BaseHTTPRequestHandler):
                         sig = stream_signature(self.server.token, parts[2], index, expires)
                         result = {"path": "/v1/stream/%s/%s?expires=%s&sig=%s" % (parts[2], index, expires, sig),
                                   "expires": expires, "name": path.name}
+                        if body.get("client_id"):
+                            result.update(s.db.begin(parts[2].lower(), index, path.name, path.stat().st_size, body["client_id"]))
+                    elif method == "POST" and len(parts) == 4 and parts[3] == "watched":
+                        index = body.get("file_index")
+                        path = s.media_file(parts[2], index)
+                        result = s.db.mark(parts[2].lower(), index, path.name, path.stat().st_size, body.get("watched"))
                     elif method == "POST" and len(parts) == 4:
                         result = s.action(parts[2], parts[3], body)
                     else:

@@ -1,6 +1,9 @@
 import Foundation
 import SwiftUI
 import Security
+#if os(iOS)
+import UIKit
+#endif
 
 struct APIError: LocalizedError {
     let message: String
@@ -9,15 +12,15 @@ struct APIError: LocalizedError {
 
 enum Credentials {
     static let service = "org.torrbaby.client"
-    static func read() -> String {
+    static func read(account: String = "api-token") -> String {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                    kSecAttrAccount as String: "api-token", kSecReturnData as String: true]
+                                    kSecAttrAccount as String: account, kSecReturnData as String: true]
         var result: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return "" }
         return String(data: data, encoding: .utf8) ?? ""
     }
-    static func save(_ token: String) throws {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: "api-token"]
+    static func save(_ token: String, account: String = "api-token") throws {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
         SecItemDelete(query as CFDictionary)
         var item = query
         item[kSecValueData as String] = Data(token.utf8)
@@ -29,6 +32,60 @@ enum Credentials {
 
 @MainActor
 final class Store: ObservableObject {
+    @Published var clients: [ClientDevice] = []
+    @Published var history: [PlaybackHistory] = []
+    let clientId: String = {
+        let existing = Credentials.read(account: "client-id")
+        if UUID(uuidString: existing) != nil { return existing }
+        let id = UUID().uuidString.lowercased()
+        try? Credentials.save(id, account: "client-id")
+        return id
+    }()
+    var defaultClientName: String {
+        #if os(macOS)
+        return Host.current().localizedName ?? ProcessInfo.processInfo.hostName
+        #else
+        return UIDevice.current.name
+        #endif
+    }
+    var clientPlatform: String {
+        #if os(macOS)
+        return "macOS"
+        #else
+        return UIDevice.current.userInterfaceIdiom == .pad ? "iPadOS" : "iOS"
+        #endif
+    }
+    func registerClient() async throws {
+        let _: ClientDevice = try await request("POST", "/v1/clients", body: ["client_id": clientId, "name": defaultClientName, "platform": clientPlatform])
+    }
+    private var flushingProgress = false
+    private var pendingKey: String { "pending-playback:" + server }
+    func reportProgress(sessionId: String, sequence: Int, position: Double, duration: Double, ended: Bool) {
+        guard position.isFinite, duration.isFinite, duration > 0 else { return }
+        var pending = UserDefaults.standard.dictionary(forKey: pendingKey) ?? [:]
+        pending[sessionId] = ["session_id": sessionId, "sequence": sequence, "position": position, "duration": duration, "ended": ended]
+        UserDefaults.standard.set(pending, forKey: pendingKey)
+        Task { await flushProgress() }
+    }
+    func flushProgress() async {
+        guard !flushingProgress else { return }
+        flushingProgress = true
+        defer { flushingProgress = false }
+        let key = pendingKey
+        let pending = UserDefaults.standard.dictionary(forKey: key) ?? [:]
+        for (id, value) in pending {
+            guard key == pendingKey else { break }
+            guard let body = value as? [String: Any] else { continue }
+            do {
+                try await send("POST", "/v1/playback/progress", body: body)
+                var current = UserDefaults.standard.dictionary(forKey: key) ?? [:]
+                if let report = current[id] as? [String: Any], report["sequence"] as? Int == body["sequence"] as? Int {
+                    current.removeValue(forKey: id)
+                    UserDefaults.standard.set(current, forKey: key)
+                }
+            } catch { break }
+        }
+    }
     @Published var server: String = UserDefaults.standard.string(forKey: "server") ?? ""
     @Published var token: String = Credentials.read()
     @Published var torrents: [Torrent] = []
@@ -115,6 +172,10 @@ final class Store: ObservableObject {
             let newStatus: DaemonStatus = try await request("GET", "/v1/status")
             let newTorrents: [Torrent] = try await request("GET", "/v1/torrents")
             let newEvents: [AuditEvent] = try await request("GET", "/v1/events")
+            try await registerClient()
+            clients = try await request("GET", "/v1/clients")
+            history = try await request("GET", "/v1/playback")
+            await flushProgress()
             status = newStatus
             torrents = newTorrents.sorted { $0.addedDate > $1.addedDate }
             events = newEvents.reversed()
