@@ -338,11 +338,14 @@ class Service:
                 self.last_poll = time.time()
                 self.last_error = None
                 metadata = {m["hash"]: m for m in self.db.metadata()}
+                rename_budget = 1
                 for t in torrents:
                     h = t["hash_string"]
                     record = metadata.get(h)
-                    if record and record.get("selected") and complete(t) and Path(t["download_dir"]) != Path(self.config["source"]):
+                    if rename_budget and record and record.get("selected") and complete(t) and Path(t["download_dir"]) != Path(self.config["source"]):
+                        before = record.get("rename_attempted")
                         self.auto_rename(t, record)
+                        if record.get("rename_attempted") != before: rename_budget -= 1
                     job = self.state["jobs"].get(h)
                     if job and job["phase"] in ("done", "ignored"):
                         continue
