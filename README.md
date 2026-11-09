@@ -7,6 +7,25 @@ and exposes an authenticated HTTP API for native apps and a CLI.
 MIT licensed. Python 3.9+ standard library only. No third-party packages, bundled
 Transmission source, metadata API keys, or hardcoded server addresses.
 
+## Active development goal
+
+Turn the shared Diamond daemon into a **standalone media server with no Plex
+dependency**. Scan and persist metadata for every movie and TV episode, apply
+correct names for high-confidence matches while preserving Transmission seeding,
+and provide polished native Mac, iOS/iPadOS, and tvOS apps with artwork, search,
+genre/date browsing, and TV season/episode navigation.
+
+Plex may help migrate existing matches during development, but is not required
+for the completed system. Completion requires cold startup, filesystem discovery,
+metadata matching and local artwork storage, naming/organization, direct playback,
+and shared watch progress to work with Plex stopped. Previously cached library
+browsing must also work without contacting metadata providers. Native Apple player
+UI remains the playback interface. Public remote-access infrastructure is outside
+this goal.
+
+This describes the target, not a claim that the current implementation is already
+independent of Plex.
+
 ## Behavior
 
 - Reconcile every 30 seconds, including after downtime. Only torrents directly
