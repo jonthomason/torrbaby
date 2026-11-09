@@ -84,14 +84,24 @@ class MetadataCollector:
         headers = {'User-Agent': 'Torrbaby/0.2', 'Accept': 'application/json'}
         if re.fullmatch(r'[a-fA-F0-9]{32}', token): query['api_key'] = token
         else: headers['Authorization'] = 'Bearer ' + token
-        url = 'https://api.themoviedb.org/3/' + path + '?' + urllib.parse.urlencode(query)
-        try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=15) as response:
-                return json.load(response)
-        except urllib.error.HTTPError as error:
-            code = error.code
-            error.close()
-            raise RuntimeError('TMDB HTTP ' + str(code)) from None
+        # Some networks return unusable DNS answers for the long hostname.
+        # Keep TLS validation and use only TMDB's two API hostnames.
+        preferred = getattr(self, 'tmdb_host', 'api.themoviedb.org')
+        hosts = [preferred] + [h for h in ('api.themoviedb.org', 'api.tmdb.org') if h != preferred]
+        for host in hosts:
+            url = 'https://' + host + '/3/' + path + '?' + urllib.parse.urlencode(query)
+            try:
+                with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=15) as response:
+                    result = json.load(response)
+                self.tmdb_host = host
+                return result
+            except urllib.error.HTTPError as error:
+                code = error.code
+                error.close()
+                raise RuntimeError('TMDB HTTP ' + str(code)) from None
+            except (urllib.error.URLError, OSError):
+                continue
+        raise RuntimeError('Cannot reach either TMDB API hostname')
 
     def configure_tmdb(self, token):
         if not isinstance(token, str) or not 20 <= len(token.strip()) <= 4096 or any(c.isspace() for c in token.strip()):
