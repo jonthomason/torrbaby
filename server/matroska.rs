@@ -42,6 +42,7 @@ pub fn inspect(path: &Path, frame_limit: usize) -> Result<Value> {
     }
     let mut timing: BTreeMap<u64,Timing> = BTreeMap::new();
     let mut presentation_times: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
+    let mut dolby_configuration: BTreeMap<u64,Value> = BTreeMap::new();
     let mut frame = Frame::default();
     let start = Instant::now();
     let mut sampled = 0;
@@ -49,6 +50,16 @@ pub fn inspect(path: &Path, frame_limit: usize) -> Result<Value> {
         ensure!(start.elapsed() < Duration::from_secs(30), "Timing sample timed out");
         ensure!(frame.data.len() <= 64 * 1024 * 1024, "Media frame too large");
         sampled += 1;
+        if !dolby_configuration.contains_key(&frame.track) {
+            if let Some(t)=file.tracks().iter().find(|t| t.track_number().get()==frame.track && ["A_AC3","A_EAC3"].contains(&t.codec_id())) {
+                let codec=if t.codec_id()=="A_AC3" {"ac3"} else {"eac3"};
+                let info=match crate::dolby::configuration(codec,&frame.data) {
+                    Ok((config,rate,channels))=>json!({"sample_rate":rate,"channels":channels,"configuration":config}),
+                    Err(error)=>json!({"error":error.to_string()}),
+                };
+                dolby_configuration.insert(frame.track,info);
+            }
+        }
         let pts = frame.timestamp.checked_mul(scale).context("Timestamp overflow")?;
         presentation_times.entry(frame.track).or_default().push(pts);
         let stats = timing.entry(frame.track).or_default();
@@ -81,7 +92,7 @@ pub fn inspect(path: &Path, frame_limit: usize) -> Result<Value> {
             "outside_default_cadence":outside_default_cadence}))
     }).collect();
     Ok(json!({"container":"matroska","timestamp_scale_ns":scale,"tracks":tracks,
-        "sampled_frames":sampled,"timing":timing,"cadence":cadence}))
+        "sampled_frames":sampled,"timing":timing,"cadence":cadence,"dolby_configuration":dolby_configuration}))
 }
 
 pub fn tracks(path: &Path) -> Result<Value> {

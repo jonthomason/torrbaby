@@ -109,3 +109,30 @@ Owned 24-second fixture results in native Apple decoding:
 
 These remain owned-fixture checks, not broad catalog/HDR/physical-device acceptance.
 No production deployment or new Apple build for this development-only change.
+
+## E-AC-3 and a real catalog conversion
+
+The development converter now derives dec3 configuration for standalone E-AC-3
+independent substream0 with six audio blocks per syncframe. It validates each
+packet and rejects dependent/converted/multiple substreams, short-block assembly,
+half-rate audio, extended mixing metadata and additional/JOC signalling until
+those forms are implemented. Fixed configuration includes bitrate; variable-rate
+changes currently reject safely. No audio bytes are changed. The HEVC codec ID
+was corrected to the MP4 writer's `h265` identifier.
+
+An owned 24-second 5.1 E-AC-3 tone plus reordered AVC video passed native decoder
+comparison: all576video frames and1,151,712PCM sample frames match the reference.
+Positive offsets insert exactly9,600silent sample frames; codec delay trims
+exactly256sample frames with remaining PCM unchanged. Native AVPlayer forward,
+backward and near-end seeks passed for both variants.
+
+Read-only initial-header inspection on Diamond accepted41of42 E-AC-3 tracks
+and the one AC-3 track. One E-AC-3 packet contains a different frame layout and
+is rejected. This sample does not prove full-file compatibility for all41tracks.
+A complete305MB/35-minute HEVC+E-AC-3 catalog asset converted successfully. Native
+Apple decoding of its first2seconds and seeks at2,12.5,23seconds passed. The
+existing AVFoundation HLS packager also completed successfully from that MP4.
+No original files were modified and no playback API was switched to this path.
+
+Outstanding: generated-caption HLS playback acceptance on that output, HDR/color/
+track metadata, remaining packet layouts, and supervised conditional integration.

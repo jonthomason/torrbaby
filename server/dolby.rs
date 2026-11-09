@@ -110,3 +110,139 @@ mod tests {
         assert!(ac3(&frame).is_err());
     }
 }
+
+/// MP4 configuration for a standalone six-block E-AC-3 independent substream.
+/// Reject dependent/JOC/extended layouts until their full signalling is supported.
+/// This is intentionally not a decoder: all original packet bytes are retained.
+pub fn configuration(codec: &str, packet: &[u8]) -> Result<(Vec<u8>, u32, u16)> {
+    if codec == "ac3" {
+        let c = ac3(packet)?;
+        return Ok((c.dac3.to_vec(), c.sample_rate, c.channels));
+    }
+    ensure!(codec == "eac3", "Unknown Dolby codec");
+    ensure!(
+        (7..=4096).contains(&packet.len()),
+        "Invalid E-AC-3 packet length"
+    );
+    let mut b = Bits {
+        data: packet,
+        position: 0,
+    };
+    ensure!(b.read(16)? == 0x0b77, "Invalid E-AC-3 syncword");
+    ensure!(
+        b.read(2)? == 0 && b.read(3)? == 0,
+        "E-AC-3 dependent/converted/multiple substreams need additional support"
+    );
+    let frame_bytes = (b.read(11)? as usize + 1) * 2;
+    ensure!(
+        frame_bytes == packet.len(),
+        "E-AC-3 packet must contain exactly one complete syncframe"
+    );
+    let fscod = b.read(2)?;
+    ensure!(fscod < 3, "Half-rate E-AC-3 needs additional support");
+    ensure!(
+        b.read(2)? == 3,
+        "Short-block E-AC-3 needs access-unit assembly"
+    );
+    let acmod = b.read(3)?;
+    let lfe = b.read(1)?;
+    let bsid = b.read(5)?;
+    ensure!(bsid == 16, "Unsupported E-AC-3 bitstream version");
+    b.read(5)?; // dialnorm
+    if b.read(1)? != 0 {
+        b.read(8)?;
+    }
+    if acmod == 0 {
+        b.read(5)?;
+        if b.read(1)? != 0 {
+            b.read(8)?;
+        }
+    }
+    if b.read(1)? != 0 {
+        // mixing metadata, ETSI E.1.2.2
+        if acmod > 2 {
+            b.read(2)?;
+        }
+        if acmod & 1 != 0 && acmod > 2 {
+            b.read(6)?;
+        }
+        if acmod & 4 != 0 {
+            b.read(6)?;
+        }
+        if lfe != 0 && b.read(1)? != 0 {
+            b.read(5)?;
+        }
+        if b.read(1)? != 0 {
+            b.read(6)?;
+        }
+        if acmod == 0 && b.read(1)? != 0 {
+            b.read(6)?;
+        }
+        if b.read(1)? != 0 {
+            b.read(6)?;
+        }
+        match b.read(2)? {
+            0 => (),
+            1 => {
+                b.read(5)?;
+            }
+            2 => {
+                b.read(12)?;
+            }
+            _ => anyhow::bail!("Extended E-AC-3 mixing metadata needs additional support"),
+        }
+        if acmod < 2 {
+            if b.read(1)? != 0 {
+                b.read(14)?;
+            }
+            if acmod == 0 && b.read(1)? != 0 {
+                b.read(14)?;
+            }
+        }
+        if b.read(1)? != 0 {
+            for _ in 0..6 {
+                if b.read(1)? != 0 {
+                    b.read(5)?;
+                }
+            }
+        }
+    }
+    let bsmod = if b.read(1)? != 0 {
+        let mode = b.read(3)?;
+        b.read(2)?;
+        if acmod == 2 {
+            b.read(4)?;
+        }
+        if acmod >= 6 {
+            b.read(2)?;
+        }
+        if b.read(1)? != 0 {
+            b.read(8)?;
+        }
+        if acmod == 0 && b.read(1)? != 0 {
+            b.read(8)?;
+        }
+        b.read(1)?;
+        mode
+    } else {
+        0
+    };
+    ensure!(
+        b.read(1)? == 0,
+        "E-AC-3 additional/JOC signalling needs additional support"
+    );
+    let rate = [48000, 44100, 32000][fscod as usize];
+    let kbps = (packet.len() as u64 * 8 * rate as u64).div_ceil(1536 * 1000);
+    ensure!(kbps < 8192, "E-AC-3 bitrate exceeds MP4 field");
+    // data_rate:13, num_ind_sub:3; fscod:2, bsid:5, reserved:1,
+    // asvc:1 (main service), bsmod:3, acmod:3, lfe:1, reserved:3,
+    // num_dep_sub:4 (none), reserved:1.
+    let fields = (fscod << 22) | (bsid << 17) | (bsmod << 12) | (acmod << 9) | (lfe << 8);
+    let bits = fields.to_be_bytes();
+    let rate_bits = ((kbps as u16) << 3).to_be_bytes();
+    Ok((
+        vec![rate_bits[0], rate_bits[1], bits[1], bits[2], bits[3]],
+        rate,
+        [2, 1, 2, 3, 3, 4, 4, 5][acmod as usize] + lfe as u16,
+    ))
+}

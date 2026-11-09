@@ -70,9 +70,10 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
         let video = t.track_type() == TrackType::Video;
         let codec = match t.codec_id() {
             "V_MPEG4/ISO/AVC" => "h264",
-            "V_MPEGH/ISO/HEVC" => "hevc",
+            "V_MPEGH/ISO/HEVC" => "h265",
             "A_AAC" => "aac",
             "A_AC3" => "ac3",
+            "A_EAC3" => "eac3",
             other => anyhow::bail!("Remux codec not implemented yet: {other}"),
         };
         let mut params = if video {
@@ -80,7 +81,7 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
         } else {
             CodecParameters::audio(CodecId::new(codec))
         };
-        params.extradata = if codec == "ac3" {
+        params.extradata = if matches!(codec, "ac3" | "eac3") {
             Vec::new()
         } else {
             t.codec_private()
@@ -102,7 +103,7 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
                 "Invalid video duration"
             );
             time_base = TimeBase::new(1, 1000);
-        } else if codec == "ac3" {
+        } else if matches!(codec, "ac3" | "eac3") {
             let a = t.audio().context("Missing audio parameters")?;
             ensure!(
                 [32000.0, 44100.0, 48000.0].contains(&a.sampling_frequency()),
@@ -154,7 +155,11 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
                 video,
                 count: 0,
                 pts: Vec::new(),
-                audio_samples: if codec == "ac3" { 1536 } else { 1024 },
+                audio_samples: if matches!(codec, "ac3" | "eac3") {
+                    1536
+                } else {
+                    1024
+                },
                 origin_ns: None,
                 codec_delay_ns: t.codec_delay().unwrap_or(0),
             },
@@ -163,35 +168,39 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
     ensure!(tracks.values().any(|t| t.video), "No supported video track");
     if tracks
         .values()
-        .any(|t| t.stream.params.codec_id.as_str() == "ac3")
+        .any(|t| matches!(t.stream.params.codec_id.as_str(), "ac3" | "eac3"))
     {
         let started = Instant::now();
         let mut frame = Frame::default();
         let mut scanned = 0;
         while tracks.values().any(|t| {
-            t.stream.params.codec_id.as_str() == "ac3" && t.stream.params.extradata.is_empty()
+            matches!(t.stream.params.codec_id.as_str(), "ac3" | "eac3")
+                && t.stream.params.extradata.is_empty()
         }) {
             ensure!(
                 scanned < 100_000 && started.elapsed() < Duration::from_secs(30),
-                "AC-3 configuration scan limit"
+                "Dolby audio configuration scan limit"
             );
-            ensure!(mkv.next_frame(&mut frame)?, "Missing AC-3 audio packet");
+            ensure!(mkv.next_frame(&mut frame)?, "Missing Dolby audio packet");
             scanned += 1;
             ensure!(
                 frame.data.len() <= 64 * 1024 * 1024,
                 "Media frame too large"
             );
             if let Some(t) = tracks.get_mut(&frame.track) {
-                if t.stream.params.codec_id.as_str() == "ac3"
+                if matches!(t.stream.params.codec_id.as_str(), "ac3" | "eac3")
                     && t.stream.params.extradata.is_empty()
                 {
-                    let config = crate::dolby::ac3(&frame.data)?;
+                    let (config, rate, channels) = crate::dolby::configuration(
+                        t.stream.params.codec_id.as_str(),
+                        &frame.data,
+                    )?;
                     ensure!(
-                        Some(config.sample_rate) == t.stream.params.sample_rate
-                            && Some(config.channels) == t.stream.params.channels,
-                        "AC-3 container/header mismatch"
+                        Some(rate) == t.stream.params.sample_rate
+                            && Some(channels) == t.stream.params.channels,
+                        "Dolby audio container/header mismatch"
                     );
-                    t.stream.params.extradata = config.dac3.to_vec();
+                    t.stream.params.extradata = config;
                 }
             }
         }
@@ -259,11 +268,14 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
                 packet.dts = Some(dts.try_into()?);
                 packet.duration = Some((next - dts).try_into()?);
             } else {
-                if t.stream.params.codec_id.as_str() == "ac3" {
-                    let config = crate::dolby::ac3(&packet.data)?;
+                if matches!(t.stream.params.codec_id.as_str(), "ac3" | "eac3") {
+                    let (config, _, _) = crate::dolby::configuration(
+                        t.stream.params.codec_id.as_str(),
+                        &packet.data,
+                    )?;
                     ensure!(
-                        config.dac3.as_slice() == t.stream.params.extradata,
-                        "AC-3 configuration changed midstream"
+                        config == t.stream.params.extradata,
+                        "Dolby audio configuration changed midstream"
                     );
                 }
                 let rate = t.stream.params.sample_rate.unwrap() as u128;
