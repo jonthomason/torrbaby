@@ -1,6 +1,9 @@
 #if !os(tvOS)
 import SwiftUI
 import UniformTypeIdentifiers
+#if os(iOS)
+import UserNotifications
+#endif
 #if os(macOS)
 import AppKit
 #endif
@@ -25,7 +28,7 @@ struct AutomationView: View {
                                 Button(status.settings.paused ? "Resume" : "Pause") { store.toggleAutomation() }.buttonStyle(.bordered)
                             }
                             if let error = status.lastError { Text(error).foregroundStyle(.orange) }
-                            if let error = status.scanError { Label("Plex: " + error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
+                            if let error = status.scanError { Label("Library: " + error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
                             HStack {
                                 Text("\(status.jobs.values.filter { $0.phase == "done" }.count) organized")
                                 Text("·")
@@ -33,7 +36,7 @@ struct AutomationView: View {
                             }.font(.caption).foregroundStyle(Theme.muted)
                             HStack {
                                 Button("Check now") { store.perform { try await store.send("POST", "/v1/reconcile") } }
-                                Button("Scan Plex libraries") { store.perform { try await store.send("POST", "/v1/plex/scan") } }
+                                Button("Scan media library") { store.perform { try await store.send("POST", "/v1/library/scan") } }
                             }.buttonStyle(.bordered).disabled(store.busy)
                         }
                     }
@@ -88,6 +91,8 @@ struct SettingsView: View {
     @State private var tv = ""
     @State private var interval = 30.0
     @State private var saved = false
+    @AppStorage("activityAlerts") private var activityAlerts = true
+    @State private var notificationStatus: String?
     #if os(macOS)
     @AppStorage("showMenuBarRates") private var showMenuBarRates = true
     #endif
@@ -104,9 +109,22 @@ struct SettingsView: View {
             #if os(macOS)
             SwiftUI.Section("Menu bar") {
                 Toggle("Show download and upload rates", isOn: $showMenuBarRates)
-                Text("Rates keep updating while Torrbaby is running, even with its windows closed.").font(.caption).foregroundStyle(.secondary)
             }
             #endif
+            SwiftUI.Section("Notifications") {
+                Toggle("Download and seeding updates", isOn: $activityAlerts)
+                #if os(iOS)
+                Button("Enable device notifications") {
+                    Task {
+                        do {
+                            let allowed = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+                            notificationStatus = allowed ? "Notifications enabled" : "Allow notifications in iOS Settings."
+                        } catch { notificationStatus = error.localizedDescription }
+                    }
+                }
+                if let notificationStatus { Text(notificationStatus).font(.caption) }
+                #endif
+            }
             SwiftUI.Section("Metadata") {
                 SecureField("TMDB API key or Read Access Token", text: $tmdbToken)
                 Button(tmdbSaved ? "Saved on Diamond" : "Save TMDB credential on Diamond") {
@@ -116,7 +134,6 @@ struct SettingsView: View {
                         tmdbSaved = true
                     }
                 }.disabled(tmdbToken.isEmpty || store.busy)
-                Text("TVmaze and your Plex library work without a new key. TMDB adds richer movie and TV metadata, artwork and ratings. Credentials stay on your server.").font(.caption).foregroundStyle(.secondary)
                 Link("Get a free TMDB API key", destination: URL(string: "https://www.themoviedb.org/settings/api")!)
                 Text("This product uses the TMDB API but is not endorsed or certified by TMDB.").font(.caption2).foregroundStyle(.secondary)
             }
@@ -124,7 +141,6 @@ struct SettingsView: View {
                 ForEach(store.clients) { client in
                     DeviceNameRow(client: client, isCurrent: client.id == store.clientId)
                 }
-                Text("Playback progress is shared across your devices. Each installation has its own stable ID.").font(.caption).foregroundStyle(.secondary)
             }
             SeedingSettings()
             SwiftUI.Section("Automation") {
@@ -132,24 +148,17 @@ struct SettingsView: View {
                     Toggle("Organize completed downloads", isOn: Binding(get: { !status.settings.paused }, set: { _ in store.toggleAutomation() })).disabled(store.busy)
                 }
                 Stepper("Check every \(Int(interval)) seconds", value: $interval, in: 5...3600, step: 5)
-                Text("Complete TV downloads are identified by season and episode markers. Other video downloads go to Movies.").font(.caption).foregroundStyle(.secondary)
             }
             SwiftUI.Section("Folders on your server") {
                 TextField("Downloads", text: $source)
                 TextField("Movies", text: $movies)
                 TextField("TV shows", text: $tv)
-                Text("These folders must already exist on your server and match your Plex library roots. Changes apply to future jobs.").font(.caption).foregroundStyle(.secondary)
                 Button(saved ? "Saved" : "Save settings") {
                     store.perform {
                         try await store.send("PATCH", "/v1/settings", body: ["source": source, "movies": movies, "tv": tv, "poll_seconds": interval])
                         saved = true
                     }
                 }.disabled(store.busy || !store.connected)
-            }
-            SwiftUI.Section("Playback prototype") {
-                Label("Apple’s native player", systemImage: "play.rectangle")
-                Text("Original files stream directly from your server. Supported formats use Apple’s playback pipeline. Unsupported formats fail without conversion. No transcoding or custom playback controls.")
-                    .font(.callout).foregroundStyle(.secondary)
             }
             #if os(macOS)
             SwiftUI.Section("Magnet links") {
@@ -160,13 +169,11 @@ struct SettingsView: View {
                         }
                     }
                 }
-                Text(magnetStatus ?? "Open links from your browser in Torrbaby, review the download, then send it to your server.")
-                    .font(.caption).foregroundStyle(.secondary)
+                if let magnetStatus { Text(magnetStatus).font(.caption).foregroundStyle(.secondary) }
             }
             #endif
             SwiftUI.Section("About") {
                 Text("Torrbaby 0.2 · MIT License")
-                Text("Made for a small, well-kept personal library.").font(.caption).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped)
         .onAppear {
@@ -311,8 +318,11 @@ struct AddTorrentView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
                         store.perform {
-                            try await store.send("POST", "/v1/torrents", body: ["magnet": canonicalMagnet(magnet), "paused": paused])
+                            struct AddedTorrent: Decodable { let name: String? }
+                            struct AddResult: Decodable { let torrentAdded: AddedTorrent?; let torrentDuplicate: AddedTorrent? }
+                            let result: AddResult = try await store.request("POST", "/v1/torrents", body: ["magnet": canonicalMagnet(magnet), "paused": paused])
                             dismiss()
+                            store.notify(result.torrentDuplicate == nil ? "Torrent added" : "Torrent already in your list", detail: result.torrentAdded?.name ?? result.torrentDuplicate?.name ?? "")
                         }
                     }.disabled(!canonicalMagnet(magnet).hasPrefix("magnet:?") || store.busy || !store.connected)
                 }

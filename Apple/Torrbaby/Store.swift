@@ -1,6 +1,9 @@
 import Foundation
 import SwiftUI
 import Security
+#if os(iOS)
+import UserNotifications
+#endif
 #if os(iOS) || os(tvOS)
 import UIKit
 #endif
@@ -30,8 +33,24 @@ enum Credentials {
     }
 }
 
+struct AppNotice: Identifiable {
+    let id = UUID()
+    let title: String
+    let detail: String
+}
+#if os(iOS)
+final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = NotificationPresenter()
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound, .list])
+    }
+}
+#endif
+
 @MainActor
 final class Store: ObservableObject {
+    @Published var notices: [AppNotice] = []
     @Published var library: MediaLibrary?
     @Published var libraryError: String?
     @Published var metadata: [MediaMetadata] = []
@@ -106,6 +125,9 @@ final class Store: ObservableObject {
     private var refreshing = false
     private var etaSmoother = TorrentETASmoother()
     init() {
+        #if os(iOS)
+        UNUserNotificationCenter.current().delegate = NotificationPresenter.shared
+        #endif
         #if os(macOS)
         if server.isEmpty, let legacy = UserDefaults.standard.persistentDomain(forName: "org.torrbaby.app"), let address = legacy["server"] as? String {
             server = address
@@ -217,10 +239,42 @@ final class Store: ObservableObject {
             await flushProgress()
             status = newStatus
             torrents = newTorrents.sorted { $0.addedDate > $1.addedDate }
+            receiveActivity(newEvents)
             events = newEvents.reversed()
             lastUpdated = Date()
             connectionError = nil
         } catch { connectionError = error.localizedDescription }
+    }
+    func notify(_ title: String, detail: String = "") {
+        notices.append(AppNotice(title: title, detail: detail))
+        if notices.count > 8 { notices.removeFirst(notices.count - 8) }
+        #if os(iOS)
+        Task {
+            let center = UNUserNotificationCenter.current()
+            let settings = await center.notificationSettings()
+            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = detail
+            content.sound = .default
+            try? await center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+        }
+        #endif
+    }
+    private func receiveActivity(_ incoming: [AuditEvent]) {
+        let key = "activity-watermark:" + server
+        let last = UserDefaults.standard.object(forKey: key) as? Double
+        let newest = incoming.map(\.time).max() ?? Date().timeIntervalSince1970
+        UserDefaults.standard.set(max(last ?? 0, newest), forKey: key)
+        guard let last, UserDefaults.standard.object(forKey: "activityAlerts") as? Bool ?? true else { return }
+        let recent = incoming.filter { $0.time > last && $0.time > Date().timeIntervalSince1970 - 86400 && ["download_complete", "seeding_ratio_reached"].contains($0.kind) }.sorted { $0.time < $1.time }
+        if recent.count > 3 {
+            notify("Torrent activity", detail: "\(recent.count) downloads or seeding goals completed.")
+        } else {
+            for event in recent {
+                notify(event.kind == "download_complete" ? "Download complete" : "Seeding goal reached", detail: event.name ?? "")
+            }
+        }
     }
     func perform(_ operation: @escaping () async throws -> Void) {
         guard !busy else { return }

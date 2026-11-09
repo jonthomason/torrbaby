@@ -130,6 +130,7 @@ struct RootView: View {
                 torrentDraft = TorrentDraft(magnet: canonicalMagnet(url.absoluteString))
             }
         }
+        .overlay(alignment: .top) { NoticeBanner().padding(.top, 12) }
         .alert("Couldn’t complete that action", isPresented: Binding(get: { store.actionError != nil }, set: { if !$0 { store.actionError = nil } })) {
             Button("OK") { store.actionError = nil }
         } message: { Text(store.actionError ?? "") }
@@ -408,6 +409,31 @@ struct TransferHistoryView: View {
               try? await Task.sleep(for: .seconds(30))
           }
       }
+    }
+}
+
+struct NoticeBanner: View {
+    @EnvironmentObject var store: Store
+    var body: some View {
+        if let notice = store.notices.first {
+            HStack(spacing: 12) {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.mint)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(notice.title).font(.headline)
+                    if !notice.detail.isEmpty { Text(notice.detail).font(.caption).lineLimit(2) }
+                }
+                Spacer(minLength: 4)
+                Button { store.notices.removeAll { $0.id == notice.id } } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.plain).accessibilityLabel("Dismiss notification")
+            }.padding(16).frame(maxWidth: 480)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                .shadow(radius: 10).padding(.horizontal)
+                .accessibilityElement(children: .combine)
+                .task(id: notice.id) {
+                    do { try await Task.sleep(for: .seconds(6)) } catch { return }
+                    store.notices.removeAll { $0.id == notice.id }
+                }
+        }
     }
 }
 

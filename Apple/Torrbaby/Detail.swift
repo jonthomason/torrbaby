@@ -335,20 +335,45 @@ struct MetadataArtwork: View {
     let hash: String
     let thumbnail: String?
     @State private var image: Image?
+    @State private var failed = false
+    @State private var retry = 0
     struct Payload: Decodable { let data: String? }
     var body: some View {
-        Group {
-            if let image { image.resizable().scaledToFit().frame(maxHeight: 180).clipShape(RoundedRectangle(cornerRadius: 8)) }
-        }.task(id: thumbnail) {
-            guard thumbnail != nil else { image = nil; return }
-            guard let payload: Payload = try? await store.request("GET", "/v1/torrents/" + hash + "/artwork"),
-                  let encoded = payload.data, let data = Data(base64Encoded: encoded) else { return }
-            #if os(macOS)
-            if let native = NSImage(data: data) { image = Image(nsImage: native) }
-            #else
-            if let native = UIImage(data: data) { image = Image(uiImage: native) }
-            #endif
+        if thumbnail != nil {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8).fill(Theme.canvas)
+                if let image {
+                    image.resizable().scaledToFit()
+                } else if failed {
+                    VStack(spacing: 8) {
+                        Image(systemName: "photo")
+                        Button("Retry artwork") { retry += 1 }.font(.caption)
+                    }.foregroundStyle(Theme.muted)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            }.frame(width: 120, height: 180).clipShape(RoundedRectangle(cornerRadius: 8))
+            .task(id: store.server + hash + (thumbnail ?? "") + String(retry)) {
+                image = nil
+                failed = false
+                do {
+                    let payload: Payload = try await store.request("GET", "/v1/torrents/" + hash + "/artwork")
+                    try Task.checkCancellation()
+                    guard let encoded = payload.data, let data = Data(base64Encoded: encoded) else {
+                        failed = true; return
+                    }
+                    #if os(macOS)
+                    if let native = NSImage(data: data) { image = Image(nsImage: native) }
+                    #else
+                    if let native = UIImage(data: data) { image = Image(uiImage: native) }
+                    #endif
+                    failed = image == nil
+                } catch {
+                    if !Task.isCancelled { failed = true }
+                }
+            }
         }
     }
 }
+
 #endif
