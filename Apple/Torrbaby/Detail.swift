@@ -33,7 +33,7 @@ struct TorrentDetail: View {
                                     Spacer()
                                     Text(t.percentDone, format: .percent.precision(.fractionLength(1))).monospacedDigit().foregroundStyle(Theme.mint)
                                 }
-                                ProgressView(value: t.percentDone)
+                                TorrentProgressGauge(value: t.percentDone)
                                 ViewThatFits(in: .horizontal) {
                                     HStack(spacing: 24) { transferStats(t) }
                                     VStack(alignment: .leading, spacing: 12) { transferStats(t) }

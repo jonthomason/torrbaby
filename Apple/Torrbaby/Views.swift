@@ -313,7 +313,8 @@ struct TorrentRow: View {
     var showReason = false
     var color: Color { torrent.needsAttention ? .orange : torrent.completed ? .cyan : Theme.mint }
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
+          HStack(alignment: .top, spacing: 16) {
             TorrentThumbnail(torrent: torrent).frame(width: 46, height: 64)
             VStack(alignment: .leading, spacing: 9) {
                 Text(torrent.displayName).font(.system(size: 15, weight: .semibold)).lineLimit(2).multilineTextAlignment(.leading)
@@ -323,10 +324,6 @@ struct TorrentRow: View {
                     Text(bytes(torrent.size)).foregroundStyle(Theme.muted)
                     Spacer(minLength: 0)
                 }.font(.caption)
-                // Draw into the existing bar's spacing so the row keeps its height.
-                Color.clear.frame(height: 4).overlay {
-                    TorrentProgressGauge(value: torrent.percentDone, color: color)
-                }
                 Text("\(bytes(torrent.downloaded)) of \(bytes(torrent.size))")
                     .font(.caption.monospacedDigit()).foregroundStyle(Theme.muted)
                 ViewThatFits(in: .horizontal) {
@@ -336,6 +333,8 @@ struct TorrentRow: View {
                 if showReason, let reason = torrent.progressIssue { Text(reason).font(.caption).foregroundStyle(.orange) }
             }
             Image(systemName: "chevron.right").font(.caption.weight(.medium)).foregroundStyle(Theme.muted).padding(.top, 18)
+          }
+          if !torrent.completed { TorrentProgressGauge(value: torrent.percentDone) }
         }
         .padding(17).background(Theme.panel, in: RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(0.04)))
@@ -348,7 +347,8 @@ struct CompactTorrentRow: View {
     let torrent: Torrent
     let showReason: Bool
     var body: some View {
-        HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
+          HStack(spacing: 12) {
             TorrentThumbnail(torrent: torrent).frame(width: 32, height: 46)
             VStack(alignment: .leading, spacing: 4) {
                 Text(torrent.displayName).font(.system(size: 13, weight: .medium)).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
@@ -370,10 +370,9 @@ struct CompactTorrentRow: View {
                 if showReason, let reason = torrent.progressIssue { Text(reason).font(.caption2).foregroundStyle(.orange).lineLimit(2) }
             }
             Spacer(minLength: 0)
-            if !torrent.completed {
-                TorrentProgressGauge(value: torrent.percentDone, color: Theme.mint).frame(width: 55)
-            }
             Image(systemName: "chevron.right").font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.muted)
+          }
+          if !torrent.completed { TorrentProgressGauge(value: torrent.percentDone) }
         }.padding(.horizontal, 13).padding(.vertical, 10)
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 9))
             .accessibilityElement(children: .combine)
@@ -411,7 +410,7 @@ private struct MobileTorrentRow: View {
                     }.font(.caption2).monospacedDigit()
                 }
             }
-            if !torrent.completed { TorrentProgressGauge(value: torrent.percentDone, color: color) }
+            if !torrent.completed { TorrentProgressGauge(value: torrent.percentDone) }
             HStack(spacing: 10) {
                 if !torrent.completed { TransferRate(value: torrent.rateDownload, upload: false, numberWidth: 65) }
                 TransferRate(value: torrent.rateUpload, upload: true, numberWidth: 65)
@@ -472,7 +471,7 @@ private struct TorrentThumbnail: View {
 
 struct TorrentProgressGauge: View {
     let value: Double
-    var color = Theme.mint
+    var color = Color(red: 0.70, green: 0.43, blue: 1.0)
     private var fraction: Double { value.isFinite ? min(1, max(0, value)) : 0 }
     private var label: String { "\(Int(fraction * 100))%" }
     var body: some View {
@@ -485,7 +484,7 @@ struct TorrentProgressGauge: View {
                     .mask(alignment: .leading) { Rectangle().frame(width: geometry.size.width * fraction) }
             }.font(.system(size: 10, weight: .bold).monospacedDigit())
                 .clipShape(RoundedRectangle(cornerRadius: 5))
-        }.frame(height: 18)
+        }.frame(height: 22)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Download progress")
             .accessibilityValue(label)

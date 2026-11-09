@@ -556,3 +556,12 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
   subtitle tracks,8 with image/other-only tracks,2 with no subtitle tracks.
   Track totals:1068 S_TEXT/UTF8,7 S_TEXT/ASS,22 S_VOBSUB. This is track metadata,
   not full extraction/translation proof for all tracks. MP4s not inspected yet.
+
+## 2026-11-09 build 55 and tvOS simulator checkpoint
+
+- Build 55: full-width violet download gauges on a dedicated 22pt line in compact/comfortable torrent rows, narrow mobile cards, details, and local Downloads. Mac and signed iOS release builds passed; mobile OTA published to the existing Mac-only Miyu Install page. Mac installed at ~/Applications/Torrbaby/Torrbaby.app.
+- tvOS debug simulator built and launched against Diamond using the existing DEBUG one-use bootstrap profile (no credentials in source/logs). UDID 3F6154D6-6A82-4461-B04A-6A1CAF6C7ED9.
+- Xcode 27 uses /Applications/Xcode.app/Contents/Applications/DeviceHub.app; there is no standalone Simulator.app at the old Developer/Applications path. Device Hub visibly showed live library artwork. Genre/sort controls and search layout still need TV polish.
+- Physical Apple TV has NOT been paired. Behind slate-seven: recommend temporarily connecting Mac to that router LAN for initial same-network discovery; select Settings > Remotes and Devices > Remote App and Devices on TV, then add/pair in Device Hub and enter displayed code. Cross-subnet deployment remains unverified; do not promise Tailnet routing alone handles discovery/deployment. No network changes made.
+- Concurrent Android session owns Android/; leave its files untouched and do not switch branches in this shared worktree. Current branch codex/subtitles.
+- Subtitle job manager in server/subtitle_jobs.rs with server/api.rs/main.rs integration is still local work pending review/docs/commit/deployment. cargo build --locked and local-state/checkpoints/2026-11-09/torrbaby-subtitle-jobs-smoke.py passed: authenticated prepare/status/VTT, job dedup, restart cache reuse, source revision invalidation, no playback side effects. Filesystem-backed max 4 queued jobs, one worker, 512MiB/256 entry cache bounds; translated/original WebVTT. Not deployed, not yet exposed in Apple subtitle UI.

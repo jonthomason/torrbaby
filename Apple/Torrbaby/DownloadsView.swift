@@ -25,7 +25,8 @@ struct DownloadsView: View {
                 let visible = queue.items.filter { $0.state != .removed }
                 if visible.isEmpty { ContentUnavailableView("No downloads", systemImage: "arrow.down.circle") }
                 ForEach(visible) { item in
-                    HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 12) {
+                      HStack(spacing: 16) {
                         DownloadPoster(url: queue.artworkURL(item.id), isTV: item.season != nil)
                             .frame(width: 60, height: 90).clipShape(RoundedRectangle(cornerRadius: 8))
                         VStack(alignment: .leading, spacing: 6) {
@@ -38,7 +39,6 @@ struct DownloadsView: View {
                             if item.state == .ready {
                                 Label(bytes(item.size), systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(Theme.mint)
                             } else {
-                                ProgressView(value: Double(queue.received[item.id] ?? item.received), total: Double(item.size))
                                 Text("\(bytes(queue.received[item.id] ?? item.received)) / \(bytes(item.size))")
                                     .font(.caption.monospacedDigit()).foregroundStyle(Theme.muted)
                                 Text(item.error ?? item.state.rawValue.capitalized).font(.caption).foregroundStyle(Theme.muted)
@@ -56,6 +56,10 @@ struct DownloadsView: View {
                             Toggle("Keep downloaded", isOn: Binding(get: { item.pinned }, set: { queue.pin(item.id, keep: $0) }))
                             Button("Remove local download", role: .destructive) { queue.remove(item.id) }
                         } label: { Image(systemName: "ellipsis.circle") }.menuStyle(.borderlessButton)
+                      }
+                      if item.state != .ready {
+                          TorrentProgressGauge(value: item.size > 0 ? Double(queue.received[item.id] ?? item.received) / Double(item.size) : 0)
+                      }
                     }.padding(18).background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
                 }
             }.padding(24)
