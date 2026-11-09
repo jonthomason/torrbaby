@@ -42,8 +42,8 @@ struct RootView: View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 22) {
                 HStack(spacing: 11) {
-                    Image(systemName: "arrow.down.forward.and.arrow.up.backward.circle.fill")
-                        .font(.system(size: 34)).foregroundStyle(Theme.mint)
+                    Image("TorrbabyLogo").resizable().frame(width: 42, height: 42)
+                        .clipShape(RoundedRectangle(cornerRadius: 9)).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 1) {
                         Text("torrbaby").font(.system(size: 24, weight: .bold, design: .rounded))
                         Text("A home for your downloads").font(.caption2).foregroundStyle(Theme.muted)
@@ -121,6 +121,7 @@ struct TorrentListView: View {
     @EnvironmentObject var store: Store
     let section: Section
     @State private var search = ""
+    @State private var removing: Torrent?
     @AppStorage("compactTorrentView") private var compact = false
     var filtered: [Torrent] {
         store.torrents.filter { t in
@@ -169,12 +170,25 @@ struct TorrentListView: View {
                                 if compact { CompactTorrentRow(torrent: torrent, showReason: section == .attention) }
                                 else { TorrentRow(torrent: torrent, showReason: section == .attention) }
                             }.buttonStyle(.plain)
+                            .contextMenu {
+                                Button { store.action(torrent, "start") } label: {
+                                    Label("Start", systemImage: "play.fill")
+                                }.disabled(store.busy || !store.connected || torrent.status != 0)
+                                Button { store.action(torrent, "stop") } label: {
+                                    Label("Stop", systemImage: "stop.fill")
+                                }.disabled(store.busy || !store.connected || torrent.status == 0)
+                                Divider()
+                                Button(role: .destructive) { removing = torrent } label: {
+                                    Label("Remove…", systemImage: "trash")
+                                }.disabled(store.busy || !store.connected)
+                            }
                         }
                     }
                 }
             }.padding(24).frame(maxWidth: 1200).frame(maxWidth: .infinity)
         }
         .searchable(text: $search, prompt: "Find a torrent")
+        .sheet(item: $removing) { RemoveTorrentView(torrent: $0) }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button { compact.toggle() } label: {

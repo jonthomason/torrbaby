@@ -13,6 +13,8 @@ struct TVRootView: View {
         NavigationStack {
             if !store.configured || settings {
                 VStack(alignment: .leading, spacing: 24) {
+                    Image("TorrbabyLogo").resizable().frame(width: 110, height: 110)
+                        .clipShape(RoundedRectangle(cornerRadius: 22)).accessibilityHidden(true)
                     Text("Meet your server.").font(.largeTitle.bold())
                     TextField("Server URL", text: $server)
                     SecureField("API token", text: $token)
