@@ -2,11 +2,13 @@
 # Build a consistently signed macOS identity for the standalone Rust server.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-: "MAC_SIGNING_IDENTITY:?Set MAC_SIGNING_IDENTITY to your Developer ID Application identity}"
+: "${MAC_SIGNING_IDENTITY:?Set MAC_SIGNING_IDENTITY to your Developer ID Application identity}"
 cargo build --manifest-path "$ROOT/Cargo.toml" --release --locked
 APP="$ROOT/local-state/server/Torrbaby Server.app"
 mkdir -p "$APP/Contents/MacOS"
 mkdir -p "$APP/Contents/Resources"
+python3 "$ROOT/scripts/generate_notices.py" "$APP/Contents/Resources/THIRD_PARTY_NOTICES.txt"
+cp "$ROOT/LICENSE" "$APP/Contents/Resources/LICENSE"
 ICONSET="$ROOT/local-state/server/TorrbabyServer.iconset"
 mkdir -p "$ICONSET"
 for SIZE in 16 32 128 256 512; do

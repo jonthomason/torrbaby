@@ -113,9 +113,20 @@ pub async fn serve(
                 .rpc
                 .call("torrent_get", json!({"fields":crate::transmission::FIELDS}))
                 .await;
+            let policy = sampling_service
+                .rpc
+                .call(
+                    "session_get",
+                    json!({"fields":["seed_ratio_limit","seed_ratio_limited"]}),
+                )
+                .await
+                .ok();
             if let Ok(mut result) = result {
                 if let Some(torrents) = result["torrents"].as_array_mut() {
                     if let Ok(mut db) = sampling_service.db.lock() {
+                        if let Err(error) = db.record_activity(torrents, policy.as_ref()) {
+                            eprintln!("Activity tracking: {error}");
+                        }
                         if let Err(error) = db.sample_torrents(torrents) {
                             eprintln!("Transfer sampling: {error}");
                         }
@@ -272,6 +283,58 @@ fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
 }
 
 async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> Result<Value> {
+    if method == Method::POST && path == "/v1/reconcile" {
+        if s.preview {
+            bail!("Automatic organization is disabled in preview mode");
+        }
+        crate::organizer::tick(s).await?;
+        scan_library(s).await?;
+        return Ok(json!({"accepted":true}));
+    }
+    if let Some((hash, action)) = path
+        .strip_prefix("/v1/torrents/")
+        .and_then(|p| p.split_once('/'))
+    {
+        if method == Method::POST
+            && ["metadata-refresh", "metadata-select", "lookup"].contains(&action)
+        {
+            let _guard = s.metadata_lock.lock().await;
+            let torrent = crate::organizer::torrent(s, hash).await?;
+            let hash = text(&torrent, "hash_string")?;
+            let mut record = if action == "metadata-select" {
+                let mut record = torrent_metadata(s, hash)?.context("Look up metadata first")?;
+                let index = body["candidate"].as_u64().context("Invalid candidate")?;
+                let candidate = record["candidates"]
+                    .as_array()
+                    .and_then(|a| a.get(index as usize))
+                    .context("Invalid candidate")?;
+                record["selected"] = s.metadata.enrich(candidate).await?;
+                record["status"] = json!("matched");
+                record["confirmed"] = json!(true);
+                record
+            } else {
+                s.metadata.search(text(&torrent, "name")?).await?
+            };
+            if action == "lookup" {
+                let candidates: Vec<Value> = record["candidates"].as_array().into_iter().flatten().map(|c| json!({"title":c["title"],"year":c["year"],"source_url":c["source_url"],"path":null,"proposed_root_name":null})).collect();
+                return Ok(
+                    json!({"query":record["query"],"provider":"TMDB","candidates":candidates,"note":"Review the title and year before entering a new file or folder name."}),
+                );
+            }
+            record["hash"] = json!(hash);
+            record["updated_at"] = json!(now());
+            save_torrent_metadata(s, &record)?;
+            return Ok(record);
+        }
+        if method == Method::GET && action == "artwork" {
+            let id = torrent_metadata(s, hash)?
+                .and_then(|r| r["selected"]["id"].as_str().map(str::to_owned));
+            return match id {
+                Some(id) => artwork(s, &id, "poster").await,
+                None => Ok(json!({"data":null})),
+            };
+        }
+    }
     if path == "/v1/settings" && (method == Method::GET || method == Method::PATCH) {
         let _guard = s.mutation_lock.lock().await;
         let mut config = serde_json::to_value(s.effective_config()?)?;
@@ -516,7 +579,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             let config = effective.as_ref().context("Missing settings")?;
             Ok(json!({"version":env!("CARGO_PKG_VERSION"),"uptime_seconds":s.started.elapsed().as_secs(),
                 "settings":{"source":config.source,"movies":config.movies,"tv":config.tv,"poll_seconds":config.poll_seconds,"paused":s.preview || config.paused},
-                "last_poll":state["last_poll"],"last_error":if s.preview { json!("Migration preview: organizer not enabled") } else {state["last_error"].clone()},"pending_scans":0,"scan_error":null,"jobs":state["jobs"]}))
+                "last_poll":state["last_poll"],"last_error":if s.preview { json!("Migration preview: organizer not enabled") } else {state["last_error"].clone()},"pending_scans":if state["library_scan"]["scanning"] == true {1} else {0},"scan_error":state["library_scan"]["error"],"jobs":state["jobs"]}))
         }
         ("GET","/v1/events") => Ok(db.state()?["events"].take()),
         ("GET","/v1/clients") => Ok(json!(db.rows("SELECT * FROM clients ORDER BY last_seen DESC",[])?)),
@@ -1035,13 +1098,68 @@ async fn collect_metadata(s: &Service) -> Result<()> {
     let Ok(_guard) = s.metadata_lock.try_lock() else {
         return Ok(());
     };
+    if let Ok(torrents) = crate::organizer::torrents(s).await {
+        for torrent in torrents {
+            let hash = text(&torrent, "hash_string")?;
+            let old = torrent_metadata(s, hash)?;
+            if old.as_ref().is_some_and(|r| {
+                r["confirmed"] == true
+                    || now() - r["updated_at"].as_f64().unwrap_or(0.0)
+                        < if r["status"] == "matched" {
+                            86400.0
+                        } else {
+                            900.0
+                        }
+            }) {
+                continue;
+            }
+            let mut record = match s.metadata.search(text(&torrent, "name")?).await {
+                Ok(record) => record,
+                Err(error) => {
+                    json!({"status":"error","candidates":[],"selected":null,"error":error.to_string()})
+                }
+            };
+            record["hash"] = json!(hash);
+            record["updated_at"] = json!(now());
+            save_torrent_metadata(s, &record)?;
+        }
+    }
     let assets =
         s.db.lock()
             .map_err(|_| anyhow::anyhow!("Database lock failed"))?
             .documents("assets")?;
-    for asset in assets {
+    for asset in &assets {
         if asset["available"] != true || asset["role"] == "extra" || asset["confirmed"] == true {
             continue;
+        }
+        if let Some(hash) = asset["torrent_hash"].as_str() {
+            if let Some(record) = torrent_metadata(s, hash)?
+                .filter(|r| r["confirmed"] == true && r["selected"].is_object())
+            {
+                let path = std::path::Path::new(text(&asset, "path")?);
+                let query = crate::metadata::parse_name(
+                    &path.file_stem().unwrap_or_default().to_string_lossy(),
+                )
+                .0;
+                let normalize = |s: &str| {
+                    s.chars()
+                        .filter(|c| c.is_alphanumeric())
+                        .flat_map(char::to_lowercase)
+                        .collect::<String>()
+                };
+                let same_title =
+                    normalize(&query) == normalize(record["query"].as_str().unwrap_or(""));
+                // A collection-level choice must not overwrite every film in a collection.
+                let single_video = assets
+                    .iter()
+                    .filter(|a| a["torrent_hash"] == hash && a["role"] != "extra")
+                    .count()
+                    == 1;
+                if same_title || single_video {
+                    save_match(s, text(&asset, "id")?, record["selected"].clone(), true)?;
+                    continue;
+                }
+            }
         }
         let age = now() - asset["matched_at"].as_f64().unwrap_or(0.0);
         if age
@@ -1158,4 +1276,38 @@ impl Service {
             *cache = None;
         }
     }
+}
+
+fn torrent_metadata(s: &Service, hash: &str) -> Result<Option<Value>> {
+    use rusqlite::OptionalExtension;
+    let db =
+        s.db.lock()
+            .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
+    let document: Option<String> = db
+        .connection
+        .query_row("SELECT document FROM metadata WHERE hash=?", [hash], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    document
+        .map(|d| serde_json::from_str(&d).map_err(Into::into))
+        .transpose()
+}
+fn save_torrent_metadata(s: &Service, record: &Value) -> Result<()> {
+    let mut db =
+        s.db.lock()
+            .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
+    let tx = db.connection.transaction()?;
+    tx.execute(
+        "INSERT OR REPLACE INTO metadata VALUES(?,?)",
+        rusqlite::params![text(record, "hash")?, record.to_string()],
+    )?;
+    if let Some(id) = record["selected"]["id"].as_str() {
+        tx.execute(
+            "INSERT OR REPLACE INTO library_entities VALUES(?,?)",
+            rusqlite::params![id, record["selected"].to_string()],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
 }

@@ -10,6 +10,26 @@ below before choosing which server to run.
 
 ## Active development goal
 
+### Integrated torrent search — queued after Rust cutover
+
+Add an indexer search interface to the native apps, backed by the shared Rust
+server on Diamond. Start with a direct JSON provider and keep the provider boundary
+open to additional sources and optional Torznab integration. Return consistent
+results with title, size, seeders/leechers when available, source, and magnet link.
+Let the user inspect a result and explicitly add it to Transmission from Torrbaby.
+Keep provider credentials, caching and request limits on the server. Search does
+not automatically download results. This is requested work, not yet implemented.
+
+### Activity feedback
+
+Show a confirmation toast after adding a torrent, distinguishing duplicates. Record
+server-side download completion and seeding-ratio milestones; show activity toasts
+on macOS and opt-in local notifications on iOS/iPadOS. Catch up on recent events
+when a client reconnects without replaying its previously seen events. No APNs or
+other push infrastructure is requested. Keep Settings limited to actionable controls.
+
+### Standalone server migration
+
 The server is now being ported to **Rust**, replacing the Python runtime before
 further server feature development. The deployed Python daemon remains in place
 only until the Rust replacement is ready. Preserve the HTTP API, configuration,
@@ -41,9 +61,10 @@ checks. Never point a preview at the live database.
 The `serve` command runs automatic library scans, metadata collection and completed
 torrent moves, with Transmission responsible for file changes and filesystem
 verification before marking work complete. It holds an exclusive database lease
-and handles launchd termination gracefully. Automatic metadata-based naming and
-production launchd cutover remain in progress; the legacy server remains live
-until that work and compatibility checks pass.
+and handles launchd termination gracefully. High-confidence media and matching
+subtitle names are applied through Transmission with persisted rename plans.
+The signed Rust preview on Diamond has verified direct filesystem range streaming.
+Production launchd cutover remains pending; the legacy server is still live.
 
 Turn the shared Diamond daemon into a **standalone media server with no Plex
 dependency**. Scan and persist metadata for every movie and TV episode, apply

@@ -84,3 +84,55 @@ impl Database {
         )
     }
 }
+
+impl Database {
+    pub fn record_activity(&mut self, torrents: &[Value], policy: Option<&Value>) -> Result<()> {
+        let mut state = self.state()?;
+        let previous = state["torrent_activity"].clone();
+        let mut current = json!({});
+        let mut events = Vec::new();
+        for t in torrents {
+            let Some(hash) = t["hash_string"].as_str() else {
+                continue;
+            };
+            let complete = t["percent_done"].as_f64().unwrap_or(0.0) >= 1.0
+                && t["left_until_done"].as_u64() == Some(0);
+            let ratio = t["upload_ratio"].as_f64().unwrap_or(0.0);
+            let goal = match t["seed_ratio_mode"].as_u64().unwrap_or(0) {
+                1 => t["seed_ratio_limit"].as_f64(),
+                0 => policy
+                    .filter(|p| p["seed_ratio_limited"] == true)
+                    .and_then(|p| p["seed_ratio_limit"].as_f64()),
+                _ => None,
+            };
+            let old = &previous[hash];
+            let kind = if old.is_object() && old["complete"] == false && complete {
+                Some("download_complete")
+            } else {
+                None
+            };
+            if let Some(kind) = kind {
+                events.push(json!({"kind":kind,"time":now(),"hash":hash,"name":t["name"]}));
+            }
+            if old.is_object()
+                && complete
+                && goal.is_some_and(|g| {
+                    g > 0.0 && ratio >= g && old["ratio"].as_f64().unwrap_or(ratio) < g
+                })
+            {
+                events.push(json!({"kind":"seeding_ratio_reached","time":now(),"hash":hash,"name":t["name"],"ratio":ratio,"goal":goal}));
+            }
+            current[hash] = json!({"complete":complete,"ratio":ratio});
+        }
+        state["torrent_activity"] = current;
+        if !state["events"].is_array() {
+            state["events"] = json!([]);
+        }
+        let saved = state["events"].as_array_mut().unwrap();
+        saved.extend(events);
+        if saved.len() > 1000 {
+            saved.drain(..saved.len() - 1000);
+        }
+        self.save_state(&state)
+    }
+}

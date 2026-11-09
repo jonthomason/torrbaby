@@ -99,6 +99,8 @@ pub const FIELDS: &[&str] = &[
     "rate_upload",
     "eta",
     "upload_ratio",
+    "seed_ratio_limit",
+    "seed_ratio_mode",
     "added_date",
     "activity_date",
     "peers_connected",
