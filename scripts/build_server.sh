@@ -28,6 +28,11 @@ swiftc -parse-as-library -O -target "$(uname -m)-apple-macos26.0" \
     -o "$APP/Contents/MacOS/torrbaby-media-segmenter"
 codesign --force --options runtime --sign "$MAC_SIGNING_IDENTITY" \
     "$APP/Contents/MacOS/torrbaby-media-segmenter"
+swiftc -parse-as-library -O -target "$(uname -m)-apple-macos26.0" \
+    "$ROOT/helpers/SubtitleExtractor.swift" \
+    -o "$APP/Contents/MacOS/torrbaby-subtitle-extractor"
+codesign --force --options runtime --sign "$MAC_SIGNING_IDENTITY" \
+    "$APP/Contents/MacOS/torrbaby-subtitle-extractor"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

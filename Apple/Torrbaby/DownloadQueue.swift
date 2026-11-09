@@ -225,7 +225,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
               let asset = title.assets.first(where: { $0.role != "extra" && $0.season == season && $0.episode == episode + 1 && $0.complete }) else { return nil }
         do {
             try await store.registerClient()
-            let link: PlaybackLink = try await store.request("POST", "/v1/library/assets/\(asset.id)/play", body: ["client_id": store.clientId])
+            let link = try await store.mediaPlaybackLink(asset: asset, titleID: title.id)
             return Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0,
                             url: try store.endpoint(link.path), name: asset.name ?? title.title,
                             libraryAssetID: asset.id, libraryTitleID: title.id)

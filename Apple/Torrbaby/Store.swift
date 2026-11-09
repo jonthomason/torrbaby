@@ -304,3 +304,75 @@ final class Store: ObservableObject {
         perform { try await self.send("PATCH", "/v1/settings", body: ["paused": !status.settings.paused]) }
     }
 }
+
+extension Store {
+    /// Use native HLS renditions when a subtitle preference requires text delivery.
+    func mediaPlaybackLink(asset: LibraryAsset, titleID: String, progress: @escaping (String) -> Void = { _ in }) async throws -> PlaybackLink {
+        let serverAtStart = server
+        let base = "/v1/library/assets/\(asset.id)"
+        var body: [String: Any] = ["client_id": clientId]
+        do {
+            let preferences: SubtitlePreferenceResponse = try await request("GET", "/v1/library/titles/\(titleID)/subtitle-preferences")
+            if preferences.effective.enabled {
+                progress("Preparing subtitles…")
+                struct Track: Decodable {
+                    let track: Int; let codec: String; let language: String?; let extractionSupported: Bool
+                    var normalizedLanguage: String? {
+                        let code = (language ?? "").lowercased()
+                        if code == "eng" || code.hasPrefix("en") { return "en" }
+                        if code == "zho" || code == "chi" || code.hasPrefix("zh") { return "zh-Hans" }
+                        return nil
+                    }
+                }
+                struct Inventory: Decodable { let embeddedTracks: [Track] }
+                struct Job: Decodable { let id: String; let state: String; let error: String? }
+                let inventory: Inventory = try await request("GET", base + "/subtitles")
+                let tracks = inventory.embeddedTracks.filter { $0.extractionSupported && $0.codec == "tx3g" }
+                guard let source = tracks.first(where: { $0.normalizedLanguage != nil }) ?? tracks.first else {
+                    throw APIError(message: "Translated subtitles aren’t available for this file yet.")
+                }
+                func wait(_ job: Job, route: String) async throws -> Job {
+                    var result = job
+                    let deadline = Date().addingTimeInterval(1200)
+                    while result.state == "queued" || result.state == "running" || result.state == "preparing" {
+                        try Task.checkCancellation()
+                        guard self.server == serverAtStart else { throw CancellationError() }
+                        guard Date() < deadline else { throw APIError(message: "Subtitles are still preparing. Try again shortly.") }
+                        try await Task.sleep(for: .seconds(2))
+                        result = try await self.request("GET", route + result.id)
+                    }
+                    guard result.state == "ready" else { throw APIError(message: result.error ?? "Subtitles couldn’t be prepared.") }
+                    return result
+                }
+                var originalBody: [String: Any] = ["track": source.track]
+                if let language = source.normalizedLanguage { originalBody["source"] = language }
+                let original: Job = try await request("POST", base + "/subtitles/prepare", body: originalBody)
+                let readyOriginal = try await wait(original, route: "/v1/subtitle-jobs/")
+                var ids = [readyOriginal.id]
+                let target = preferences.effective.language
+                if target != "original" && target != source.normalizedLanguage {
+                    var translatedBody: [String: Any]
+                    if let existing = tracks.first(where: { $0.normalizedLanguage == target }) {
+                        translatedBody = ["track": existing.track, "source": target]
+                    } else {
+                        guard let language = source.normalizedLanguage else { throw APIError(message: "The subtitle language couldn’t be identified.") }
+                        progress("Translating subtitles…")
+                        translatedBody = ["track": source.track, "source": language, "target": target]
+                    }
+                    let job: Job = try await request("POST", base + "/subtitles/prepare", body: translatedBody)
+                    ids.append(try await wait(job, route: "/v1/subtitle-jobs/").id)
+                }
+                progress("Preparing playback…")
+                let package: Job = try await request("POST", base + "/hls", body: ["subtitle_jobs": ids])
+                body["hls_job"] = try await wait(package, route: "/v1/hls-jobs/").id
+            }
+        } catch {
+            try Task.checkCancellation()
+            guard server == serverAtStart else { throw CancellationError() }
+            notify("Subtitles unavailable", detail: error.localizedDescription)
+        }
+        try Task.checkCancellation()
+        guard server == serverAtStart else { throw CancellationError() }
+        return try await request("POST", base + "/play", body: body)
+    }
+}

@@ -6,6 +6,7 @@ mod hls;
 mod matroska;
 mod media_packaging;
 mod metadata;
+mod native_subtitles;
 mod offline;
 mod organizer;
 mod pairing;
@@ -177,7 +178,7 @@ async fn main() -> Result<()> {
             helper,
         } => {
             let mut cues = if let Some(track) = track {
-                matroska::extract_worker(&input, track).await?
+                native_subtitles::extract(&input, track).await?
             } else {
                 let mut bytes = Vec::new();
                 fs::File::open(input)?

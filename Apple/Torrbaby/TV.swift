@@ -134,6 +134,8 @@ private struct TVMediaDetail: View {
     @State private var season: Int?
     @State private var playback: Playback?
     @State private var loading = false
+    @State private var preparation = ""
+    @State private var playbackTask: Task<Void, Never>?
     @State private var showSubtitlePreferences = false
     private var title: LibraryTitle? { store.library?.titles.first { $0.id == titleID } }
     var body: some View {
@@ -155,6 +157,12 @@ private struct TVMediaDetail: View {
                         }.padding(.horizontal, 90).padding(.bottom, 50).frame(maxWidth: 1350, alignment: .leading)
                     }.frame(height: 650)
                     VStack(alignment: .leading, spacing: 38) {
+                        if loading {
+                            HStack {
+                                Text(preparation.isEmpty ? "Preparing playback…" : preparation)
+                                Button("Cancel") { playbackTask?.cancel() }
+                            }
+                        }
                         Button("Subtitles") { showSubtitlePreferences = true }
                             .sheet(isPresented: $showSubtitlePreferences) { SubtitlePreferencesView(titleID: title.id) }
                         if !title.summary.isEmpty {
@@ -198,6 +206,7 @@ private struct TVMediaDetail: View {
                 }
             }
             .fullScreenCover(item: $playback) { PlayerScreen(playback: $0, store: store).onExitCommand { playback = nil } }
+            .onDisappear { playbackTask?.cancel() }
     }
     private func assetButton(_ asset: LibraryAsset, title: LibraryTitle) -> some View {
         Button { play(asset, title: title) } label: {
@@ -223,16 +232,16 @@ private struct TVMediaDetail: View {
     }
     private func play(_ asset: LibraryAsset, title: LibraryTitle) {
         guard !loading else { return }
-        loading = true
-        Task {
-            defer { loading = false }
+        loading = true; preparation = ""
+        playbackTask = Task {
+            defer { loading = false; playbackTask = nil }
             do {
                 await store.flushProgress()
                 try await store.registerClient()
-                let link: PlaybackLink = try await store.request("POST", "/v1/library/assets/\(asset.id)/play", body: ["client_id": store.clientId])
+                let link = try await store.mediaPlaybackLink(asset: asset, titleID: title.id) { preparation = $0 }
                 playback = Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0,
                     url: try store.endpoint(link.path), name: asset.episode == nil ? title.title : title.title + " · " + (asset.name ?? "Episode \(asset.episode!)"), libraryAssetID: asset.id, libraryTitleID: title.id)
-            } catch { store.actionError = error.localizedDescription }
+            } catch { if !Task.isCancelled { store.actionError = error.localizedDescription } }
         }
     }
 }

@@ -502,13 +502,10 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
                     value
                 })
                 .collect();
-            let matroska = media.extension().is_some_and(|s| s.eq_ignore_ascii_case("mkv") || s.eq_ignore_ascii_case("webm"));
-            let (embedded, scanned, error) = if matroska {
-                match crate::matroska::tracks_worker(&media).await {
-                    Ok(value) => (value["tracks"].clone(), true, None),
-                    Err(error) => (json!([]), false, Some(error.to_string())),
-                }
-            } else { (json!([]), false, None) };
+            let (embedded, scanned, error) = match crate::native_subtitles::tracks(&media).await {
+                Ok(value) => (value["tracks"].clone(), true, None),
+                Err(error) => (json!([]), false, Some(error.to_string())),
+            };
             return Ok(json!({"tracks":tracks,"embedded_tracks":embedded,
                 "embedded_tracks_scanned":scanned,"embedded_error":error}));
         }

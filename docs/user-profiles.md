@@ -25,3 +25,11 @@ can watch on multiple devices.
 Open product decisions for implementation time: profile icons, optional child profiles,
 optional profile lock, and ownership of download retention. These are not prerequisites
 for the initial simple profile picker and separate watch state.
+
+## Confirmed profile UI
+
+- Profile creation page requires only a name; a photo is optional.
+- Mobile devices normally use one remembered profile. Do not force a profile picker
+  on every launch; retain a way to change it in Settings.
+- Shared TVs need obvious profile switching in both tvOS and Android TV clients.
+- No account/password/email flow is required for these lightweight LAN profiles.

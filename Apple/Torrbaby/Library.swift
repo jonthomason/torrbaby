@@ -192,6 +192,8 @@ struct LibraryDetail: View {
     @State private var season: Int = -1
     @State private var playback: Playback?
     @State private var loading = false
+    @State private var preparation = ""
+    @State private var playbackTask: Task<Void, Never>?
     @State private var showSubtitles = false
     var title: LibraryTitle? { store.library?.titles.first { $0.id == titleID } }
     var body: some View {
@@ -210,6 +212,13 @@ struct LibraryDetail: View {
                             #if !os(tvOS)
                             DownloadAssetControl(asset: asset, title: title)
                             #endif
+                        }
+                    }
+                    if loading {
+                        HStack {
+                            ProgressView().controlSize(.small)
+                            Text(preparation.isEmpty ? "Preparing playback…" : preparation).font(.caption)
+                            Button("Cancel") { playbackTask?.cancel() }
                         }
                     }
                     Button { showSubtitles = true } label: { Label("Subtitles", systemImage: "captions.bubble") }
@@ -257,6 +266,7 @@ struct LibraryDetail: View {
                 }.padding(24)
             }
         }.background(Theme.canvas).navigationTitle(title?.title ?? "Library")
+        .onDisappear { playbackTask?.cancel() }
         #if os(iOS)
         .background(MobilePlayerPresentation(playback: $playback, store: store).frame(width: 0, height: 0))
         #elseif os(tvOS)
@@ -264,9 +274,10 @@ struct LibraryDetail: View {
         #endif
     }
     func play(_ asset: LibraryAsset, title: String) {
-        loading = true
-        Task {
-            defer { loading = false }
+        guard !loading else { return }
+        loading = true; preparation = ""
+        playbackTask = Task {
+            defer { loading = false; playbackTask = nil }
             do {
                 #if !os(tvOS)
                 let downloads = DownloadQueue.shared
@@ -282,14 +293,14 @@ struct LibraryDetail: View {
                 #endif
                 await store.flushProgress()
                 try await store.registerClient()
-                let link: PlaybackLink = try await store.request("POST", "/v1/library/assets/\(asset.id)/play", body: ["client_id":store.clientId])
+                let link = try await store.mediaPlaybackLink(asset: asset, titleID: titleID) { preparation = $0 }
                 let item = Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0, url: try store.endpoint(link.path), name: asset.season == nil ? title : title + " · " + (asset.name ?? ""), libraryAssetID: asset.id, libraryTitleID: titleID)
                 #if os(macOS)
                 openWindow(value: item)
                 #else
                 playback = item
                 #endif
-            } catch { store.actionError = error.localizedDescription }
+            } catch { if !Task.isCancelled { store.actionError = error.localizedDescription } }
         }
     }
 }

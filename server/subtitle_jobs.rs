@@ -141,11 +141,12 @@ impl Manager {
         ensure!(
             input
                 .extension()
-                .is_some_and(|s| s.eq_ignore_ascii_case("mkv") || s.eq_ignore_ascii_case("webm")),
-            "Embedded preparation currently supports Matroska only"
+                .and_then(|s|s.to_str())
+                .is_some_and(|s| ["mkv", "webm", "mp4", "m4v", "mov"].contains(&s.to_ascii_lowercase().as_str())),
+            "Embedded preparation supports Matroska and MP4 text subtitles"
         );
         ensure!(
-            (source.is_none() && target.is_none())
+            (target.is_none() && source.as_deref().is_none_or(|s| ["en", "zh-Hans"].contains(&s)))
                 || (source != target
                     && source
                         .as_deref()
@@ -245,7 +246,7 @@ impl Manager {
             let _permit = self.gate.acquire().await?;
             job.state = "running".into();
             self.save(&job)?;
-            let mut cues = crate::matroska::extract_worker(&job.input, job.track).await?;
+            let mut cues = crate::native_subtitles::extract(&job.input, job.track).await?;
             if let (Some(source), Some(target)) = (&job.source, &job.target) {
                 let helper =
                     std::env::current_exe()?.with_file_name("torrbaby-subtitle-translator");
