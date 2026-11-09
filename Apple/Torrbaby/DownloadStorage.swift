@@ -70,6 +70,35 @@ final class DownloadStorage {
         try FileManager.default.createDirectory(at: self.root.appendingPathComponent("partial"), withIntermediateDirectories: true)
         // A durable removal intent is safe to replay after interruption.
         for item in manifest.items where item.state == .removing { try finishRemoval(item.id) }
+        try reconcileFiles()
+    }
+
+    /// Runs before reconnecting the background URLSession. Completed delegate
+    /// staging files are ours, not URLSession's resumable temporary files.
+    private func reconcileFiles() throws {
+        let partial = root.appendingPathComponent("partial")
+        for file in try fm.contentsOfDirectory(at: partial, includingPropertiesForKeys: [.isRegularFileKey]) {
+            guard file.pathExtension == "completed",
+                  UUID(uuidString: file.deletingPathExtension().lastPathComponent) != nil,
+                  try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { continue }
+            try fm.removeItem(at: file)
+        }
+        for item in items {
+            let file = mediaURL(item)
+            let attributes = try? fm.attributesOfItem(atPath: file.path)
+            if item.state == .ready {
+                guard attributes?[.type] as? FileAttributeType == .typeRegular,
+                      (attributes?[.size] as? NSNumber)?.int64Value == item.size else {
+                    try update(item.id) { $0.state = .failed; $0.received = 0; $0.error = "Downloaded file is missing or incomplete. Download it again." }
+                    if attributes != nil { try fm.removeItem(at: file) }
+                    continue
+                }
+            } else if attributes != nil {
+                // A crash after move but before durable adoption leaves a file
+                // whose revision was never committed. Never present it as ready.
+                try fm.removeItem(at: file)
+            }
+        }
     }
 
     private func save(_ next: Manifest) throws {

@@ -63,14 +63,14 @@ final class PlaybackModel: ObservableObject {
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, !self.finished, self.playback.id == playbackID else { return }
-                self.report(ended: true, reachedEnd: true)
+                let progressSaved = self.report(ended: true, reachedEnd: true)
                 #if !os(tvOS)
                 let queue = DownloadQueue.shared
                 let episode = queue.isEpisode(self.playback)
                 if self.playback.localDownloadID != nil || episode {
                     self.resumed = false
                     self.player.replaceCurrentItem(with: nil)
-                    if let id = self.playback.localDownloadID { queue.finished(id) }
+                    if progressSaved, let id = self.playback.localDownloadID { queue.finished(id) }
                     if episode, let next = await queue.nextPlayback(after: self.playback) {
                         guard !self.finished else { return }
                         self.load(next)
@@ -107,20 +107,21 @@ final class PlaybackModel: ObservableObject {
             }
         } else { resumed = true; player.play() }
     }
-    func report(ended: Bool = false, reachedEnd: Bool = false) {
-        guard resumed, !finished else { return }
+    @discardableResult
+    func report(ended: Bool = false, reachedEnd: Bool = false) -> Bool {
+        guard resumed, !finished else { return false }
         let duration = player.currentItem?.duration.seconds ?? 0
         let position = player.currentTime().seconds
-        guard duration.isFinite, duration > 0, position.isFinite else { return }
+        guard duration.isFinite, duration > 0, position.isFinite else { return false }
         #if !os(tvOS)
         if let id = playback.localDownloadID {
-            DownloadQueue.shared.report(id, position: position, duration: duration, reachedEnd: reachedEnd)
-            return
+            return DownloadQueue.shared.report(id, position: position, duration: duration, reachedEnd: reachedEnd)
         }
         #endif
-        guard let session = playback.sessionId else { return }
+        guard let session = playback.sessionId else { return false }
         sequence += 1
         store.reportProgress(sessionId: session, sequence: sequence, position: position, duration: duration, ended: ended)
+        return true
     }
     func stop() {
         player.pause()

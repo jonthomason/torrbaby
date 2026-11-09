@@ -170,9 +170,13 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
                             libraryAssetID: asset.id, libraryTitleID: title.id)
         } catch { return nil }
     }
-    func report(_ id: UUID, position: Double, duration: Double, reachedEnd: Bool) {
-        do { try storage?.recordPlayback(id, position: position, duration: duration, reachedEnd: reachedEnd); reload() }
-        catch { self.error = error.localizedDescription }
+    @discardableResult
+    func report(_ id: UUID, position: Double, duration: Double, reachedEnd: Bool) -> Bool {
+        guard let storage, position.isFinite, duration.isFinite, duration > 0, position >= 0 else { return false }
+        do {
+            try storage.recordPlayback(id, position: position, duration: duration, reachedEnd: reachedEnd)
+            reload(); return true
+        } catch { self.error = error.localizedDescription; return false }
     }
     func finished(_ id: UUID) {
         do { try storage?.removeAfterPlayback(id); reload(); pump() }

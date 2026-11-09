@@ -348,3 +348,24 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
   playback-session side effects. Scratch fixture saved to
   `local-state/checkpoints/2026-11-09/torrbaby-subtitle-smoke.py`.
 - No production deployment or app release for this work.
+
+## Follow-up: offline recovery and deletion safety
+
+- `DownloadStorage` startup now removes only UUID-named `.completed` staging
+  leftovers, validates ready files are regular/exact-size, marks missing/truncated
+  files failed while preserving watch progress, and removes uncommitted media
+  files for known non-ready records. Resume files and unknown filenames remain.
+- `DownloadQueue.report`/`PlaybackModel.report` now return whether local progress
+  was durably saved. Native end-of-playback only invokes delete-after-playback
+  when that exact progress write succeeded, preventing stale completion flags
+  from causing deletion after a persistence failure.
+- Mac and iOS Simulator builds passed. Original storage smoke passed. New scratch
+  `local-state/checkpoints/2026-11-09/torrbaby-storage-recovery-smoke.swift` verifies
+  orphan cleanup, unknown/resume-file preservation, truncated-ready rejection,
+  durable progress retention, and idempotent restart.
+- Shared offline progress sync is still pending; no endpoint/outbox flush added in
+  this change. Also still pending: normal Library Play preferring local media,
+  offline artwork/metadata/subtitles, storage reservation improvements, cross-
+  season ordering, and real-device background transfer/PiP checks.
+- These app builds remain WIP and were not installed or published. Stable OTA42
+  and installed Mac37 unchanged. Production Rust unchanged.
