@@ -766,3 +766,13 @@ User reports iPad left/right correctly skip 15 seconds but Space does not play/p
 - Reviewed local oxideav-mp4 muxer/fragmented writer and Dolby sample entries: explicit PTS/DTS/durations required; Dolby config must be provided, not inferred by muxer. No dependency added. Design/evidence in docs/matroska-remux.md.
 - Extended inspect-matroska with presentation-order cadence histogram, duplicate PTS and quantization-aware default-duration deviations. Packet order stays unchanged. cargo check/build passed; owned synthetic reordered timestamps, duplicates, gaps and scale fixture passed. This diagnostic is not yet deployed; no app build required.
 - Next: derive/validate decode timeline and Dolby configuration, implement supervised Rust remux, prove native AVPlayer decode/seek/sync before exposing MKV prepared captions. Goal active.
+
+## Build72 / download row playback and explicit title languages
+
+- User asked whether MKV subtitle work breaks compatibility: new development remux is isolated from production; existing paths/source files retained.
+- Added development remux CLI with MIT oxideav dependencies and notices audit. Native owned AVC reordered fixture remux decoded all576frames byte-identically in display order; existing-output refusal passed, cargo check/build passed. Current restrictions and outstanding work in docs/matroska-remux.md. No Rust deploy this turn.
+- Download ready rows now activate playback across the row, play glyph decorative; pause/resume controls retained for in-flight rows, swipe deletion unchanged. Accessibility combined row + action. Mobile physical tap/swipe acceptance not yet performed.
+- Shared title language component now explicitly labels Audio/Subtitles; pending/failed state visible, generated Chinese retains Translated badge. Episode rows show their own ready inventory.
+- Mac/iOS/tvOS simulator72 builds passed. Mac72 installed and launched via CUA; title details for Fellowship of the Ring verified English Audio, English Subtitles, Simplified Chinese Translated. Matrix inventory pending (server-confirmed), correctly displays Checking languages.
+- Mobile72 published and HTTPS current.json verified; IPA SHA74475d785d59203c0bcc8cde3faa5a9db787a5576fd4f29055450a45c9f5722e. TVsim72 installed, not newly launched this turn. Android untouched/untracked.
+- Latest daemon status72inventoried/3translated/1failed; currentnull at poll. Investigate failed job next; no dialogue printed. Goal remains active.

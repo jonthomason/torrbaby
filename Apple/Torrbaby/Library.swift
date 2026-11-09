@@ -112,14 +112,10 @@ struct MediaLanguagesView: View {
         return Locale.current.localizedString(forIdentifier: normalized) ?? code
     }
     var body: some View {
-        if let info, info.state == "ready" {
-            VStack(alignment: .leading, spacing: 8) {
-                if !info.audioTracks.isEmpty {
-                    Label(Array(Set(info.audioTracks.map { name($0.language) })).sorted().joined(separator: " · "), systemImage: "speaker.wave.2")
-                }
-                if !info.subtitleTracks.isEmpty {
-                    Label(Array(Set(info.subtitleTracks.map { name($0.language) })).sorted().joined(separator: " · "), systemImage: "captions.bubble")
-                }
+        VStack(alignment: .leading, spacing: 8) {
+            if let info, info.state == "ready" {
+                languageRow("Audio", icon: "speaker.wave.2", languages: info.audioTracks.map { name($0.language) })
+                languageRow("Subtitles", icon: "captions.bubble", languages: info.subtitleTracks.map { name($0.language) })
                 ForEach(info.prepared.filter { $0.generated && $0.state == "ready" }, id: \.id) { track in
                     HStack(spacing: 8) {
                         Label(name(track.language), systemImage: "captions.bubble.fill")
@@ -127,7 +123,16 @@ struct MediaLanguagesView: View {
                             .background(.purple.opacity(0.2), in: Capsule())
                     }.foregroundStyle(.purple)
                 }
-            }.font(.callout).foregroundStyle(.secondary)
+            } else {
+                Label(info?.state == "failed" ? "Languages unavailable" : "Checking languages…", systemImage: "captions.bubble")
+            }
+        }.font(.callout).foregroundStyle(.secondary)
+    }
+    private func languageRow(_ title: String, icon: String, languages: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Label(title, systemImage: icon).font(.caption.weight(.semibold))
+            Text(languages.isEmpty ? "None" : Array(Set(languages)).sorted().joined(separator: " · "))
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -335,6 +340,7 @@ struct LibraryDetail: View {
                                     if let s = asset.season, let e = asset.episode { Text("S\(s) · E\(e)").font(.caption).foregroundStyle(Theme.muted) }
                                     Text(asset.name ?? title.title).font(.headline)
                                     if !asset.summary.isEmpty { Text(asset.summary).font(.caption).lineLimit(3).foregroundStyle(Theme.muted) }
+                                    if title.kind == "tv", asset.mediaInfo?.state == "ready" { MediaLanguagesView(info: asset.mediaInfo) }
                                     if asset.duration > 0 && !asset.watched { ProgressView(value: min(1, asset.position / asset.duration)) }
                                     if !asset.complete { Text("Downloading").font(.caption).foregroundStyle(Theme.muted) }
                                 }

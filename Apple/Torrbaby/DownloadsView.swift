@@ -50,7 +50,7 @@ struct DownloadsView: View {
                         }
                         Spacer(minLength: 8)
                         if item.state == .ready {
-                            Button { play(item.id) } label: { Image(systemName: "play.circle.fill").font(.title).frame(width: 48, height: 48).contentShape(Rectangle()) }.buttonStyle(.borderless).accessibilityLabel("Play download").help("Play download").disabled(preparing)
+                            Image(systemName: "play.circle.fill").font(.title).frame(width: 48, height: 48).accessibilityHidden(true)
                         } else if item.state == .transferring || item.state == .queued {
                             Button { queue.pause(item.id) } label: { Image(systemName: "pause.circle").font(.title2) }.help("Pause download")
                         } else {
@@ -62,6 +62,12 @@ struct DownloadsView: View {
                           TorrentProgressGauge(value: item.size > 0 ? Double(queue.received[item.id] ?? item.received) / Double(item.size) : 0)
                       }
                     }.padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { if item.state == .ready { play(item.id) } }
+                    .accessibilityElement(children: item.state == .ready ? .combine : .contain)
+                    .accessibilityAddTraits(item.state == .ready ? .isButton : [])
+                    .accessibilityAction { if item.state == .ready { play(item.id) } }
                     .background(Theme.panel)
                     .offset(x: hintRow == item.id ? hintOffset : 0)
                     .background(alignment: .trailing) {
