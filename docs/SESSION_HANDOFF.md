@@ -80,17 +80,18 @@ Diamond production runs Rust 0.3.0 under `org.torrbaby.daemon`:
 - Transmission local RPC: `http://127.0.0.1:9091/transmission/rpc`, v4.1.4 RPC2
   snake_case protocol. Media roots `/Volumes/Alpha/Media/{Downloads,Movies,TV}`.
 - Config, state.sqlite3, api.token, tmdb.token and rust-server.log are in
-  `~/Library/Application Support/Torrbaby/`. SQLite schema version **6**.
+  `~/Library/Application Support/Torrbaby/`. SQLite schema version **7** (updated 14:31 on 2026-11-09).
 - Signed bundle ID `org.torrbaby.server`, Developer ID team **23PTSAZN2G**.
   User granted file access; direct range reads were verified from media volumes.
 - Python launch agent was replaced, not run alongside Rust. No Rust Plex calls.
   Legacy cached Plex-relative artwork can be read from disk, never fetched.
 - Initial cutover backup: `backups/pre-rust-20261109-125138`; latest server update
-  backup `backups/rust-20261109-133150` includes previous signed bundle and SQLite.
-  Rolling back schema 6 to an older server requires the corresponding DB backup.
-- Latest deployed Rust includes authenticated original-file download descriptors
-  and ranged transfer (a4a7c89). Successful real-media descriptor + HEAD + 1 KiB
-  conditional 206 range verified on Diamond after deployment.
+  backup `backups/rust-20261109-143105` includes the previous signed bundle and schema-6 SQLite.
+  Rolling back schema 7 requires restoring that corresponding DB backup.
+- Latest deployed Rust includes original-file transfers, sidecar subtitle APIs,
+  shared progress read/offline sync, and the signed Apple translation helper
+  (server source through 85dfd5c, unchanged in e4ecef0). Live library, history,
+  progress/subtitle APIs and a 1 KiB media range verified after deployment.
 - Standalone-server goal still needs a broad final acceptance audit, including
   cold startup/catalog/artwork/playback/progress without Plex available. Do not
   claim this broad goal complete based on a single range-read check.
@@ -450,3 +451,17 @@ as references. Their absolute /tmp paths may need adjustment when rerunning.
 - Rechecked Rust download/range and pairing fixtures: both passed. Signed Rust
   bundle build passed. Preparing an additive server rollout with DB backup;
   production before rollout is schema 6, 1 history record and 3 registered clients.
+
+## Deployment: additive Rust APIs on Diamond, 14:31
+
+- Signed server bundle deployed; launchctl restarted only org.torrbaby.daemon.
+  Backup: ~/Library/Application Support/Torrbaby/backups/rust-20261109-143105
+  (old signed server and schema-6 SQLite). Live schema is now 7.
+- Live status/library passed: 180 complete assets, no library error, 3 clients;
+  the single playback-history record was byte-for-byte JSON equal to predeploy.
+- Authenticated new progress read, subtitle discovery, and 1 KiB 206 media read
+  passed. The deployed Rust CLI invoked its adjacent signed Apple translator and
+  translated a synthetic English cue to Chinese. This was not a movie caption job.
+- Local scratch queue fixture stopped (PID 97351 confirmed terminal).
+- Stable installed Mac37 and OTA42 unchanged. WIP app release still pending;
+  deployment does not imply native subtitle selection or translation UI exists.
