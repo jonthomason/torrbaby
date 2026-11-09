@@ -126,6 +126,9 @@ final class Store: ObservableObject {
     private var refreshing = false
     private var etaSmoother = TorrentETASmoother()
     init() {
+        #if !os(tvOS)
+        DownloadQueue.shared.attach(self)
+        #endif
         #if os(iOS)
         UNUserNotificationCenter.current().delegate = NotificationPresenter.shared
         #endif

@@ -239,6 +239,9 @@ struct LibraryDetail: View {
                 }.padding(24)
             }
         }.background(Theme.canvas).navigationTitle(title?.title ?? "Library")
+        #if !os(tvOS)
+        .toolbar { if let title { DownloadTitleMenu(title: title) } }
+        #endif
         #if os(iOS)
         .background(MobilePlayerPresentation(playback: $playback, store: store).frame(width: 0, height: 0))
         #elseif os(tvOS)
@@ -253,7 +256,7 @@ struct LibraryDetail: View {
                 await store.flushProgress()
                 try await store.registerClient()
                 let link: PlaybackLink = try await store.request("POST", "/v1/library/assets/\(asset.id)/play", body: ["client_id":store.clientId])
-                let item = Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0, url: try store.endpoint(link.path), name: asset.season == nil ? title : title + " · " + (asset.name ?? ""))
+                let item = Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0, url: try store.endpoint(link.path), name: asset.season == nil ? title : title + " · " + (asset.name ?? ""), libraryAssetID: asset.id, libraryTitleID: titleID)
                 #if os(macOS)
                 openWindow(value: item)
                 #else

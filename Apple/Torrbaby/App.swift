@@ -3,6 +3,9 @@ import SwiftUI
 @main
 struct TorrbabyApp: App {
     @StateObject private var store = Store()
+    #if os(iOS)
+    @UIApplicationDelegateAdaptor(DownloadAppDelegate.self) private var downloadDelegate
+    #endif
     #if os(macOS)
     @AppStorage("showMenuBarRates") private var showMenuBarRates = true
     #endif

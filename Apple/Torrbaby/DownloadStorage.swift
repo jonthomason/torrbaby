@@ -53,6 +53,7 @@ final class DownloadStorage {
     init(root: URL) throws {
         self.root = root.standardizedFileURL
         try FileManager.default.createDirectory(at: self.root, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: self.root.path)
         let path = self.root.appendingPathComponent("downloads.json")
         if FileManager.default.fileExists(atPath: path.path) {
             manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: path))
@@ -108,6 +109,9 @@ final class DownloadStorage {
     func resumeURL(_ id: UUID) -> URL {
         root.appendingPathComponent("partial").appendingPathComponent(id.uuidString + ".resume")
     }
+    func resumeContextURL(_ id: UUID) -> URL {
+        root.appendingPathComponent("partial").appendingPathComponent(id.uuidString + ".context")
+    }
     /// Includes posters, partials, resume data and unknown leftovers, not just ready movies.
     func usedBytes() throws -> Int64 {
         guard let files = fm.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .isSymbolicLinkKey]) else {
@@ -161,6 +165,9 @@ final class DownloadStorage {
             item.received = min(item.size, max(0, received)); item.state = .paused; item.error = error
         }
     }
+    func queue(_ id: UUID) throws {
+        try update(id) { if [.paused, .failed].contains($0.state) { $0.state = .queued; $0.error = nil } }
+    }
     func pin(_ id: UUID, _ keep: Bool) throws { try update(id) { $0.pinned = keep } }
     func adopt(_ id: UUID, temporary: URL, revision: String) throws {
         guard let item = items.first(where: { $0.id == id }), item.state == .transferring else { throw StorageError(message: "Download was cancelled.") }
@@ -204,7 +211,7 @@ final class DownloadStorage {
     private func finishRemoval(_ id: UUID) throws {
         guard let item = items.first(where: { $0.id == id }) else { return }
         // Only UUID-derived paths owned by this store can be removed. No server paths.
-        for file in [mediaURL(item), partialURL(id), resumeURL(id)] where fm.fileExists(atPath: file.path) {
+        for file in [mediaURL(item), partialURL(id), resumeURL(id), resumeContextURL(id)] where fm.fileExists(atPath: file.path) {
             try fm.removeItem(at: file)
         }
         // Retain watch progress until it has synced, independently of the media file.

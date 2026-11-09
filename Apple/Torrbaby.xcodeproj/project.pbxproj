@@ -156,6 +156,24 @@
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
 		</dict>
+		<key>1FA5AF6BDE9E9EEAABB77707</key>
+		<dict>
+			<key>fileRef</key>
+			<string>32CDE922981FCB722A7CEBF5</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+		</dict>
+		<key>32CDE922981FCB722A7CEBF5</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>DownloadQueue.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
 		<key>3343252C3DA956EE0F714F10</key>
 		<dict>
 			<key>isa</key>
@@ -197,7 +215,9 @@
 			<array>
 				<string>4411227784337DBB3AE28994</string>
 				<string>FBE0B9919A6FBE5EDE525267</string>
+				<string>32CDE922981FCB722A7CEBF5</string>
 				<string>44236D4B917299E3A921FE21</string>
+				<string>64858D4F4DA4F5B7871B6D1F</string>
 				<string>452DD7801481B6DCBE203458</string>
 				<string>68942EF6B5944194B714E5FF</string>
 				<string>8BF4A28E43F6CF370D3EE1C2</string>
@@ -337,6 +357,17 @@
 			<string>0991948DBEFEC33CC776D59D</string>
 			<key>isa</key>
 			<string>PBXBuildFile</string>
+		</dict>
+		<key>64858D4F4DA4F5B7871B6D1F</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>DownloadsView.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
 		</dict>
 		<key>64C8BF146D89DEF8C229D0E0</key>
 		<dict>
@@ -499,7 +530,9 @@
 			<array>
 				<string>0742EAAFE818D8AF1F2654FF</string>
 				<string>4A65F154EF0D30B3C788EBB8</string>
+				<string>1FA5AF6BDE9E9EEAABB77707</string>
 				<string>86CB94279876336AF04E019D</string>
+				<string>CD0B908E1A2E7C3201798DE4</string>
 				<string>801803212947630192DC4AE3</string>
 				<string>64C8BF146D89DEF8C229D0E0</string>
 				<string>D1B1E93CC8825EE71A6BC9AF</string>
@@ -526,6 +559,13 @@
 			<string>Pairing.swift</string>
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
+		</dict>
+		<key>CD0B908E1A2E7C3201798DE4</key>
+		<dict>
+			<key>fileRef</key>
+			<string>64858D4F4DA4F5B7871B6D1F</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
 		</dict>
 		<key>D1B1E93CC8825EE71A6BC9AF</key>
 		<dict>

@@ -14,38 +14,24 @@ func skip(_ player: AVPlayer, seconds: Double) {
 final class PlaybackModel: ObservableObject {
     let player: AVPlayer
     @Published var error: String?
+    @Published var title: String
+    @Published var endMessage: String?
     private var observation: NSKeyValueObservation?
     private var timeObserver: Any?
     private var rateObservation: NSKeyValueObservation?
+    private var endObserver: NSObjectProtocol?
     private var sequence = 0
     private var starting = false
     private var resumed = false
     private var finished = false
-    private let playback: Playback
+    private var playback: Playback
     private let store: Store
     init(playback: Playback, store: Store) {
         self.playback = playback
         self.store = store
-        let url = playback.url
-        let title = playback.name
-        let item = AVPlayerItem(url: url)
-        #if os(iOS) || os(tvOS)
-        let metadata = AVMutableMetadataItem()
-        metadata.identifier = .commonIdentifierTitle
-        metadata.value = title as NSString
-        metadata.extendedLanguageTag = "und"
-        item.externalMetadata = [metadata]
-        #endif
-        player = AVPlayer(playerItem: item)
-        observation = item.observe(\.status, options: [.new, .initial]) { [weak self] item, _ in
-            if item.status == .readyToPlay {
-                Task { @MainActor [weak self] in self?.start() }
-            }
-            if item.status == .failed {
-                let message = item.error?.localizedDescription ?? "Apple's player cannot open this file."
-                Task { @MainActor [weak self] in self?.error = message }
-            }
-        }
+        self.title = playback.name
+        player = AVPlayer()
+        load(playback)
         #if os(iOS) || os(tvOS)
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         try? AVAudioSession.sharedInstance().setActive(true)
@@ -55,6 +41,57 @@ final class PlaybackModel: ObservableObject {
         }
         rateObservation = player.observe(\.rate, options: [.new]) { [weak self] _, _ in
             Task { @MainActor [weak self] in self?.report() }
+        }
+    }
+    private func load(_ next: Playback) {
+        if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+        observation = nil
+        playback = next; title = next.name; error = nil; endMessage = nil
+        sequence = 0; starting = false; resumed = false
+        let url = playback.url
+        let title = playback.name
+        let item = AVPlayerItem(url: url)
+        let playbackID = playback.id
+        #if os(iOS) || os(tvOS)
+        let metadata = AVMutableMetadataItem()
+        metadata.identifier = .commonIdentifierTitle
+        metadata.value = title as NSString
+        metadata.extendedLanguageTag = "und"
+        item.externalMetadata = [metadata]
+        #endif
+        player.replaceCurrentItem(with: item)
+        endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, !self.finished, self.playback.id == playbackID else { return }
+                self.report(ended: true, reachedEnd: true)
+                #if !os(tvOS)
+                let queue = DownloadQueue.shared
+                let episode = queue.isEpisode(self.playback)
+                if self.playback.localDownloadID != nil || episode {
+                    self.resumed = false
+                    self.player.replaceCurrentItem(with: nil)
+                    if let id = self.playback.localDownloadID { queue.finished(id) }
+                    if episode, let next = await queue.nextPlayback(after: self.playback) {
+                        guard !self.finished else { return }
+                        self.load(next)
+                    } else if !self.finished {
+                        self.endMessage = episode ? "Next episode unavailable" : "Playback finished"
+                    }
+                }
+                #endif
+            }
+        }
+        observation = item.observe(\.status, options: [.new, .initial]) { [weak self] item, _ in
+            if item.status == .readyToPlay {
+                Task { @MainActor [weak self] in
+                    guard let self, self.player.currentItem === item else { return }
+                    self.start()
+                }
+            }
+            if item.status == .failed {
+                let message = item.error?.localizedDescription ?? "Apple's player cannot open this file."
+                Task { @MainActor [weak self] in self?.error = message }
+            }
         }
     }
     private func start() {
@@ -70,11 +107,18 @@ final class PlaybackModel: ObservableObject {
             }
         } else { resumed = true; player.play() }
     }
-    func report(ended: Bool = false) {
-        guard resumed, !finished, let session = playback.sessionId else { return }
+    func report(ended: Bool = false, reachedEnd: Bool = false) {
+        guard resumed, !finished else { return }
         let duration = player.currentItem?.duration.seconds ?? 0
         let position = player.currentTime().seconds
         guard duration.isFinite, duration > 0, position.isFinite else { return }
+        #if !os(tvOS)
+        if let id = playback.localDownloadID {
+            DownloadQueue.shared.report(id, position: position, duration: duration, reachedEnd: reachedEnd)
+            return
+        }
+        #endif
+        guard let session = playback.sessionId else { return }
         sequence += 1
         store.reportProgress(sessionId: session, sequence: sequence, position: position, duration: duration, ended: ended)
     }
@@ -85,6 +129,7 @@ final class PlaybackModel: ObservableObject {
         if let timeObserver { player.removeTimeObserver(timeObserver); self.timeObserver = nil }
         rateObservation = nil
         observation = nil
+        if let endObserver { NotificationCenter.default.removeObserver(endObserver); self.endObserver = nil }
     }
 }
 
@@ -106,9 +151,9 @@ struct NativePlayer: NSViewRepresentable {
             }
         }
         func configure(_ window: NSWindow, title: String) {
+            window.title = title
             guard self.window !== window else { return }
             self.window = window
-            window.title = title
             window.titlebarAppearsTransparent = true
             window.styleMask.insert(.fullSizeContentView)
             window.acceptsMouseMovedEvents = true
@@ -210,9 +255,13 @@ struct PlayerScreen: View {
                 } actions: {
                     Button("Close") { dismiss() }
                 }
+            } else if let message = model.endMessage {
+                ContentUnavailableView { Label(message, systemImage: "checkmark.circle") } actions: {
+                    Button("Close") { dismiss() }
+                }
             } else {
                 #if os(macOS)
-                NativePlayer(title: playback.name, player: model.player, close: { dismiss() })
+                NativePlayer(title: model.title, player: model.player, close: { dismiss() })
                 #else
                 NativePlayer(player: model.player, close: { dismiss() })
                 #endif

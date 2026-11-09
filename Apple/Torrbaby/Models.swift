@@ -149,6 +149,9 @@ struct Playback: Identifiable, Codable, Hashable {
     let resumePosition: Double
     let url: URL
     let name: String
+    var localDownloadID: UUID? = nil
+    var libraryAssetID: String? = nil
+    var libraryTitleID: String? = nil
 }
 
 func bytes(_ count: Int64) -> String { ByteCountFormatter.string(fromByteCount: count, countStyle: .file) }
