@@ -48,7 +48,7 @@ owned output. Never publish a partial artifact as ready.
 development command, not connected to playback APIs. It streams compressed AVC/
 HEVC and ordinary AAC-LC to MP4 with a 64-bit mdat. It validates all video PTS
 against a zero-origin fixed cadence, reconstructs decode timing and composition
-offsets, and rejects offsets/gaps/delays or unsupported codecs/configurations.
+offsets, and rejects gaps or unsupported codecs/configurations. Track offsets and codec delays are preserved with edit lists.
 Audio uses 1024-sample AAC units with timestamp validation. Storage, packet count
 and elapsed time are bounded; errors remove only the newly created output.
 Existing destinations are never replaced. Source revision is checked at finish.
@@ -62,8 +62,8 @@ server deployment or compatibility claim is made for this development command.
 
 ## AC-3 passthrough
 
-The development converter now supports AC-3 with a zero-origin, no-CodecDelay
-timeline. `server/dolby.rs` derives the three-byte MP4 dac3 configuration from
+The development converter now supports AC-3 with validated constant-cadence
+timing. `server/dolby.rs` derives the three-byte MP4 dac3 configuration from
 the syncframe header per ETSI TS 102 366 sections 4 and F.4. It validates sync,
 version, sample rate, exact frame length, channel layout and conditional header
 fields. Each packet is revalidated; midstream configuration changes fail rather
@@ -79,5 +79,33 @@ trimming); their timelines match. An unsupported midstream header caused failure
 and removal of the newly created partial output. A focused standard-header test
 checks the dac3 bytes and rejects truncated/wrong-version packets.
 
-E-AC-3, DTS, nonzero CodecDelay/track offsets, seek acceptance, HDR metadata and
+E-AC-3, DTS, HDR metadata and
 production HLS integration are still outstanding. No production activation yet.
+
+## Track origins, codec delay and playback policy
+
+User explicitly questioned risking currently successful playback. Keep direct
+playback for working files. The reason for this converter is native delivery of
+generated captions (and compatibility when necessary), not mandatory conversion
+of every file. The command remains isolated from playback APIs; callers must
+never silently switch normal playback to this development path.
+
+The converter now preserves each track's initial timestamp and subtracts its
+Matroska CodecDelay. MP4 edit lists express delayed starts or priming trim. A
+bounded pass over the finished output's moov updates fixed-size mvhd/tkhd duration
+fields: oxideav-mp4 0.0.11 otherwise uses media duration without accounting for
+edits. Compressed samples and their tables remain unchanged.
+
+Owned 24-second fixture results in native Apple decoding:
+- Video starting at 1s and audio at 200ms: movie duration25s; decoder inserts
+  exactly9,600 silent audio samples before byte-identical original PCM.
+- AC-3 CodecDelay5,333,333ns: exactly256 samples trimmed, remaining PCM equals
+  the baseline suffix byte-for-byte. Native audio ends23.9886667s versus
+  baseline23.994s (decoder itself trims288 initial samples in both paths).
+- Independent reference remux has equivalent positive-offset timing. Reference
+  delay rounds to milliseconds; our sample-accurate delay preserves the declared
+ 256sample trim rather than that reference's240sample trim.
+- AVPlayer ready-to-play and exact seeks to12.5s,2s,23s pass for both variants.
+
+These remain owned-fixture checks, not broad catalog/HDR/physical-device acceptance.
+No production deployment or new Apple build for this development-only change.

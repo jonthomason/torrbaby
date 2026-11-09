@@ -5,7 +5,7 @@ use oxideav_core::{CodecId, CodecParameters, Packet, StreamInfo, TimeBase};
 use std::{
     collections::BTreeMap,
     fs::{File, OpenOptions},
-    io::{BufReader, Seek, SeekFrom, Write},
+    io::{BufReader, Read, Seek, SeekFrom, Write},
     os::unix::fs::OpenOptionsExt,
     path::Path,
     time::{Duration, Instant},
@@ -39,6 +39,8 @@ struct Track {
     count: u64,
     pts: Vec<u64>,
     audio_samples: u64,
+    origin_ns: Option<u64>,
+    codec_delay_ns: u64,
 }
 
 pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Value> {
@@ -62,8 +64,8 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
     {
         ensure!(tracks.len() < 8, "Too many media tracks");
         ensure!(
-            t.content_encodings().is_none() && t.codec_delay().unwrap_or(0) == 0,
-            "Encoded tracks or codec delay need additional remux support"
+            t.content_encodings().is_none(),
+            "Encoded tracks need additional remux support"
         );
         let video = t.track_type() == TrackType::Video;
         let codec = match t.codec_id() {
@@ -153,6 +155,8 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
                 count: 0,
                 pts: Vec::new(),
                 audio_samples: if codec == "ac3" { 1536 } else { 1024 },
+                origin_ns: None,
+                codec_delay_ns: t.codec_delay().unwrap_or(0),
             },
         );
     }
@@ -204,7 +208,7 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
     let result = (|| -> Result<serde_json::Value> {
         let options = oxideav_mp4::options::Mp4MuxerOptions {
             large_mdat: true,
-            write_edit_list: false,
+            write_edit_list: true,
             ..Default::default()
         };
         let mut mux = oxideav_mp4::muxer::open_with_options(
@@ -235,6 +239,8 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
                 .timestamp
                 .checked_mul(scale)
                 .context("Timestamp overflow")?;
+            let origin = *t.origin_ns.get_or_insert(ns);
+            let start = origin as i128 - t.codec_delay_ns as i128;
             let mut packet = Packet::new(
                 t.stream.index,
                 t.stream.time_base,
@@ -242,11 +248,16 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
             );
             if t.video {
                 t.pts.push(ns);
-                let dts = (t.count as u128 * t.duration_ns as u128 / 1_000_000) as i64;
-                let next = ((t.count + 1) as u128 * t.duration_ns as u128 / 1_000_000) as i64;
-                packet.pts = Some((ns / 1_000_000).try_into()?);
-                packet.dts = Some(dts);
-                packet.duration = Some(next - dts);
+                let dts = (start + t.count as i128 * t.duration_ns as i128).div_euclid(1_000_000);
+                let next =
+                    (start + (t.count + 1) as i128 * t.duration_ns as i128).div_euclid(1_000_000);
+                packet.pts = Some(
+                    (ns as i128 - t.codec_delay_ns as i128)
+                        .div_euclid(1_000_000)
+                        .try_into()?,
+                );
+                packet.dts = Some(dts.try_into()?);
+                packet.duration = Some((next - dts).try_into()?);
             } else {
                 if t.stream.params.codec_id.as_str() == "ac3" {
                     let config = crate::dolby::ac3(&packet.data)?;
@@ -256,12 +267,15 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
                     );
                 }
                 let rate = t.stream.params.sample_rate.unwrap() as u128;
-                let expected = t.count as u128 * t.audio_samples as u128 * 1_000_000_000 / rate;
+                let expected = origin as u128
+                    + t.count as u128 * t.audio_samples as u128 * 1_000_000_000 / rate;
                 ensure!(
                     expected.abs_diff(ns as u128) <= scale as u128,
                     "Audio offset/gap needs additional timing support"
                 );
-                packet.pts = Some((t.count * t.audio_samples).try_into()?);
+                let start_samples = (start * rate as i128).div_euclid(1_000_000_000);
+                packet.pts =
+                    Some((start_samples + (t.count * t.audio_samples) as i128).try_into()?);
                 packet.dts = packet.pts;
                 packet.duration = Some(t.audio_samples as i64);
             }
@@ -274,7 +288,7 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
             if t.video {
                 t.pts.sort_unstable();
                 for (i, pts) in t.pts.iter().enumerate() {
-                    let expected = i as u128 * t.duration_ns as u128;
+                    let expected = t.origin_ns.unwrap() as u128 + i as u128 * t.duration_ns as u128;
                     ensure!(
                         expected.abs_diff(*pts as u128) <= scale as u128,
                         "Video offset/gap/variable cadence needs additional timing support"
@@ -287,6 +301,23 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
             "Source changed during remux"
         );
         mux.write_trailer()?;
+        drop(mux);
+        let durations: BTreeMap<u32, u64> = tracks
+            .values()
+            .map(|t| {
+                let start = t.origin_ns.unwrap() as i128 - t.codec_delay_ns as i128;
+                let end_ms = if t.video {
+                    (start + t.count as i128 * t.duration_ns as i128).div_euclid(1_000_000)
+                } else {
+                    let rate = t.stream.params.sample_rate.unwrap() as i128;
+                    let samples = (start * rate).div_euclid(1_000_000_000)
+                        + (t.count * t.audio_samples) as i128;
+                    (samples * 1000).div_euclid(rate)
+                };
+                (t.stream.index + 1, end_ms.max(0) as u64)
+            })
+            .collect();
+        repair_presentation_durations(output, &durations)?;
         Ok(
             serde_json::json!({"tracks":streams.len(),"bytes":output.metadata()?.len(),"development_only":true}),
         )
@@ -295,4 +326,140 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
         let _ = std::fs::remove_file(output);
     }
     result
+}
+
+// oxideav-mp4 0.0.11 writes media duration into movie/track headers even when
+// edit lists offset/trim that media. Update only these fixed-size fields in our
+// own finished output; sample tables, compressed packets and edits stay intact.
+fn repair_presentation_durations(path: &Path, durations: &BTreeMap<u32, u64>) -> Result<()> {
+    let mut file = OpenOptions::new().read(true).write(true).open(path)?;
+    let length = file.metadata()?.len();
+    let mut offset = 0;
+    while offset < length {
+        ensure!(length - offset >= 8, "Truncated MP4 box");
+        file.seek(SeekFrom::Start(offset))?;
+        let mut header = [0u8; 8];
+        file.read_exact(&mut header)?;
+        let size32 = u32::from_be_bytes(header[..4].try_into()?) as u64;
+        let (size, header_size) = if size32 == 1 {
+            let mut large = [0; 8];
+            file.read_exact(&mut large)?;
+            (u64::from_be_bytes(large), 16)
+        } else if size32 == 0 {
+            (length - offset, 8)
+        } else {
+            (size32, 8)
+        };
+        ensure!(
+            size >= header_size && size <= length - offset,
+            "Invalid MP4 box size"
+        );
+        if &header[4..] == b"moov" {
+            ensure!(
+                size - header_size <= 64 * 1024 * 1024,
+                "MP4 metadata too large"
+            );
+            let mut moov = vec![0; (size - header_size) as usize];
+            file.read_exact(&mut moov)?;
+            let boxes = children(&moov)?;
+            let mut movie = false;
+            let mut seen = std::collections::BTreeSet::new();
+            for (kind, start, end) in boxes {
+                if &kind == b"mvhd" {
+                    let payload = &mut moov[start..end];
+                    let version = *payload.first().context("Missing mvhd version")?;
+                    let (scale_pos, duration_pos) = match version {
+                        0 => (12, 16),
+                        1 => (20, 24),
+                        _ => anyhow::bail!("Unsupported mvhd version"),
+                    };
+                    ensure!(payload.len() >= scale_pos + 4, "Truncated mvhd");
+                    ensure!(
+                        u32::from_be_bytes(payload[scale_pos..scale_pos + 4].try_into()?) == 1000,
+                        "Unexpected movie timescale"
+                    );
+                    write_duration(
+                        payload,
+                        duration_pos,
+                        version,
+                        *durations
+                            .values()
+                            .max()
+                            .context("Missing track durations")?,
+                    )?;
+                    movie = true;
+                } else if &kind == b"trak" {
+                    for (child, begin, finish) in children(&moov[start..end])? {
+                        if &child != b"tkhd" {
+                            continue;
+                        }
+                        let payload = &mut moov[start + begin..start + finish];
+                        let version = *payload.first().context("Missing tkhd version")?;
+                        let (id_pos, duration_pos) = match version {
+                            0 => (12, 20),
+                            1 => (20, 28),
+                            _ => anyhow::bail!("Unsupported tkhd version"),
+                        };
+                        ensure!(payload.len() >= id_pos + 4, "Truncated tkhd");
+                        let id = u32::from_be_bytes(payload[id_pos..id_pos + 4].try_into()?);
+                        ensure!(seen.insert(id), "Duplicate MP4 track");
+                        write_duration(
+                            payload,
+                            duration_pos,
+                            version,
+                            *durations.get(&id).context("Unexpected MP4 track")?,
+                        )?;
+                    }
+                }
+            }
+            ensure!(
+                movie && seen.len() == durations.len(),
+                "Missing MP4 presentation headers"
+            );
+            file.seek(SeekFrom::Start(offset + header_size))?;
+            file.write_all(&moov)?;
+            file.sync_all()?;
+            return Ok(());
+        }
+        offset += size;
+    }
+    anyhow::bail!("Missing MP4 movie metadata")
+}
+fn children(data: &[u8]) -> Result<Vec<([u8; 4], usize, usize)>> {
+    let mut result = Vec::new();
+    let mut offset = 0;
+    while offset < data.len() {
+        ensure!(
+            data.len() - offset >= 8 && result.len() < 4096,
+            "Invalid MP4 child boxes"
+        );
+        let size = u32::from_be_bytes(data[offset..offset + 4].try_into()?) as usize;
+        ensure!(
+            size >= 8 && size <= data.len() - offset,
+            "Invalid MP4 child size"
+        );
+        result.push((
+            data[offset + 4..offset + 8].try_into()?,
+            offset + 8,
+            offset + size,
+        ));
+        offset += size;
+    }
+    Ok(result)
+}
+fn write_duration(payload: &mut [u8], position: usize, version: u8, value: u64) -> Result<()> {
+    let bytes = if version == 0 {
+        u32::try_from(value)
+            .context("MP4 duration exceeds version-zero range")?
+            .to_be_bytes()
+            .to_vec()
+    } else {
+        value.to_be_bytes().to_vec()
+    };
+    ensure!(
+        payload.len() >= position + bytes.len(),
+        "Truncated MP4 duration"
+    );
+    payload[position..position + bytes.len()].copy_from_slice(&bytes);
+    Ok(())
 }
