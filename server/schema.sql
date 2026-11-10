@@ -73,3 +73,7 @@ CREATE TABLE IF NOT EXISTS processing_failures (
 INSERT OR IGNORE INTO processing_failures(asset_id,revision,stage,error,occurrences,first_seen,last_seen)
  SELECT asset_id,revision,stage,error,MAX(1,attempts),updated,updated
  FROM media_processing WHERE state='failed' AND error IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS torrent_trials(id TEXT PRIMARY KEY,document TEXT NOT NULL);
+
+CREATE TABLE IF NOT EXISTS search_torrent_hashes(listing_key TEXT PRIMARY KEY,hash TEXT NOT NULL);

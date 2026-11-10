@@ -81,6 +81,7 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
         let Some(root) = torrent["download_dir"].as_str() else {
             continue;
         };
+        if crate::trials::trial_path(root) {continue;}
         if [&config.source,&config.movies,&config.tv].iter().any(|managed|Path::new(root).starts_with(Path::new(managed).join("Junk"))) { continue; }
         if let Some(files) = torrent["files"].as_array() {
             let package_complete = package_complete(files) && files.iter().all(|file| {
@@ -148,6 +149,7 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
                     continue;
                 }
                 if kind.is_dir() {
+                    if entry.file_name()==".torrbaby-trials" {continue;}
                     if entry.path() == Path::new(root).join("Junk") { continue; }
                     pending.push(entry.path());
                 } else if kind.is_file() && video(&entry.path()) {

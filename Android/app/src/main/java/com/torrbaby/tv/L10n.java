@@ -26,6 +26,7 @@ final class L10n {
     IDS.put("Add magnet link to server", R.string.ui_8985db712c53);
     IDS.put("Add media on your Torrbaby server, then refresh here.", R.string.ui_676f036428f3);
     IDS.put("Add paused", R.string.ui_dbe5ad51cb48);
+    IDS.put("Add to trial", R.string.ui_abe7e96d75c0);
     IDS.put("Add torrent", R.string.ui_ebf1fd2504e7);
     IDS.put("Added", R.string.ui_b68734c25910);
     IDS.put("Added to Transmission", R.string.ui_a98648e9368b);
@@ -57,6 +58,7 @@ final class L10n {
     IDS.put("Bytes/sec", R.string.ui_8c84989bcc5e);
     IDS.put("Cancel", R.string.ui_77dfd2135f4d);
     IDS.put("Cancel download", R.string.ui_67bb11d08df2);
+    IDS.put("Cancel trial", R.string.ui_87f8cd8360cc);
     IDS.put("Cast", R.string.ui_60745aef336b);
     IDS.put("Change", R.string.ui_64fbd995d3b6);
     IDS.put("Change server connection", R.string.ui_d4223134a9c8);
@@ -80,6 +82,7 @@ final class L10n {
     IDS.put("Choose the right title", R.string.ui_0772fa16aa51);
     IDS.put("Choose your server", R.string.ui_82be318f7bae);
     IDS.put("Clear filters", R.string.ui_412226715c56);
+    IDS.put("Clear selection", R.string.ui_247fd63183c7);
     IDS.put("Click to prioritize this title in the processing queue", R.string.ui_ba29ddeac7e6);
     IDS.put("Click to prioritize this title in the subtitle queue", R.string.ui_a5a18ce21516);
     IDS.put("Close", R.string.ui_bbfa773e5a63);
@@ -87,6 +90,8 @@ final class L10n {
     IDS.put("Collecting history…", R.string.ui_402e2cc39017);
     IDS.put("Comfortable view", R.string.ui_d2f76731e1e1);
     IDS.put("Compact view", R.string.ui_e3719eae891e);
+    IDS.put("Compare releases", R.string.ui_a3b13fde9c84);
+    IDS.put("Comparing releases", R.string.ui_171b1113ddd7);
     IDS.put("Complete", R.string.ui_1f5a1abf2f08);
     IDS.put("Confirm", R.string.ui_04a212215ef9);
     IDS.put("Connect", R.string.ui_b65463cb6a42);
@@ -103,6 +108,7 @@ final class L10n {
     IDS.put("Could not find your server", R.string.ui_3498c19c828e);
     IDS.put("Could not load users", R.string.ui_47dd74c0c423);
     IDS.put("Could not refresh.", R.string.ui_3bcad4a3da4b);
+    IDS.put("Couldn’t add release", R.string.ui_5a538c5c5377);
     IDS.put("Couldn’t add torrent", R.string.ui_f3f2d926eb9b);
     IDS.put("Couldn’t complete that action", R.string.ui_bdbad1e91c63);
     IDS.put("Couldn’t complete the request", R.string.ui_105483da313b);
@@ -191,6 +197,7 @@ final class L10n {
     IDS.put("Finishing cleanup…", R.string.ui_dfdda95a2fb2);
     IDS.put("First name", R.string.ui_7e568a90221d);
     IDS.put("First name must not be empty", R.string.ui_e82b1912c8d1);
+    IDS.put("Five minutes. About 256 MB per release. The fastest progressing release is kept; other trial downloads are deleted.", R.string.ui_d851a452d092);
     IDS.put("Folders on your server", R.string.ui_b2b163a7935b);
     IDS.put("Follow system language", R.string.ui_ddc61f82d863);
     IDS.put("Font", R.string.ui_b97c4d4cddf2);
@@ -216,6 +223,8 @@ final class L10n {
     IDS.put("Keep file extensions and episode numbers.", R.string.ui_44d9c7e94283);
     IDS.put("Keep files on server", R.string.ui_0ecad4174400);
     IDS.put("Keep free (GB)", R.string.ui_ed7e27d64487);
+    IDS.put("Keep this release", R.string.ui_d2c87390fe7a);
+    IDS.put("Keeping best release", R.string.ui_d9e4b6487684);
     IDS.put("Language", R.string.ui_89b86ab0e66f);
     IDS.put("Languages", R.string.ui_db07be184479);
     IDS.put("Languages unavailable", R.string.ui_4ece8db0cba2);
@@ -288,6 +297,8 @@ final class L10n {
     IDS.put("No supported subtitle source", R.string.ui_55b63277f6b3);
     IDS.put("No titles match your search.", R.string.ui_34649c3ae595);
     IDS.put("No torrents", R.string.ui_879b4a9bb1c8);
+    IDS.put("No trial made progress", R.string.ui_0180f27718d1);
+    IDS.put("No trials yet", R.string.ui_d839d62a2b1e);
     IDS.put("None", R.string.ui_6eef6648406c);
     IDS.put("Not configured", R.string.ui_811931bba8d1);
     IDS.put("Not downloaded", R.string.ui_5fe04f57e34d);
@@ -335,6 +346,7 @@ final class L10n {
     IDS.put("Preparing next episode", R.string.ui_8be25e2451fb);
     IDS.put("Preparing playback…", R.string.ui_de58cdcf6ca3);
     IDS.put("Preparing subtitles…", R.string.ui_0f255a84a82a);
+    IDS.put("Preparing trial", R.string.ui_9173783815b0);
     IDS.put("Preparing…", R.string.ui_0b1d6c0b1a56);
     IDS.put("Prioritize processing", R.string.ui_109a00c0bd39);
     IDS.put("Prioritize subtitles", R.string.ui_5af3161d2251);
@@ -420,6 +432,7 @@ final class L10n {
     IDS.put("Seeding target", R.string.ui_fd877c9a4fd7);
     IDS.put("Seeding will stop. All server files listed on this page will be permanently deleted for everyone. This cannot be undone.", R.string.ui_6f27fe72ee93);
     IDS.put("Seeding will stop. These server files will be permanently deleted. This cannot be undone.", R.string.ui_a7c66748478a);
+    IDS.put("Selected", R.string.ui_9a976fc228b6);
     IDS.put("Serif", R.string.ui_a5c78a86fab1);
     IDS.put("Server", R.string.ui_cb0cb170d106);
     IDS.put("Server torrents", R.string.ui_d83a107297bb);
@@ -446,6 +459,7 @@ final class L10n {
     IDS.put("Start", R.string.ui_952f375412e8);
     IDS.put("Start from Beginning", R.string.ui_f1eb7755ae4e);
     IDS.put("Start from beginning", R.string.ui_ee6fad6de0db);
+    IDS.put("Start trial", R.string.ui_3876de26de77);
     IDS.put("Startup diagnostics", R.string.ui_b1bfaa46b94a);
     IDS.put("Startup timings", R.string.ui_cd7984197a67);
     IDS.put("Status unavailable", R.string.ui_f261ff7629df);
@@ -517,6 +531,11 @@ final class L10n {
     IDS.put("Translating subtitles", R.string.ui_7317cb083a2d);
     IDS.put("Translations", R.string.ui_8ad8302d110b);
     IDS.put("Transmission reports this torrent as stalled", R.string.ui_9a14b54f2d98);
+    IDS.put("Trial cancelled", R.string.ui_855c2e4674d0);
+    IDS.put("Trial complete", R.string.ui_f5c1aa962501);
+    IDS.put("Trial measured", R.string.ui_afb32e2b2409);
+    IDS.put("Trial needs attention", R.string.ui_cd2272fc7169);
+    IDS.put("Trials", R.string.ui_3dcdcafebd57);
     IDS.put("Try a different title.", R.string.ui_c17f217d8b8e);
     IDS.put("Try a shorter title or another source.", R.string.ui_bcabdf3a5848);
     IDS.put("Try again", R.string.ui_042c862e4467);

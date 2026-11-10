@@ -252,6 +252,13 @@ pub async fn serve(
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
         }));
+        let trials_service=service.clone();
+        workers.push(tokio::spawn(async move {
+            loop {
+                if let Err(error)=crate::trials::tick(&trials_service).await {tracing::warn!(%error,"Torrent trial scheduler failed");}
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+        }));
         let background = service.clone();
         workers.push(tokio::spawn(async move {
             loop {
@@ -578,12 +585,31 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         } else { db.connection.execute("DELETE FROM profile_hidden_titles WHERE profile_id=? AND title_id=?",[profile,id])?; }
         return Ok(json!({"hidden":hidden}));
     }
+    if method==Method::GET && path=="/v1/search/torrents/hashes" {
+        let rows=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?.rows("SELECT listing_key,hash FROM search_torrent_hashes",[])?;
+        return Ok(json!({"hashes":rows}));
+    }
+    if path=="/v1/trials" {
+        return if method==Method::GET {crate::trials::list(s)} else if method==Method::POST {crate::trials::create(s,&body).await} else {bail!("Unsupported method")};
+    }
+    if method==Method::POST {
+        if let Some(id)=path.strip_prefix("/v1/trials/") {return crate::trials::action(s,id,&body).await;}
+    }
     if method == Method::POST && path == "/v1/search/torrents" {
-        return Ok(serde_json::to_value(
-            s.torrent_search
-                .search(serde_json::from_value(body)?)
-                .await?,
-        )?);
+        let mut result=s.torrent_search.search(serde_json::from_value(body)?).await?;
+        let known=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?.rows("SELECT listing_key,hash FROM search_torrent_hashes",[])?;
+        let mut merged:Vec<crate::torrent_search::Item>=Vec::new();
+        for mut item in result.items {
+            if item.info_hash.is_empty() {
+                let key=item.sources.iter().map(|s|format!("{}:{}",s.provider,s.id)).collect::<Vec<_>>().join(",");
+                if let Some(row)=known.iter().find(|r|r["listing_key"]==key) {item.info_hash=row["hash"].as_str().unwrap_or("").to_owned();}
+            }
+            if let Some(existing)=merged.iter_mut().find(|r|!item.info_hash.is_empty() && r.info_hash.eq_ignore_ascii_case(&item.info_hash)) {
+                for source in item.sources {if !existing.sources.iter().any(|s|s.provider==source.provider && s.id==source.id){existing.sources.push(source);}}
+            } else {merged.push(item);}
+        }
+        result.items=merged;
+        return Ok(serde_json::to_value(result)?);
     }
     if method == Method::POST && path == "/v1/search/torrents/artwork" {
         // Artwork is optional; a slow/unavailable metadata provider must not affect search.

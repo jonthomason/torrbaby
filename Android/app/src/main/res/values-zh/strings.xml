@@ -15,6 +15,7 @@
     <string name="ui_8985db712c53" formatted="false">添加磁力链接到服务器</string>
     <string name="ui_676f036428f3" formatted="false">请在 Torrbaby 服务器上添加媒体，然后在此刷新。</string>
     <string name="ui_dbe5ad51cb48" formatted="false">添加后暂停</string>
+    <string name="ui_abe7e96d75c0" formatted="false">加入试下载</string>
     <string name="ui_ebf1fd2504e7" formatted="false">添加种子</string>
     <string name="ui_b68734c25910" formatted="false">已添加</string>
     <string name="ui_a98648e9368b" formatted="false">已添加到 Transmission</string>
@@ -46,6 +47,7 @@
     <string name="ui_8c84989bcc5e" formatted="false">字节/秒</string>
     <string name="ui_77dfd2135f4d" formatted="false">取消</string>
     <string name="ui_67bb11d08df2" formatted="false">取消下载</string>
+    <string name="ui_87f8cd8360cc" formatted="false">取消试下载</string>
     <string name="ui_60745aef336b" formatted="false">演员表</string>
     <string name="ui_64fbd995d3b6" formatted="false">更改</string>
     <string name="ui_d4223134a9c8" formatted="false">更改服务器连接</string>
@@ -69,6 +71,7 @@
     <string name="ui_0772fa16aa51" formatted="false">选择正确的影片</string>
     <string name="ui_82be318f7bae" formatted="false">选择服务器</string>
     <string name="ui_412226715c56" formatted="false">清除筛选</string>
+    <string name="ui_247fd63183c7" formatted="false">清空选择</string>
     <string name="ui_ba29ddeac7e6" formatted="false">点击优先处理此影片或剧集</string>
     <string name="ui_a5a18ce21516" formatted="false">点击将此影片移至字幕队列前列</string>
     <string name="ui_bbfa773e5a63" formatted="false">关闭</string>
@@ -76,6 +79,8 @@
     <string name="ui_402e2cc39017" formatted="false">正在收集历史记录…</string>
     <string name="ui_d2f76731e1e1" formatted="false">舒适视图</string>
     <string name="ui_e3719eae891e" formatted="false">紧凑视图</string>
+    <string name="ui_a3b13fde9c84" formatted="false">比较版本</string>
+    <string name="ui_171b1113ddd7" formatted="false">正在比较版本</string>
     <string name="ui_1f5a1abf2f08" formatted="false">已完成</string>
     <string name="ui_04a212215ef9" formatted="false">确认</string>
     <string name="ui_b65463cb6a42" formatted="false">连接</string>
@@ -92,6 +97,7 @@
     <string name="ui_3498c19c828e" formatted="false">找不到服务器</string>
     <string name="ui_47dd74c0c423" formatted="false">无法加载用户</string>
     <string name="ui_3bcad4a3da4b" formatted="false">无法刷新。</string>
+    <string name="ui_5a538c5c5377" formatted="false">无法添加版本</string>
     <string name="ui_f3f2d926eb9b" formatted="false">无法添加种子</string>
     <string name="ui_bdbad1e91c63" formatted="false">无法完成此操作</string>
     <string name="ui_105483da313b" formatted="false">无法完成请求</string>
@@ -180,6 +186,7 @@
     <string name="ui_dfdda95a2fb2" formatted="false">正在完成清理…</string>
     <string name="ui_7e568a90221d" formatted="false">名字</string>
     <string name="ui_e82b1912c8d1" formatted="false">名字不能为空</string>
+    <string name="ui_d851a452d092" formatted="false">试下载五分钟，每个版本约 256 MB。自动保留最快的版本，并删除其他试下载文件。</string>
     <string name="ui_b2b163a7935b" formatted="false">服务器上的文件夹</string>
     <string name="ui_ddc61f82d863" formatted="false">跟随系统语言</string>
     <string name="ui_b97c4d4cddf2" formatted="false">字体</string>
@@ -205,6 +212,8 @@
     <string name="ui_44d9c7e94283" formatted="false">请保留文件扩展名和剧集编号。</string>
     <string name="ui_0ecad4174400" formatted="false">保留服务器文件</string>
     <string name="ui_ed7e27d64487" formatted="false">保留空闲空间（GB）</string>
+    <string name="ui_d2c87390fe7a" formatted="false">保留此版本</string>
+    <string name="ui_d9e4b6487684" formatted="false">正在保留最佳版本</string>
     <string name="ui_89b86ab0e66f" formatted="false">语言</string>
     <string name="ui_db07be184479" formatted="false">语言</string>
     <string name="ui_4ece8db0cba2" formatted="false">语言信息不可用</string>
@@ -277,6 +286,8 @@
     <string name="ui_55b63277f6b3" formatted="false">没有支持的字幕来源</string>
     <string name="ui_34649c3ae595" formatted="false">未找到匹配的影片。</string>
     <string name="ui_879b4a9bb1c8" formatted="false">暂无种子</string>
+    <string name="ui_0180f27718d1" formatted="false">所有试下载均无进展</string>
+    <string name="ui_d839d62a2b1e" formatted="false">暂无试下载</string>
     <string name="ui_6eef6648406c" formatted="false">无</string>
     <string name="ui_811931bba8d1" formatted="false">未配置</string>
     <string name="ui_5fe04f57e34d" formatted="false">未下载</string>
@@ -324,6 +335,7 @@
     <string name="ui_8be25e2451fb" formatted="false">正在准备下一集</string>
     <string name="ui_de58cdcf6ca3" formatted="false">正在准备播放…</string>
     <string name="ui_0f255a84a82a" formatted="false">正在准备字幕…</string>
+    <string name="ui_9173783815b0" formatted="false">正在准备试下载</string>
     <string name="ui_0b1d6c0b1a56" formatted="false">正在准备…</string>
     <string name="ui_109a00c0bd39" formatted="false">优先处理</string>
     <string name="ui_5af3161d2251" formatted="false">优先处理字幕</string>
@@ -409,6 +421,7 @@
     <string name="ui_fd877c9a4fd7" formatted="false">做种目标</string>
     <string name="ui_6f27fe72ee93" formatted="false">做种将停止。此页列出的所有服务器文件将为所有用户永久删除。此操作无法撤销。</string>
     <string name="ui_a7c66748478a" formatted="false">做种将停止，这些服务器文件将被永久删除。此操作无法撤销。</string>
+    <string name="ui_9a976fc228b6" formatted="false">已选择</string>
     <string name="ui_a5c78a86fab1" formatted="false">衬线字体</string>
     <string name="ui_cb0cb170d106" formatted="false">服务器</string>
     <string name="ui_d83a107297bb" formatted="false">服务器种子</string>
@@ -435,6 +448,7 @@
     <string name="ui_952f375412e8" formatted="false">开始</string>
     <string name="ui_f1eb7755ae4e" formatted="false">从头播放</string>
     <string name="ui_ee6fad6de0db" formatted="false">从头播放</string>
+    <string name="ui_3876de26de77" formatted="false">开始试下载</string>
     <string name="ui_b1bfaa46b94a" formatted="false">启动诊断</string>
     <string name="ui_cd7984197a67" formatted="false">启动耗时</string>
     <string name="ui_f261ff7629df" formatted="false">状态不可用</string>
@@ -506,6 +520,11 @@
     <string name="ui_7317cb083a2d" formatted="false">翻译字幕</string>
     <string name="ui_8ad8302d110b" formatted="false">翻译</string>
     <string name="ui_9a14b54f2d98" formatted="false">Transmission 报告此种子停滞</string>
+    <string name="ui_855c2e4674d0" formatted="false">试下载已取消</string>
+    <string name="ui_f5c1aa962501" formatted="false">试下载已完成</string>
+    <string name="ui_afb32e2b2409" formatted="false">已完成测速</string>
+    <string name="ui_cd2272fc7169" formatted="false">试下载需要处理</string>
+    <string name="ui_3dcdcafebd57" formatted="false">试下载</string>
     <string name="ui_c17f217d8b8e" formatted="false">请尝试其他片名。</string>
     <string name="ui_bcabdf3a5848" formatted="false">请尝试更短的片名或其他来源。</string>
     <string name="ui_042c862e4467" formatted="false">重试</string>

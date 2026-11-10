@@ -1,4 +1,5 @@
 //! Native server and CLI. Production cutover follows API and data parity checks.
+mod trials;
 mod api;
 mod catalog;
 mod config;

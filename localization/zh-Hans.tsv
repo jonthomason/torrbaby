@@ -594,3 +594,24 @@ Not configured	未配置
 %d min remaining	剩余 %d 分钟
 Start from Beginning	从头播放
 …	…
+Compare releases	比较版本
+Start trial	开始试下载
+Clear selection	清空选择
+Trials	试下载
+Add to trial	加入试下载
+Selected	已选择
+%lld selected	已选择 %lld 项
+Five minutes. About 256 MB per release. The fastest progressing release is kept; other trial downloads are deleted.	试下载五分钟，每个版本约 256 MB。自动保留最快的版本，并删除其他试下载文件。
+Cancel trial	取消试下载
+Keep this release	保留此版本
+No trials yet	暂无试下载
+Preparing trial	正在准备试下载
+Comparing releases	正在比较版本
+Trial measured	已完成测速
+Trial needs attention	试下载需要处理
+Keeping best release	正在保留最佳版本
+Trial complete	试下载已完成
+Trial cancelled	试下载已取消
+Couldn’t add release	无法添加版本
+%lld connected · %lld sending	%lld 个已连接 · %lld 个正在发送
+No trial made progress	所有试下载均无进展

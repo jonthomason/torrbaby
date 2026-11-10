@@ -183,12 +183,15 @@ pub async fn action(s: &Service, hash: &str, action: &str, body: &Value) -> Resu
 }
 
 pub async fn add(s: &Service, body: &Value) -> Result<Value> {
+    add_at(s, body, None).await
+}
+pub(crate) async fn add_at(s: &Service, body: &Value, directory:Option<&Path>) -> Result<Value> {
     use base64::Engine;
     if body
         .as_object()
         .context("Expected object")?
         .keys()
-        .any(|k| !["magnet", "metainfo", "torrent_url", "paused"].contains(&k.as_str()))
+        .any(|k| !["magnet", "metainfo", "torrent_url", "paused", "listing_key"].contains(&k.as_str()))
     {
         bail!("Allowed fields: magnet, metainfo, torrent_url, paused");
     }
@@ -203,7 +206,7 @@ pub async fn add(s: &Service, body: &Value) -> Result<Value> {
         None => false,
         Some(v) => v.as_bool().context("paused must be boolean")?,
     };
-    let mut params = json!({"download_dir":config.source,"paused":paused});
+    let mut params = json!({"download_dir":directory.map(|p|p.to_string_lossy().into_owned()).unwrap_or(config.source),"paused":paused});
     if let Some(magnet) = magnet {
         if !magnet.starts_with("magnet:?") {
             bail!("Expected a magnet link");
@@ -222,10 +225,16 @@ pub async fn add(s: &Service, body: &Value) -> Result<Value> {
     }
     let _guard = s.mutation_lock.lock().await;
     let result = s.rpc.call("torrent_add", params).await?;
-    if let Some(hash) = result["torrent_added"]["hash_string"].as_str()
+    if directory.is_none() { if let Some(hash) = result["torrent_added"]["hash_string"].as_str()
         .or_else(||result["torrent_duplicate"]["hash_string"].as_str()) {
         s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?
             .restore_completed_package(&hash.to_ascii_lowercase())?;
+    }
+    }
+    if let Some(key)=body["listing_key"].as_str().filter(|s|!s.is_empty() && s.len()<2048) {
+        if let Some(hash)=result["torrent_added"]["hash_string"].as_str().or(result["torrent_duplicate"]["hash_string"].as_str()) {
+            s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?.connection.execute("INSERT OR REPLACE INTO search_torrent_hashes VALUES(?,?)",rusqlite::params![key,hash.to_ascii_lowercase()])?;
+        }
     }
     s.event("torrent_added", json!({"result":result}))?;
     s.invalidate_torrents();
@@ -373,6 +382,7 @@ pub async fn tick(s: &Service) -> Result<()> {
         state["last_error"] = Value::Null;
     })?;
     for t in &all {
+        if crate::trials::trial_path(t["download_dir"].as_str().unwrap_or("")) {continue;}
         let hash = text(t, "hash_string")?;
         if s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.hidden_package(hash)? { continue; }
         let previous = job(s, hash)?;

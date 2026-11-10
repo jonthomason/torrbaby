@@ -21,7 +21,7 @@ struct TorrentReleaseHints: Decodable {
     var summary: String { ([resolution, videoCodec, releaseSource].compactMap { $0 } + audio + languages).joined(separator: " · ") }
 }
 struct TorrentSearchItem: Decodable, Identifiable {
-    let infoHash: String
+    var infoHash: String
     let name: String
     let magnet: String
     let sizeBytes: UInt64?
@@ -32,7 +32,8 @@ struct TorrentSearchItem: Decodable, Identifiable {
     let hints: TorrentReleaseHints
     let matchScore: Int
     let matchNotes: [String]
-    var id: String { infoHash.isEmpty ? sources.map { "\($0.provider):\($0.id)" }.joined(separator: ",") : infoHash }
+    var sourceKey: String { sources.map { "\($0.provider):\($0.id)" }.joined(separator: ",") }
+    var id: String { infoHash.isEmpty ? sourceKey : infoHash }
     var title: String {
         if name.hasPrefix("[BT下载]["), let end = name.dropFirst(7).firstIndex(of: "]") {
             return String(name[name.index(name.startIndex, offsetBy: 7)..<end])
@@ -81,7 +82,7 @@ struct TorrentSearchItem: Decodable, Identifiable {
 }
 private struct TorrentSearchResponse: Decodable {
     struct Provider: Decodable { let provider: String; let count: Int; let error: String? }
-    let items: [TorrentSearchItem]
+    var items: [TorrentSearchItem]
     let providers: [Provider]
 }
 private struct TorrentSearchDetails: Decodable {
@@ -129,6 +130,12 @@ struct TorrentSearchView: View {
     @State private var searching = false
     @State private var work: Task<Void, Never>?
     @State private var selectedID: String?
+    #if os(macOS)
+    @State private var trialMode = false
+    @State private var trialCandidates: [String: [String: Any]] = [:]
+    @State private var showTrials = false
+    @State private var startingTrial = false
+    #endif
     @FocusState private var searchFocused: Bool
     @State private var prepareNextSearch = false
     #if !os(tvOS)
@@ -142,6 +149,19 @@ struct TorrentSearchView: View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 searchHeader
+                #if os(macOS)
+                HStack(spacing: 12) {
+                    Toggle("Compare releases", isOn: $trialMode).toggleStyle(.button)
+                    if trialMode {
+                        Text("\(trialCandidates.count) selected").font(.caption)
+                        Button("Start trial") { Task { await startTrial() } }
+                            .disabled(!(3...5).contains(trialCandidates.count) || startingTrial)
+                        Button("Clear selection") { trialCandidates.removeAll() }.disabled(trialCandidates.isEmpty)
+                    }
+                    Spacer()
+                    Button("Trials") { showTrials = true }
+                }.padding(.horizontal, 16).padding(.bottom, 8)
+                #endif
                 if let response {
                     if visibleItems.isEmpty && !searching {
                         if !response.providers.isEmpty && response.providers.allSatisfy({ $0.error != nil }) {
@@ -180,8 +200,15 @@ struct TorrentSearchView: View {
         }
         .onDisappear { work?.cancel(); searching = false }
         .task { if !query.isEmpty && response == nil { search() } }
+        #if os(macOS)
+        .sheet(isPresented: $showTrials) { LocalizedInterface { TorrentTrialsView() } }
+        .task {while !Task.isCancelled {await deduplicateKnownHashes();try? await Task.sleep(for:.seconds(5))}}
+        #endif
     }
     private func usesColumns(_ width: CGFloat) -> Bool {
+        #if os(macOS)
+        if trialMode { return false }
+        #endif
         #if os(tvOS)
         return false
         #elseif os(iOS)
@@ -265,6 +292,19 @@ struct TorrentSearchView: View {
     }
     private func results(_ items: [TorrentSearchItem], inline: Bool) -> some View {
         List(items) { item in
+            #if os(macOS)
+            if trialMode {
+                TorrentSearchRow(item: item, onTrial: { kind, value, name, key in
+                    if trialCandidates[value] != nil {trialCandidates.removeValue(forKey: value)}
+                    else if trialCandidates.count < 5 {trialCandidates[value] = ["name":name,"source":[kind:value],"listing_key":key]}
+                }, trialSelected: Set(trialCandidates.keys))
+            } else { ordinaryRow(item, inline: inline) }
+            #else
+            ordinaryRow(item, inline: inline)
+            #endif
+        }.listStyle(.plain).disabled(searching)
+    }
+    @ViewBuilder private func ordinaryRow(_ item: TorrentSearchItem, inline: Bool) -> some View {
             if item.sources.contains(where: { $0.provider == "1lou" }) {
                 TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true; focusNextSearch() })
             } else if inline {
@@ -275,8 +315,34 @@ struct TorrentSearchView: View {
             } else {
                 NavigationLink { TorrentSearchDetail(item: item, onAdded: { prepareNextSearch = true }).id(item.id) } label: { TorrentSearchRow(item: item) }
             }
-        }.listStyle(.plain).disabled(searching)
     }
+    #if os(macOS)
+    private func deduplicateKnownHashes() async {
+        guard response != nil else {return}
+        do {
+            struct Known:Decodable {struct Entry:Decodable {let listingKey:String;let hash:String};let hashes:[Entry]}
+            let known:Known=try await store.request("GET","/v1/search/torrents/hashes")
+            guard var response else {return}
+            var seen=Set<String>()
+            response.items=response.items.compactMap { item in
+                var item=item
+                let key=item.sources.map {"\($0.provider):\($0.id)"}.joined(separator:",")
+                if item.infoHash.isEmpty, let match=known.hashes.first(where:{$0.listingKey==key}) {item.infoHash=match.hash}
+                if !item.infoHash.isEmpty && !seen.insert(item.infoHash.lowercased()).inserted {return nil}
+                return item
+            }
+            self.response=response
+        } catch { /* Hash enrichment must never interrupt search. */ }
+    }
+    private func startTrial() async {
+        startingTrial = true
+        defer {startingTrial = false}
+        do {
+            let _: TorrentTrial = try await store.request("POST", "/v1/trials", body: ["candidates":Array(trialCandidates.values)], timeout: 30)
+            trialCandidates.removeAll(); showTrials = true
+        } catch {self.error = error.localizedDescription}
+    }
+    #endif
     @ViewBuilder private var searchField: some View {
         #if os(tvOS)
         TextField("Movie, show, or release", text: $query)
@@ -368,7 +434,7 @@ private enum SearchReleaseSizes {
     static var cache: [String: String] = [:]
     static var active = 0
     static func load(_ item: TorrentSearchItem, store: Store) async throws -> String {
-        let key = store.server + item.id
+        let key = store.server + item.sourceKey
         if let cached = cache[key] { return cached }
         while active >= 2 { try await Task.sleep(for: .milliseconds(200)) }
         try Task.checkCancellation()
@@ -390,6 +456,8 @@ private struct TorrentSearchRow: View {
     @EnvironmentObject var store: Store
     let item: TorrentSearchItem
     var onAdded: () -> Void = {}
+    var onTrial: ((String, String, String, String) -> Void)? = nil
+    var trialSelected: Set<String> = []
     @State private var fetchedSize: String?
     @State private var showBTDetails = false
     @State private var btChoices: [SearchReleaseSizes.Choice] = []
@@ -421,7 +489,20 @@ private struct TorrentSearchRow: View {
                 if !tracks.isEmpty { Text(tracks).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
                 if let addError { Text(addError).font(.caption).foregroundStyle(.orange) }
             }
-            if isBT {
+            if let onTrial {
+                Spacer(minLength: 8)
+                if isBT {
+                    if btChoices.count == 1, let choice = btChoices.first, let url = choice.url {
+                        Button(trialSelected.contains(url) ? "Selected" : "Add to trial") { onTrial("torrent_url",url,item.name,item.sourceKey) }
+                    } else if !btChoices.isEmpty {
+                        Menu("Add to trial") { ForEach(btChoices) { choice in
+                            if let url=choice.url { Button(choice.name) { onTrial("torrent_url",url,choice.name,"") } }
+                        } }
+                    } else { ProgressView().controlSize(.small) }
+                } else if !item.magnet.isEmpty {
+                    Button(trialSelected.contains(item.magnet) ? "Selected" : "Add to trial") { onTrial("magnet",item.magnet,item.name,item.sourceKey) }
+                }
+            } else if isBT {
                 Spacer(minLength: 8)
                 if adding { ProgressView().controlSize(.small) }
                 else if added { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.mint).accessibilityLabel("Added") }
@@ -441,11 +522,11 @@ private struct TorrentSearchRow: View {
                 }
                     .frame(minWidth:320,minHeight:400)
             }
-            .task(id: store.server + item.id) {
+            .task(id: store.server + item.sourceKey) {
                 guard isBT else { return }
                 do {
                     fetchedSize = try await SearchReleaseSizes.load(item, store: store)
-                    btChoices = SearchReleaseSizes.summaries[store.server + item.id]?.choices ?? []
+                    btChoices = SearchReleaseSizes.summaries[store.server + item.sourceKey]?.choices ?? []
                 }
                 catch is CancellationError { }
                 catch { fetchedSize = nil }
@@ -458,7 +539,7 @@ private struct TorrentSearchRow: View {
         do {
             struct Result: Decodable { let torrentDuplicate: TorrentIdentity? }
             struct TorrentIdentity: Decodable { let name: String? }
-            let result: Result = try await store.request("POST", "/v1/torrents", body: ["torrent_url":url], timeout:45)
+            let result: Result = try await store.request("POST", "/v1/torrents", body: ["torrent_url":url,"listing_key":btChoices.count == 1 ? item.sourceKey : ""], timeout:45)
             added=true
             store.notify(result.torrentDuplicate == nil ? "Torrent added" : "Already in your torrents", detail:item.name)
             onAdded()
@@ -566,7 +647,7 @@ private struct TorrentSearchDetail: View {
         }.searchDetailTitle(embedded: embedded)
         .task {
             guard let source = item.sources.first(where: { $0.provider == "tpb" }) ?? item.sources.first(where: { $0.provider == "nyaa" }) ?? item.sources.first else { return }
-            if let summary = SearchReleaseSizes.summaries[store.server + item.id] {
+            if let summary = SearchReleaseSizes.summaries[store.server + item.sourceKey] {
                 if summary.choices.count == 1 { selectedAttachment = summary.choices.first?.id }
                 else if summary.choices.count > 1 { choices = summary.choices }
             }
@@ -586,7 +667,7 @@ private struct TorrentSearchDetail: View {
             if !resolved.magnet.isEmpty && choices.isEmpty {
                 payload["magnet"] = resolved.magnet
             } else if let source = item.sources.first(where: { $0.provider == "1lou" }) {
-                if selectedAttachment == nil, let summary = SearchReleaseSizes.summaries[store.server + item.id] {
+                if selectedAttachment == nil, let summary = SearchReleaseSizes.summaries[store.server + item.sourceKey] {
                     if summary.choices.count == 1 { selectedAttachment = summary.choices.first?.id }
                     else if summary.choices.count > 1 { choices = summary.choices; message = "Choose a release, then add it."; return }
                 }
@@ -622,3 +703,85 @@ private extension View {
         #endif
     }
 }
+
+#if os(macOS)
+private struct TorrentTrial: Decodable, Identifiable {
+    struct Candidate: Decodable {
+        let name: String?
+        let hash: String?
+        let state: String
+        let bytes: UInt64?
+        let speed: Double?
+        let peers: Int?
+        let sending: Int?
+        let error: String?
+    }
+    let id: String
+    let state: String
+    let candidates: [Candidate]
+    let error: String?
+    let winner: String?
+}
+private struct TorrentTrialsView: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.dismiss) private var dismiss
+    @State private var trials: [TorrentTrial] = []
+    @State private var error: String?
+    @State private var busy = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack { Text("Trials").font(.title2.bold()); Spacer(); Button("Close") {dismiss()} }
+            Text("Five minutes. About 256 MB per release. The fastest progressing release is kept; other trial downloads are deleted.")
+                .font(.callout).foregroundStyle(.secondary)
+            if let error {Text(error).foregroundStyle(.orange)}
+            ScrollView {
+                VStack(spacing: 16) {
+                    ForEach(trials) { trial in
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text(LocalizedStringKey(stateName(trial.state))).font(.headline)
+                                Spacer()
+                                if trial.state == "running" || trial.state == "review" {
+                                    Button("Cancel trial") {Task {await action(trial,body:["cancel":true])}}.disabled(busy)
+                                }
+                            }
+                            if let error=trial.error {Text(L10n.text(error)).font(.caption).foregroundStyle(.orange)}
+                            ForEach(Array(trial.candidates.enumerated()), id: \.offset) { _, candidate in
+                                HStack(spacing: 12) {
+                                    VStack(alignment: .leading,spacing: 4) {
+                                        Text(candidate.name ?? "").lineLimit(2)
+                                        Text(LocalizedStringKey(stateName(candidate.state))).font(.caption).foregroundStyle(.secondary)
+                                    }.frame(maxWidth:.infinity,alignment:.leading)
+                                    VStack(alignment:.trailing,spacing:4) {
+                                        Text(ByteCountFormatter.string(fromByteCount:Int64(candidate.speed ?? 0),countStyle:.file)+"/s")
+                                        Text(ByteCountFormatter.string(fromByteCount:Int64(clamping:candidate.bytes ?? 0),countStyle:.file)).font(.caption).foregroundStyle(.secondary)
+                                    }.monospacedDigit().frame(width:105,alignment:.trailing)
+                                    Text("\(candidate.peers ?? 0) connected · \(candidate.sending ?? 0) sending").font(.caption).frame(width:150)
+                                    if candidate.hash == trial.winner {Image(systemName:"checkmark.circle.fill").foregroundStyle(.blue)}
+                                    else if trial.state == "review", candidate.state != "removed", let hash=candidate.hash {
+                                        Button("Keep this release") {Task {await action(trial,body:["winner":hash])}}.disabled(busy)
+                                    }
+                                }.padding(10).background(Theme.panel,in:RoundedRectangle(cornerRadius:7))
+                            }
+                        }.padding(12).background(Theme.canvas,in:RoundedRectangle(cornerRadius:8))
+                    }
+                    if trials.isEmpty {Text("No trials yet").foregroundStyle(.secondary)}
+                }
+            }
+        }.padding(20).frame(minWidth:760,minHeight:460)
+            .task {while !Task.isCancelled {await refresh();try? await Task.sleep(for:.seconds(3))}}
+    }
+    private func refresh() async {
+        do {struct Response:Decodable {let trials:[TorrentTrial]};let response:Response=try await store.request("GET","/v1/trials");trials=response.trials}
+        catch {self.error=error.localizedDescription}
+    }
+    private func action(_ trial:TorrentTrial,body:[String:Any]) async {
+        busy=true;defer{busy=false}
+        do {let _:TorrentTrial=try await store.request("POST","/v1/trials/\(trial.id)",body:body);await refresh()}
+        catch {self.error=error.localizedDescription}
+    }
+    private func stateName(_ state:String)->String {
+        ["starting":"Preparing trial","pending":"Preparing trial","running":"Comparing releases","ready":"Comparing releases","paused":"Trial measured","review":"Trial needs attention","finishing":"Keeping best release","complete":"Trial complete","cancelled":"Trial cancelled","removed":"Removed","duplicate":"Already in your torrents","error":"Couldn’t add release"][state] ?? state
+    }
+}
+#endif

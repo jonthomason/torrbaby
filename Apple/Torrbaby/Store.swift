@@ -569,12 +569,12 @@ final class Store: ObservableObject {
         let newest = incoming.map(\.time).max() ?? Date().timeIntervalSince1970
         UserDefaults.standard.set(max(last ?? 0, newest), forKey: key)
         guard let last, UserDefaults.standard.object(forKey: "activityAlerts") as? Bool ?? true else { return }
-        let recent = incoming.filter { $0.time > last && $0.time > Date().timeIntervalSince1970 - 86400 && ["download_complete", "seeding_ratio_reached"].contains($0.kind) }.sorted { $0.time < $1.time }
+        let recent = incoming.filter { $0.time > last && $0.time > Date().timeIntervalSince1970 - 86400 && ["download_complete", "seeding_ratio_reached", "trial_complete", "trial_needs_attention"].contains($0.kind) }.sorted { $0.time < $1.time }
         if recent.count > 3 {
             notify("Torrent activity", detail: "\(recent.count) downloads or seeding goals completed.")
         } else {
             for event in recent {
-                notify(event.kind == "download_complete" ? "Download complete" : "Seeding goal reached", detail: event.name ?? "", torrentHash: event.hash)
+                notify(["download_complete":"Download complete","seeding_ratio_reached":"Seeding goal reached","trial_complete":"Trial complete","trial_needs_attention":"Trial needs attention"][event.kind] ?? "Torrent activity", detail: event.kind == "trial_needs_attention" ? L10n.text(event.name ?? "") : event.name ?? "", torrentHash: event.hash)
             }
         }
     }
