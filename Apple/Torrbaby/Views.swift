@@ -194,9 +194,20 @@ struct RootView: View {
         #if os(iOS)
         0
         #else
-        22
+        6
         #endif
     }
+    #if os(iOS)
+    private var sidebarBrand: some View {
+        HStack(spacing: 7) {
+            Image("TorrbabyLogo").resizable().frame(width: 28, height: 28)
+                .clipShape(RoundedRectangle(cornerRadius: 6)).accessibilityHidden(true)
+            Text(verbatim: "torrbaby").font(.system(size: 18, weight: .bold, design: .rounded))
+                .lineLimit(1).minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+    #endif
     @State private var showConnect = false
     @State private var torrentDraft: TorrentDraft?
     var body: some View {
@@ -209,7 +220,7 @@ struct RootView: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("torrbaby").font(.system(size: 24, weight: .bold, design: .rounded))
                     }
-                }.padding(.horizontal, 18).padding(.top, 24)
+                }.padding(.horizontal, 18).padding(.top, 6)
                 #endif
                 List(selection: Binding(get: { location.section }, set: { navigate(Location(section: $0)) })) {
                     SwiftUI.Section("Library") {
@@ -259,13 +270,11 @@ struct RootView: View {
                 if sizeClass == .compact {
                     ToolbarItem(placement: .topBarTrailing) { InterfaceLanguagePicker() }
                 }
-                ToolbarItem(placement: .topBarLeading) {
-                    HStack(spacing: 7) {
-                        Image("TorrbabyLogo").resizable().frame(width: 28, height: 28)
-                            .clipShape(RoundedRectangle(cornerRadius: 6)).accessibilityHidden(true)
-                        Text(verbatim: "torrbaby").font(.system(size: 18, weight: .bold, design: .rounded))
-                            .lineLimit(1).minimumScaleFactor(0.8)
-                    }.fixedSize()
+                if #available(iOS 26, *) {
+                    ToolbarItem(placement: .principal) { sidebarBrand }
+                        .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .principal) { sidebarBrand }
                 }
             }
             #endif
