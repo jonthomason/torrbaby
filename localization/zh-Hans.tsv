@@ -592,3 +592,5 @@ Used when the primary address is unreachable. Torrents and downloads are availab
 Streaming is unavailable on fallback. Download this title to watch it.	备用连接不支持在线播放。请下载此影片后观看。
 Not configured	未配置
 %d min remaining	剩余 %d 分钟
+Start from Beginning	从头播放
+…	…

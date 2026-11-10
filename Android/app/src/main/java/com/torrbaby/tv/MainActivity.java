@@ -543,10 +543,7 @@ public class MainActivity extends Activity {
       Ui.gap(buttons, 12);
 
       if (asset != null) {
-        Ui.add(buttons, Ui.button(this, asset.watched ? L10n.t("Mark as Unwatched") : L10n.t("Mark as Watched"), () -> mark(asset)), -2, 48);
         if (asset.complete) {
-          Ui.gap(buttons, 12);
-          Ui.add(buttons, Ui.button(this, L10n.t("Manage files"), () -> new LibraryFileActions(this, api, io, asset.id, this::load).show()), -2, 48);
           if (t.cast != null && t.cast.length() > 0) {
             Ui.gap(buttons, 12);
             Button cast = Ui.button(this, L10n.t("Cast"), () -> { showingCast = true; render(); });
@@ -555,13 +552,14 @@ public class MainActivity extends Activity {
           }
           if (asset.position > 0) {
             Ui.gap(buttons, 12);
-            Ui.add(buttons, Ui.button(this, L10n.t("Start from beginning"), () -> play(t, asset, true)), -2, 48);
+            Ui.add(buttons, Ui.button(this, L10n.t("Start from Beginning"), () -> play(t, asset, true)), -2, 48);
           }
         }
-        if (t.isContinuing()) {
-          Ui.gap(buttons, 12);
-          Ui.add(buttons, Ui.button(this, L10n.t("Remove from Continue Watching"), () -> setContinueWatchingHidden(t, true)), -2, 48);
-        }
+        Ui.gap(buttons, 12);
+        Button more = Ui.button(this, "…", () -> detailOptions(t, asset));
+        more.setContentDescription(L10n.t("More"));
+        more.setTag("detail-more");
+        Ui.add(buttons, more, 64, 48);
       }
       HorizontalScrollView actionScroll = new HorizontalScrollView(this);
       actionScroll.setHorizontalScrollBarEnabled(false);
@@ -1632,6 +1630,24 @@ public class MainActivity extends Activity {
     Ui.gap(body, 18);
   }
 
+  private void detailOptions(Library.Title title, Library.Asset asset) {
+    List<String> labels = new ArrayList<>();
+    List<Runnable> actions = new ArrayList<>();
+    labels.add(L10n.t(asset.watched ? "Mark as Unwatched" : "Mark as Watched"));
+    actions.add(() -> mark(asset));
+    if (asset.complete) {
+      labels.add(L10n.t("Manage Files"));
+      actions.add(() -> new LibraryFileActions(this, api, io, asset.id, this::load).show());
+    }
+    if (title.isContinuing()) {
+      labels.add(L10n.t("Remove from Continue Watching"));
+      actions.add(() -> setContinueWatchingHidden(title, true));
+    }
+    new AlertDialog.Builder(this).setTitle(L10n.t("More"))
+        .setItems(labels.toArray(new String[0]), (dialog, which) -> actions.get(which).run())
+        .setNegativeButton(L10n.t("Cancel"), null).show();
+  }
+
   private void assetOptions(Library.Title t, Library.Asset a) {
     if (a == null) {
       new AlertDialog.Builder(this)
@@ -1644,20 +1660,20 @@ public class MainActivity extends Activity {
     List<String> labels = new ArrayList<>();
     if (a.complete) {
       labels.add(a.position > 0 && !a.watched ? "Resume" : "Play");
-      if (a.position > 0) labels.add("Start from beginning");
+      if (a.position > 0) labels.add("Start from Beginning");
     }
     labels.add(a.watched ? "Mark as Unwatched" : "Mark as Watched");
-    if (a.complete) labels.add("Manage files");
+    if (a.complete) labels.add("Manage Files");
     new AlertDialog.Builder(this)
         .setTitle(a.name)
         .setItems(
-            labels.toArray(new String[0]),
+            L10n.labels(labels.toArray(new String[0])),
             (d, w) -> {
               String action = labels.get(w);
               if (action.startsWith("Mark")) mark(a);
-              else if (action.equals("Manage files"))
+              else if (action.equals("Manage Files"))
                 new LibraryFileActions(this, api, io, a.id, this::load).show();
-              else play(t, a, action.equals("Start from beginning"));
+              else play(t, a, action.equals("Start from Beginning"));
             })
         .show();
   }

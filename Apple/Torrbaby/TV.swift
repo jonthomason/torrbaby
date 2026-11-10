@@ -225,11 +225,20 @@ private struct TVMediaDetail: View {
                             Text(LocalizedStringKey(([title.year ?? "", title.contentRating ?? ""] + title.genres.prefix(3)).filter { !$0.isEmpty }.joined(separator: " · ")))
                                 .font(.headline).foregroundStyle(.white.opacity(0.8))
                             if let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
-                                Button { play(asset, title: title) } label: {
-                                    Label(asset.playbackActionTitle(television: title.kind == "tv"), systemImage: "play.fill")
-                                        .frame(width: title.kind == "tv" ? 650 : nil, alignment: .leading)
-                                }.buttonStyle(.borderedProminent).tint(Theme.mint).disabled(loading)
-                                LibraryAssetActions(asset: asset, castTitle: title)
+                                ScrollView(.horizontal) {
+                                    HStack(spacing: 20) {
+                                        Button { play(asset, title: title) } label: {
+                                            Label(asset.playbackActionTitle(television: title.kind == "tv"), systemImage: "play.fill")
+                                                .frame(width: title.kind == "tv" ? 650 : nil, alignment: .leading)
+                                        }.buttonStyle(.borderedProminent).tint(Theme.mint).disabled(loading)
+                                        LibraryCastLink(title: title)
+                                        if asset.position > 0 {
+                                            Button("Start from Beginning") { play(asset, title: title, fromBeginning: true) }
+                                                .disabled(loading)
+                                        }
+                                        TVDetailMoreActions(asset: asset, title: title)
+                                    }.buttonBorderShape(.roundedRectangle(radius: 10)).padding(12)
+                                }.scrollClipDisabled().focusSection()
                             }
                         }.padding(.horizontal, 90).padding(.bottom, 50).frame(maxWidth: 1350, alignment: .leading)
                     }.frame(height: 650)
@@ -311,7 +320,7 @@ private struct TVMediaDetail: View {
         LibraryEpisodeActions(asset: asset, title: title)
         }
     }
-    private func play(_ asset: LibraryAsset, title: LibraryTitle) {
+    private func play(_ asset: LibraryAsset, title: LibraryTitle, fromBeginning: Bool = false) {
         guard !loading else { return }
         loading = true; preparation = ""
         playbackTask = Task {
@@ -321,10 +330,46 @@ private struct TVMediaDetail: View {
                 await store.flushProgress()
                 try await store.registerClient()
                 let link = try await store.mediaPlaybackLink(asset: asset, titleID: title.id) { preparation = $0 }
-                playback = Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0,
+                playback = Playback(sessionId: link.sessionId, resumePosition: fromBeginning ? 0 : (link.resumePosition ?? 0),
                     url: try store.endpoint(link.path), name: asset.episode == nil ? title.title : title.title + " · " + (asset.name ?? "Episode \(asset.episode!)"), libraryAssetID: asset.id, libraryTitleID: title.id)
             } catch { if !Task.isCancelled { store.actionError = error.localizedDescription } }
         }
+    }
+}
+
+private struct TVDetailMoreActions: View {
+    @EnvironmentObject var store: Store
+    let asset: LibraryAsset
+    let title: LibraryTitle
+    @State private var showMenu = false
+    @State private var showFiles = false
+    @State private var saving = false
+    var body: some View {
+        Button { showMenu = true } label: {
+            Image(systemName: "ellipsis").frame(minWidth: 44)
+        }
+        .accessibilityLabel("More")
+        .disabled(saving)
+        .confirmationDialog("More", isPresented: $showMenu, titleVisibility: .visible) {
+            Button(LocalizedStringKey(asset.watched ? "Mark as Unwatched" : "Mark as Watched")) {
+                saving = true
+                Task {
+                    defer { saving = false }
+                    do {
+                        try await store.send("POST", "/v1/library/assets/\(asset.id)/watched", body: ["watched": !asset.watched])
+                        await store.refresh()
+                    } catch { store.actionError = error.localizedDescription }
+                }
+            }
+            if asset.complete { Button("Manage Files") { showFiles = true } }
+            if title.isContinuing {
+                Button("Remove from Continue Watching") {
+                    Task { await store.setContinueWatchingHidden(title.id, hidden: true) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .navigationDestination(isPresented: $showFiles) { LibraryFileManagement(assetID: asset.id) }
     }
 }
 

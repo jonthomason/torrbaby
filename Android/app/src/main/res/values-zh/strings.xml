@@ -433,6 +433,7 @@
     <string name="ui_adc3296dff7b" formatted="false">特别篇</string>
     <string name="ui_2d2cb022bc3d" formatted="false">速度</string>
     <string name="ui_952f375412e8" formatted="false">开始</string>
+    <string name="ui_f1eb7755ae4e" formatted="false">从头播放</string>
     <string name="ui_ee6fad6de0db" formatted="false">从头播放</string>
     <string name="ui_b1bfaa46b94a" formatted="false">启动诊断</string>
     <string name="ui_cd7984197a67" formatted="false">启动耗时</string>
@@ -548,6 +549,7 @@
     <string name="ui_19d4fb4f3901" formatted="false">所选用户不可用，请选择用户以继续。</string>
     <string name="ui_8f3182a89e24" formatted="false">tb · 离线</string>
     <string name="ui_42aef171c1c0" formatted="false">轨道</string>
+    <string name="ui_df316e17de9c" formatted="false">…</string>
     <string name="ui_f77b6feff6f9" formatted="false">ⓘ</string>
     <string name="ui_76ffb15387e1" formatted="false">▶  查看详情</string>
     <string name="ui_4159b402b262" formatted="false">▶  播放</string>

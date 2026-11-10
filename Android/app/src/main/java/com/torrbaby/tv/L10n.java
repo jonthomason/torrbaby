@@ -444,6 +444,7 @@ final class L10n {
     IDS.put("Specials", R.string.ui_adc3296dff7b);
     IDS.put("Speed", R.string.ui_2d2cb022bc3d);
     IDS.put("Start", R.string.ui_952f375412e8);
+    IDS.put("Start from Beginning", R.string.ui_f1eb7755ae4e);
     IDS.put("Start from beginning", R.string.ui_ee6fad6de0db);
     IDS.put("Startup diagnostics", R.string.ui_b1bfaa46b94a);
     IDS.put("Startup timings", R.string.ui_cd7984197a67);
@@ -559,6 +560,7 @@ final class L10n {
     IDS.put("Your selected profile is unavailable. Choose a user to continue.", R.string.ui_19d4fb4f3901);
     IDS.put("tb · Offline", R.string.ui_8f3182a89e24);
     IDS.put("track", R.string.ui_42aef171c1c0);
+    IDS.put("…", R.string.ui_df316e17de9c);
     IDS.put("ⓘ", R.string.ui_f77b6feff6f9);
     IDS.put("▶  Explore", R.string.ui_76ffb15387e1);
     IDS.put("▶  Play", R.string.ui_4159b402b262);
