@@ -450,9 +450,9 @@ public class MainActivity extends Activity {
     Ui.add(page, body, -1, -2);
     shelf(body, "Continue watching", library.continuing());
     shelf(body, "Recently added", recent);
-    shelf(body, "Recently watched", library.recentlyWatched());
     shelf(body, "Movies", library.filter("movie", "", "", 0));
     shelf(body, "TV Shows", library.filter("tv", "", "", 0));
+    shelf(body, "Recently watched", finishedTitles());
     for (String name : library.genres("")) {
       List<Library.Title> matches=library.filter("", "", name, 0);
       if(matches.size()>=6)shelf(body,name,matches);
@@ -467,6 +467,12 @@ public class MainActivity extends Activity {
       hero.setNextFocusDownId(firstPoster.getId());
     }
     restoreFocus(body);
+  }
+
+  private List<Library.Title> finishedTitles() {
+    List<Library.Title> titles=library.recentlyWatched();
+    titles.removeIf(t -> !t.watched());
+    return titles;
   }
 
   private void openCollection(String name, List<Library.Title> titles) {
@@ -589,7 +595,7 @@ public class MainActivity extends Activity {
       if(available<=0)return;
       int gap=Ui.dp(this,12),columns=Math.max(3,(available+gap)/Ui.dp(this,130));
       int width=(available-gap*(columns-1))/columns;
-      int height=width*3/2+Ui.dp(this,name.equals("Continue watching")?101:84);
+      int height=width*3/2+Ui.dp(this,name.equals("Continue watching")?64:30);
       for(int i=0;i<row.getChildCount();i+=2) {
         View child=row.getChildAt(i);
         if(child.getLayoutParams().width!=width || child.getLayoutParams().height!=height) {
@@ -1232,7 +1238,7 @@ public class MainActivity extends Activity {
   }
   private List<Library.Title> shelfTitles(String name) {
     if(name.equals("Continue watching"))return library.continuing();
-    if(name.equals("Recently watched"))return library.recentlyWatched();
+    if(name.equals("Recently watched"))return finishedTitles();
     if(name.equals("Recently added"))return library.filter("","","",0);
     if(name.equals("Movies"))return library.filter("movie","","",0);
     if(name.equals("TV Shows"))return library.filter("tv","","",0);

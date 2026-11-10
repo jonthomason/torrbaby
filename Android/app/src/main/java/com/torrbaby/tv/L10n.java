@@ -429,6 +429,7 @@ final class L10n {
     IDS.put("Search torrents", R.string.ui_d499e5b1e322);
     IDS.put("Searching…", R.string.ui_1a6a5ba8c23d);
     IDS.put("Season", R.string.ui_62255f5671e8);
+    IDS.put("Season %d Ep %d", R.string.ui_e5444912e049);
     IDS.put("See All", R.string.ui_8196e42428ff);
     IDS.put("See All  ›", R.string.ui_e41966be6687);
     IDS.put("Seeding", R.string.ui_2ac9cd891f0d);

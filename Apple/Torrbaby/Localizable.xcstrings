@@ -10546,6 +10546,23 @@
           }
         }
       }
+    },
+    "Season %d Ep %d": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Season %d Ep %d"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "第 %d 季 第 %d 集"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

@@ -215,11 +215,10 @@ private struct TVLibraryView: View {
                     let continuing = titles.filter { $0.isContinuing }.sorted { $0.continueWatchingAt > $1.continueWatchingAt }
                     TVShelf(name: "Continue watching", titles: continuing)
                     TVShelf(name: "Recently added", titles: titles)
-                    let watched = titles.filter { $0.assets.contains { $0.lastPlayed > 0 } }
-                        .sorted { ($0.assets.map(\.lastPlayed).max() ?? 0) > ($1.assets.map(\.lastPlayed).max() ?? 0) }
-                    TVShelf(name: "Recently watched", titles: watched)
                     TVShelf(name: "Movies", titles: titles.filter { $0.kind == "movie" })
                     TVShelf(name: "TV Shows", titles: titles.filter { $0.kind == "tv" })
+                    let watched = titles.filter { $0.watched }.sorted { ($0.assets.map(\.lastPlayed).max() ?? 0) > ($1.assets.map(\.lastPlayed).max() ?? 0) }
+                    TVShelf(name: "Recently watched", titles: watched)
                     let genres = Array(Set(titles.flatMap(\.genres))).sorted()
                     ForEach(genres, id: \.self) { genre in
                         let matches = titles.filter { $0.genres.contains(genre) }
@@ -510,25 +509,26 @@ private struct TVPoster: View {
     let title: LibraryTitle
     var continuing = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 10) {
             NavigationLink(value: LibraryDestination(id: title.id)) {
                 LibraryArtwork(id: title.id).aspectRatio(2.0 / 3.0, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .overlay { if title.poster?.isEmpty != false { Text(title.title).font(.system(size: 25, weight: .semibold)).multilineTextAlignment(.center).padding() } }
                     .overlay(alignment: .topTrailing) { if title.watched { WatchedBadge() } }
-            }.buttonStyle(TVPosterButtonStyle()).contextMenu { ContinueWatchingAction(title: title) }
-            Text(title.title).font(.system(size: 25, weight: .semibold)).lineLimit(3, reservesSpace: true)
+            }.accessibilityLabel(title.title).buttonStyle(TVPosterButtonStyle()).contextMenu { ContinueWatchingAction(title: title) }
             if continuing, let asset = title.resume {
                 VStack(alignment: .leading, spacing: 5) {
                     if let season = asset.season, let episode = asset.episode {
-                        Text((asset.position == 0 ? L10n.text("Up next") + " · " : "") + "S\(season):E\(episode)")
+                        Text(L10n.format("Season %d Ep %d", season, episode))
                     }
                     if asset.duration > 0 {
                         let minutes = Int(ceil(max(0, asset.duration - asset.position) / 60))
                         Text(minutes >= 60 ? L10n.format("%dh %dm left", minutes / 60, minutes % 60) : L10n.format("%dm left", minutes))
                     }
+                    if let year = title.year, !year.isEmpty { Text(year) }
                 }.font(.system(size: 21)).foregroundStyle(Theme.muted)
             } else {
-                Text(LocalizedStringKey(title.continuationLabel ?? title.year ?? "")).font(.system(size: 21)).foregroundStyle(Theme.muted)
+                Text(([title.genres.first, title.year].compactMap { $0 }.filter { !$0.isEmpty }).joined(separator: " · ")).font(.system(size: 21)).foregroundStyle(Theme.muted).lineLimit(1)
             }
         }
     }

@@ -12,7 +12,7 @@ final class PosterCard extends LinearLayout {
   static int created;
   private final ImageView poster;
   private final FrameLayout artwork;
-  private final TextView title, subtitle, watched, remaining;
+  private final TextView title, subtitle, watched, remaining, year;
   private boolean continuing;
   private final ProgressBar progress;
   private final Art art;
@@ -42,10 +42,12 @@ final class PosterCard extends LinearLayout {
     addView(artwork,new LinearLayout.LayoutParams(-1,Ui.dp(context,180)));
     Ui.gap(this,10);
     title=Ui.title(context,"",14); title.setMaxLines(3); title.setEllipsize(TextUtils.TruncateAt.END);
-    Ui.add(this,title,-1,54);
+    title.setGravity(Gravity.CENTER);
+    artwork.addView(title,new FrameLayout.LayoutParams(-1,-1));
     subtitle=Ui.text(context,"",11,Ui.MUTED); subtitle.setSingleLine(true); subtitle.setEllipsize(TextUtils.TruncateAt.END);
     Ui.add(this,subtitle,-1,17);
     remaining=Ui.text(context,"",11,Ui.MUTED);remaining.setSingleLine(true);Ui.add(this,remaining,-1,17);remaining.setVisibility(GONE);
+    year=Ui.text(context,"",11,Ui.MUTED);year.setSingleLine(true);Ui.add(this,year,-1,17);year.setVisibility(GONE);
     progress=new ProgressBar(context,null,android.R.attr.progressBarStyleHorizontal);
     progress.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.ACCENT));
     Ui.add(this,progress,-1,3);
@@ -62,7 +64,7 @@ final class PosterCard extends LinearLayout {
   void bind(Library.Title value) {
     item=value; setTag("title:"+value.id);
     setContentDescription(value.title+", "+value.year+(value.watched()?", Watched":""));
-    title.setText(value.title);
+    title.setText(value.title);title.setVisibility(value.poster.isEmpty()?VISIBLE:GONE);
     watched.setVisibility(value.watched()?VISIBLE:GONE);
     Library.Asset resume=value.resume();
     subtitle.setText(resume!=null ? (resume.position==0?"Up next · "+resume.label():resume.status()) : value.watched()?L10n.t("Watched"):value.year);
@@ -74,11 +76,15 @@ final class PosterCard extends LinearLayout {
 
   void showContinuation(boolean enabled) { continuing=enabled;updateCaption(); }
   private void updateCaption() {
-    remaining.setVisibility(GONE);
-    if(!continuing || item==null)return;
+    remaining.setVisibility(GONE);year.setVisibility(GONE);
+    if(item==null)return;
+    subtitle.setVisibility(VISIBLE);
+    subtitle.setText((item.genres.isEmpty()?"":item.genres.get(0))+(item.genres.isEmpty()||item.year.isEmpty()?"":" · ")+item.year);
+    if(!continuing)return;
+    year.setText(item.year);year.setVisibility(item.year.isEmpty()?GONE:VISIBLE);
     Library.Asset resume=item.resume();if(resume==null)return;
     if(item.kind.equals("tv") && resume.hasSeason) {
-      subtitle.setText((resume.position==0?L10n.t("Up next")+" · ":"")+String.format(java.util.Locale.ROOT,"S%d:E%d",resume.season,resume.episode));
+      subtitle.setText(String.format(L10n.locale(),L10n.t("Season %d Ep %d"),resume.season,resume.episode));
       subtitle.setVisibility(VISIBLE);
     } else { subtitle.setVisibility(GONE); }
     if(resume.duration>0) {

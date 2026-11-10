@@ -418,6 +418,7 @@
     <string name="ui_d499e5b1e322" formatted="false">Search torrents</string>
     <string name="ui_1a6a5ba8c23d" formatted="false">Searching…</string>
     <string name="ui_62255f5671e8" formatted="false">Season</string>
+    <string name="ui_e5444912e049" formatted="false">Season %d Ep %d</string>
     <string name="ui_8196e42428ff" formatted="false">See All</string>
     <string name="ui_e41966be6687" formatted="false">See All  ›</string>
     <string name="ui_2ac9cd891f0d" formatted="false">Seeding</string>
