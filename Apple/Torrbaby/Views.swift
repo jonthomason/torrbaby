@@ -216,6 +216,9 @@ struct RootView: View {
                     }
                 }
                 .navigationDestination(for: String.self) { hash in TorrentDetail(hash: hash).navigationBarBackButtonHidden().toolbar { historyControls } }
+                .navigationDestination(for: LibraryShelfDestination.self) { route in
+                    LibraryBrowser(shelfIDs: route.ids).navigationTitle(route.name).navigationBarBackButtonHidden().toolbar { historyControls }
+                }
                 .navigationDestination(for: LibraryDestination.self) { route in LibraryDetail(titleID: route.id).navigationBarBackButtonHidden().toolbar { historyControls } }
                 .safeAreaInset(edge: .top) {
                     if store.offline {

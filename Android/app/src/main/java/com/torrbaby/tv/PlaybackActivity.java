@@ -486,6 +486,14 @@ public class PlaybackActivity extends Activity {
 
   @Override
   protected void onDestroy() {
+    if (!finished) {
+      report(true);
+      if (api != null && !session.isEmpty() && (player == null || !ready || player.getDuration() <= 0 || player.getDuration() == C.TIME_UNSET)) {
+        final String closingSession = session;
+        io.execute(() -> { try { api.request("POST", "/v1/playback/end", new JSONObject().put("session_id", closingSession)); } catch (Exception ignored) {} });
+      }
+      finished = true;
+    }
     cancelled = true;
     main.removeCallbacksAndMessages(null);
     if (mediaSession != null) mediaSession.release();

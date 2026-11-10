@@ -82,7 +82,15 @@ pub struct SearchResult {
     pub providers: Vec<ProviderStatus>,
     pub cached: bool,
 }
+#[derive(Debug)]
+struct RateLimited(u64);
+impl std::fmt::Display for RateLimited {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f,"Source rate limited") }
+}
+impl std::error::Error for RateLimited {}
+
 pub struct Search {
+    lou: tokio::sync::Mutex<(Instant, HashMap<String, (Instant, Vec<Item>)>)>,
     http: reqwest::Client,
     cache: Mutex<HashMap<String, (Instant, SearchResult)>>,
     gate: tokio::sync::Semaphore,
@@ -96,10 +104,11 @@ impl Search {
             builder = builder.proxy(reqwest::Proxy::all(&proxy).map_err(|_| anyhow::anyhow!("Invalid search proxy configuration"))?);
         }
         Ok(Self {
+            lou: tokio::sync::Mutex::new((Instant::now(), HashMap::new())),
             http: builder
                 .user_agent("Torrbaby/0.3 (personal media library)")
-                .connect_timeout(Duration::from_secs(5))
-                .timeout(Duration::from_secs(12))
+                .connect_timeout(Duration::from_secs(8))
+                .timeout(Duration::from_secs(20))
                 .redirect(reqwest::redirect::Policy::none())
                 .build()?,
             cache: Mutex::new(HashMap::new()),
@@ -123,7 +132,12 @@ impl Search {
     async fn read_once(&self, url: reqwest::Url) -> Result<Vec<u8>> {
         let mut request = self.http.get(url.clone());
         if url.host_str() == Some("www.1lou.me") { request = request.header(reqwest::header::CONNECTION, "close"); }
-        let mut response = request.send().await?.error_for_status()?;
+        let response = request.send().await?;
+        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let delay=response.headers().get(reqwest::header::RETRY_AFTER).and_then(|v|v.to_str().ok()).and_then(|s|s.parse::<u64>().ok()).unwrap_or(15).clamp(1,3600);
+            return Err(RateLimited(delay).into());
+        }
+        let mut response = response.error_for_status()?;
         ensure!(
             response.content_length().is_none_or(|n| n <= 4_194_304),
             "Indexer response too large"
@@ -137,6 +151,30 @@ impl Search {
             bytes.extend_from_slice(&chunk);
         }
         Ok(bytes)
+    }
+    async fn search_lou(&self, terms: &str) -> Result<Vec<Item>> {
+        // Serialize this source and share raw results across filters and clients.
+        let mut state=self.lou.lock().await;
+        state.1.retain(|_,(at,_)|at.elapsed()<Duration::from_secs(600));
+        if let Some((_,items))=state.1.get(terms) { return Ok(items.clone()); }
+        let wait=state.0.saturating_duration_since(Instant::now());
+        if wait>Duration::from_secs(5) { return Err(RateLimited(wait.as_secs()+1).into()); }
+        tokio::time::sleep(wait).await;
+        let mut url=reqwest::Url::parse("http://www.1lou.me/search/api/search.php")?;
+        url.query_pairs_mut().append_pair("q",terms).append_pair("sort","newest").append_pair("track","0");
+        let result=match self.read(url).await { Ok(raw)=>chinese::listings(&raw),Err(e)=>Err(e) };
+        let delay=result.as_ref().err().and_then(|e|e.downcast_ref::<RateLimited>()).map(|e|e.0).unwrap_or(5);
+        state.0=Instant::now()+Duration::from_secs(delay);
+        match &result {
+            Ok(items)=> { if state.1.len()>=32 {state.1.clear();} state.1.insert(terms.to_owned(),(Instant::now(),items.clone())); },
+            Err(error)=> {
+                let class=if error.downcast_ref::<RateLimited>().is_some() {"rate_limited"}
+                    else if let Some(e)=error.downcast_ref::<reqwest::Error>() {if e.is_timeout(){"timeout"}else if e.is_connect(){"connection"}else if e.status().is_some(){"http_status"}else{"transport"}}
+                    else {"invalid_response"};
+                eprintln!("Torrent search provider=1lou failure={class}");
+            }
+        }
+        result
     }
     pub async fn search(&self, mut query: Query) -> Result<SearchResult> {
         query.query = query.query.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -207,9 +245,7 @@ impl Search {
                         Err(e) => Err(e),
                     }
                 } else if provider == "1lou" {
-                    let mut url = reqwest::Url::parse("http://www.1lou.me/search/api/search.php").unwrap();
-                    url.query_pairs_mut().append_pair("q", terms).append_pair("sort", "newest").append_pair("track", "0");
-                    match self.read(url).await { Ok(raw) => chinese::listings(&raw), Err(e) => Err(e) }
+                    self.search_lou(terms).await
                 } else if provider == "dmhy" || provider == "mikan" {
                     let (base, key) = if provider == "dmhy" {
                         ("https://share.dmhy.org/topics/rss/rss.xml", "keyword")
@@ -269,7 +305,9 @@ impl Search {
                 }
                 Err(error) => {
                     // Keep remote bodies/URLs out of client errors and logs.
-                    let message = if error
+                    let message = if error.downcast_ref::<RateLimited>().is_some() {
+                        "Source is rate limiting searches. Please wait briefly and try again."
+                    } else if error
                         .downcast_ref::<reqwest::Error>()
                         .is_some_and(|e| e.is_timeout())
                     {

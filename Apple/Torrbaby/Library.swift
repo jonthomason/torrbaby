@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct LibraryDestination: Hashable { let id: String }
+struct LibraryShelfDestination: Hashable { let name: String; let ids: [String] }
 
 struct MediaLibrary: Decodable {
     let titles: [LibraryTitle]
@@ -191,6 +192,7 @@ struct LibraryArtwork: View {
 struct LibraryBrowser: View {
     @EnvironmentObject var store: Store
     var kind: String? = nil
+    var shelfIDs: [String]? = nil
     var showDownloads: () -> Void = {}
     @State private var search = ""
     #if os(macOS)
@@ -200,7 +202,7 @@ struct LibraryBrowser: View {
     @State private var order = "Recently added"
     var titles: [LibraryTitle] {
         let result = store.library?.titles.filter { title in
-            (kind == nil || title.kind == kind) && (genre == "All genres" || title.genres.contains(genre)) &&
+            (shelfIDs == nil || shelfIDs!.contains(title.id)) && (kind == nil || title.kind == kind) && (genre == "All genres" || title.genres.contains(genre)) &&
             (search.isEmpty || title.title.localizedCaseInsensitiveContains(search) || title.genres.contains { $0.localizedCaseInsensitiveContains(search) })
         } ?? []
         return result.sorted {
@@ -210,7 +212,27 @@ struct LibraryBrowser: View {
         }
     }
     var genres: [String] { Array(Set((store.library?.titles ?? []).filter { kind == nil || $0.kind == kind }.flatMap(\.genres))).sorted() }
-    var browsing: Bool { kind == nil && search.isEmpty && genre == "All genres" }
+    var browsing: Bool { shelfIDs == nil && kind == nil && search.isEmpty && genre == "All genres" }
+    private var homeShelves: [(name: String, items: [LibraryTitle], allItems: [LibraryTitle])] {
+        var result: [(name: String, items: [LibraryTitle], allItems: [LibraryTitle])] = []
+        var shown = Set<String>()
+        func append(_ name: String, _ candidates: [LibraryTitle]) {
+            let fresh = candidates.filter { !shown.contains($0.id) }
+            guard !fresh.isEmpty else { return }
+            result.append((name, fresh, candidates))
+            shown.formUnion(fresh.prefix(8).map(\.id))
+        }
+        append("Continue watching", titles.filter { $0.resume != nil }.sorted { $0.continueWatchingAt > $1.continueWatchingAt })
+        append("Recently added", titles)
+        append("Movies", titles.filter { $0.kind == "movie" })
+        append("TV Shows", titles.filter { $0.kind == "tv" })
+        for genre in genres { append(genre, titles.filter { $0.genres.contains(genre) }) }
+        return result
+    }
+    private var remainingTitles: [LibraryTitle] {
+        let shown = Set(homeShelves.flatMap { $0.items.prefix(8).map(\.id) })
+        return titles.filter { !shown.contains($0.id) }
+    }
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 28) {
@@ -256,12 +278,13 @@ struct LibraryBrowser: View {
                         ContentUnavailableView("Your library", systemImage: "film.stack", description: Text(search.isEmpty ? "No movies or shows yet." : "No titles match your search."))
                     }
                 } else if browsing && order == "Recently added" {
-                    let continuing = titles.filter { $0.resume != nil }.sorted { ($0.resume?.lastPlayed ?? 0) > ($1.resume?.lastPlayed ?? 0) }
-                    if !continuing.isEmpty { shelf("Continue watching", continuing) }
-                    shelf("Recently added", titles)
-                    shelf("Movies", titles.filter { $0.kind == "movie" })
-                    shelf("TV Shows", titles.filter { $0.kind == "tv" })
-                    ForEach(genres.prefix(6), id: \.self) { genre in shelf(genre, titles.filter { $0.genres.contains(genre) }) }
+                    ForEach(homeShelves, id: \.name) { section in shelf(section.name, section.items, allItems: section.allItems) }
+                    if !remainingTitles.isEmpty {
+                        Text("More to explore").font(.title2.bold())
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 155, maximum: 240), spacing: 20)], alignment: .leading, spacing: 28) {
+                            ForEach(remainingTitles) { title in poster(title) }
+                        }
+                    }
                 } else {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 155, maximum: 240), spacing: 20)], alignment: .leading, spacing: 28) {
                         ForEach(titles) { title in poster(title) }
@@ -275,19 +298,13 @@ struct LibraryBrowser: View {
         .focusedSceneValue(\.searchContent, { searchFocused = true })
         #endif
     }
-    @ViewBuilder func shelf(_ name: String, _ items: [LibraryTitle]) -> some View {
+    @ViewBuilder func shelf(_ name: String, _ items: [LibraryTitle], allItems: [LibraryTitle]? = nil) -> some View {
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     Text(name).font(.title2.bold())
                     Spacer()
-                    NavigationLink {
-                        ScrollView {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 155, maximum: 240), spacing: 20)], alignment: .leading, spacing: 28) {
-                                ForEach(items) { title in poster(title) }
-                            }.padding(24)
-                        }.background(Theme.canvas).navigationTitle(name)
-                    } label: { Text("See All").font(.subheadline.weight(.semibold)) }
+                    NavigationLink(value: LibraryShelfDestination(name: name, ids: (allItems ?? items).map(\.id))) { Text("See All").font(.subheadline.weight(.semibold)) }
                 }
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: 18) {

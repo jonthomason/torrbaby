@@ -151,7 +151,7 @@ pub async fn serve(
         Some(tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-                if !service.virtual_media.idle() {continue;}
+                if !service.virtual_media.idle() || !service.virtual_media.can_preindex() {continue;}
                 let assets=service.db.lock().ok().and_then(|db|db.documents("assets").ok()).unwrap_or_default();
                 for asset in assets {
                     if !service.virtual_media.idle() {break;}
@@ -1170,6 +1170,14 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
         ("GET","/v1/clients") => Ok(json!(db.rows("SELECT clients.*, EXISTS(SELECT 1 FROM device_credentials WHERE client_id=clients.id) AS paired_credential FROM clients ORDER BY last_seen DESC",[])?)),
         ("POST","/v1/clients") => db.register(text(&body,"client_id")?,text(&body,"name")?,text(&body,"platform")?),
         ("GET","/v1/playback") => Ok(json!(db.history()?)),
+        ("POST","/v1/playback/end") => {
+            let session=text(&body,"session_id")?;
+            let tx=db.connection.transaction()?;
+            tx.execute("UPDATE playback_sessions SET ended=1 WHERE id=?",[session])?;
+            tx.execute("UPDATE profile_playback SET active_session=NULL WHERE active_session=?",[session])?;
+            tx.commit()?;
+            Ok(json!({"accepted":true}))
+        },
         ("POST","/v1/playback/progress") => db.progress(text(&body,"session_id")?,body["sequence"].as_i64().context("Invalid sequence")?,body["position"].as_f64().context("Invalid position")?,body["duration"].as_f64().context("Invalid duration")?, match body.get("ended") {None => false,Some(v)=>v.as_bool().context("ended must be boolean")?}),
         ("GET","/v1/rates") => Ok(json!(db.rows("SELECT CAST(time/60 AS INTEGER)*60 AS time,AVG(download) AS download,AVG(upload) AS upload FROM transfer_rates WHERE time>=? GROUP BY CAST(time/60 AS INTEGER) ORDER BY time",[now()-86400.0])?)),
         ("GET","/v1/metadata") => {

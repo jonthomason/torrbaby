@@ -13,6 +13,9 @@ import org.json.*;
 /** Explicit remote indexer searches, separate from the retained media browser. */
 public final class TorrentSearchActivity extends Activity {
   private final ExecutorService io = Executors.newFixedThreadPool(2);
+  private final ExecutorService sizeIo = Executors.newSingleThreadExecutor();
+  private final Set<String> sizeRequests = new HashSet<>();
+  private final Map<String,String> sizes = new HashMap<>();
   private Api api;
   private LinearLayout resultsRoot;
   private EditText query;
@@ -95,6 +98,8 @@ public final class TorrentSearchActivity extends Activity {
   private static String label(String provider) {return provider.equals("1lou")?"BT之家":provider.equals("dmhy")?"动漫花园":provider.equals("mikan")?"蜜柑计划":provider.equals("tpb")?"The Pirate Bay":provider.equals("csv")?"Torrent CSV":"Nyaa";}
   private String summary(JSONObject item) {
     List<String> parts=new ArrayList<>(); if(!item.isNull("size_bytes"))parts.add(android.text.format.Formatter.formatFileSize(this,item.optLong("size_bytes")));
+    else if(!item.isNull("size_label") && !item.optString("size_label").isEmpty())parts.add(item.optString("size_label"));
+    else parts.add(sizes.getOrDefault(item.optString("name"), "Size…"));
     if(!item.isNull("seeders"))parts.add(item.optLong("seeders")+(item.optLong("seeders")==1?" seed":" seeds"));
     if(!item.isNull("leechers"))parts.add(item.optLong("leechers")+(item.optLong("leechers")==1?" peer":" peers"));
     JSONArray sources=item.optJSONArray("sources");if(sources!=null)for(int i=0;i<sources.length();i++)parts.add(label(sources.optJSONObject(i).optString("provider")));
@@ -114,14 +119,31 @@ public final class TorrentSearchActivity extends Activity {
     for(String key:new String[]{"audio","languages"}) {JSONArray a=hints.optJSONArray(key);if(a!=null)for(int i=0;i<a.length();i++)values.add(a.optString(i));}
     return String.join(" · ",values);
   }
+  private void loadSize(JSONObject item) {
+    if(!item.isNull("size_bytes") || (!item.isNull("size_label") && !item.optString("size_label").isEmpty()))return;
+    String key=item.optString("name"); if(!sizeRequests.add(key))return;
+    JSONArray sources=item.optJSONArray("sources"); JSONObject source=sources==null?null:sources.optJSONObject(0);
+    if(source==null || !source.optString("provider").equals("1lou"))return;
+    sizeIo.execute(() -> {
+      String label="Size unavailable";
+      try {
+        JSONObject d=api.request("POST","/v1/search/torrents/detail",new JSONObject().put("provider","1lou").put("id",source.optString("id")));
+        JSONArray releases=d.optJSONArray("releases");long min=Long.MAX_VALUE,max=0;
+        if(releases!=null)for(int i=0;i<releases.length();i++){JSONObject r=releases.optJSONObject(i).optJSONObject("item");if(!r.isNull("size_bytes")){long n=r.optLong("size_bytes");min=Math.min(min,n);max=Math.max(max,n);}}
+        if(max>0)label=android.text.format.Formatter.formatFileSize(this,min)+(min==max?"":"–"+android.text.format.Formatter.formatFileSize(this,max));
+      } catch(Exception ignored) {}
+      final String value=label;
+      runOnUiThread(() -> {if(!isDestroyed()){sizes.put(key,value);((BaseAdapter)list.getAdapter()).notifyDataSetChanged();}});
+    });
+  }
   private class Results extends BaseAdapter {
     public int getCount(){return results.length();} public Object getItem(int p){return results.optJSONObject(p);} public long getItemId(int p){return p;}
     public View getView(int position, View old, ViewGroup parent) {
       LinearLayout row; if(old instanceof LinearLayout)row=(LinearLayout)old; else {
-        row=Ui.column(TorrentSearchActivity.this); Ui.pad(row,18,14);row.setBackground(Ui.shape(Ui.PANEL,0,TorrentSearchActivity.this));
-        TextView title=Ui.title(TorrentSearchActivity.this,"",17);title.setMaxLines(2);Ui.add(row,title,-1,-2);Ui.add(row,Ui.text(TorrentSearchActivity.this,"",13,Ui.ACCENT),-1,26);Ui.add(row,Ui.text(TorrentSearchActivity.this,"",13,Ui.MUTED),-1,-2);
+        row=Ui.column(TorrentSearchActivity.this); Ui.pad(row,16,6);row.setBackground(Ui.shape(Ui.PANEL,0,TorrentSearchActivity.this));
+        TextView title=Ui.title(TorrentSearchActivity.this,"",18);title.setMaxLines(2);Ui.add(row,title,-1,-2);Ui.add(row,Ui.text(TorrentSearchActivity.this,"",13,Ui.ACCENT),-1,22);Ui.add(row,Ui.text(TorrentSearchActivity.this,"",13,Ui.MUTED),-1,-2);
       }
-      JSONObject item=results.optJSONObject(position);((TextView)row.getChildAt(0)).setText(title(item));((TextView)row.getChildAt(1)).setText(summary(item));((TextView)row.getChildAt(2)).setText(tags(item));return row;
+      JSONObject item=results.optJSONObject(position);loadSize(item);((TextView)row.getChildAt(0)).setText(title(item));((TextView)row.getChildAt(1)).setText(summary(item));((TextView)row.getChildAt(2)).setText(tags(item));return row;
     }
   }
   private void details(JSONObject item) {
@@ -186,5 +208,5 @@ public final class TorrentSearchActivity extends Activity {
     }catch(Exception error){runOnUiThread(()->{if(!isDestroyed()){button.setEnabled(true);button.setText("Add torrent");new AlertDialog.Builder(this).setTitle("Couldn’t add torrent").setMessage(MainActivity.message(error)).setPositiveButton("Close",null).show();}});}});
   }
   public void onBackPressed(){if(inDetail){inDetail=false;generation++;setContentView(resultsRoot);list.requestFocus();}else super.onBackPressed();}
-  protected void onDestroy(){generation++;io.shutdownNow();super.onDestroy();}
+  protected void onDestroy(){generation++;sizeIo.shutdownNow();io.shutdownNow();super.onDestroy();}
 }

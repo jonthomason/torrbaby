@@ -186,11 +186,18 @@ final class PlaybackModel: ObservableObject {
         return true
     }
     func stop() {
+        guard !finished else { return }
         nextEpisodeTask?.cancel(); nextEpisodeTask = nil
         subtitleController?.stop(); subtitleController = nil
         player.pause()
-        report(ended: true)
+        let saved = report(ended: true)
+        if !saved, let session = playback.sessionId {
+            Task { struct Ended: Decodable { let accepted: Bool }
+                let _: Ended? = try? await store.request("POST", "/v1/playback/end", body: ["session_id": session])
+            }
+        }
         finished = true
+        player.replaceCurrentItem(with: nil)
         if let timeObserver { player.removeTimeObserver(timeObserver); self.timeObserver = nil }
         rateObservation = nil
         speedObservation = nil

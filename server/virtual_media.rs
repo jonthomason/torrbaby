@@ -181,6 +181,9 @@ impl Manager {
             crate::subtitle_jobs::revision(path)? == j.revision,
             "Media changed; prepare again"
         );
+        if let Ok(directory)=fs::File::open(self.index_path(&j)?) {
+            let _=directory.set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now()));
+        }
         let mut readers = self
             .readers
             .lock()
@@ -231,7 +234,9 @@ impl Manager {
             .lock()
             .map_err(|_| anyhow::anyhow!("Playback queue unavailable"))?;
         if let Ok(j) = self.job(&id) {
-            if j.state == "ready" || (j.state == "failed" && j.preparation_version >= 3) || pending.contains(&id) {
+            let retry_storage=j.error.as_deref()==Some("Virtual media index storage limit reached")
+                || j.error.as_deref()==Some("Playback cache is busy. Please try again shortly.");
+            if (j.state == "ready" && self.index_path(&j)?.exists()) || (j.state == "failed" && j.preparation_version >= 3 && !retry_storage) || pending.contains(&id) {
                 return self.status(&id);
             }
         }
@@ -272,25 +277,52 @@ impl Manager {
         });
         self.status(&id)
     }
+    fn index_usage(&self) -> Result<Vec<(PathBuf, u64, std::time::SystemTime)>> {
+        let mut entries=Vec::new();
+        for entry in fs::read_dir(&self.root)? {
+            let entry=entry?;let name=entry.file_name();let name=name.to_string_lossy();
+            if !entry.file_type()?.is_dir() || !(valid(&name) || name.strip_prefix("base-").is_some_and(valid)) {continue;}
+            let mut size=0u64;
+            for child in fs::read_dir(entry.path())? {let child=child?;if child.file_type()?.is_file(){size=size.saturating_add(child.metadata()?.len());}}
+            entries.push((entry.path(),size,entry.metadata()?.modified()?));
+        }
+        Ok(entries)
+    }
+    pub fn can_preindex(&self) -> bool {
+        self.index_usage().is_ok_and(|entries|entries.iter().map(|(_,n,_)|*n).sum::<u64>() + 256*1024*1024 <= 2*1024*1024*1024)
+    }
+    fn reclaim_indexes(&self) -> Result<()> {
+        let mut entries=self.index_usage()?;
+        let mut used=entries.iter().map(|(_,n,_)|*n).sum::<u64>();
+        if used + 256*1024*1024 <= 2*1024*1024*1024 {return Ok(());}
+        let mut protected=HashSet::new();
+        {
+            let pending=self.pending.lock().map_err(|_|anyhow::anyhow!("Playback queue unavailable"))?;
+            for id in pending.iter() {if let Ok(job)=self.job(id){protected.insert(self.index_path(&job)?);}}
+        }
+        {
+            let readers=self.readers.lock().map_err(|_|anyhow::anyhow!("Playback index unavailable"))?;
+            for id in readers.keys() {if let Ok(job)=self.job(id){protected.insert(self.index_path(&job)?);}}
+        }
+        entries.sort_by_key(|(_,_,modified)|*modified);
+        for (path,size,modified) in entries {
+            if used + 256*1024*1024 <= 2*1024*1024*1024 {break;}
+            // Recent readers may still be in flight after leaving the small RAM cache.
+            if protected.contains(&path) || modified.elapsed().unwrap_or_default().as_secs()<3600 {continue;}
+            fs::remove_dir_all(&path)?;
+            used=used.saturating_sub(size);
+        }
+        ensure!(used+256*1024*1024<=2*1024*1024*1024,"Playback cache is busy. Please try again shortly.");
+        Ok(())
+    }
     fn build(&self, id: &str) -> Result<()> {
         let mut job = self.job(id)?;
         job.state = "running".into();
         self.save(&job)?;
         let final_path = self.index_path(&job)?;
         if !final_path.exists() {
-            let mut used = 0u64;
-            for entry in fs::read_dir(&self.root)? {
-                let entry = entry?;
-                if entry.file_type()?.is_dir() {
-                    for file in fs::read_dir(entry.path())? {
-                        used = used.saturating_add(file?.metadata()?.len());
-                    }
-                }
-            }
-            ensure!(
-                used + 256 * 1024 * 1024 <= 2 * 1024 * 1024 * 1024,
-                "Virtual media index storage limit reached"
-            );
+            // MP4 captions are virtual; they do not allocate an MKV disk index.
+            if is_mkv(&job.input) { self.reclaim_indexes()?; }
             let temporary = final_path.with_extension("building");
             if is_mkv(&job.input) {
                 crate::virtual_mkv::build(&job.input, &temporary)?;
@@ -335,4 +367,26 @@ impl Manager {
 fn is_mkv(path: &Path) -> bool {
     path.extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("mkv"))
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+    #[test]
+    fn only_old_unprotected_indexes_are_reclaimed() -> Result<()> {
+        let root=std::env::temp_dir().join(format!("torrbaby-index-reclaim-{}-{}",std::process::id(),uuid::Uuid::new_v4()));
+        let manager=Manager::new(&root)?;
+        let base=manager.root.join(format!("base-{}","a".repeat(64)));
+        fs::create_dir(&base)?;
+        fs::File::create(base.join("metadata.bin"))?.set_len(2*1024*1024*1024)?;
+        assert!(!manager.can_preindex());
+        assert!(manager.reclaim_indexes().is_err());
+        assert!(base.exists());
+        fs::File::open(&base)?.set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now()-std::time::Duration::from_secs(7200)))?;
+        manager.reclaim_indexes()?;
+        assert!(!base.exists());
+        assert!(manager.can_preindex());
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
 }

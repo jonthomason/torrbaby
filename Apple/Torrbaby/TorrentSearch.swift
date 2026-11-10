@@ -74,7 +74,7 @@ struct TorrentSearchItem: Decodable, Identifiable {
         }.joined(separator: " · ")
     }
     var availability: String {
-        guard let seeders else { return "Availability not listed" }
+        guard let seeders else { return "Peers not reported" }
         return seeders == 0 ? "No reported seeds" : "\(seeders.formatted()) \(seeders == 1 ? "seed" : "seeds")"
     }
     var size: String { sizeBytes.map { ByteCountFormatter.string(fromByteCount: Int64(clamping: $0), countStyle: .file) } ?? sizeLabel ?? "" }
@@ -140,7 +140,8 @@ struct TorrentSearchView: View {
                 if let response {
                     if response.items.isEmpty && !searching {
                         if !response.providers.isEmpty && response.providers.allSatisfy({ $0.error != nil }) {
-                            ContentUnavailableView("Sources unavailable", systemImage: "network.slash", description: Text("Try again shortly or choose another source."))
+                            let limited = response.providers.contains { $0.error?.contains("rate limiting") == true }
+                            ContentUnavailableView(limited ? "Search rate limited" : "Sources unavailable", systemImage: limited ? "clock" : "network.slash", description: Text(response.providers.compactMap(\.error).first ?? "Try again shortly."))
                         } else {
                             ContentUnavailableView("No releases found", systemImage: "magnifyingglass", description: Text("Try a shorter title or another source."))
                         }
@@ -277,7 +278,7 @@ struct TorrentSearchView: View {
         if let year { body["year"] = year }; if let season { body["season"] = season }; if let episode { body["episode"] = episode }
         work = Task { @MainActor in
             do {
-                let value: TorrentSearchResponse = try await store.request("POST", "/v1/search/torrents", body: body, timeout: 20)
+                let value: TorrentSearchResponse = try await store.request("POST", "/v1/search/torrents", body: body, timeout: 30)
                 guard !Task.isCancelled else { return }; response = value
                 if !value.items.contains(where: { $0.id == selectedID }) { selectedID = value.items.first?.id }
             } catch {
@@ -305,7 +306,7 @@ private struct SearchReleaseArtwork: View {
                 RoundedRectangle(cornerRadius: 7).fill(Theme.panel)
                     .overlay(Image(systemName: "film").foregroundStyle(Theme.muted))
             }
-        }.frame(width: 46, height: 69).clipShape(RoundedRectangle(cornerRadius: 7))
+        }.frame(width: 34, height: 51).clipShape(RoundedRectangle(cornerRadius: 7))
             .accessibilityHidden(true)
             .task(id: store.server + name) {
                 data = nil
@@ -323,33 +324,60 @@ private struct SearchReleaseArtwork: View {
     }
 }
 
+@MainActor
+private enum SearchReleaseSizes {
+    static var cache: [String: String] = [:]
+    static var active = 0
+    static func load(_ item: TorrentSearchItem, store: Store) async throws -> String {
+        let key = store.server + item.id
+        if let cached = cache[key] { return cached }
+        while active >= 2 { try await Task.sleep(for: .milliseconds(200)) }
+        try Task.checkCancellation()
+        if let cached = cache[key] { return cached }
+        active += 1
+        defer { active -= 1 }
+        guard let source = item.sources.first(where: { $0.provider == "1lou" }) else { return "Size unavailable" }
+        let detail: TorrentSearchDetails = try await store.request("POST", "/v1/search/torrents/detail", body: ["provider": source.provider, "id": source.id], timeout: 45)
+        let sizes = detail.releases?.compactMap { $0.item.sizeBytes }.sorted() ?? []
+        guard let first = sizes.first, let last = sizes.last else { return "Size unavailable" }
+        let format: (UInt64) -> String = { ByteCountFormatter.string(fromByteCount: Int64(clamping: $0), countStyle: .file) }
+        let value = first == last ? format(first) : "\(format(first))–\(format(last))"
+        if cache.count >= 128 { cache.removeAll() }
+        cache[key] = value
+        return value
+    }
+}
+
 private struct TorrentSearchRow: View {
+    @EnvironmentObject var store: Store
     let item: TorrentSearchItem
+    @State private var fetchedSize: String?
+    private var metadata: String { [item.edition, item.quality].filter { !$0.isEmpty }.joined(separator: " · ") }
+    private var tracks: String { (item.hints.audio + [item.languages]).filter { !$0.isEmpty }.joined(separator: " · ") }
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-          SearchReleaseArtwork(name: item.name)
-          VStack(alignment: .leading, spacing: 8) {
-            Text(item.title).font(.headline).foregroundStyle(.primary).lineLimit(2)
-            if !item.edition.isEmpty { Text(item.edition).font(.subheadline).foregroundStyle(.secondary) }
-            HStack(alignment: .firstTextBaseline) {
-                Text(item.quality).lineLimit(2)
-                Spacer(minLength: 8)
-                Text(item.size).monospacedDigit().fixedSize()
-            }.font(.caption).foregroundStyle(.secondary)
-            if !item.hints.audio.isEmpty {
-                Label(item.hints.audio.joined(separator: " · "), systemImage: "speaker.wave.2")
-                    .font(.caption).foregroundStyle(.secondary)
+        HStack(alignment: .top, spacing: 10) {
+            SearchReleaseArtwork(name: item.name)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(item.title).font(.headline).foregroundStyle(.primary).lineLimit(2)
+                    Spacer(minLength: 0)
+                    Text(item.size.isEmpty ? (fetchedSize ?? "Size…") : item.size)
+                        .font(.subheadline.weight(.semibold)).monospacedDigit().foregroundStyle(Theme.mint)
+                        .multilineTextAlignment(.trailing).fixedSize(horizontal: false, vertical: true)
+                }
+                if !metadata.isEmpty { Text(metadata).font(.subheadline).foregroundStyle(.secondary).lineLimit(2) }
+                if !tracks.isEmpty { Text(tracks).font(.subheadline).foregroundStyle(.secondary).lineLimit(2) }
+                if item.seeders != nil {
+                    Text(item.availability).font(.subheadline).foregroundStyle(item.seeders == 0 ? Color.orange : Theme.mint)
+                }
             }
-            Label(item.languages.isEmpty ? "Languages not listed" : item.languages, systemImage: "globe")
-                .font(.caption).foregroundStyle(.secondary).lineLimit(2)
-            HStack {
-                Label(item.availability, systemImage: "arrow.up.circle.fill")
-                    .foregroundStyle(item.seeders == 0 ? Color.orange : Theme.mint)
-                Spacer()
-                if let peers = item.leechers { Text("\(peers.formatted()) \(peers == 1 ? "peer" : "peers")").foregroundStyle(.secondary) }
-            }.font(.caption).monospacedDigit()
-          }
-        }.padding(.vertical, 10).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+        }.padding(.vertical, 3).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+            .task(id: store.server + item.id) {
+                guard item.size.isEmpty else { return }
+                do { fetchedSize = try await SearchReleaseSizes.load(item, store: store) }
+                catch is CancellationError { }
+                catch { fetchedSize = "Size unavailable" }
+            }
     }
 }
 
@@ -377,8 +405,8 @@ private struct TorrentSearchDetail: View {
             SwiftUI.Section {
                 Text(item.title).font(.title2.bold()).searchSelectable
                 if !item.edition.isEmpty { Text(item.edition).foregroundStyle(.secondary) }
-                Text([item.quality, item.size].filter { !$0.isEmpty }.joined(separator: " · ")).font(.subheadline).foregroundStyle(.secondary)
-                Label(item.availability, systemImage: "arrow.up.circle.fill").font(.caption).foregroundStyle(Theme.mint)
+                Text([item.quality, resolved.size].filter { !$0.isEmpty }.joined(separator: " · ")).font(.subheadline).foregroundStyle(.secondary)
+                if item.seeders != nil { Label(item.availability, systemImage: "arrow.up.circle.fill").font(.subheadline).foregroundStyle(Theme.mint) }
                 Text(item.name).font(.caption).foregroundStyle(.secondary).searchSelectable
                 if let releases = detail?.releases, releases.count > 1 {
                     Picker("Release", selection: $attachment) {

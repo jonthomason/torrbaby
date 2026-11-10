@@ -13,6 +13,10 @@ pub(super) fn listings(raw: &str) -> Result<Vec<Item>> {
         let name = hit["subject"].as_str()?.to_owned();
         if name.is_empty() || name.len()>4096 { return None; }
         let mut row = item(name, String::new(), Source {provider:"1lou".into(),url:format!("http://www.1lou.me/thread-{id}.htm"),id});
+        static SIZE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)([0-9]+(?:\.[0-9]+)?)\s*(GiB|GB|G|MiB|MB|M|TiB|TB|T)(?:[\] /]|$)").unwrap());
+        if let Some(size)=SIZE.captures(&row.name) {
+            row.size_label=Some(format!("{} {}",&size[1],size[2].to_ascii_uppercase()));
+        }
         row.magnet.clear(); // Never invent a torrent hash for a forum listing.
         row.added = hit["create_date"].as_u64().map(|n|n.to_string());
         Some(row)

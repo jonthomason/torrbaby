@@ -26,7 +26,14 @@ static PREFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^www\.[^ ]+\s
 
 pub fn parse_name(name: &str) -> (String, String, &'static str) {
     let name = PREFIX.replace(name, "");
-    let season = SEASON.find(&name);
+    let name = name.trim_start_matches("[BT下载]");
+    static CHINESE_EPISODES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:全|第|更新至|共)[0-9一二三四五六七八九十百]+(?:[-–][0-9]+)?[集季]|[0-9]+集(?:全|完)").unwrap());
+    let chinese_episode = CHINESE_EPISODES.find(name);
+    let chinese_title = if let Some(rest)=name.strip_prefix('[') {
+        rest.split_once(']').map(|(title,_)|title)
+    } else { name.split_once('[').map(|(title,_)|title) }
+        .filter(|title|title.chars().any(|c|('\u{4e00}'..='\u{9fff}').contains(&c)));
+    let season = SEASON.find(name);
     // A title may itself start with a year or contain one (1917, 2001, Blade Runner 2049).
     // The release year is the last year token before episode/encoding markers,
     // and must have a nonempty title before it.
@@ -37,6 +44,7 @@ pub fn parse_name(name: &str) -> (String, String, &'static str) {
         && name[..m.start()].chars().any(|c|c.is_alphanumeric()))).last();
     let cutoff = [
         season.as_ref().map(|m| m.start()),
+        chinese_episode.as_ref().map(|m|m.start()),
         year.as_ref().and_then(|c| c.get(1)).map(|m| m.start()),
     ]
     .into_iter()
@@ -49,12 +57,12 @@ pub fn parse_name(name: &str) -> (String, String, &'static str) {
         .map(|m| m.start())
         .unwrap_or(title.len());
     (
-        title[..cutoff]
+        chinese_title.unwrap_or(&title[..cutoff])
             .trim_matches(|c: char| c.is_whitespace() || "-()[]".contains(c))
             .to_owned(),
         year.and_then(|c| c.get(1).map(|m| m.as_str().to_owned()))
             .unwrap_or_default(),
-        if season.is_some() || SERIES_PACK.is_match(&name) { "tv" } else { "movie" },
+        if season.is_some() || chinese_episode.is_some() || SERIES_PACK.is_match(name) { "tv" } else { "movie" },
     )
 }
 fn normalized(value: &str) -> String {
@@ -411,5 +419,17 @@ mod numeric_title_tests {
             ("2001 A Space Odyssey", "2001 A Space Odyssey", ""),
         ] { let parsed=parse_name(name);assert_eq!((parsed.0.as_str(),parsed.1.as_str()),(title,year)); }
         assert_eq!(normalized("2001: A Space Odyssey"),normalized("2001 A Space Odyssey"));
+    }
+}
+
+#[cfg(test)]
+mod chinese_title_tests {
+    use super::*;
+    #[test]
+    fn forum_tags_are_not_part_of_the_title() {
+        for name in ["[BT下载][逐玉][全40集][国语配音/中文字幕]", "逐玉[杜比视界版本][全40集][国语配音/中文字幕].Pursuit.of.Jade.S01.2026.2160p"] {
+            let (title,_,kind)=parse_name(name); assert_eq!(title,"逐玉");assert_eq!(kind,"tv");
+        }
+        assert_eq!(parse_name("流浪地球[国语配音/中文字幕].2019.1080p").0,"流浪地球");
     }
 }
