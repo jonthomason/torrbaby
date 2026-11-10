@@ -296,7 +296,7 @@ final class Store: ObservableObject {
         #if os(tvOS)
         return false
         #else
-        return offline
+        return configured && (status == nil || offline)
         #endif
     }
     func isDownloaded(_ asset: LibraryAsset) -> Bool {
@@ -369,7 +369,7 @@ final class Store: ObservableObject {
         do {
             server = server.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             token = token.trimmingCharacters(in: .whitespacesAndNewlines)
-            let _: DaemonStatus = try await request("GET", "/v1/status")
+            let _: DaemonStatus = try await request("GET", "/v1/status", timeout: 4)
             try Credentials.save(token)
             UserDefaults.standard.set(server, forKey: "server")
             await refresh()
@@ -401,14 +401,23 @@ final class Store: ObservableObject {
                 guard identity == profileIdentity else { return }
                 library = saved
             }
+            // Restore browsing before contacting the server. A satisfied network path
+            // does not mean the home server is reachable (for example while travelling).
+            guard networkAvailable else { throw URLError(.notConnectedToInternet) }
+            let serverStatus: DaemonStatus = try await request("GET", "/v1/status", timeout: 4)
+            guard identity == profileIdentity else { return }
+            status = serverStatus
+            connectionError = nil
+            subtitleQueueError = nil
             do {
-                let receivedLibrary: MediaLibrary = try await request("GET", "/v1/library")
+                let receivedLibrary: MediaLibrary = try await request("GET", "/v1/library", timeout: 8)
                 guard identity == profileIdentity else { return }
                 library = receivedLibrary
                 libraryError = nil
-            } catch { libraryError = error.localizedDescription }
-            await refreshStatus()
-            connectionError = nil
+            } catch {
+                libraryError = error.localizedDescription
+                throw error
+            }
             let newEvents: [AuditEvent] = try await request("GET", "/v1/events")
             try await registerClient()
             clients = try await request("GET", "/v1/clients")

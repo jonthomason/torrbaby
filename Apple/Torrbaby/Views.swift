@@ -137,10 +137,12 @@ struct RootView: View {
         var path = NavigationPath()
     }
     @State private var location = Location()
+    @State private var preferredColumn: NavigationSplitViewColumn = .sidebar
     @State private var past: [Location] = []
     @State private var future: [Location] = []
     private var selection: Section? { location.section }
     private func navigate(_ next: Location) {
+        preferredColumn = .detail
         guard next != location else { return }
         past.append(location)
         if past.count > 100 { past.removeFirst() }
@@ -228,7 +230,7 @@ struct RootView: View {
     @State private var showConnect = false
     @State private var torrentDraft: TorrentDraft?
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(preferredCompactColumn: $preferredColumn) {
             VStack(alignment: .leading, spacing: sidebarSpacing) {
                 #if !os(iOS)
                 HStack(spacing: 11) {
@@ -244,7 +246,7 @@ struct RootView: View {
                 GeometryReader { geometry in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 14) {
-                            mobileMenuSection("Library", sections: [.library, .findTorrents, .movies, .shows], rowHeight: min(52, max(40, (geometry.size.height - 120) / 11)))
+                            mobileMenuSection("Library", sections: [.library, .findTorrents, .movies, .shows, .downloads], rowHeight: min(52, max(40, (geometry.size.height - 120) / 11)))
                             mobileMenuSection("Torrents", sections: [.active, .seeding, .complete, .subtitles, .attention], rowHeight: min(52, max(40, (geometry.size.height - 120) / 11)))
                             mobileMenuSection("Server", sections: [.automation, .settings], rowHeight: min(52, max(40, (geometry.size.height - 120) / 11)))
                         }.padding(.horizontal, 12).padding(.vertical, 6)
@@ -253,7 +255,7 @@ struct RootView: View {
                 #else
                 List(selection: Binding(get: { location.section }, set: { navigate(Location(section: $0)) })) {
                     SwiftUI.Section("Library") {
-                        ForEach([Section.library, .findTorrents, .movies, .shows]) { section in
+                        ForEach([Section.library, .findTorrents, .movies, .shows, .downloads]) { section in
                             Label(LocalizedStringKey(section.rawValue), systemImage: section.icon)
                                 .font(compactSidebar ? .callout : .body)
                                 .padding(.vertical, mobileSidebar ? 0 : 5)
