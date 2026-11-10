@@ -28,12 +28,22 @@ pub(super) fn summary_size(raw: &str) -> Result<Option<String>> {
     let dom=tl::parse(raw,tl::ParserOptions::default())?;
     let p=dom.parser();
     static SIZE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)([0-9]+(?:\.[0-9]+)?)\s*(GiB|GB|MiB|MB|TiB|TB)\b").unwrap());
+    // Posts use both blockquotes and plain <br>-separated full-title lines.
+    // Stop at the next HTML tag/newline, before per-stream MediaInfo sizes.
+    static FULL_TITLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"完整标题\s*[:：]\s*([^<\r\n]+)").unwrap());
+    let mut titles=Vec::new();
+    if let Some(node)=dom.query_selector(".message").and_then(|mut q|q.next()).and_then(|h|h.get(p)) {
+        if let Some(tag)=node.as_tag() {
+            let html=tag.inner_html(p);
+            titles.extend(FULL_TITLE.captures_iter(&html).map(|c|html_text(&c[1])));
+        }
+    }
+    // The release size embedded in an attachment NAME is safe; the download
+    // link's adjacent byte count is the .torrent file size and must be ignored.
+    titles.extend(attachment_choices(raw)?.into_iter().map(|(_,name)|name));
     let mut sizes=Vec::new();
-    for handle in dom.query_selector("blockquote").into_iter().flatten() {
-        let Some(node)=handle.get(p) else {continue};
-        let text=node.inner_text(p);
-        if !text.contains("完整标题") {continue;}
-        for cap in SIZE.captures_iter(&text) {
+    for title in titles {
+        for cap in SIZE.captures_iter(&title) {
             let size=format!("{} {}",&cap[1],cap[2].to_ascii_uppercase());
             if !sizes.contains(&size) {sizes.push(size);}
         }
@@ -155,6 +165,10 @@ mod tests {
         let rows=listings(&search).unwrap();assert!(!rows.is_empty());assert!(rows.iter().all(|r|r.magnet.is_empty()));
         let html=std::fs::read_to_string(format!("{dir}/1lou-detail.html")).unwrap();
         assert_eq!(summary_size(&html).unwrap().as_deref(),Some("21.40 GB"));
+        for (file,size) in [("jade-964048.html","48.99 GB"),("jade-964046.html","27.04 GB")] {
+            let page=std::fs::read_to_string(format!("{dir}/{file}")).unwrap();
+            assert_eq!(summary_size(&page).unwrap().as_deref(),Some(size));
+        }
         assert_eq!(summary_size("<div class=message><a>torrent 12 MB</a></div>").unwrap(),None);
         let (_,attachments)=thread(&html).unwrap();assert!(attachments.contains(&"13093".into()));
         let raw=std::fs::read(format!("{dir}/1lou-attachment")).unwrap();

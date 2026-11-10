@@ -9,3 +9,7 @@ The new authenticated POST /v1/search/torrents/summary reads only the post page.
 Validation: cargo check; saved public fixture test extracts 21.40 GB and ignores attachment-link sizes; signed Apple Release builds; Android release compilation/signature; localization and whitespace checks. No live search-provider test traffic was generated, and no torrents were added. Consequently actual provider latency has not been measured for this release.
 
 Diamond deployed with a database/app backup and pending subtitle-job preservation; authenticated status and summary-route validation passed. Apple110 and Android36 OTA artifacts were fetched and SHA-256 verified. Mac110 installed at ~/Applications/Torrbaby.app. Mobile108 already contains the compact sidebar/artwork work;110 includes it and the Mac109 footer correction.
+
+## Follow-up: plain full-title lines
+
+The first extractor only recognized blockquotes. Saved Pursuit of Jade posts use plain `<br>`-separated full-title lines, so it missed valid sizes. The parser now reads the explicit full-title line within the message and the release size embedded in attachment filenames. It still excludes adjacent attachment byte counts and MediaInfo stream sizes, and leaves ambiguous multiple sizes absent. Saved fixtures verify Three-Body 21.40 GB and Jade 48.99 GB / 27.04 GB. Server-only correction; restart existing clients to clear cached empty summaries.
