@@ -55,6 +55,60 @@ struct Track {
     visual_boxes: Vec<u8>,
     labels: TrackLabels,
     default_track: bool,
+    // The newest video packet is held so the final sample's decode duration
+    // can cover any presentation slots missing from the source.
+    held: Option<(Packet, u64)>,
+}
+
+/// Matroska timestamps are quantized to TimestampScale and some muxers round
+/// twice, so container times jitter around exact codec cadence (2 ms has been
+/// observed in E-AC-3 tracks with no missing audio). A quarter frame still
+/// assigns every packet to exactly one cadence slot: missing or duplicated
+/// frames and cumulative drift remain rejected because each packet is compared
+/// with the absolute cadence from the track origin, never with its neighbour.
+fn cadence_tolerance_ns(frame_ns: u128, scale: u64) -> u128 {
+    (frame_ns / 4).max(scale as u128)
+}
+
+/// Validate presentation-ordered video times against a constant cadence and
+/// return the number of cadence slots spanned. Every frame must sit on its own
+/// slot; empty slots are frames absent from the source (for example dropped
+/// leading pictures) and are presented by holding the previous frame, exactly
+/// as the source timestamps describe.
+fn video_cadence_slots(sorted_pts: &[u64], origin: u64, duration_ns: u64, scale: u64) -> Result<u64> {
+    let tolerance = cadence_tolerance_ns(duration_ns as u128, scale) as i128;
+    let duration = duration_ns as i128;
+    let mut next_slot = 0i128;
+    for &pts in sorted_pts {
+        let offset = pts as i128 - origin as i128;
+        let slot = (offset + duration / 2).div_euclid(duration);
+        ensure!(
+            slot >= next_slot && (offset - slot * duration).abs() <= tolerance,
+            "Video offset/gap/variable cadence needs additional timing support"
+        );
+        next_slot = slot + 1;
+    }
+    Ok(next_slot.try_into()?)
+}
+
+type Mapping = Option<std::sync::Arc<std::sync::Mutex<crate::virtual_mkv::Recording>>>;
+
+fn write_mapped<M: oxideav_core::Muxer + ?Sized>(
+    mux: &mut M,
+    mapping: &Mapping,
+    packet: &Packet,
+    source_offset: u64,
+) -> Result<()> {
+    if let Some(mapping) = mapping {
+        let mut record = mapping.lock().map_err(|_| anyhow::anyhow!("Mapping lock failed"))?;
+        ensure!(record.pending.is_none(), "Unconsumed media packet");
+        record.pending = Some((source_offset, packet.data.clone()));
+    }
+    mux.write_packet(packet)?;
+    if let Some(mapping) = mapping {
+        ensure!(mapping.lock().map_err(|_| anyhow::anyhow!("Mapping lock failed"))?.pending.is_none(), "Unmapped media packet");
+    }
+    Ok(())
 }
 
 pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Value> {
@@ -76,11 +130,22 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
     let mut mkv = MatroskaFile::open(BufReader::new(source))?;
     let scale = mkv.info().timestamp_scale().get();
     let mut tracks = BTreeMap::new();
+    // Audio formats this passthrough cannot carry (for example DTS, which
+    // Apple platforms cannot decode) are left out rather than failing the
+    // whole title. Callers decide whether a title left with no audio track is
+    // acceptable (video-only analysis) or not (playback).
+    let mut omitted_audio = Vec::new();
     for t in mkv
         .tracks()
         .iter()
         .filter(|t| matches!(t.track_type(), TrackType::Video | TrackType::Audio))
     {
+        if t.track_type() == TrackType::Audio
+            && !matches!(t.codec_id(), "A_AAC" | "A_AC3" | "A_EAC3")
+        {
+            omitted_audio.push(t.codec_id().to_owned());
+            continue;
+        }
         ensure!(tracks.len() < 8, "Too many media tracks");
         ensure!(
             t.content_encodings().is_none(),
@@ -176,6 +241,7 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
                     enabled: t.flag_enabled(),
                 },
                 default_track: t.flag_default(),
+                held: None,
                 visual_boxes: t
                     .video()
                     .map(crate::video_metadata::boxes)
@@ -320,8 +386,9 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
                 let rate = t.stream.params.sample_rate.unwrap() as u128;
                 let expected = origin as u128
                     + t.count as u128 * t.audio_samples as u128 * 1_000_000_000 / rate;
+                let frame_ns = t.audio_samples as u128 * 1_000_000_000 / rate;
                 ensure!(
-                    expected.abs_diff(ns as u128) <= scale as u128,
+                    expected.abs_diff(ns as u128) <= cadence_tolerance_ns(frame_ns, scale),
                     "Audio offset/gap needs additional timing support"
                 );
                 let start_samples = (start * rate as i128).div_euclid(1_000_000_000);
@@ -331,28 +398,30 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
                 packet.duration = Some(t.audio_samples as i64);
             }
             packet.flags.keyframe = !t.video || frame.is_keyframe == Some(true);
-            if let Some(mapping) = &mapping {
-                let mut record = mapping.lock().map_err(|_| anyhow::anyhow!("Mapping lock failed"))?;
-                ensure!(record.pending.is_none(), "Unconsumed media packet");
-                record.pending = Some((frame.source_offset, packet.data.clone()));
-            }
-            mux.write_packet(&packet)?;
-            if let Some(mapping) = &mapping {
-                ensure!(mapping.lock().map_err(|_| anyhow::anyhow!("Mapping lock failed"))?.pending.is_none(), "Unmapped media packet");
+            if t.video {
+                if let Some((previous, offset)) = t.held.replace((packet, frame.source_offset)) {
+                    write_mapped(&mut *mux, &mapping, &previous, offset)?;
+                }
+            } else {
+                write_mapped(&mut *mux, &mapping, &packet, frame.source_offset)?;
             }
             t.count += 1;
         }
+        let mut slots = BTreeMap::new();
         for t in tracks.values_mut() {
             ensure!(t.count > 0, "Empty media track");
             if t.video {
                 t.pts.sort_unstable();
-                for (i, pts) in t.pts.iter().enumerate() {
-                    let expected = t.origin_ns.unwrap() as u128 + i as u128 * t.duration_ns as u128;
-                    ensure!(
-                        expected.abs_diff(*pts as u128) <= scale as u128,
-                        "Video offset/gap/variable cadence needs additional timing support"
-                    );
-                }
+                let spanned = video_cadence_slots(&t.pts, t.origin_ns.unwrap(), t.duration_ns, scale)?;
+                // Extend only the final decode duration so the media timeline
+                // reaches the last presented frame when source slots are empty.
+                let start = t.origin_ns.unwrap() as i128 - t.codec_delay_ns as i128;
+                let end = (start + spanned as i128 * t.duration_ns as i128).div_euclid(1_000_000);
+                let (mut last, offset) = t.held.take().context("Missing final video packet")?;
+                let dts = last.dts.context("Missing video decode time")? as i128;
+                last.duration = Some((end - dts).try_into()?);
+                write_mapped(&mut *mux, &mapping, &last, offset)?;
+                slots.insert(t.stream.index, spanned);
             }
         }
         ensure!(
@@ -366,7 +435,7 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
             .map(|t| {
                 let start = t.origin_ns.unwrap() as i128 - t.codec_delay_ns as i128;
                 let end_ms = if t.video {
-                    (start + t.count as i128 * t.duration_ns as i128).div_euclid(1_000_000)
+                    (start + slots[&t.stream.index] as i128 * t.duration_ns as i128).div_euclid(1_000_000)
                 } else {
                     let rate = t.stream.params.sample_rate.unwrap() as i128;
                     let samples = (start * rate).div_euclid(1_000_000_000)
@@ -387,7 +456,8 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
             .collect();
         repair_presentation_durations(output, &durations, &visual, &labels, max_bytes)?;
         Ok(
-            serde_json::json!({"tracks":streams.len(),"bytes":output.metadata()?.len(),"development_only":true}),
+            serde_json::json!({"tracks":streams.len(),"bytes":output.metadata()?.len(),"development_only":true,
+                "audio_tracks":tracks.values().filter(|t|!t.video).count(),"omitted_audio":omitted_audio}),
         )
     })();
     if result.is_err() {
@@ -771,5 +841,167 @@ mod aac_tests {
         assert!(parse(&[0x13,0x30,0x56,0xe5,0x98]).is_ok());
         assert!(parse(&[0x13,0x30,0x56,0xe5]).is_err());
         assert!(parse(&[0x13,0x30,0x56,0xe5,0x9d,0x48,0x80]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod timing_tests {
+    use super::*;
+
+    // Minimal Matroska writer for synthetic timing fixtures (test-only).
+    fn element(id: u32, body: &[u8]) -> Vec<u8> {
+        let mut out: Vec<u8> = id.to_be_bytes().into_iter().skip_while(|b| *b == 0).collect();
+        out.push(0x01);
+        out.extend_from_slice(&(body.len() as u64).to_be_bytes()[1..]);
+        out.extend_from_slice(body);
+        out
+    }
+    fn uint(id: u32, value: u64) -> Vec<u8> {
+        element(id, &value.to_be_bytes())
+    }
+    struct Fixture {
+        video_pts_ms: Vec<i64>,
+        aac_ms: Option<Vec<i64>>,
+        dts: bool,
+    }
+    fn matroska(fixture: &Fixture) -> Vec<u8> {
+        let header = [
+            uint(0x4286, 1), uint(0x42F7, 1), uint(0x42F2, 4), uint(0x42F3, 8),
+            element(0x4282, b"matroska"), uint(0x4287, 4), uint(0x4285, 2),
+        ]
+        .concat();
+        let info = element(0x1549A966, &[uint(0x2AD7B1, 1_000_000), element(0x4D80, b"t"), element(0x5741, b"t")].concat());
+        let video = element(0xAE, &[
+            uint(0xD7, 1), uint(0x73C5, 1), uint(0x83, 1), element(0x86, b"V_MPEG4/ISO/AVC"),
+            element(0x63A2, &[1, 0x64, 0, 0x1f, 0xff, 0xe0, 0]), uint(0x23E383, 41_708_333),
+            element(0xE0, &[uint(0xB0, 64), uint(0xBA, 48)].concat()),
+        ].concat());
+        let audio = |number: u64, codec: &[u8], private: Option<&[u8]>| element(0xAE, &[
+            uint(0xD7, number), uint(0x73C5, number), uint(0x83, 2), element(0x86, codec),
+            private.map(|p| element(0x63A2, p)).unwrap_or_default(),
+            element(0xE1, &[element(0xB5, &48000f64.to_be_bytes()), uint(0x9F, 2)].concat()),
+        ].concat());
+        let mut tracks = video;
+        if fixture.aac_ms.is_some() { tracks.extend(audio(2, b"A_AAC", Some(&[0x11, 0x90]))); }
+        if fixture.dts { tracks.extend(audio(3, b"A_DTS", None)); }
+        let block = |track: u8, ms: i64, key: bool, tag: u8| element(0xA3, &[
+            &[0x80 | track][..], &(ms as i16).to_be_bytes(), &[if key { 0x80 } else { 0 }], &[0x21, tag, tag, 0x5a],
+        ].concat());
+        let mut cluster = uint(0xE7, 0);
+        let mut events: Vec<(i64, Vec<u8>)> = fixture.video_pts_ms.iter().enumerate()
+            .map(|(i, ms)| (*ms, block(1, *ms, i == 0, i as u8))).collect();
+        for (i, ms) in fixture.aac_ms.iter().flatten().enumerate() { events.push((*ms, block(2, *ms, true, i as u8))); }
+        if fixture.dts { events.push((0, block(3, 0, true, 0))); }
+        events.sort_by_key(|(ms, _)| *ms);
+        for (_, b) in events { cluster.extend(b); }
+        let segment = [info, element(0x1654AE6B, &tracks), element(0x1F43B675, &cluster)].concat();
+        [element(0x1A45DFA3, &header), element(0x18538067, &segment)].concat()
+    }
+    fn remux(fixture: &Fixture) -> (Result<serde_json::Value>, Option<Vec<u8>>) {
+        let dir = std::env::temp_dir().join(format!("torrbaby-remux-timing-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let (input, output) = (dir.join("in.mkv"), dir.join("out.mp4"));
+        std::fs::write(&input, matroska(fixture)).unwrap();
+        let result = run(&input, &output, 16 * 1024 * 1024);
+        let bytes = std::fs::read(&output).ok();
+        std::fs::remove_dir_all(dir).unwrap();
+        (result, bytes)
+    }
+    // Movie-timescale tkhd duration, media mdhd duration and media timescale per track.
+    fn track_durations(mp4: &[u8]) -> Vec<(u64, u64, u32)> {
+        fn find<'a>(data: &'a [u8], kind: &[u8; 4]) -> Vec<&'a [u8]> {
+            children(data).unwrap().into_iter().filter(|(k, _, _)| k == kind).map(|(_, s, e)| &data[s..e]).collect()
+        }
+        // Top level holds a 64-bit mdat, which children() does not walk.
+        let mut at = 0;
+        let moov = loop {
+            let size32 = u32::from_be_bytes(mp4[at..at + 4].try_into().unwrap()) as usize;
+            let (size, header) = if size32 == 1 { (u64::from_be_bytes(mp4[at + 8..at + 16].try_into().unwrap()) as usize, 16) } else { (size32, 8) };
+            if &mp4[at + 4..at + 8] == b"moov" { break &mp4[at + header..at + size]; }
+            at += size;
+        };
+        find(moov, b"trak").into_iter().map(|trak| {
+            let tkhd = find(trak, b"tkhd")[0];
+            let tk = if tkhd[0] == 1 { u64::from_be_bytes(tkhd[28..36].try_into().unwrap()) } else { u32::from_be_bytes(tkhd[20..24].try_into().unwrap()) as u64 };
+            let mdhd = find(find(trak, b"mdia")[0], b"mdhd")[0];
+            let (scale, md) = if mdhd[0] == 1 {
+                (u32::from_be_bytes(mdhd[20..24].try_into().unwrap()), u64::from_be_bytes(mdhd[24..32].try_into().unwrap()))
+            } else {
+                (u32::from_be_bytes(mdhd[12..16].try_into().unwrap()), u32::from_be_bytes(mdhd[16..20].try_into().unwrap()) as u64)
+            };
+            (tk, md, scale)
+        }).collect()
+    }
+    fn video_ms(slots: impl Iterator<Item = u64>) -> Vec<i64> {
+        slots.map(|i| ((i as f64) * 41.708333).round() as i64).collect()
+    }
+    fn aac_ms(count: u64) -> Vec<i64> {
+        (0..count).map(|i| ((i as f64) * 1024.0 / 48.0).round() as i64).collect()
+    }
+
+    #[test]
+    fn tolerance_is_a_quarter_frame_but_never_below_one_tick() {
+        assert_eq!(cadence_tolerance_ns(32_000_000, 1_000_000), 8_000_000);
+        assert_eq!(cadence_tolerance_ns(2_000_000, 1_000_000), 1_000_000);
+    }
+
+    #[test]
+    fn video_slots_accept_missing_pictures_but_not_duplicates_or_variable_cadence() {
+        let d = 41_708_333;
+        // Gone Girl (2014): presentation slots 2 and 3 are absent in the source.
+        let gap: Vec<u64> = [0u64, 42, 167, 209, 250, 292].iter().map(|ms| ms * 1_000_000).collect();
+        assert_eq!(video_cadence_slots(&gap, 0, d, 1_000_000).unwrap(), 8);
+        let regular: Vec<u64> = (0..1000u64).map(|i| (i * d).div_ceil(1_000_000) * 1_000_000).collect();
+        assert_eq!(video_cadence_slots(&regular, 0, d, 1_000_000).unwrap(), 1000);
+        assert!(video_cadence_slots(&[0, 42_000_000, 42_000_000], 0, d, 1_000_000).is_err());
+        assert!(video_cadence_slots(&[0, 20_000_000], 0, d, 1_000_000).is_err());
+        assert!(video_cadence_slots(&[0, 33_000_000, 66_000_000], 0, d, 1_000_000).is_err());
+        assert!(video_cadence_slots(&[0, 42_000_000], 42_000_000, d, 1_000_000).is_err());
+    }
+
+    #[test]
+    fn quantization_jitter_is_accepted_and_missing_audio_frames_are_not() {
+        // Citizen Kane / Gone Girl: some packets are stamped 2 ms early, never drifting.
+        let mut jitter = aac_ms(240);
+        for (i, ms) in jitter.iter_mut().enumerate() { if i % 7 == 3 { *ms -= 2; } }
+        let (result, mp4) = remux(&Fixture { video_pts_ms: video_ms(0..120), aac_ms: Some(jitter), dts: false });
+        assert_eq!(result.unwrap()["audio_tracks"], 1);
+        let durations = track_durations(&mp4.unwrap());
+        assert_eq!(durations[0].0, 120 * 41_708_333 / 1_000_000);
+        assert_eq!(durations[1].0, 240 * 1024 * 1000 / 48000);
+
+        let mut missing = aac_ms(241);
+        missing.remove(100);
+        let (result, mp4) = remux(&Fixture { video_pts_ms: video_ms(0..120), aac_ms: Some(missing), dts: false });
+        assert_eq!(result.unwrap_err().to_string(), "Audio offset/gap needs additional timing support");
+        assert!(mp4.is_none(), "failed remux must remove its output");
+
+        let drift: Vec<i64> = aac_ms(240).iter().enumerate().map(|(i, ms)| ms + i as i64 / 20).collect();
+        assert!(remux(&Fixture { video_pts_ms: video_ms(0..120), aac_ms: Some(drift), dts: false }).0.is_err());
+    }
+
+    #[test]
+    fn empty_video_slots_extend_the_final_decode_duration() {
+        let slots = (0..120).filter(|i| ![2, 3].contains(i));
+        let (result, mp4) = remux(&Fixture { video_pts_ms: video_ms(slots), aac_ms: Some(aac_ms(240)), dts: false });
+        result.unwrap();
+        let (presented, media, scale) = track_durations(&mp4.unwrap())[0];
+        // 118 frames span 120 cadence slots; media and presentation durations agree.
+        assert_eq!(presented, 120 * 41_708_333 / 1_000_000);
+        assert_eq!(media * 1000 / scale as u64, presented);
+        let duplicate = [video_ms(0..60), video_ms(59..60)].concat();
+        assert!(remux(&Fixture { video_pts_ms: duplicate, aac_ms: Some(aac_ms(120)), dts: false }).0.is_err());
+    }
+
+    #[test]
+    fn unsupported_audio_is_omitted_and_reported() {
+        let (result, _) = remux(&Fixture { video_pts_ms: video_ms(0..48), aac_ms: Some(aac_ms(96)), dts: true });
+        let result = result.unwrap();
+        assert_eq!((result["audio_tracks"].as_u64(), result["omitted_audio"].clone()), (Some(1), serde_json::json!(["A_DTS"])));
+        // Creed (2015): DTS is the only audio track; output is video-only for analysis.
+        let (result, mp4) = remux(&Fixture { video_pts_ms: video_ms(0..48), aac_ms: None, dts: true });
+        let result = result.unwrap();
+        assert_eq!((result["audio_tracks"].as_u64(), result["omitted_audio"].clone()), (Some(0), serde_json::json!(["A_DTS"])));
+        assert_eq!(track_durations(&mp4.unwrap()).len(), 1);
     }
 }

@@ -21,6 +21,17 @@ struct Job {
     preparation_version: u32,
     #[serde(default)]
     captions: Vec<crate::virtual_captions::Caption>,
+    /// Set when every source audio track uses a codec the virtual MP4 cannot
+    /// carry. The video-only index serves analysis; playback stays refused.
+    #[serde(default)]
+    missing_audio: Option<String>,
+}
+// Version 4 tolerates Matroska timestamp jitter, empty video cadence slots and
+// unsupported audio codecs, so earlier failures are retried once.
+const PREPARATION_VERSION: u32 = 4;
+fn playback_refusal(j: &Job) -> Option<String> {
+    // Same wording as the remux failure these titles reported before.
+    j.missing_audio.as_ref().map(|codec| format!("Remux codec not implemented yet: {codec}"))
 }
 pub struct Manager {
     root: PathBuf,
@@ -159,11 +170,19 @@ impl Manager {
         Ok(())
     }
     pub fn status(&self, id: &str) -> Result<Value> {
+        self.status_for(id, false)
+    }
+    fn status_for(&self, id: &str, analysis: bool) -> Result<Value> {
         let j = self.job(id)?;
         ensure!(
             crate::subtitle_jobs::revision(&j.input)? == j.revision,
             "Media changed; prepare playback again"
         );
+        if j.state == "ready" && !analysis {
+            if let Some(error) = playback_refusal(&j) {
+                return Ok(json!({"id":j.id,"asset_id":j.asset,"state":"failed","error":error}));
+            }
+        }
         Ok(json!({"id":j.id,"asset_id":j.asset,"state":j.state,"error":j.error}))
     }
     pub async fn reader(
@@ -172,23 +191,47 @@ impl Manager {
         asset: &str,
         path: &Path,
     ) -> Result<Arc<crate::virtual_captions::Reader>> {
+        self.reader_for(id, asset, path, false).await
+    }
+    /// Video analysis reader; unlike playback it accepts a video-only index.
+    pub async fn analysis_reader(
+        self: &Arc<Self>,
+        id: &str,
+        asset: &str,
+        path: &Path,
+    ) -> Result<Arc<crate::virtual_captions::Reader>> {
+        self.reader_for(id, asset, path, true).await
+    }
+    async fn reader_for(
+        self: &Arc<Self>,
+        id: &str,
+        asset: &str,
+        path: &Path,
+        analysis: bool,
+    ) -> Result<Arc<crate::virtual_captions::Reader>> {
         let manager = self.clone();
         let id = id.to_owned();
         let asset = asset.to_owned();
         let path = path.to_owned();
-        tokio::task::spawn_blocking(move || manager.reader_sync(&id, &asset, &path)).await?
+        tokio::task::spawn_blocking(move || manager.reader_sync(&id, &asset, &path, analysis)).await?
     }
     fn reader_sync(
         &self,
         id: &str,
         asset: &str,
         path: &Path,
+        analysis: bool,
     ) -> Result<Arc<crate::virtual_captions::Reader>> {
         let j = self.job(id)?;
         ensure!(
             j.asset == asset && j.input == path && j.state == "ready",
             "Virtual media is not ready for this title"
         );
+        if !analysis {
+            if let Some(error) = playback_refusal(&j) {
+                anyhow::bail!(error);
+            }
+        }
         ensure!(
             crate::subtitle_jobs::revision(path)? == j.revision,
             "Media changed; prepare again"
@@ -225,20 +268,23 @@ impl Manager {
         input: PathBuf,
         captions: Vec<crate::virtual_captions::Caption>,
     ) -> Result<Value> {
-        self.prepare_with(asset, input, captions, false)
+        let id = self.prepare_job(asset, input, captions, false)?;
+        self.status(&id)
     }
-    /// Build an index for background processing on its own gate, so playback
-    /// preparation never queues behind it and the queue is not paused by it.
-    pub fn prepare_background(self: &Arc<Self>, asset: &str, input: PathBuf) -> Result<Value> {
-        self.prepare_with(asset, input, Vec::new(), true)
+    /// Background analysis index (credits): shares the playback index, accepts a
+    /// video-only index, runs on its own gate so playback preparation never
+    /// queues behind it, and does not pause the processing queue.
+    pub fn prepare_analysis(self: &Arc<Self>, asset: &str, input: PathBuf) -> Result<Value> {
+        let id = self.prepare_job(asset, input, Vec::new(), true)?;
+        self.status_for(&id, true)
     }
-    fn prepare_with(
+    fn prepare_job(
         self: &Arc<Self>,
         asset: &str,
         input: PathBuf,
         captions: Vec<crate::virtual_captions::Caption>,
         background: bool,
-    ) -> Result<Value> {
+    ) -> Result<String> {
         use sha2::{Digest, Sha256};
         ensure!(
             input
@@ -262,13 +308,12 @@ impl Manager {
         if let Ok(j) = self.job(&id) {
             let retry_storage=j.error.as_deref()==Some("Virtual media index storage limit reached")
                 || j.error.as_deref()==Some("Playback cache is busy. Please try again shortly.");
-            if (j.state == "ready" && self.index_path(&j)?.exists()) || (j.state == "failed" && j.preparation_version >= 3 && !retry_storage) || pending.contains(&id) {
+            if (j.state == "ready" && self.index_path(&j)?.exists()) || (j.state == "failed" && j.preparation_version >= PREPARATION_VERSION && !retry_storage) || pending.contains(&id) {
                 // A playback request for a background build now counts as playback.
                 if !background && pending.contains(&id) {
                     if let Ok(mut set)=self.background.lock() {set.remove(&id);}
                 }
-                drop(pending);
-                return self.status(&id);
+                return Ok(id);
             }
         }
         ensure!(pending.len() < 128, "Playback queue is full");
@@ -279,8 +324,9 @@ impl Manager {
             revision,
             state: "queued".into(),
             error: None,
-            preparation_version: 3,
+            preparation_version: PREPARATION_VERSION,
             captions,
+            missing_audio: None,
         };
         self.save(&job)?;
         if background {
@@ -312,7 +358,7 @@ impl Manager {
                 if let Ok(mut set) = manager.background.lock() { set.remove(&run_id); }
             }
         });
-        self.status(&id)
+        Ok(id)
     }
     fn index_usage(&self) -> Result<Vec<(PathBuf, u64, std::time::SystemTime)>> {
         let mut entries=Vec::new();
@@ -374,10 +420,9 @@ impl Manager {
             fs::File::open(&self.root)?.sync_all()?;
         }
         let source = if is_mkv(&job.input) {
-            crate::virtual_captions::Source::Indexed(Arc::new(crate::virtual_mkv::Reader::open(
-                &job.input,
-                &final_path,
-            )?))
+            let index = crate::virtual_mkv::Reader::open(&job.input, &final_path)?;
+            job.missing_audio = index.missing_audio().map(str::to_owned);
+            crate::virtual_captions::Source::Indexed(Arc::new(index))
         } else {
             crate::virtual_captions::Source::file(&job.input)?
         };
@@ -423,6 +468,54 @@ mod cache_tests {
         manager.reclaim_indexes()?;
         assert!(!base.exists());
         assert!(manager.can_preindex());
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn video_only_index_serves_analysis_but_not_playback() -> Result<()> {
+        let root=std::env::temp_dir().join(format!("torrbaby-video-only-{}",uuid::Uuid::new_v4()));
+        let manager=Manager::new(&root)?;
+        let input=root.join("title.mkv");
+        fs::write(&input,b"source")?;
+        let revision=crate::subtitle_jobs::revision(&input)?;
+        // Jobs saved by earlier releases have no missing_audio field.
+        let id="b".repeat(64);
+        fs::write(root.join("virtual-media-v1").join(format!("{id}.json")),serde_json::to_vec(&json!({
+            "id":id,"asset":"asset-1","input":input,"revision":revision,"state":"ready","error":null,"preparation_version":3}))?)?;
+        assert_eq!(manager.status(&id)?["state"],"ready");
+        let mut job=manager.job(&id)?;
+        job.missing_audio=Some("A_DTS".into());
+        manager.save(&job)?;
+        let playback=manager.status(&id)?;
+        assert_eq!((playback["state"].as_str(),playback["error"].as_str()),(Some("failed"),Some("Remux codec not implemented yet: A_DTS")));
+        assert_eq!(manager.status_for(&id,true)?["state"],"ready");
+        let refused=manager.reader_sync(&id,"asset-1",&input,false).err().map(|e|e.to_string());
+        assert_eq!(refused.as_deref(),Some("Remux codec not implemented yet: A_DTS"));
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn earlier_preparation_failures_are_retried_once() -> Result<()> {
+        let root=std::env::temp_dir().join(format!("torrbaby-retry-{}",uuid::Uuid::new_v4()));
+        let manager=Manager::new(&root)?;
+        let input=root.join("title.mp4");
+        fs::write(&input,b"source")?;
+        let runtime=tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+        runtime.block_on(async {
+            let id=manager.prepare_job("asset-1",input.clone(),Vec::new(),false)?;
+            while manager.preparing() {tokio::time::sleep(std::time::Duration::from_millis(5)).await;}
+            for (version,retried) in [(3,true),(PREPARATION_VERSION,false)] {
+                let mut job=manager.job(&id)?;
+                job.state="failed".into();job.error=Some("Audio offset/gap needs additional timing support".into());job.preparation_version=version;
+                manager.save(&job)?;
+                manager.prepare_job("asset-1",input.clone(),Vec::new(),false)?;
+                while manager.preparing() {tokio::time::sleep(std::time::Duration::from_millis(5)).await;}
+                assert_eq!(manager.job(&id)?.state=="ready",retried);
+            }
+            Ok::<_,anyhow::Error>(())
+        })?;
         fs::remove_dir_all(root)?;
         Ok(())
     }

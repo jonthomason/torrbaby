@@ -160,3 +160,39 @@ dependencies. Existing Matroska extraction fixtures and EAC3 seek checks pass.
 
 Dynamic Dolby Vision/HDR10+ handling, real HDR visual acceptance, language/default
 track preservation and conditional HLS integration remain outstanding.
+
+## Timestamp jitter, empty video slots and DTS (2026-11-11)
+
+Three catalog movies failed indexing. Full read-only scans on Diamond found:
+
+- Citizen Kane (1941) and Gone Girl (2014), E-AC-3 1536-sample frames: every
+  packet sits within -2..0 ms of the exact cadence measured from the first packet
+  (223,870 and 279,437 packets), with no missing frames and no drift. The muxer
+  rounded the timestamps more than once; it is not a real gap. The audio check
+  now allows up to a quarter of a frame (8 ms here, and never less than one
+  tick). It still compares every packet with the absolute cadence from the
+  origin, so missing or duplicated frames and accumulated drift are still
+  rejected. Output audio stays contiguous codec cadence, as before.
+- Gone Girl video: presentation slots 2 and 3 (83 and 125 ms) are missing from
+  the source. Every other frame is on the 24000/1001 grid. Video now validates
+  unique cadence slots instead of consecutive frames, keeps the real PTS, and
+  extends only the final sample's decode duration, so mdhd/tkhd cover the last
+  presented frame. AVFoundation holds 0.042 until 0.167, as the source does.
+- Creed (2015): its only audio track is DTS core (512-sample frames). Core
+  Audio on macOS 27.2 has no DTS decoder, and AVFoundation does not expose a DTS
+  track in MP4 at all. Unsupported audio codecs are now left out of the virtual
+  MP4. If no supported audio track remains, the index is marked as missing
+  audio. Credits analysis uses that video-only index. Playback and downloads
+  still refuse it with the previous message, so nothing plays silently.
+  preparation_version 4 retries earlier failures once.
+
+On Diamond, indexing completed for all three files (15-25 s each, under nice).
+Audio media durations equal packets x 1536 exactly, and audio ends exactly where
+the source's last packet does. Creed's credits scan returned ready.
+
+Separate finding: x265 open-GOP CRA keyframes are written as full sync samples
+even though RASL leading pictures follow them. AVAssetImageGenerator fails with
+-11821/-12911 when a seek lands on one of those leading pictures. Citizen Kane's
+credits scan is incomplete at 6339.8 s and 7019.8 s for this reason. Remaining
+work is to signal partial sync/leading samples (stps/sdtp) or start decoding at
+an earlier sync sample.

@@ -44,7 +44,9 @@ pub fn summary(db:&Database)->Result<Value> {
     Ok(json!({"scanned":scanned,"detected":detected,"failed":failed,"current":current}))
 }
 pub async fn process(s:&Service, asset:&Value)->Result<()> {
-    if !s.virtual_media.idle() || crate::processing::playback_active(s)? {return Ok(());}
+    // Only playback preparation pauses analysis. Other scans' readers and playback
+    // are handled by the processing pool's limit (1 while playing), not here.
+    if s.virtual_media.preparing() {return Ok(());}
     for asset in std::iter::once(asset) {
         if asset["available"]!=true || asset["complete"]!=true || asset["role"]=="extra" {continue;}
         let Some(id)=asset["id"].as_str() else {continue};
@@ -63,7 +65,7 @@ pub async fn process(s:&Service, asset:&Value)->Result<()> {
         let input=crate::api::media_file(s,id,0).await?;
         let mut reader=None;
         if path.extension().is_some_and(|e|e.eq_ignore_ascii_case("mkv")) {
-            let job=s.virtual_media.prepare_background(id,input.clone())?;
+            let job=s.virtual_media.prepare_analysis(id,input.clone())?;
             if job["state"]!="ready" {
                 if job["state"]=="failed" {
                     let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
@@ -71,7 +73,7 @@ pub async fn process(s:&Service, asset:&Value)->Result<()> {
                 }
                 return Ok(());
             }
-            reader=Some(s.virtual_media.reader(job["id"].as_str().context("Missing index")?,id,&input).await?);
+            reader=Some(s.virtual_media.analysis_reader(job["id"].as_str().context("Missing index")?,id,&input).await?);
         }
         {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;save(&db,id,&revision,&json!({"state":"running"}))?;}
         let outcome=scan(s,&input,reader,if asset["kind"]=="tv" || asset["season"].is_number(){300}else{900}).await;

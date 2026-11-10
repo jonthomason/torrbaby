@@ -19,6 +19,12 @@ pub struct Index {
     pub size: u64,
     pub extents: Vec<[u64; 3]>,
     pub metadata_extents: Vec<[u64; 3]>,
+    /// Source audio codecs left out of the virtual MP4. Older indexes omit
+    /// nothing, so the default keeps them valid.
+    #[serde(default)]
+    pub omitted_audio: Vec<String>,
+    #[serde(default)]
+    pub audio_tracks: Option<u64>,
 }
 pub fn build(input: &Path, output: &Path) -> Result<serde_json::Value> {
     let revision = crate::subtitle_jobs::revision(input)?;
@@ -27,7 +33,7 @@ pub fn build(input: &Path, output: &Path) -> Result<serde_json::Value> {
         let mapping = Arc::new(Mutex::new(Recording::default()));
         let metadata = output.join("metadata.mp4");
         let before = std::time::Instant::now();
-        crate::remux::run_internal(input, &metadata, 34_359_738_368, Some(mapping.clone()))?;
+        let remuxed = crate::remux::run_internal(input, &metadata, 34_359_738_368, Some(mapping.clone()))?;
         let mut record = mapping
             .lock()
             .map_err(|_| anyhow::anyhow!("Mapping unavailable"))?;
@@ -85,6 +91,8 @@ pub fn build(input: &Path, output: &Path) -> Result<serde_json::Value> {
             size: output_size,
             extents: std::mem::take(&mut record.extents),
             metadata_extents,
+            omitted_audio: serde_json::from_value(remuxed["omitted_audio"].clone())?,
+            audio_tracks: remuxed["audio_tracks"].as_u64(),
         };
         let json = serde_json::to_vec(&index)?;
         ensure!(json.len() <= 128 * 1024 * 1024, "Index too large");
@@ -179,6 +187,13 @@ impl Reader {
     }
     pub fn len(&self) -> u64 {
         self.index.size
+    }
+    /// The source audio codec that kept this index from carrying any audio.
+    pub fn missing_audio(&self) -> Option<&str> {
+        match self.index.audio_tracks {
+            Some(0) => self.index.omitted_audio.first().map(String::as_str),
+            _ => None,
+        }
     }
     pub fn read_at(&self, mut at: u64, mut output: &mut [u8]) -> std::io::Result<usize> {
         use std::os::unix::fs::FileExt;
