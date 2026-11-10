@@ -287,7 +287,7 @@ impl Manager {
             let bitmap=if job.input.extension().is_some_and(|e|e.eq_ignore_ascii_case("mkv") || e.eq_ignore_ascii_case("webm")) {
                 let tracks=crate::native_subtitles::tracks(&job.input).await?;
                 let selected=tracks["tracks"].as_array().and_then(|t|t.iter().find(|t|t["track"]==job.track)).context("Subtitle track missing")?;
-                if selected["codec"]=="S_VOBSUB" {
+                if (selected["codec"]=="S_VOBSUB" || selected["codec"]=="S_HDMV/PGS") {
                     let sidecar_input=job.input.clone();
                     let sidecars=tokio::task::spawn_blocking(move ||crate::subtitles::discover(&sidecar_input)).await??;
                     ensure!(sidecars.is_empty() && !tracks["tracks"].as_array().unwrap().iter().any(|t|t["text_extractable"]==true),"Text subtitles are available; OCR is only a fallback");true

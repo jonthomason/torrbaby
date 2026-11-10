@@ -11,6 +11,7 @@ mod media_packaging;
 mod metadata;
 mod native_subtitles;
 mod ocr_subtitles;
+mod pgs_subtitles;
 mod offline;
 mod organizer;
 mod pairing;

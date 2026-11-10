@@ -55,7 +55,7 @@ fn subtitle_source(tracks:&[Value])->Option<(&Value,&'static str,&'static str)> 
     if let Some(t)=tracks.iter().find(|t|t["extraction_supported"]==true && language(t).is_none() && t["forced"]!=true && t["language"].as_str().is_none_or(|s|s.is_empty() || s=="und")) {return Some((t,"auto","auto"));}
     if tracks.iter().any(|t|t["text_extractable"]==true || t["sidecar"]==true) {return None;}
     for lang in ["en","zh-Hans","auto"] {
-        if let Some(t)=tracks.iter().find(|t|t["codec"]=="S_VOBSUB" && t["forced"]!=true &&
+        if let Some(t)=tracks.iter().find(|t|(t["codec"]=="S_VOBSUB" || t["codec"]=="S_HDMV/PGS") && t["forced"]!=true &&
             (language(t)==Some(lang) || (lang=="auto" && t["language"].as_str().is_none_or(|s|s.is_empty() || s=="und")))) {
             return Some((t,lang,if lang=="en" {"zh-Hans"} else if lang=="zh-Hans" {"en"} else {"auto"}));
         }
@@ -290,6 +290,9 @@ mod ocr_fallback_tests {
         let tracks=vec![bitmap.clone(),json!({"sidecar":true,"text_extractable":true,"extraction_supported":true,"language":"en","track":1})];assert_eq!(subtitle_source(&tracks).unwrap().0["sidecar"],true);
         let tracks=vec![bitmap.clone(),json!({"text_extractable":true,"extraction_supported":false,"language":"en"})];assert!(subtitle_source(&tracks).is_none());
         let tracks=vec![bitmap];assert_eq!(subtitle_source(&tracks).unwrap().1,"auto");
+        let pgs=json!({"codec":"S_HDMV/PGS","track":5,"language":"en"});
+        assert_eq!(subtitle_source(&[pgs.clone()]).unwrap().1,"en");
+        assert_eq!(subtitle_source(&[pgs,text.clone()]).unwrap().0["track"],4);
         let tracks=vec![text,json!({"text_extractable":true,"extraction_supported":true,"language":"zh-Hans"})];assert!(subtitle_source(&tracks).is_none());
     }
 }

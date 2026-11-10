@@ -19,10 +19,24 @@ pub fn decode(input: &Path, track: u64, out: &Path) -> Result<()> {
         .iter()
         .find(|t| t.track_number().get() == track)
         .context("Track missing")?;
-    ensure!(t.codec_id() == "S_VOBSUB", "Expected VobSub");
-    let private = std::str::from_utf8(t.codec_private().context("Missing palette")?)?;
-    let idx = oxideav_sub_image::vobsub::parse_idx(private)?;
-    ensure!(idx.has_palette, "Missing palette");
+    let is_pgs = t.codec_id() == "S_HDMV/PGS";
+    ensure!(
+        is_pgs || t.codec_id() == "S_VOBSUB",
+        "Unsupported bitmap subtitle codec"
+    );
+    let idx = if is_pgs {
+        None
+    } else {
+        let private = std::str::from_utf8(t.codec_private().context("Missing palette")?)?;
+        let idx = oxideav_sub_image::vobsub::parse_idx(private)?;
+        ensure!(idx.has_palette, "Missing palette");
+        Some(idx)
+    };
+    let mut pgs = if is_pgs {
+        Some(crate::pgs_subtitles::Pgs::new()?)
+    } else {
+        None
+    };
     let enc = t.content_encodings().unwrap_or(&[]).to_vec();
     let mut cues = Vec::new();
     let mut failures = Vec::new();
@@ -56,6 +70,18 @@ pub fn decode(input: &Path, track: u64, out: &Path) -> Result<()> {
                 _ => anyhow::bail!("Encrypted subtitle"),
             }
         }
+        if let Some(pgs) = &mut pgs {
+            pgs.push(
+                &data,
+                (frame.timestamp as u128 * scale as u128 / 1_000_000) as u64,
+                frame
+                    .duration
+                    .map(|d| (d as u128 * scale as u128 / 1_000_000) as u64),
+                out,
+            )?;
+            continue;
+        }
+        let idx = idx.as_ref().context("Missing VobSub palette")?;
         match oxideav_sub_image::vobsub::parse_and_decode_spu(&data) {
             Ok((spu, pixels, (w, h))) => {
                 ensure!(
@@ -94,6 +120,9 @@ pub fn decode(input: &Path, track: u64, out: &Path) -> Result<()> {
             }
             Err(e) => failures.push(json!({"timestamp":frame.timestamp,"error":e.to_string()})),
         }
+    }
+    if let Some(pgs) = pgs {
+        cues = pgs.finish(out)?;
     }
     let after = fs::metadata(input)?;
     ensure!(
