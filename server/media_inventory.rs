@@ -182,11 +182,11 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
             Some(job) if job["state"]=="running" || job["state"]=="queued" => job,
             Some(job) if job["state"]=="failed" => {
                 // Coordinator supplies the retry boundary; preserve the error until then.
-                if asset["retrying"]==true && complete && !s.subtitle_jobs.busy() {
+                if asset["retrying"]==true && complete && s.subtitle_jobs.can_admit() {
                     s.subtitle_jobs.prepare(id,path.clone(),*track,source,target)?
                 } else {job}
             },
-            _ if complete && !s.subtitle_jobs.busy() => s.subtitle_jobs.prepare(id,path.clone(),*track,source,target)?,
+            _ if complete && s.subtitle_jobs.can_admit() => s.subtitle_jobs.prepare(id,path.clone(),*track,source,target)?,
             _ => json!({"state":"queued","stage":if target.is_some(){"translation"}else{"extraction"},"target":target}),
         };
         if !job["id"].is_null(){jobs.push(job["id"].clone());}

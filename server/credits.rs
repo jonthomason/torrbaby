@@ -32,7 +32,7 @@ pub fn summary(db:&Database)->Result<Value> {
     Ok(json!({"scanned":scanned,"detected":detected,"failed":failed,"current":current}))
 }
 pub async fn process(s:&Service, asset:&Value)->Result<()> {
-    if !s.virtual_media.idle() {return Ok(());}
+    if !s.virtual_media.idle() || crate::processing::playback_active(s)? {return Ok(());}
     for asset in std::iter::once(asset) {
         if asset["available"]!=true || asset["complete"]!=true || asset["role"]=="extra" {continue;}
         let Some(id)=asset["id"].as_str() else {continue};
@@ -99,7 +99,7 @@ async fn scan(s:&Service,path:&Path,reader:Option<Arc<crate::virtual_captions::R
         let started=std::time::Instant::now();
         let status=loop {
             if let Some(status)=child.try_wait()?{break status;}
-            if started.elapsed()>Duration::from_secs(300) || s.virtual_media.preparing() {
+            if started.elapsed()>Duration::from_secs(300) || s.virtual_media.preparing() || crate::processing::playback_active(s)? {
                 child.kill().await?;let _=child.wait().await;out.abort();err.abort();
                 anyhow::bail!("Credits scan deferred for playback preparation or time budget");
             }

@@ -64,3 +64,12 @@ CREATE TABLE IF NOT EXISTS media_processing (
  attempts INTEGER NOT NULL DEFAULT 0, completed_at REAL, updated REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS media_processing_work ON media_processing(state,retry_after);
+
+CREATE TABLE IF NOT EXISTS processing_failures (
+ asset_id TEXT NOT NULL, revision TEXT NOT NULL, stage TEXT NOT NULL, error TEXT NOT NULL,
+ occurrences INTEGER NOT NULL DEFAULT 1, first_seen REAL NOT NULL, last_seen REAL NOT NULL,
+ resolved_at REAL, PRIMARY KEY(asset_id,revision,stage,error)
+);
+INSERT OR IGNORE INTO processing_failures(asset_id,revision,stage,error,occurrences,first_seen,last_seen)
+ SELECT asset_id,revision,stage,error,MAX(1,attempts),updated,updated
+ FROM media_processing WHERE state='failed' AND error IS NOT NULL;

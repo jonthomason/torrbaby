@@ -43,6 +43,8 @@ pub struct Manager {
     root: PathBuf,
     pending: Mutex<HashSet<String>>,
     gate: tokio::sync::Semaphore,
+    concurrency: std::sync::atomic::AtomicUsize,
+    urgent: std::sync::atomic::AtomicBool,
 }
 pub(crate) fn revision(path: &Path) -> Result<String> {
     let m = path.metadata()?;
@@ -97,8 +99,19 @@ impl Manager {
         Ok(Arc::new(Self {
             root,
             pending: Mutex::new(HashSet::new()),
-            gate: tokio::sync::Semaphore::new(1),
+            gate: tokio::sync::Semaphore::new(2),
+            concurrency: std::sync::atomic::AtomicUsize::new(1),
+            urgent: std::sync::atomic::AtomicBool::new(false),
         }))
+    }
+    pub fn set_urgent(&self, urgent:bool) {
+        self.urgent.store(urgent,std::sync::atomic::Ordering::Relaxed);
+    }
+    pub fn can_admit(&self)->bool {
+        self.pending.lock().map(|p|p.len()<self.concurrency.load(std::sync::atomic::Ordering::Relaxed)).unwrap_or(false)
+    }
+    pub fn set_concurrency(&self, limit:usize) {
+        self.concurrency.store(limit.min(2),std::sync::atomic::Ordering::Relaxed);
     }
     pub fn busy(&self) -> bool {
         self.pending.lock().map(|p| !p.is_empty()).unwrap_or(true)
@@ -328,7 +341,12 @@ impl Manager {
     }
     async fn run(self: Arc<Self>, mut job: Job) {
         let result = async {
-            let _permit = self.gate.acquire().await?;
+            let _permit = loop {
+                let permit=self.gate.acquire().await?;
+                if 2-self.gate.available_permits()<=self.concurrency.load(std::sync::atomic::Ordering::Relaxed) {break permit;}
+                drop(permit);
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            };
             job.state = "running".into();
             self.save(&job)?;
             let original=if job.target.is_some() {
@@ -414,18 +432,31 @@ impl Manager {
             if checkpoint.exists() { fs::remove_file(checkpoint)?; }
             Ok::<(), anyhow::Error>(())
         };
-        let result = tokio::time::timeout(Duration::from_secs(1200), result).await;
+        let result = tokio::select! {
+            result=tokio::time::timeout(Duration::from_secs(1200), result)=>Some(result),
+            _=async {
+                loop {
+                    if self.urgent.load(std::sync::atomic::Ordering::Relaxed) {break;}
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                }
+            }=>None,
+        };
         job.updated = crate::storage::now();
         match result {
-            Ok(Ok(())) => {
+            None => {
+                job.state="interrupted".into();
+                job.error=None;
+                tracing::info!(job=%job.id,"Subtitle work interrupted for playback preparation; queued for retry");
+            }
+            Some(Ok(Ok(()))) => {
                 job.state = "ready".into();
                 job.error = None;
             }
-            Ok(Err(error)) => {
+            Some(Ok(Err(error))) => {
                 job.state = "failed".into();
                 job.error = Some(error.to_string());
             }
-            Err(_) => {
+            Some(Err(_)) => {
                 job.state = "failed".into();
                 job.error = Some("Subtitle preparation timed out".into());
             }
@@ -453,6 +484,24 @@ mod sidecar_job_tests {
         assert!(manager.lookup("other",&input,3,&Some("en".into()),&Some("zh-Hans".into())).is_none());
         fs::write(&input,b"changed file")?;
         assert!(manager.lookup("movie",&input,3,&Some("en".into()),&Some("zh-Hans".into())).is_none());
+        fs::remove_dir_all(root)?;Ok(())
+    }
+    #[tokio::test]
+    async fn interrupted_job_is_requeued_and_can_complete()->Result<()> {
+        let root=std::env::temp_dir().join(format!("torrbaby-interrupt-{}",uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root)?;let input=root.join("example.en.srt");
+        fs::write(&input,"1\n00:00:01,000 --> 00:00:03,000\nHello world.\n")?;
+        let manager=Manager::new(&root)?;manager.set_concurrency(0);manager.set_urgent(true);
+        let job=manager.prepare("test",input.clone(),1,Some("en".into()),None)?;
+        let id=job["id"].as_str().unwrap();
+        for _ in 0..100 {if !manager.busy(){break;}tokio::time::sleep(Duration::from_millis(10)).await;}
+        assert_eq!(manager.status(id)?["state"],"interrupted");
+        manager.set_urgent(false);manager.set_concurrency(2);
+        let resumed=manager.prepare("test",input,1,Some("en".into()),None)?;
+        assert_eq!(resumed["id"],id);
+        for _ in 0..100 {if !manager.busy(){break;}tokio::time::sleep(Duration::from_millis(10)).await;}
+        assert_eq!(manager.status(id)?["state"],"ready");
+        assert!(manager.artifact(id)?.contains("Hello world."));
         fs::remove_dir_all(root)?;Ok(())
     }
     #[tokio::test]

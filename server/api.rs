@@ -242,6 +242,16 @@ pub async fn serve(
                 tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             }
         }));
+        let capacity_service=service.clone();
+        workers.push(tokio::spawn(async move {
+            loop {
+                if let Err(error)=crate::processing::refresh_capacity(&capacity_service) {
+                    capacity_service.subtitle_jobs.set_concurrency(0);
+                    tracing::warn!(%error,"Processing capacity unavailable");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+        }));
         let background = service.clone();
         workers.push(tokio::spawn(async move {
             loop {
@@ -1217,6 +1227,10 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         ("PUT","/v1/subtitle-preferences") => db.save_subtitle_preferences(None, body),
         ("GET","/v1/library/revision") => Ok(json!({"revision":db.catalog_revision()?})),
         ("GET","/v1/processing") => crate::processing::summary(&db),
+        ("GET","/v1/processing/failures") => Ok(json!({
+            "failures":db.rows("SELECT * FROM processing_failures ORDER BY resolved_at IS NULL DESC,last_seen DESC",[])?,
+            "patterns":db.rows("SELECT stage,error,COUNT(*) AS affected_files,SUM(occurrences) AS occurrences FROM processing_failures WHERE resolved_at IS NULL GROUP BY stage,error ORDER BY affected_files DESC",[])?
+        })),
         ("GET","/v1/credits") => crate::credits::summary(&db),
         ("GET","/v1/library") => {
             let mut catalog = db.catalog(profile)?;

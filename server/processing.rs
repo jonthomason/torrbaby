@@ -14,9 +14,12 @@ fn finished(value:&str)->bool {matches!(value,"ready"|"not_applicable")}
 fn sign_off(db:&Database,id:&str,revision:&str)->Result<bool> {
     // The SQL predicate is deliberately the final authority: a worker becoming
     // idle, an English artifact, or an empty job list can never sign off a file.
-    Ok(db.connection.execute("UPDATE media_processing SET state='ready',stage='complete',completed_at=?,updated=?,error=NULL WHERE asset_id=? AND revision=? AND inventory_state='ready' AND subtitles_state IN ('ready','not_applicable') AND credits_state IN ('ready','not_applicable')",rusqlite::params![now(),now(),id,revision])?==1)
+    let complete=db.connection.execute("UPDATE media_processing SET state='ready',stage='complete',completed_at=?,updated=?,error=NULL WHERE asset_id=? AND revision=? AND inventory_state='ready' AND subtitles_state IN ('ready','not_applicable') AND credits_state IN ('ready','not_applicable')",rusqlite::params![now(),now(),id,revision])?==1;
+    if complete {db.connection.execute("UPDATE processing_failures SET resolved_at=? WHERE asset_id=? AND revision=? AND resolved_at IS NULL",rusqlite::params![now(),id,revision])?;}
+    Ok(complete)
 }
 fn fail(db:&Database,id:&str,revision:&str,error:&str)->Result<()> {
+    db.connection.execute("INSERT INTO processing_failures(asset_id,revision,stage,error,first_seen,last_seen) SELECT asset_id,revision,stage,?,?,? FROM media_processing WHERE asset_id=? AND revision=? ON CONFLICT(asset_id,revision,stage,error) DO UPDATE SET occurrences=occurrences+1,last_seen=excluded.last_seen,resolved_at=NULL",rusqlite::params![error,now(),now(),id,revision])?;
     db.connection.execute("UPDATE media_processing SET state='failed',error=?,retry_after=?,updated=?,attempts=attempts+1 WHERE asset_id=? AND revision=?",rusqlite::params![error,now()+3600.0,now(),id,revision])?;Ok(())
 }
 fn assets(db:&Database)->Result<Vec<Value>> {
@@ -25,8 +28,23 @@ fn assets(db:&Database)->Result<Vec<Value>> {
     crate::media_inventory::order_assets(&mut assets,&crate::media_inventory::priorities(db)?);
     Ok(assets)
 }
+/// Recent authenticated playback heartbeats, including paused players, reserve capacity.
+pub fn playback_active(s:&Service)->Result<bool> {
+    let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+    Ok(db.connection.query_row("SELECT EXISTS(SELECT 1 FROM profile_playback p JOIN playback_sessions s ON p.active_session=s.id WHERE s.ended=0 AND p.last_played>?)",[now()-90.0],|r|r.get(0))?)
+}
+fn capacity(enabled:bool, preparing:bool, playing:bool)->usize {
+    if !enabled || preparing {0} else if playing {1} else {2}
+}
+pub fn refresh_capacity(s:&Service)->Result<usize> {
+    let preparing=s.virtual_media.preparing();
+    s.subtitle_jobs.set_urgent(preparing);
+    let limit=capacity(s.effective_config()?.background_subtitles,preparing,playback_active(s)?);
+    s.subtitle_jobs.set_concurrency(limit);
+    Ok(limit)
+}
 pub async fn tick(s:&Service)->Result<()> {
-    let enabled=s.effective_config()?.background_subtitles;
+    let limit=refresh_capacity(s)?;
     let selected={
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
         let assets=assets(&db)?;
@@ -47,14 +65,22 @@ pub async fn tick(s:&Service)->Result<()> {
                 db.connection.execute("UPDATE media_processing SET state='running' WHERE asset_id=?",[job["asset_id"].as_str().unwrap_or("")])?;
             }
         }
-        if !enabled{return Ok(());}
+        if limit==0{return Ok(());}
         let rows=db.rows("SELECT * FROM media_processing",[])?;
-        // Keep the claimed file until all stages finish. Priority applies to the next file.
-        let active=assets.iter().find(|a|rows.iter().any(|r|r["asset_id"]==a["id"] && r["state"]=="running"));
-        let selected=active.or_else(||assets.iter().find(|a|rows.iter().any(|r|r["asset_id"]==a["id"] && r["state"]!="ready" && r["retry_after"].as_f64().unwrap_or(0.0)<=now()))).cloned();
+        // Retain claimed files first; fill idle slots in title/episode priority order.
+        let mut selected:Vec<Value>=assets.iter().filter(|a|rows.iter().any(|r|r["asset_id"]==a["id"] && r["state"]=="running")).take(limit).cloned().collect();
+        for asset in &assets {
+            if selected.len()>=limit {break;}
+            if selected.iter().any(|a|a["id"]==asset["id"]) {continue;}
+            if rows.iter().any(|r|r["asset_id"]==asset["id"] && r["state"]!="ready" && r["retry_after"].as_f64().unwrap_or(0.0)<=now()) {selected.push(asset.clone());}
+        }
         selected
     };
-    let Some(mut asset)=selected else{return Ok(());};
+    let outcomes=futures_util::future::join_all(selected.into_iter().map(|asset|process_file(s,asset))).await;
+    for outcome in outcomes {outcome?;}
+    Ok(())
+}
+async fn process_file(s:&Service,mut asset:Value)->Result<()> {
     let id=asset["id"].as_str().context("Missing asset ID")?.to_owned();
     let path=asset["path"].as_str().context("Missing asset path")?.to_owned();
     let revision=crate::subtitle_jobs::revision(Path::new(&path))?;
@@ -131,6 +157,25 @@ pub fn summary(db:&Database)->Result<Value> {
 mod tests {
     use super::*;
     fn database()->Result<Database>{let db=Database{connection:rusqlite::Connection::open_in_memory()?};db.connection.execute_batch(include_str!("schema.sql"))?;Ok(db)}
+    #[test]
+    fn failure_history_survives_retries_and_completion()->Result<()> {
+        let db=database()?;enroll(&db,"episode","r1")?;
+        fail(&db,"episode","r1","decode failed")?;fail(&db,"episode","r1","decode failed")?;
+        assert_eq!(db.rows("SELECT occurrences FROM processing_failures",[])?[0]["occurrences"],2);
+        enroll(&db,"next","r1")?;
+        assert_eq!(db.rows("SELECT state FROM media_processing WHERE asset_id='next'",[])?[0]["state"],"queued");
+        db.connection.execute("UPDATE media_processing SET inventory_state='ready',subtitles_state='ready',credits_state='ready' WHERE asset_id='episode'",[])?;
+        assert!(sign_off(&db,"episode","r1")?);
+        assert!(!db.rows("SELECT resolved_at FROM processing_failures",[])?[0]["resolved_at"].is_null());
+        Ok(())
+    }
+    #[test]
+    fn playback_capacity_reserves_resources() {
+        assert_eq!(capacity(true,false,false),2);
+        assert_eq!(capacity(true,false,true),1);
+        assert_eq!(capacity(true,true,false),0);
+        assert_eq!(capacity(false,false,false),0);
+    }
     #[test]
     fn all_stages_and_current_revision_are_required_for_sign_off()->Result<()> {
         let db=database()?;enroll(&db,"movie","r1")?;
