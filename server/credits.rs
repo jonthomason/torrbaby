@@ -10,9 +10,21 @@ pub fn cached(db:&Database,id:&str)->Result<Value> {
     let asset=db.asset(id)?;
     let row:Option<(String,String)>=db.connection.query_row("SELECT revision,document FROM credits_analysis WHERE asset_id=? AND version=?",rusqlite::params![id,VERSION],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     if let Some((revision,text))=row {
-        if asset["path"].as_str().and_then(|p|crate::subtitle_jobs::revision(Path::new(p)).ok()).as_deref()==Some(&revision) {return Ok(serde_json::from_str(&text)?);}
+        if asset["path"].as_str().and_then(|p|crate::subtitle_jobs::revision(Path::new(p)).ok()).as_deref()==Some(&revision) {return Ok(explain(serde_json::from_str(&text)?));}
     }
     Ok(json!({"state":"pending","segments":[]}))
+}
+/// An unfinished or failed analysis must always say why; the processing queue
+/// surfaces this text instead of a bare "incomplete".
+fn explain(mut document:Value)->Value {
+    if matches!(document["state"].as_str(),Some("incomplete"|"failed")) && document["error"].as_str().is_none_or(|e|e.trim().is_empty()) {
+        let reason=match document["sample_errors"].as_u64() {
+            Some(n) if n>0 => format!("Credits scanner could not read {n} of {} sampled positions",document["probes"].as_u64().unwrap_or(0)),
+            _ => "Credits scanner stopped without a result".to_owned(),
+        };
+        document["error"]=json!(reason);
+    }
+    document
 }
 fn save(db:&Database,id:&str,revision:&str,document:&Value)->Result<()> {
     db.connection.execute("INSERT INTO credits_analysis VALUES(?,?,?,?,?) ON CONFLICT(asset_id) DO UPDATE SET revision=excluded.revision,version=excluded.version,document=excluded.document,updated=excluded.updated",
@@ -63,7 +75,7 @@ pub async fn process(s:&Service, asset:&Value)->Result<()> {
         }
         {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;save(&db,id,&revision,&json!({"state":"running"}))?;}
         let outcome=scan(s,&input,reader,if asset["kind"]=="tv" || asset["season"].is_number(){300}else{900}).await;
-        let document=match outcome {Ok(result)=>result,Err(error)=>json!({"state":if error.to_string().contains("deferred") {"deferred"}else{"failed"},"error":error.to_string()})};
+        let document=explain(match outcome {Ok(result)=>result,Err(error)=>json!({"state":if error.to_string().contains("deferred") {"deferred"}else{"failed"},"error":error.to_string()})});
         if crate::subtitle_jobs::revision(&input).ok().as_deref()==Some(&revision) {
             let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;save(&db,id,&revision,&document)?;
         }
@@ -114,4 +126,19 @@ async fn scan(s:&Service,path:&Path,reader:Option<Arc<crate::virtual_captions::R
     }.await;
     if let Some(task)=task{task.abort();}
     let _=std::fs::remove_file(progress);result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn unfinished_analysis_always_explains_itself() {
+        let legacy=json!({"state":"incomplete","probes":16,"sample_errors":1,"segments":[]});
+        assert_eq!(explain(legacy)["error"],"Credits scanner could not read 1 of 16 sampled positions");
+        assert_eq!(explain(json!({"state":"failed","error":""}))["error"],"Credits scanner stopped without a result");
+        let reported=json!({"state":"incomplete","sample_errors":2,"error":"Cannot Decode [AVFoundationErrorDomain -11821]"});
+        assert_eq!(explain(reported.clone()),reported);
+        let ready=json!({"state":"ready","segments":[],"sample_errors":0});
+        assert_eq!(explain(ready.clone()),ready);
+    }
 }

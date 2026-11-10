@@ -2,10 +2,42 @@ import Foundation
 import AVFoundation
 import Vision
 import CoreGraphics
+import CoreML
 
 struct Line { let text: String; let box: CGRect }
 struct Sample { let time: Double; let lines: [Line] }
 struct ScanError: Error { let message: String }
+let retryOffsets = [0.0, -0.4, 0.4, -0.8]
+
+// Text recognition normally runs on the Neural Engine. When that service is
+// unavailable or saturated, Vision fails the request (CRImageReaderError);
+// the same request on the CPU is slower but gives the same answer.
+func recognize(_ image: CGImage) throws -> [VNRecognizedTextObservation] {
+    func run(cpu: Bool) throws -> [VNRecognizedTextObservation] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["en-US","zh-Hans"]
+        request.usesLanguageCorrection = false
+        request.minimumTextHeight = 0.012
+        if cpu {
+            let device = try request.supportedComputeStageDevices[.main]?.first {
+                if case .cpu = $0 { return true }; return false
+            }
+            guard let device else { throw ScanError(message:"Text recognition has no CPU fallback") }
+            request.setComputeDevice(device, for:.main)
+        }
+        try VNImageRequestHandler(cgImage:image,options:[:]).perform([request])
+        return request.results ?? []
+    }
+    do { return try run(cpu:false) } catch { return try run(cpu:true) }
+}
+
+func describe(_ error: Error) -> String {
+    if let scan = error as? ScanError { return scan.message }
+    let ns = error as NSError
+    let underlying = (ns.userInfo[NSUnderlyingErrorKey] as? NSError).map { " (\($0.domain) \($0.code))" } ?? ""
+    return "\(ns.localizedDescription) [\(ns.domain) \(ns.code)]\(underlying)"
+}
 
 // Match actual words as well as their geometry: camera motion or changing captions
 // must not be mistaken for multiple persistent lines of rolling credit text.
@@ -33,8 +65,7 @@ func rolling(_ a: Sample, _ b: Sample) -> Bool {
     static func main() async {
         do { try await run() }
         catch {
-            let message = (error as? ScanError)?.message ?? error.localizedDescription
-            FileHandle.standardError.write(Data(message.utf8)); exit(1)
+            FileHandle.standardError.write(Data(describe(error).utf8)); exit(1)
         }
     }
     static func run() async throws {
@@ -62,19 +93,32 @@ func rolling(_ a: Sample, _ b: Sample) -> Bool {
         generator.requestedTimeToleranceBefore = CMTime(seconds:0.1,preferredTimescale:600)
         generator.requestedTimeToleranceAfter = CMTime(seconds:0.1,preferredTimescale:600)
         let started = Date(), lower = max(0,duration-budget), step = 20.0
-        var frames = 0, probes = 0, hits = [Double](), errors = 0
+        var frames = 0, probes = 0, hits = [Double](), errors = 0, recovered = 0, failure = ""
+        // HEVC open-GOP streams mark CRA pictures as sync samples. Their leading
+        // RASL pictures precede the CRA in presentation order but reference the
+        // previous GOP, so AVFoundation cannot decode a request that lands on one
+        // ("Cannot Decode"). Such windows are shorter than one mini-GOP; sample a
+        // nearby frame instead of discarding the probe. Each probe uses actual
+        // frame times, so motion measurement stays exact.
+        func frame(_ time:Double, _ actual:inout CMTime) throws -> CGImage {
+            var first: Error?
+            for offset in retryOffsets {
+                let t = min(max(0,time+offset),duration)
+                do {
+                    let image = try generator.copyCGImage(at:CMTime(seconds:t,preferredTimescale:600),actualTime:&actual)
+                    if offset != 0 { recovered += 1 }
+                    return image
+                } catch { if first == nil { first = error } }
+            }
+            throw first!
+        }
         func sample(_ time:Double) throws -> Sample {
             try autoreleasepool {
                 var actual = CMTime.zero
-                let image = try generator.copyCGImage(at:CMTime(seconds:time,preferredTimescale:600),actualTime:&actual)
-                let request = VNRecognizeTextRequest()
-                request.recognitionLevel = .accurate
-                request.recognitionLanguages = ["en-US","zh-Hans"]
-                request.usesLanguageCorrection = false
-                request.minimumTextHeight = 0.012
-                try VNImageRequestHandler(cgImage:image,options:[:]).perform([request])
+                let image = try frame(time,&actual)
+                let observations = try recognize(image)
                 frames += 1
-                let lines = (request.results ?? []).compactMap { observation -> Line? in
+                let lines = observations.compactMap { observation -> Line? in
                     guard let text = observation.topCandidates(1).first, text.confidence >= 0.4 else { return nil }
                     let normalized = text.string.lowercased().filter { $0.isLetter || $0.isNumber }
                     return Line(text:normalized,box:observation.boundingBox)
@@ -93,7 +137,9 @@ func rolling(_ a: Sample, _ b: Sample) -> Bool {
         }
         var time = max(lower,duration-4)
         while time >= lower {
-            do { if try probe(time) { hits.append(time) } } catch { errors += 1; if errors > 4 { throw error } }
+            do { if try probe(time) { hits.append(time) } } catch {
+                errors += 1; failure = describe(error); if errors > 4 { throw error }
+            }
             let data = try JSONSerialization.data(withJSONObject:["scanned_seconds":duration-time,"window_seconds":min(budget,duration),"frames":frames])
             try data.write(to:URL(fileURLWithPath:args[3]),options:.atomic)
             if time == lower { break }; time = max(lower,time-step)
@@ -121,9 +167,10 @@ func rolling(_ a: Sample, _ b: Sample) -> Bool {
             // observed start. Do not present the cap as a detected boundary.
             if start > lower+2 { segments.append(["start":start,"end":end]) }
         }
-        let result:[String:Any] = ["state":errors == 0 ? "ready" : "incomplete","duration":duration,"segments":segments,
-            "method":"rolling-text-v1","frames":frames,"probes":probes,"sample_errors":errors,
+        var result:[String:Any] = ["state":errors == 0 ? "ready" : "incomplete","duration":duration,"segments":segments,
+            "method":"rolling-text-v1","frames":frames,"probes":probes,"sample_errors":errors,"recovered_samples":recovered,
             "elapsed_seconds":Date().timeIntervalSince(started),"window_seconds":min(budget,duration)]
+        if errors > 0 { result["error"] = "Credits scanner could not read \(errors) of \(probes) probes: \(failure)" }
         print(String(data:try JSONSerialization.data(withJSONObject:result,options:[.sortedKeys]),encoding:.utf8)!)
     }
 }
