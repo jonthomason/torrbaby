@@ -26,8 +26,8 @@ fn fail(db:&Database,id:&str,revision:&str,error:&str)->Result<()> {
 }
 /// Reopen the credits stage of files analysed by an older credits method, even if
 /// they were signed off: a method upgrade should reach the whole library.
-fn reopen_outdated(db:&Database)->Result<usize> {
-    Ok(db.connection.execute("UPDATE media_processing SET credits_state='pending',state=CASE WHEN state IN ('ready','failed') THEN 'queued' ELSE state END,retry_after=0,attempts=0,completed_at=NULL,error=NULL,updated=? WHERE credits_state IN ('ready','failed','incomplete') AND state!='running' AND asset_id IN (SELECT asset_id FROM credits_analysis WHERE version<?)",rusqlite::params![now(),crate::credits::VERSION])?)
+pub(crate) fn reopen_outdated(db:&Database)->Result<usize> {
+    Ok(db.connection.execute("UPDATE media_processing SET credits_state='pending',stage='credits',state=CASE WHEN state IN ('ready','failed') THEN 'queued' ELSE state END,retry_after=0,attempts=0,completed_at=NULL,error=NULL,updated=? WHERE credits_state IN ('ready','failed','incomplete') AND state!='running' AND asset_id IN (SELECT asset_id FROM credits_analysis WHERE version<?)",rusqlite::params![now(),crate::credits::VERSION])?)
 }
 /// Operator rescans. `scope`: "failed" re-queues every failed file now (any
 /// stage); with `stage` "credits", "no_credits" reopens credits wherever none were
@@ -44,8 +44,8 @@ pub fn rescan(db:&Database,body:&Value)->Result<Value> {
         let none_found=credits["state"]=="ready" && credits["segments"].as_array().is_none_or(|s|s.is_empty());
         let sql=match (scope,body["stage"].as_str()) {
             ("failed",_) if row["state"]=="failed" => "UPDATE media_processing SET state='queued',retry_after=0,updated=? WHERE asset_id=?",
-            ("no_credits",Some("credits")) if none_found => "UPDATE media_processing SET credits_state='pending',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=?",
-            ("all",Some("credits")) => "UPDATE media_processing SET credits_state='pending',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=?",
+            ("no_credits",Some("credits")) if none_found => "UPDATE media_processing SET credits_state='pending',stage='credits',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=?",
+            ("all",Some("credits")) => "UPDATE media_processing SET credits_state='pending',stage='credits',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=?",
             ("failed",_)|("no_credits",Some("credits"))|("all",Some("credits")) => continue,
             _ => anyhow::bail!("Use scope failed, or stage credits with scope no_credits or all"),
         };

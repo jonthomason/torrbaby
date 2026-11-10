@@ -3,6 +3,7 @@ mod trials;
 mod api;
 mod catalog;
 mod config;
+mod credit_series;
 mod credits;
 mod dolby;
 mod hls;

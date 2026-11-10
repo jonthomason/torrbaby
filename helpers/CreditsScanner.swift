@@ -127,7 +127,8 @@ func rolling(_ a: Sample, _ b: Sample) -> Bool {
                   !rolling(Sample(time:0,lines:Array(lines.prefix(2))),Sample(time:1,lines:Array(moved.prefix(2)))) else {
                 throw ScanError(message:"Motion checks failed")
             }
-            print("rolling, static, subtitle-line checks passed"); return
+            guard CreditCards.selfTest() else { throw ScanError(message:"Credit card checks failed") }
+            print("rolling, static, subtitle-line, credit-card checks passed"); return
         }
         guard args.count == 4, let budget = Double(args[2]), [300.0,900.0].contains(budget) else {
             throw ScanError(message:"Expected input, 300/900-second window, progress file")
@@ -145,6 +146,7 @@ func rolling(_ a: Sample, _ b: Sample) -> Bool {
         generator.requestedTimeToleranceAfter = CMTime(seconds:0.1,preferredTimescale:600)
         let started = Date(), lower = max(0,duration-budget), step = 20.0
         var frames = 0, probes = 0, hits = [Double](), errors = 0, recovered = 0, failure = ""
+        var cardFrames = [CardFrame](), cardErrors = 0
         // HEVC open-GOP streams mark CRA pictures as sync samples. Their leading
         // RASL pictures precede the CRA in presentation order but reference the
         // previous GOP, so AVFoundation cannot decode a request that lands on one
@@ -169,6 +171,7 @@ func rolling(_ a: Sample, _ b: Sample) -> Bool {
                 let image = try frame(time,&actual)
                 let observations = try recognize(image)
                 frames += 1
+                cardFrames.append(CreditCards.frame(time:actual.seconds,image:image,observations:observations))
                 let lines = observations.compactMap { observation -> Line? in
                     guard let text = observation.topCandidates(1).first, text.confidence >= 0.4 else { return nil }
                     let normalized = text.string.lowercased().filter { $0.isLetter || $0.isNumber }
@@ -211,7 +214,7 @@ func rolling(_ a: Sample, _ b: Sample) -> Bool {
             if let last = groups.last?.last, t-last <= step+0.1 { groups[groups.count-1].append(t) }
             else { groups.append([t]) }
         }
-        var segments = [[String:Double]]()
+        var segments = [[String:Any]]()
         for group in groups where group.count >= 2 {
             var start = group.first!, end = group.last!+2
             var t = max(lower,start-step)
@@ -224,10 +227,15 @@ func rolling(_ a: Sample, _ b: Sample) -> Bool {
             }
             // A rolling sequence already in progress at the scan limit has no
             // observed start. Do not present the cap as a detected boundary.
-            if start > lower+2 { segments.append(["start":start,"end":end]) }
+            if start > lower+2 { segments.append(["start":start,"end":end,"method":"rolling-text-v1","confidence":0.9]) }
+        }
+        let cards = try CreditCards.scan(lower:lower,duration:duration,coarseStep:budget > 300 ? 10 : 6,frames:cardFrames) { time in
+            guard Date().timeIntervalSince(started) < 240 else { throw ScanError(message:"Credits scan time budget reached") }
+            guard (try? sample(time)) != nil else { cardErrors += 1; return nil }
+            return cardFrames.last
         }
         var result:[String:Any] = ["state":errors == 0 ? "ready" : "incomplete","duration":duration,"segments":segments,
-            "method":"rolling-text-v1","frames":frames,"probes":probes,"sample_errors":errors,"recovered_samples":recovered,
+            "cards":cards.map(\.document),"method":"rolling-text-v1+cards-v1","frames":frames,"probes":probes,"sample_errors":errors,"recovered_samples":recovered,"card_sample_errors":cardErrors,
             "elapsed_seconds":Date().timeIntervalSince(started),"window_seconds":min(budget,duration)]
         if errors > 0 { result["error"] = "Credits scanner could not read \(errors) of \(probes) probes: \(failure)" }
         print(String(data:try JSONSerialization.data(withJSONObject:result,options:[.sortedKeys]),encoding:.utf8)!)

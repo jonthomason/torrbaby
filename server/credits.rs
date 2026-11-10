@@ -1,11 +1,13 @@
-//! Bounded, revision-keyed rolling credits stage of the durable processing queue.
+//! Bounded, revision-keyed credits stage (rolling crawls and static credit cards)
+//! of the durable processing queue.
 use crate::{api::Service, storage::{Database, now}};
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use rusqlite::OptionalExtension;
 use std::{path::Path, process::Stdio, sync::Arc, time::Duration};
 
-pub(crate) const VERSION:i64=1;
+/// 2: static credit cards (cards-v1) alongside rolling crawls, resolved per series.
+pub(crate) const VERSION:i64=2;
 pub fn cached(db:&Database,id:&str)->Result<Value> {
     let asset=db.asset(id)?;
     let row:Option<(String,String)>=db.connection.query_row("SELECT revision,document FROM credits_analysis WHERE asset_id=? AND version=?",rusqlite::params![id,VERSION],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
@@ -77,9 +79,13 @@ pub async fn process(s:&Service, asset:&Value)->Result<()> {
         }
         {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;save(&db,id,&revision,&json!({"state":"running"}))?;}
         let outcome=scan(s,&input,reader,if asset["kind"]=="tv" || asset["season"].is_number(){300}else{900}).await;
-        let document=explain(match outcome {Ok(result)=>result,Err(error)=>json!({"state":if error.to_string().contains("deferred") {"deferred"}else{"failed"},"error":error.to_string()})});
+        let document=explain(match outcome {Ok(result)=>crate::credit_series::prepare(result),Err(error)=>json!({"state":if error.to_string().contains("deferred") {"deferred"}else{"failed"},"error":error.to_string()})});
         if crate::subtitle_jobs::revision(&input).ok().as_deref()==Some(&revision) {
             let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;save(&db,id,&revision,&document)?;
+            // Resolve this file against its series, and its series against it.
+            let entity=asset["entity_id"].as_str().map(str::to_owned).unwrap_or_default();
+            if entity.is_empty() {save(&db,id,&revision,&crate::credit_series::resolve(&document,&[]))?;}
+            else {crate::credit_series::resolve_title(&db,&entity,VERSION)?;}
         }
         tracing::info!(asset=id,state=?document["state"],elapsed=?document["elapsed_seconds"],"Credits analysis finished");
         return Ok(());
@@ -145,5 +151,19 @@ mod tests {
         assert_eq!(explain(reported.clone()),reported);
         let ready=json!({"state":"ready","segments":[],"sample_errors":0});
         assert_eq!(explain(ready.clone()),ready);
+    }
+    #[test]
+    fn signed_off_files_with_older_analysis_are_requeued_for_credits_only() -> Result<()> {
+        let db=Database{connection:rusqlite::Connection::open_in_memory()?};
+        db.connection.execute_batch(include_str!("schema.sql"))?;
+        for (id,version) in [("asset-old",1),("asset-new",VERSION)] {
+            db.connection.execute("INSERT INTO media_processing(asset_id,revision,version,state,stage,inventory_state,subtitles_state,credits_state,updated) VALUES(?,'r',1,'ready','complete','ready','ready','ready',0)",[id])?;
+            db.connection.execute("INSERT INTO credits_analysis VALUES(?,'r',?,'{}',0)",rusqlite::params![id,version])?;
+        }
+        assert_eq!(crate::processing::reopen_outdated(&db)?,1);
+        let row:(String,String,String,String)=db.connection.query_row("SELECT state,stage,subtitles_state,credits_state FROM media_processing WHERE asset_id='asset-old'",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
+        assert_eq!(row,("queued".into(),"credits".into(),"ready".into(),"pending".into()));
+        assert_eq!(crate::processing::reopen_outdated(&db)?,0);
+        Ok(())
     }
 }
