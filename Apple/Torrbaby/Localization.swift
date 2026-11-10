@@ -34,11 +34,13 @@ enum L10n {
 struct InterfaceLanguagePicker: View {
     @ObservedObject private var language = InterfaceLanguage.shared
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             option("EN", code: "en")
-            Text("/").foregroundStyle(.secondary)
             option("中文", code: "zh-Hans")
         }.font(.system(size: selectorFontSize, weight: .semibold))
+            .padding(4)
+            .background(.quaternary, in: Capsule())
+            .fixedSize()
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Interface language")
     }
@@ -51,9 +53,9 @@ struct InterfaceLanguagePicker: View {
     }
     private func option(_ label: String, code: String) -> some View {
         Button { language.choose(code) } label: {
-            Text(verbatim: label).padding(.horizontal, 8).padding(.vertical, 6)
+            Text(verbatim: label).frame(minWidth: 30).padding(.horizontal, 9).padding(.vertical, 5)
                 .foregroundStyle(language.code == code ? Theme.canvas : Theme.mint)
-                .background(language.code == code ? Theme.mint : .clear, in: RoundedRectangle(cornerRadius: 6))
+                .background(language.code == code ? Theme.mint : .clear, in: Capsule())
         }.buttonStyle(.plain)
             .accessibilityLabel(code == "en" ? "English" : "中文")
             .accessibilityAddTraits(language.code == code ? .isSelected : [])
@@ -82,3 +84,46 @@ struct InterfaceLanguageSettings: View {
         }
     }
 }
+
+#if os(macOS)
+/// A normal toolbar field leaves the language control at the trailing edge;
+/// SwiftUI's searchable toolbar item otherwise always takes that position.
+struct MacToolbarSearch: View {
+    @Binding var text: String
+    var focus: FocusState<Bool>.Binding
+    let prompt: String
+    var body: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField(LocalizedStringKey(prompt), text: $text)
+                    .textFieldStyle(.plain).focused(focus)
+                    .onExitCommand { text = ""; focus.wrappedValue = false }
+            }.padding(.horizontal, 10).padding(.vertical, 7)
+                .frame(minWidth: 180, idealWidth: 280, maxWidth: 360)
+                .background(.quaternary, in: Capsule())
+                .accessibilityLabel(LocalizedStringKey(prompt))
+            InterfaceLanguagePicker()
+        }
+    }
+}
+#endif
+
+#if os(macOS)
+struct MacSearchToolbar: ToolbarContent {
+    @Binding var text: String
+    var focus: FocusState<Bool>.Binding
+    let prompt: String
+    var body: some ToolbarContent {
+        if #available(macOS 26, *) {
+            ToolbarItem(placement: .primaryAction) {
+                MacToolbarSearch(text: $text, focus: focus, prompt: prompt)
+            }.sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .primaryAction) {
+                MacToolbarSearch(text: $text, focus: focus, prompt: prompt)
+            }
+        }
+    }
+}
+#endif

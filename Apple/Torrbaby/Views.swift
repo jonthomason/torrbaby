@@ -148,7 +148,11 @@ struct RootView: View {
         location = next
     }
     @ToolbarContentBuilder private var languageControls: some ToolbarContent {
+        #if os(macOS)
+        ToolbarItem(placement: .confirmationAction) { InterfaceLanguagePicker() }
+        #else
         ToolbarItem(placement: .primaryAction) { InterfaceLanguagePicker() }
+        #endif
     }
     @ToolbarContentBuilder private var historyControls: some ToolbarContent {
         ToolbarItemGroup(placement: .navigation) {
@@ -218,7 +222,13 @@ struct RootView: View {
                 #endif
                 .toolbar {
                     historyControls
+                    #if os(macOS)
+                    if ![Section.library, .movies, .shows, .active, .seeding, .complete, .attention].contains(selection ?? .library) {
+                        languageControls
+                    }
+                    #else
                     languageControls
+                    #endif
                     ToolbarItemGroup(placement: .primaryAction) {
                         if store.busy { ProgressView().controlSize(.small) }
                         if [.active, .seeding, .complete, .attention].contains(selection) {
@@ -231,7 +241,12 @@ struct RootView: View {
                 }
                 .navigationDestination(for: String.self) { hash in TorrentDetail(hash: hash).navigationBarBackButtonHidden().toolbar { historyControls; languageControls } }
                 .navigationDestination(for: LibraryShelfDestination.self) { route in
-                    LibraryBrowser(shelfIDs: route.ids).navigationTitle(route.name).navigationBarBackButtonHidden().toolbar { historyControls; languageControls }
+                    LibraryBrowser(shelfIDs: route.ids).navigationTitle(route.name).navigationBarBackButtonHidden().toolbar {
+                        historyControls
+                        #if !os(macOS)
+                        languageControls
+                        #endif
+                    }
                 }
                 .navigationDestination(for: LibraryDestination.self) { route in LibraryDetail(titleID: route.id).navigationBarBackButtonHidden().toolbar { historyControls; languageControls } }
                 .safeAreaInset(edge: .top) {
@@ -393,10 +408,13 @@ struct TorrentListView: View {
                 }
             }.padding(24).frame(maxWidth: 1200).frame(maxWidth: .infinity)
         }
-        .searchable(text: $search, prompt: "Find a torrent")
         #if os(macOS)
-        .searchFocused($searchFocused)
+        .toolbar {
+            MacSearchToolbar(text: $search, focus: $searchFocused, prompt: "Find a torrent")
+        }
         .focusedSceneValue(\.searchContent, { searchFocused = true })
+        #else
+        .searchable(text: $search, prompt: "Find a torrent")
         #endif
         .sheet(item: $removing) { item in LocalizedInterface { RemoveTorrentView(torrent: item) } }
         .toolbar {

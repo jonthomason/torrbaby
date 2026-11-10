@@ -420,10 +420,13 @@ struct LibraryBrowser: View {
                 }
             }.padding(24)
         }.background(Theme.canvas)
-        .searchable(text: $search, prompt: "Search movies and TV shows")
         #if os(macOS)
-        .searchFocused($searchFocused)
+        .toolbar {
+            MacSearchToolbar(text: $search, focus: $searchFocused, prompt: "Search movies and TV shows")
+        }
         .focusedSceneValue(\.searchContent, { searchFocused = true })
+        #else
+        .searchable(text: $search, prompt: "Search movies and TV shows")
         #endif
     }
     @ViewBuilder func shelf(_ name: String, _ items: [LibraryTitle], allItems: [LibraryTitle]? = nil) -> some View {
