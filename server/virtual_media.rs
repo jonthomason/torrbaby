@@ -28,7 +28,13 @@ struct Job {
 }
 // Version 4 tolerates Matroska timestamp jitter, empty video cadence slots and
 // unsupported audio codecs, so earlier failures are retried once.
-const PREPARATION_VERSION: u32 = 4;
+// Version 5 writes open-GOP random-access tables (stss/stps). The virtual MP4
+// bytes differ, so the version is part of new job IDs (download ETags) and
+// index paths. Earlier ready jobs keep their own index, so resumed downloads
+// never mix layouts; titles get the new layout lazily on their next
+// preparation, and old indexes leave through normal cache reclamation.
+const PREPARATION_VERSION: u32 = 5;
+const LAYOUT_VERSION: u32 = 3;
 fn playback_refusal(j: &Job) -> Option<String> {
     // Same wording as the remux failure these titles reported before.
     j.missing_audio.as_ref().map(|codec| format!("Remux codec not implemented yet: {codec}"))
@@ -77,8 +83,10 @@ impl Manager {
     }
     fn index_path(&self, job: &Job) -> Result<PathBuf> {
         use sha2::{Digest, Sha256};
+        // Jobs from before random-access tables keep their original index.
+        let layout = if job.preparation_version >= PREPARATION_VERSION { 2 } else { 1 };
         let key: String = Sha256::digest(serde_json::to_vec(&(
-            1,
+            layout,
             &job.asset,
             &job.input,
             &job.revision,
@@ -296,7 +304,7 @@ impl Manager {
         );
         let revision = crate::subtitle_jobs::revision(&input)?;
         let id: String = Sha256::digest(serde_json::to_vec(&(
-            2, asset, &input, &revision, &captions,
+            LAYOUT_VERSION, asset, &input, &revision, &captions,
         ))?)
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -468,6 +476,28 @@ mod cache_tests {
         manager.reclaim_indexes()?;
         assert!(!base.exists());
         assert!(manager.can_preindex());
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn earlier_ready_jobs_keep_their_index_while_new_jobs_use_the_new_layout() -> Result<()> {
+        let root=std::env::temp_dir().join(format!("torrbaby-layout-{}",uuid::Uuid::new_v4()));
+        let manager=Manager::new(&root)?;
+        let input=root.join("title.mkv");
+        fs::write(&input,b"source")?;
+        let revision=crate::subtitle_jobs::revision(&input)?;
+        let id="c".repeat(64);
+        fs::write(root.join("virtual-media-v1").join(format!("{id}.json")),serde_json::to_vec(&json!({
+            "id":id,"asset":"asset-1","input":input,"revision":revision,"state":"ready","error":null,"preparation_version":4}))?)?;
+        let mut old=manager.job(&id)?;
+        let old_path=manager.index_path(&old)?;
+        old.preparation_version=PREPARATION_VERSION;
+        // Same title, new layout: a separate index and (in prepare) a separate job ID/ETag.
+        assert_ne!(manager.index_path(&old)?,old_path);
+        fs::create_dir(&old_path)?;
+        // The old job stays ready against its own index for resumed downloads.
+        assert!(manager.index_path(&manager.job(&id)?)?.exists());
         fs::remove_dir_all(root)?;
         Ok(())
     }

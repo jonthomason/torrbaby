@@ -190,9 +190,52 @@ On Diamond, indexing completed for all three files (15-25 s each, under nice).
 Audio media durations equal packets x 1536 exactly, and audio ends exactly where
 the source's last packet does. Creed's credits scan returned ready.
 
-Separate finding: x265 open-GOP CRA keyframes are written as full sync samples
-even though RASL leading pictures follow them. AVAssetImageGenerator fails with
--11821/-12911 when a seek lands on one of those leading pictures. Citizen Kane's
-credits scan is incomplete at 6339.8 s and 7019.8 s for this reason. Remaining
-work is to signal partial sync/leading samples (stps/sdtp) or start decoding at
-an earlier sync sample.
+x265 open-GOP CRA keyframes were written as full sync samples even though
+RASL leading pictures follow them. AVAssetImageGenerator then failed with
+-11821/-12911 for times inside the leading window. AVPlayer exact seeks there
+produced no frame, which froze the picture while scrubbing. See the next section.
+
+## Open-GOP random access (2026-11-11)
+
+The remux reads the first VCL NAL type of every video sample (hvcC/avcC
+length size) and rewrites the video stbl's random-access tables:
+
+- HEVC IDR, CRA/BLA without RASL, and CRA/BLA followed by RADL only: stss.
+- HEVC CRA/BLA followed by RASL (8/9): QuickTime stps (partial sync).
+- AVC IDR and non-IDR keyframes with no earlier-presented followers: stss.
+- AVC non-IDR keyframes followed by earlier-presented pictures: ordinary samples.
+- Unparseable HEVC falls back to the Matroska keyframe flags. If there is no
+  full sync point, the first point is promoted.
+
+What AVFoundation honours (macOS 27.2, AVAssetImageGenerator with zero
+tolerance and AVPlayer exact seeks, on owned x265/x264 open-GOP fixtures):
+
+- CRA in stss (previous layout): leading-window seeks fail with -12911.
+- sdtp is_leading/depends_on flags, with or without stps, and CRA kept in
+  stss: still fails. AVFoundation ignores sdtp for this.
+- CRA removed from stss without stps: leading windows decode, but seeks
+  hundreds of seconds from the only IDR fail with -12431.
+- CRA in stps and only true random-access points in stss: every tested time
+  decodes. Seeks take about 40-80 ms instead of about 40 ms, because decoding
+  starts one GOP earlier.
+- AVC open keyframes fail from either stss or stps: VideoToolbox decodes the
+  broken leading pictures and later frames depend on them. As ordinary
+  samples, decoding starts at the previous closed keyframe or IDR, and every
+  tested time decodes.
+
+Only the video stss changes and stps is added. On Diamond, every other moov box
+is byte-identical to the previous layout for Seinfeld S02E05, Outlander S01E16
+and S02E10, Citizen Kane, Gone Girl and Creed, including the audio tables,
+stts, ctts and edit lists, so A/V timing cannot change. stss plus stps
+partitions exactly the previous stss. Creed (closed-GOP AVC) is unchanged. The
+previous layout failed, and the new one decodes, at: Seinfeld 1278.441 s,
+Citizen Kane 6339.834/7019.834/7019.9 s, Outlander S01E16 3437.873 s and
+S02E10 3467.49 s. Credits scans of all four need no recovered samples. Control
+seeks on Creed and Gone Girl return identical frames.
+
+Preparation version 5 adds the layout to new job IDs (download ETags) and to
+index paths. Existing ready jobs keep their own index, so resumed downloads
+never mix bytes. Titles get the new tables lazily: an episode re-indexes in a
+few seconds and a movie in 15-25 s on its next playback preparation. Old indexes
+(333, 1.8 GB at deployment time) leave through the normal LRU reclaim.
+Completed offline downloads keep the old tables until downloaded again.

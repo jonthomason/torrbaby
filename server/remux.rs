@@ -58,6 +58,104 @@ struct Track {
     // The newest video packet is held so the final sample's decode duration
     // can cover any presentation slots missing from the source.
     held: Option<(Packet, u64)>,
+    // Per video sample in decode order: first VCL NAL unit type, or
+    // UNKNOWN_NAL, plus CONTAINER_KEY when Matroska marked a keyframe.
+    nal_kinds: Vec<u8>,
+    nal_length: usize,
+}
+
+const UNKNOWN_NAL: u8 = 0x7f;
+const CONTAINER_KEY: u8 = 0x80;
+
+/// First VCL NAL unit type of a length-prefixed AVC/HEVC access unit.
+fn first_vcl_type(data: &[u8], length_size: usize, hevc: bool) -> u8 {
+    let mut at = 0usize;
+    while length_size > 0 && at + length_size < data.len() {
+        let length = data[at..at + length_size].iter().fold(0usize, |n, b| n << 8 | *b as usize);
+        if length == 0 || length > data.len() - at - length_size {
+            break;
+        }
+        let header = data[at + length_size];
+        let kind = if hevc { (header >> 1) & 0x3f } else { header & 0x1f };
+        if (hevc && kind < 32) || (!hevc && (1..=5).contains(&kind)) {
+            return kind;
+        }
+        match at.checked_add(length_size + length) {
+            Some(next) if length > 0 => at = next,
+            _ => break,
+        }
+    }
+    UNKNOWN_NAL
+}
+
+/// MP4 random-access tables for one video track: 1-based decode-order sample
+/// numbers. `full` goes to stss; `partial` goes to QuickTime stps.
+#[derive(Debug, Default, PartialEq)]
+struct RandomAccess {
+    full: Vec<u32>,
+    partial: Vec<u32>,
+    /// Open AVC keyframes left as ordinary samples.
+    demoted: usize,
+}
+
+/// Classify random-access points. An HEVC CRA/BLA followed by RASL pictures
+/// is an open-GOP point: those leading pictures reference the previous GOP.
+/// In stss, AVFoundation starts decoding there and fails with -11821/-12911
+/// for times inside the leading window; left out of stss entirely, distant
+/// seeks fail with -12431 when every later keyframe is a CRA. Native checks
+/// show AVFoundation honours QuickTime stps (partial sync) for these: every
+/// frame resolves at normal seek cost.
+///
+/// An AVC non-IDR keyframe followed by pictures presented before it is also
+/// open, but AVC has no RASL marking: VideoToolbox decodes those leading
+/// pictures, and later frames may reference them, so starting there fails in
+/// either table. Such keyframes are ordinary samples; decoding starts from the
+/// previous closed keyframe or IDR.
+fn random_access(kinds: &[u8], decode_pts: &[u64], hevc: bool) -> RandomAccess {
+    let mut access = RandomAccess::default();
+    let known = kinds.iter().any(|k| k & !CONTAINER_KEY != UNKNOWN_NAL);
+    for (i, &kind) in kinds.iter().enumerate() {
+        let nal = kind & !CONTAINER_KEY;
+        let number = i as u32 + 1;
+        if hevc && known {
+            if !(16..=23).contains(&nal) {
+                continue;
+            }
+            // Leading pictures directly follow their IRAP in decode order.
+            let rasl = kinds[i + 1..]
+                .iter()
+                .map(|k| k & !CONTAINER_KEY)
+                .take_while(|n| (6..=9).contains(n))
+                .any(|n| n == 8 || n == 9);
+            if rasl { access.partial.push(number) } else { access.full.push(number) }
+        } else if kind & CONTAINER_KEY != 0 {
+            let open = !hevc && nal != 5 && nal != UNKNOWN_NAL && kinds[i + 1..]
+                .iter()
+                .zip(&decode_pts[i + 1..])
+                .take_while(|(k, _)| *k & CONTAINER_KEY == 0)
+                .any(|(_, pts)| *pts < decode_pts[i]);
+            if !open || access.full.is_empty() { access.full.push(number) } else { access.demoted += 1 }
+        }
+    }
+    // Playback must be able to begin somewhere: promote the first point.
+    if access.full.is_empty() && !access.partial.is_empty() {
+        access.full.push(access.partial.remove(0));
+    }
+    access
+}
+
+struct VisualRewrite {
+    boxes: Vec<u8>,
+    access: RandomAccess,
+}
+
+fn sample_table(kind: &[u8; 4], numbers: &[u32]) -> Result<Vec<u8>> {
+    let mut body = vec![0u8; 4];
+    body.extend(u32::try_from(numbers.len())?.to_be_bytes());
+    for n in numbers {
+        body.extend(n.to_be_bytes());
+    }
+    crate::video_metadata::atom(kind, &body)
 }
 
 /// Matroska timestamps are quantized to TimestampScale and some muxers round
@@ -210,6 +308,12 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
             duration_ns = 0;
             time_base = TimeBase::new(1, output_rate as i64);
         }
+        // hvcC byte 21 / avcC byte 4 carry lengthSizeMinusOne.
+        let nal_length = match codec {
+            "h265" => params.extradata.get(21).map_or(0, |b| (b & 3) as usize + 1),
+            "h264" => params.extradata.get(4).map_or(0, |b| (b & 3) as usize + 1),
+            _ => 0,
+        };
         let stream = StreamInfo {
             index: tracks.len() as u32,
             time_base,
@@ -242,6 +346,9 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
                 },
                 default_track: t.flag_default(),
                 held: None,
+                nal_kinds: Vec::new(),
+                // hvcC byte 21 / avcC byte 4: lengthSizeMinusOne.
+                nal_length,
                 visual_boxes: t
                     .video()
                     .map(crate::video_metadata::boxes)
@@ -362,6 +469,9 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
             );
             if t.video {
                 t.pts.push(ns);
+                let hevc = t.stream.params.codec_id.as_str() == "h265";
+                let key = if frame.is_keyframe == Some(true) { CONTAINER_KEY } else { 0 };
+                t.nal_kinds.push(key | first_vcl_type(&packet.data, t.nal_length, hevc));
                 let dts = (start + t.count as i128 * t.duration_ns as i128).div_euclid(1_000_000);
                 let next =
                     (start + (t.count + 1) as i128 * t.duration_ns as i128).div_euclid(1_000_000);
@@ -408,9 +518,12 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
             t.count += 1;
         }
         let mut slots = BTreeMap::new();
+        let mut access = BTreeMap::new();
         for t in tracks.values_mut() {
             ensure!(t.count > 0, "Empty media track");
             if t.video {
+                let hevc = t.stream.params.codec_id.as_str() == "h265";
+                access.insert(t.stream.index + 1, random_access(&t.nal_kinds, &t.pts, hevc));
                 t.pts.sort_unstable();
                 let spanned = video_cadence_slots(&t.pts, t.origin_ns.unwrap(), t.duration_ns, scale)?;
                 // Extend only the final decode duration so the media timeline
@@ -445,10 +558,15 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
                 (t.stream.index + 1, end_ms.max(0) as u64)
             })
             .collect();
-        let visual: BTreeMap<u32, Vec<u8>> = tracks
+        let partial_sync_samples: usize = access.values().map(|a| a.partial.len()).sum();
+        let demoted_keyframes: usize = access.values().map(|a| a.demoted).sum();
+        let visual: BTreeMap<u32, VisualRewrite> = tracks
             .values()
             .filter(|t| t.video)
-            .map(|t| (t.stream.index + 1, t.visual_boxes.clone()))
+            .map(|t| {
+                let id = t.stream.index + 1;
+                (id, VisualRewrite { boxes: t.visual_boxes.clone(), access: access.remove(&id).unwrap_or_default() })
+            })
             .collect();
         let labels = tracks
             .values()
@@ -457,7 +575,8 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
         repair_presentation_durations(output, &durations, &visual, &labels, max_bytes)?;
         Ok(
             serde_json::json!({"tracks":streams.len(),"bytes":output.metadata()?.len(),"development_only":true,
-                "audio_tracks":tracks.values().filter(|t|!t.video).count(),"omitted_audio":omitted_audio}),
+                "audio_tracks":tracks.values().filter(|t|!t.video).count(),"omitted_audio":omitted_audio,
+                "partial_sync_samples":partial_sync_samples,"demoted_keyframes":demoted_keyframes}),
         )
     })();
     if result.is_err() {
@@ -472,7 +591,7 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
 fn repair_presentation_durations(
     path: &Path,
     durations: &BTreeMap<u32, u64>,
-    visual: &BTreeMap<u32, Vec<u8>>,
+    visual: &BTreeMap<u32, VisualRewrite>,
     labels: &BTreeMap<u32, TrackLabels>,
     max_bytes: u64,
 ) -> Result<()> {
@@ -621,7 +740,7 @@ fn write_duration(payload: &mut [u8], position: usize, version: u8, value: u64) 
 
 fn rewrite_visual_tracks(
     moov: &[u8],
-    visual: &BTreeMap<u32, Vec<u8>>,
+    visual: &BTreeMap<u32, VisualRewrite>,
     labels: &BTreeMap<u32, TrackLabels>,
 ) -> Result<Vec<u8>> {
     let mut out = Vec::new();
@@ -652,13 +771,19 @@ fn rewrite_visual_tracks(
     }
     Ok(out)
 }
-fn rewrite_visual_container(data: &[u8], extra: &[u8], depth: usize) -> Result<Vec<u8>> {
+fn rewrite_visual_container(data: &[u8], visual: &VisualRewrite, depth: usize) -> Result<Vec<u8>> {
     ensure!(depth < 6, "Unexpected MP4 nesting");
+    let extra = &visual.boxes;
     let mut out = Vec::new();
+    let in_stbl = depth == 3;
+    let mut tables = false;
     for (kind, start, end) in children(data)? {
         let body = &data[start..end];
+        if in_stbl && [*b"stss", *b"stps"].contains(&kind) {
+            continue;
+        }
         let rewritten = if [&b"mdia"[..], &b"minf"[..], &b"stbl"[..]].contains(&kind.as_slice()) {
-            rewrite_visual_container(body, extra, depth + 1)?
+            rewrite_visual_container(body, visual, depth + 1)?
         } else if &kind == b"stsd" {
             ensure!(
                 body.len() >= 8 && u32::from_be_bytes(body[4..8].try_into()?) == 1,
@@ -687,7 +812,17 @@ fn rewrite_visual_container(data: &[u8], extra: &[u8], depth: usize) -> Result<V
             body.to_vec()
         };
         out.extend(crate::video_metadata::atom(&kind, &rewritten)?);
+        // Random-access tables follow the decode-time tables in stbl.
+        if in_stbl && &kind == b"stsz" {
+            ensure!(!visual.access.full.is_empty(), "Missing video random-access point");
+            out.extend(sample_table(b"stss", &visual.access.full)?);
+            if !visual.access.partial.is_empty() {
+                out.extend(sample_table(b"stps", &visual.access.partial)?);
+            }
+            tables = true;
+        }
     }
+    ensure!(!in_stbl || tables, "Missing video sample sizes");
     Ok(out)
 }
 
@@ -863,6 +998,8 @@ mod timing_tests {
         video_pts_ms: Vec<i64>,
         aac_ms: Option<Vec<i64>>,
         dts: bool,
+        // HEVC NAL unit type per video packet (decode order); None writes AVC.
+        hevc_nals: Option<Vec<u8>>,
     }
     fn matroska(fixture: &Fixture) -> Vec<u8> {
         let header = [
@@ -871,9 +1008,16 @@ mod timing_tests {
         ]
         .concat();
         let info = element(0x1549A966, &[uint(0x2AD7B1, 1_000_000), element(0x4D80, b"t"), element(0x5741, b"t")].concat());
+        // hvcC: 22 fixed bytes with lengthSizeMinusOne = 3, then no arrays.
+        let mut hvcc = vec![1u8; 21];
+        hvcc.extend([0x03, 0]);
+        let (codec, private): (&[u8], Vec<u8>) = match fixture.hevc_nals {
+            Some(_) => (b"V_MPEGH/ISO/HEVC", hvcc),
+            None => (b"V_MPEG4/ISO/AVC", vec![1, 0x64, 0, 0x1f, 0xff, 0xe0, 0]),
+        };
         let video = element(0xAE, &[
-            uint(0xD7, 1), uint(0x73C5, 1), uint(0x83, 1), element(0x86, b"V_MPEG4/ISO/AVC"),
-            element(0x63A2, &[1, 0x64, 0, 0x1f, 0xff, 0xe0, 0]), uint(0x23E383, 41_708_333),
+            uint(0xD7, 1), uint(0x73C5, 1), uint(0x83, 1), element(0x86, codec),
+            element(0x63A2, &private), uint(0x23E383, 41_708_333),
             element(0xE0, &[uint(0xB0, 64), uint(0xBA, 48)].concat()),
         ].concat());
         let audio = |number: u64, codec: &[u8], private: Option<&[u8]>| element(0xAE, &[
@@ -884,14 +1028,21 @@ mod timing_tests {
         let mut tracks = video;
         if fixture.aac_ms.is_some() { tracks.extend(audio(2, b"A_AAC", Some(&[0x11, 0x90]))); }
         if fixture.dts { tracks.extend(audio(3, b"A_DTS", None)); }
-        let block = |track: u8, ms: i64, key: bool, tag: u8| element(0xA3, &[
-            &[0x80 | track][..], &(ms as i16).to_be_bytes(), &[if key { 0x80 } else { 0 }], &[0x21, tag, tag, 0x5a],
+        let block = |track: u8, ms: i64, key: bool, payload: &[u8]| element(0xA3, &[
+            &[0x80 | track][..], &(ms as i16).to_be_bytes(), &[if key { 0x80 } else { 0 }], payload,
         ].concat());
         let mut cluster = uint(0xE7, 0);
+        // Video is muxed in decode order (one cadence step per packet).
         let mut events: Vec<(i64, Vec<u8>)> = fixture.video_pts_ms.iter().enumerate()
-            .map(|(i, ms)| (*ms, block(1, *ms, i == 0, i as u8))).collect();
-        for (i, ms) in fixture.aac_ms.iter().flatten().enumerate() { events.push((*ms, block(2, *ms, true, i as u8))); }
-        if fixture.dts { events.push((0, block(3, 0, true, 0))); }
+            .map(|(i, ms)| {
+                let decode = ((i as f64) * 41.708333).round() as i64;
+                match &fixture.hevc_nals {
+                    Some(nals) => (decode, block(1, *ms, (16..=23).contains(&nals[i]), &[0, 0, 0, 2, nals[i] << 1, 1, i as u8])),
+                    None => (decode, block(1, *ms, i == 0, &[0x21, i as u8, i as u8, 0x5a])),
+                }
+            }).collect();
+        for (i, ms) in fixture.aac_ms.iter().flatten().enumerate() { events.push((*ms, block(2, *ms, true, &[0x21, i as u8, i as u8, 0x5a]))); }
+        if fixture.dts { events.push((0, block(3, 0, true, &[0x21, 0, 0, 0x5a]))); }
         events.sort_by_key(|(ms, _)| *ms);
         for (_, b) in events { cluster.extend(b); }
         let segment = [info, element(0x1654AE6B, &tracks), element(0x1F43B675, &cluster)].concat();
@@ -932,8 +1083,84 @@ mod timing_tests {
             (tk, md, scale)
         }).collect()
     }
+    // stss and stps sample numbers of the first (video) track; None when absent.
+    fn sync_tables(mp4: &[u8]) -> (Option<Vec<u32>>, Option<Vec<u32>>) {
+        fn find<'a>(data: &'a [u8], kind: &[u8; 4]) -> Option<&'a [u8]> {
+            children(data).unwrap().into_iter().find(|(k, _, _)| k == kind).map(|(_, s, e)| &data[s..e])
+        }
+        let mut at = 0;
+        let moov = loop {
+            let size32 = u32::from_be_bytes(mp4[at..at + 4].try_into().unwrap()) as usize;
+            let (size, header) = if size32 == 1 { (u64::from_be_bytes(mp4[at + 8..at + 16].try_into().unwrap()) as usize, 16) } else { (size32, 8) };
+            if &mp4[at + 4..at + 8] == b"moov" { break &mp4[at + header..at + size]; }
+            at += size;
+        };
+        let stbl = find(find(find(find(moov, b"trak").unwrap(), b"mdia").unwrap(), b"minf").unwrap(), b"stbl").unwrap();
+        let table = |kind: &[u8; 4]| find(stbl, kind).map(|b| {
+            let n = u32::from_be_bytes(b[4..8].try_into().unwrap()) as usize;
+            (0..n).map(|i| u32::from_be_bytes(b[8 + 4 * i..12 + 4 * i].try_into().unwrap())).collect()
+        });
+        (table(b"stss"), table(b"stps"))
+    }
     fn video_ms(slots: impl Iterator<Item = u64>) -> Vec<i64> {
         slots.map(|i| ((i as f64) * 41.708333).round() as i64).collect()
+    }
+
+    #[test]
+    fn first_vcl_nal_type_skips_parameter_sets_and_sei() {
+        // HEVC: VPS(32), SEI(39), then CRA(21).
+        let hevc = [0, 0, 0, 2, 32 << 1, 1, 0, 0, 0, 3, 39 << 1, 1, 5, 0, 0, 0, 2, 21 << 1, 1];
+        assert_eq!(first_vcl_type(&hevc, 4, true), 21);
+        // AVC with 2-byte lengths: SPS(7), PPS(8), then non-IDR slice(1).
+        let avc = [0, 1, 0x67, 0, 1, 0x68, 0, 2, 0x41, 0x9a];
+        assert_eq!(first_vcl_type(&avc, 2, false), 1);
+        assert_eq!(first_vcl_type(&[0, 0, 0, 9, 0x26], 4, true), UNKNOWN_NAL);
+        assert_eq!(first_vcl_type(&[0, 0, 0, 0], 4, true), UNKNOWN_NAL);
+        assert_eq!(first_vcl_type(&hevc, 0, true), UNKNOWN_NAL);
+    }
+
+    #[test]
+    fn open_gop_points_are_partial_sync_only_with_rasl_pictures() {
+        let k = CONTAINER_KEY;
+        // IDR_W_RADL, trailing, CRA + RASL, trailing, CRA + RADL only, BLA + RASL.
+        let kinds = [19 | k, 1, 0, 21 | k, 9, 8, 1, 21 | k, 7, 1, 16 | k, 8, 1];
+        let access = random_access(&kinds, &[0; 13], true);
+        assert_eq!(access, RandomAccess { full: vec![1, 8], partial: vec![4, 11], demoted: 0 });
+        // A stream that starts on an open CRA still needs one starting point.
+        let access = random_access(&[21 | k, 9, 1, 21 | k, 8, 1], &[0; 6], true);
+        assert_eq!((access.full, access.partial), (vec![1], vec![4]));
+        // Unparseable HEVC falls back to the container keyframes.
+        let access = random_access(&[UNKNOWN_NAL | k, UNKNOWN_NAL, UNKNOWN_NAL | k], &[0; 3], true);
+        assert_eq!((access.full, access.partial), (vec![1, 3], vec![]));
+    }
+
+    #[test]
+    fn open_avc_keyframes_become_ordinary_samples() {
+        let k = CONTAINER_KEY;
+        // IDR, then a non-IDR keyframe with a leading B frame (pts 3 < 4),
+        // then a non-IDR keyframe whose followers are all presented later.
+        let kinds = [5 | k, 1, 1, 1 | k, 1, 1, 1 | k, 1];
+        let pts = [0, 2, 1, 4, 3, 5, 7, 8];
+        let access = random_access(&kinds, &pts, false);
+        assert_eq!(access, RandomAccess { full: vec![1, 7], partial: vec![], demoted: 1 });
+    }
+
+    #[test]
+    fn remuxed_hevc_signals_cra_with_rasl_as_partial_sync() {
+        // 24 packets in decode order: IDR, 11 trailing, CRA, 3 RASL, 8 trailing.
+        let mut nals = vec![19u8];
+        nals.extend([1; 11]);
+        nals.extend([21, 8, 8, 8]);
+        nals.extend([1; 8]);
+        let mut pts: Vec<i64> = video_ms(0..24);
+        // The CRA is presented after its three leading pictures.
+        pts[12..16].rotate_right(1);
+        let (result, mp4) = remux(&Fixture { video_pts_ms: pts, aac_ms: None, dts: false, hevc_nals: Some(nals) });
+        assert_eq!(result.unwrap()["partial_sync_samples"], 1);
+        assert_eq!(sync_tables(&mp4.unwrap()), (Some(vec![1]), Some(vec![13])));
+        // AVC output still carries its sync table and no partial sync table.
+        let (_, mp4) = remux(&Fixture { video_pts_ms: video_ms(0..24), aac_ms: None, dts: false, hevc_nals: None });
+        assert_eq!(sync_tables(&mp4.unwrap()), (Some(vec![1]), None));
     }
     fn aac_ms(count: u64) -> Vec<i64> {
         (0..count).map(|i| ((i as f64) * 1024.0 / 48.0).round() as i64).collect()
@@ -964,7 +1191,7 @@ mod timing_tests {
         // Citizen Kane / Gone Girl: some packets are stamped 2 ms early, never drifting.
         let mut jitter = aac_ms(240);
         for (i, ms) in jitter.iter_mut().enumerate() { if i % 7 == 3 { *ms -= 2; } }
-        let (result, mp4) = remux(&Fixture { video_pts_ms: video_ms(0..120), aac_ms: Some(jitter), dts: false });
+        let (result, mp4) = remux(&Fixture { video_pts_ms: video_ms(0..120), aac_ms: Some(jitter), dts: false, hevc_nals: None });
         assert_eq!(result.unwrap()["audio_tracks"], 1);
         let durations = track_durations(&mp4.unwrap());
         assert_eq!(durations[0].0, 120 * 41_708_333 / 1_000_000);
@@ -972,34 +1199,34 @@ mod timing_tests {
 
         let mut missing = aac_ms(241);
         missing.remove(100);
-        let (result, mp4) = remux(&Fixture { video_pts_ms: video_ms(0..120), aac_ms: Some(missing), dts: false });
+        let (result, mp4) = remux(&Fixture { video_pts_ms: video_ms(0..120), aac_ms: Some(missing), dts: false, hevc_nals: None });
         assert_eq!(result.unwrap_err().to_string(), "Audio offset/gap needs additional timing support");
         assert!(mp4.is_none(), "failed remux must remove its output");
 
         let drift: Vec<i64> = aac_ms(240).iter().enumerate().map(|(i, ms)| ms + i as i64 / 20).collect();
-        assert!(remux(&Fixture { video_pts_ms: video_ms(0..120), aac_ms: Some(drift), dts: false }).0.is_err());
+        assert!(remux(&Fixture { video_pts_ms: video_ms(0..120), aac_ms: Some(drift), dts: false, hevc_nals: None }).0.is_err());
     }
 
     #[test]
     fn empty_video_slots_extend_the_final_decode_duration() {
         let slots = (0..120).filter(|i| ![2, 3].contains(i));
-        let (result, mp4) = remux(&Fixture { video_pts_ms: video_ms(slots), aac_ms: Some(aac_ms(240)), dts: false });
+        let (result, mp4) = remux(&Fixture { video_pts_ms: video_ms(slots), aac_ms: Some(aac_ms(240)), dts: false, hevc_nals: None });
         result.unwrap();
         let (presented, media, scale) = track_durations(&mp4.unwrap())[0];
         // 118 frames span 120 cadence slots; media and presentation durations agree.
         assert_eq!(presented, 120 * 41_708_333 / 1_000_000);
         assert_eq!(media * 1000 / scale as u64, presented);
         let duplicate = [video_ms(0..60), video_ms(59..60)].concat();
-        assert!(remux(&Fixture { video_pts_ms: duplicate, aac_ms: Some(aac_ms(120)), dts: false }).0.is_err());
+        assert!(remux(&Fixture { video_pts_ms: duplicate, aac_ms: Some(aac_ms(120)), dts: false, hevc_nals: None }).0.is_err());
     }
 
     #[test]
     fn unsupported_audio_is_omitted_and_reported() {
-        let (result, _) = remux(&Fixture { video_pts_ms: video_ms(0..48), aac_ms: Some(aac_ms(96)), dts: true });
+        let (result, _) = remux(&Fixture { video_pts_ms: video_ms(0..48), aac_ms: Some(aac_ms(96)), dts: true, hevc_nals: None });
         let result = result.unwrap();
         assert_eq!((result["audio_tracks"].as_u64(), result["omitted_audio"].clone()), (Some(1), serde_json::json!(["A_DTS"])));
         // Creed (2015): DTS is the only audio track; output is video-only for analysis.
-        let (result, mp4) = remux(&Fixture { video_pts_ms: video_ms(0..48), aac_ms: None, dts: true });
+        let (result, mp4) = remux(&Fixture { video_pts_ms: video_ms(0..48), aac_ms: None, dts: true, hevc_nals: None });
         let result = result.unwrap();
         assert_eq!((result["audio_tracks"].as_u64(), result["omitted_audio"].clone()), (Some(0), serde_json::json!(["A_DTS"])));
         assert_eq!(track_durations(&mp4.unwrap()).len(), 1);
