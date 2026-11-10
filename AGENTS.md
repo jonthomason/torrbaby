@@ -1,0 +1,9 @@
+# Torrbaby product and release rules
+
+- Every new or changed user-facing string must ship in English and Simplified Chinese. This includes buttons, menus, alerts, validation, toasts, accessibility labels and empty/error/loading states on every platform. Add the English key and reviewed Chinese translation to localization/zh-Hans.tsv, regenerate platform resources with scripts/generate_localizations.py, and use the platform localization mechanism. Do not translate protocol values, filenames, user-entered names or media metadata as interface strings.
+- Run scripts/check_localizations.py before builds. A release is not complete until new UI has been checked in both EN and 中文. Do not claim visual verification from a successful build.
+- The language switch belongs at the top right within existing navigation space; never add a full-width language header that pushes the content down.
+- Keep iPad landscape and macOS library/detail layouts consistent. Play/Resume and Download belong on the same row. Wrap secondary actions compactly with consistent spacing. Movies have one main Play/Resume action at the top; episode-style playback rows are for TV episodes and special features only.
+- macOS installs only to ~/Applications/Torrbaby.app. The nested historical path is a compatibility symlink. Keep one Mac client process and one main library window; playback windows may be separate. Verify attempted duplicate launches rather than relying only on an Info.plist flag.
+
+- Subtitle preferences belong only to the device, independent of profiles. Preserve device identity and subtitle choices across updates and restarts; never inherit a server-wide or profile subtitle default. Diamond may store the device-specific record.

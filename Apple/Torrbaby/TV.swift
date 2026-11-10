@@ -117,6 +117,7 @@ struct TVRootView: View {
                 .navigationDestination(for: LibraryDestination.self) { route in TVMediaDetail(titleID: route.id) }
             }
         }
+        .overlay(alignment: .topTrailing) { InterfaceLanguagePicker().padding(24) }
         .overlay(alignment: .bottom) { ContinueWatchingUndoBanner() }
         .task(id: phase) {
             while !Task.isCancelled && phase == .active {

@@ -67,21 +67,7 @@ struct LocalizedInterface<Content: View>: View {
     @EnvironmentObject private var store: Store
     @ViewBuilder let content: Content
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                InterfaceLanguagePicker()
-                Spacer()
-                #if os(tvOS)
-                if let profile = store.activeProfile {
-                    Button { store.choosingProfile = true } label: {
-                        HStack(spacing: 12) { ProfileAvatar(profile: profile, size: 42); Text(verbatim: profile.name) }
-                    }.accessibilityLabel("Switch user")
-                }
-                #endif
-            }
-                .padding(.horizontal, 16).padding(.vertical, 4).background(Theme.canvas)
-            content
-        }.environment(\.locale, Locale(identifier: language.code))
+        content.environment(\.locale, Locale(identifier: language.code))
             .onReceive(NotificationCenter.default.publisher(for: NSLocale.currentLocaleDidChangeNotification)) { _ in
                 if language.selection == "system" { language.objectWillChange.send() }
             }

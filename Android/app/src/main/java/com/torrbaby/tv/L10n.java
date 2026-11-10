@@ -58,6 +58,7 @@ final class L10n {
     IDS.put("Change server connection", R.string.ui_d4223134a9c8);
     IDS.put("Change server seeding target?", R.string.ui_bf83da1053c7);
     IDS.put("Character", R.string.ui_ee9946c82d4a);
+    IDS.put("Check access to your Application Support folder and try again.", R.string.ui_eba399ce4b7b);
     IDS.put("Check again", R.string.ui_e185048ce3c0);
     IDS.put("Check now", R.string.ui_2ce5dd0d6f18);
     IDS.put("Check the server address and network connection.", R.string.ui_ffe5184940bc);
@@ -104,6 +105,7 @@ final class L10n {
     IDS.put("Couldn’t load source details. You can still add this torrent.", R.string.ui_6ea8bdf5fd9f);
     IDS.put("Couldn’t load this release. Please reopen it to retry.", R.string.ui_5cbc510fd460);
     IDS.put("Couldn’t manage files", R.string.ui_b8b71a01afec);
+    IDS.put("Couldn’t open Torrbaby", R.string.ui_043e16ed23b9);
     IDS.put("Couldn’t retrieve this torrent. Try again.", R.string.ui_bf0f3a2d2c62);
     IDS.put("Create", R.string.ui_6e157c5da441);
     IDS.put("Create user", R.string.ui_bdbcfa0af077);

@@ -607,6 +607,11 @@ struct ProfileGate<Content: View>: View {
                 content.id(store.profileIdentity)
             }
         }
+        .overlay(alignment: .topTrailing) {
+            if store.configured && (!store.profileReady || store.choosingProfile) {
+                InterfaceLanguagePicker().padding(16)
+            }
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active && store.profileReady { Task { await store.loadProfiles() } }
         }

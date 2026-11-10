@@ -478,7 +478,7 @@ struct LibraryDetail: View {
     @ViewBuilder private func playbackActions(_ asset: LibraryAsset, title: LibraryTitle) -> some View {
         Button { play(asset, title: title.title) } label: {
             Label(LocalizedStringKey(store.canPlay(asset) ? asset.playbackActionTitle(television: title.kind == "tv") : "Not downloaded"), systemImage: store.canPlay(asset) ? "play.fill" : "wifi.slash")
-                .font(.headline).frame(width: title.kind == "tv" ? 270 : nil, alignment: .leading).frame(minHeight: 44)
+                .font(.headline).frame(minWidth: title.kind == "tv" ? 160 : nil, alignment: .leading).frame(minHeight: 44)
         }.libraryActionStyle(prominent: true).disabled(loading || !store.canPlay(asset))
         #if !os(tvOS)
         if title.kind == "tv" {
@@ -502,7 +502,7 @@ struct LibraryDetail: View {
                                 LibraryAssetActions(asset: asset, showsDownload: false, castTitle: title)
                             }.fixedSize(horizontal: true, vertical: false)
                             VStack(alignment: .leading, spacing: 12) {
-                                VStack(alignment: .leading, spacing: 12) { playbackActions(asset, title: title) }
+                                HStack(spacing: 12) { playbackActions(asset, title: title) }
                                 LibraryAssetActions(asset: asset, showsDownload: false, castTitle: title)
                             }
                         }
@@ -530,8 +530,10 @@ struct LibraryDetail: View {
                             }.padding(.vertical, 4)
                         }.scrollIndicators(.hidden)
                     }
+                    if title.kind == "tv" {
                     ForEach(title.assets.filter { $0.role != "extra" && (title.kind != "tv" || $0.season == selectedSeason || $0.season == nil) }.sorted { ($0.season ?? 0, $0.episode ?? 0) < ($1.season ?? 0, $1.episode ?? 0) }) { asset in
                         episodeRow(asset, title: title)
+                    }
                     }
 
                     let extras = title.assets.filter { $0.role == "extra" }.sorted { ($0.name ?? "").localizedStandardCompare($1.name ?? "") == .orderedAscending }
@@ -546,6 +548,7 @@ struct LibraryDetail: View {
         }.background(Theme.canvas).navigationTitle(title?.title ?? "Library")
         .onDisappear { playbackTask?.cancel() }
         #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
         .background(MobilePlayerPresentation(playback: $playback, store: store).frame(width: 0, height: 0))
         #elseif os(tvOS)
         .fullScreenCover(item: $playback) { PlayerScreen(playback: $0, store: store).onExitCommand { playback = nil } }
@@ -655,10 +658,8 @@ struct LibraryAssetActions: View {
     var castTitle: LibraryTitle?
     @State private var saving = false
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) { actions }.fixedSize(horizontal: true, vertical: false)
-            VStack(alignment: .leading, spacing: 12) { actions }
-        }.font(.headline).libraryActionStyle()
+        LibraryActionFlow(spacing: 10) { actions }
+            .font(.subheadline).libraryActionStyle()
     }
     @ViewBuilder private var actions: some View {
         Group {
@@ -971,6 +972,33 @@ struct ContinueWatchingUndoBanner: View {
                     do { try await Task.sleep(for: .seconds(10)) } catch { return }
                     if store.continueWatchingUndo?.id == undo.id { store.continueWatchingUndo = nil }
                 }
+        }
+    }
+}
+
+/// Wrap action buttons at their natural widths with consistent spacing.
+struct LibraryActionFlow: Layout {
+    var spacing: CGFloat = 10
+    private func layout(_ subviews: Subviews, width: CGFloat) -> (CGSize, [CGPoint]) {
+        var x: CGFloat = 0, y: CGFloat = 0, height: CGFloat = 0
+        var points: [CGPoint] = []
+        var used: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > 0 && x + size.width > width { x = 0; y += height + spacing; height = 0 }
+            points.append(CGPoint(x: x, y: y))
+            used = max(used, x + size.width)
+            x += size.width + spacing; height = max(height, size.height)
+        }
+        return (CGSize(width: used, height: y + height), points)
+    }
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        layout(subviews, width: proposal.width ?? .infinity).0
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let points = layout(subviews, width: bounds.width).1
+        for (view, point) in zip(subviews, points) {
+            view.place(at: CGPoint(x: bounds.minX + point.x, y: bounds.minY + point.y), proposal: .unspecified)
         }
     }
 }

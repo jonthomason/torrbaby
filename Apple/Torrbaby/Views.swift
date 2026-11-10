@@ -147,18 +147,15 @@ struct RootView: View {
         past.append(location)
         location = next
     }
+    @ToolbarContentBuilder private var languageControls: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) { InterfaceLanguagePicker() }
+    }
     @ToolbarContentBuilder private var historyControls: some ToolbarContent {
         ToolbarItemGroup(placement: .navigation) {
             Button(action: back) { Image(systemName: "chevron.left") }
                 .help("Back").disabled(past.isEmpty)
             Button(action: forward) { Image(systemName: "chevron.right") }
                 .help("Forward").disabled(future.isEmpty)
-            #if os(macOS)
-            Button {
-                MacLibraryTabs.create { openWindow(id: "main") }
-            } label: { Image(systemName: "plus") }
-                .help("New Tab (⌘T)").accessibilityLabel("New Tab")
-            #endif
         }
     }
     @State private var showConnect = false
@@ -216,8 +213,12 @@ struct RootView: View {
                 }
                 .background(Theme.canvas)
                 .navigationTitle(L10n.text(selection?.rawValue ?? "Torrbaby"))
+                #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+                #endif
                 .toolbar {
                     historyControls
+                    languageControls
                     ToolbarItemGroup(placement: .primaryAction) {
                         if store.busy { ProgressView().controlSize(.small) }
                         if [.active, .seeding, .complete, .attention].contains(selection) {
@@ -228,11 +229,11 @@ struct RootView: View {
                         }
                     }
                 }
-                .navigationDestination(for: String.self) { hash in TorrentDetail(hash: hash).navigationBarBackButtonHidden().toolbar { historyControls } }
+                .navigationDestination(for: String.self) { hash in TorrentDetail(hash: hash).navigationBarBackButtonHidden().toolbar { historyControls; languageControls } }
                 .navigationDestination(for: LibraryShelfDestination.self) { route in
-                    LibraryBrowser(shelfIDs: route.ids).navigationTitle(route.name).navigationBarBackButtonHidden().toolbar { historyControls }
+                    LibraryBrowser(shelfIDs: route.ids).navigationTitle(route.name).navigationBarBackButtonHidden().toolbar { historyControls; languageControls }
                 }
-                .navigationDestination(for: LibraryDestination.self) { route in LibraryDetail(titleID: route.id).navigationBarBackButtonHidden().toolbar { historyControls } }
+                .navigationDestination(for: LibraryDestination.self) { route in LibraryDetail(titleID: route.id).navigationBarBackButtonHidden().toolbar { historyControls; languageControls } }
                 .safeAreaInset(edge: .top) {
                     if store.offline {
                         HStack {

@@ -9560,6 +9560,40 @@
           }
         }
       }
+    },
+    "Couldn’t open Torrbaby": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn’t open Torrbaby"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法打开 Torrbaby"
+          }
+        }
+      }
+    },
+    "Check access to your Application Support folder and try again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check access to your Application Support folder and try again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请检查应用程序支持文件夹的访问权限，然后重试。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

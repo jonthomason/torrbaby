@@ -293,8 +293,9 @@ enum AppRelease {
 }
 
 struct SubtitlePreferences: Codable, Equatable {
-    var enabled = false
-    var language = "original"
+    // Initial choice for a new device; never inherited from a household/profile.
+    var enabled = true
+    var language = "en"
     var font = "default"
     var sizePercent = 100
     var textOpacity = 100

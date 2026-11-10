@@ -1,5 +1,6 @@
 import SwiftUI
 import AVKit
+import OSLog
 
 @MainActor
 private enum PlaybackSpeeds {
@@ -114,7 +115,7 @@ final class PlaybackModel: ObservableObject {
                 Task { @MainActor [weak self] in
                     guard let self, self.player.currentItem === item else { return }
                     if self.subtitleController == nil {
-                        self.subtitleController = SubtitlePlaybackController(item: item, titleID: self.playback.libraryTitleID, store: self.store)
+                        self.subtitleController = SubtitlePlaybackController(item: item, store: self.store)
                     }
                     self.start()
                 }
@@ -472,7 +473,8 @@ final class SubtitlePlaybackController {
     private var lastOption: AVMediaSelectionOption?
     private var preferences = SubtitlePreferences()
     private var stopped = false
-    init(item: AVPlayerItem, titleID: String?, store: Store) {
+    private let logger = Logger(subsystem: "org.torrbaby", category: "Subtitles")
+    init(item: AVPlayerItem, store: Store) {
         task = Task { [weak self, weak item] in
             guard let self, let item else { return }
             let path = store.deviceSubtitlePath
@@ -485,7 +487,7 @@ final class SubtitlePlaybackController {
                         if (try? await store.send("PUT", path, body: cached.body)) != nil {
                             SubtitlePreferenceCache.save(cached, store: store, pending: false)
                         }
-                    } else if let response: SubtitlePreferenceResponse = try? await store.request("GET", path, timeout: 5) {
+                    } else if cached == nil, let response: SubtitlePreferenceResponse = try? await store.request("GET", path, timeout: 5) {
                         p = response.effective
                         SubtitlePreferenceCache.save(p, store: store, pending: false)
                     }
@@ -502,15 +504,35 @@ final class SubtitlePlaybackController {
                 ]
                 if let rule = AVTextStyleRule(textMarkupAttributes: attributes) { item.textStyleRules = [rule] }
                 guard let group = try await item.asset.loadMediaSelectionGroup(for: .legible), !self.stopped else { return }
+                // A forced-only track can contain no dialogue at all. Prefer full
+                // subtitles when the user explicitly enables subtitles in Settings.
+                let fullOptions = group.options.filter { !$0.hasMediaCharacteristic(.containsOnlyForcedSubtitles) }
+                let options = fullOptions.isEmpty ? group.options : fullOptions
+                let fallback = options.first { $0 == group.defaultOption } ?? options.first
                 let option: AVMediaSelectionOption?
                 if !p.enabled { option = nil }
-                else if p.language == "original" { option = group.defaultOption ?? group.options.first }
+                else if p.language == "original" { option = fallback }
                 else {
-                    option = AVMediaSelectionGroup.mediaSelectionOptions(from: group.options, with: Locale(identifier: p.language)).first
-                        ?? group.defaultOption ?? group.options.first
+                    option = AVMediaSelectionGroup.mediaSelectionOptions(from: options, with: Locale(identifier: p.language)).first
+                        ?? fallback
                 }
+                self.logger.info("Applying subtitle default enabled=\(p.enabled) language=\(p.language, privacy: .public) options=\(options.count) selected=\(option?.extendedLanguageTag ?? "off", privacy: .public)")
                 item.select(option, in: group)
-                self.lastOption = option
+                // Selection is asynchronous. Do not interpret its intermediate nil
+                // state as the user switching subtitles off and persist that state.
+                // Confirm the requested selection before observing user changes.
+                for _ in 0..<40 {
+                    guard !Task.isCancelled, !self.stopped else { return }
+                    if item.currentMediaSelection.selectedMediaOption(in: group) == option { break }
+                    try await Task.sleep(for: .milliseconds(50))
+                }
+                if item.currentMediaSelection.selectedMediaOption(in: group) == option {
+                    self.logger.info("Subtitle default confirmed")
+                } else {
+                    self.logger.error("Subtitle default did not settle; preserving saved preference")
+                }
+                // Even on a failed selection, keep observing later explicit choices.
+                self.lastOption = item.currentMediaSelection.selectedMediaOption(in: group)
                 self.observer = NotificationCenter.default.addObserver(forName: AVPlayerItem.mediaSelectionDidChangeNotification, object: item, queue: .main) { [weak self, weak item] _ in
                     Task { @MainActor [weak self, weak item] in
                         guard let self, let item, !self.stopped else { return }
@@ -534,7 +556,7 @@ final class SubtitlePlaybackController {
                     }
                 }
             } catch {
-                // Preserve AVKit defaults when disconnected or using an older server.
+                self.logger.error("Could not apply subtitle preference: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -587,9 +609,15 @@ struct SubtitlePreferencesView: View {
                 ToolbarItem(placement: .confirmationAction) { Button("Save") { save() }.disabled(!loaded || saving) }
             }
         }.task {
+            if let cached = SubtitlePreferenceCache.load(store) {
+                preferences = cached; loaded = true
+                return
+            }
             do {
                 let response: SubtitlePreferenceResponse = try await store.request("GET", path)
-                preferences = response.defaults; loaded = true
+                preferences = response.defaults
+                SubtitlePreferenceCache.save(preferences, store: store, pending: false)
+                loaded = true
             } catch { self.error = error.localizedDescription }
         }
         #if os(macOS)

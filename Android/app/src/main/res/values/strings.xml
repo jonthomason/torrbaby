@@ -47,6 +47,7 @@
     <string name="ui_d4223134a9c8" formatted="false">Change server connection</string>
     <string name="ui_bf83da1053c7" formatted="false">Change server seeding target?</string>
     <string name="ui_ee9946c82d4a" formatted="false">Character</string>
+    <string name="ui_eba399ce4b7b" formatted="false">Check access to your Application Support folder and try again.</string>
     <string name="ui_e185048ce3c0" formatted="false">Check again</string>
     <string name="ui_2ce5dd0d6f18" formatted="false">Check now</string>
     <string name="ui_ffe5184940bc" formatted="false">Check the server address and network connection.</string>
@@ -93,6 +94,7 @@
     <string name="ui_6ea8bdf5fd9f" formatted="false">Couldn’t load source details. You can still add this torrent.</string>
     <string name="ui_5cbc510fd460" formatted="false">Couldn’t load this release. Please reopen it to retry.</string>
     <string name="ui_b8b71a01afec" formatted="false">Couldn’t manage files</string>
+    <string name="ui_043e16ed23b9" formatted="false">Couldn’t open Torrbaby</string>
     <string name="ui_bf0f3a2d2c62" formatted="false">Couldn’t retrieve this torrent. Try again.</string>
     <string name="ui_6e157c5da441" formatted="false">Create</string>
     <string name="ui_bdbcfa0af077" formatted="false">Create user</string>

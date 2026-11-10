@@ -47,6 +47,7 @@
     <string name="ui_d4223134a9c8" formatted="false">更改服务器连接</string>
     <string name="ui_bf83da1053c7" formatted="false">更改服务器做种目标？</string>
     <string name="ui_ee9946c82d4a" formatted="false">角色</string>
+    <string name="ui_eba399ce4b7b" formatted="false">请检查应用程序支持文件夹的访问权限，然后重试。</string>
     <string name="ui_e185048ce3c0" formatted="false">再次检查</string>
     <string name="ui_2ce5dd0d6f18" formatted="false">立即检查</string>
     <string name="ui_ffe5184940bc" formatted="false">请检查服务器地址和网络连接。</string>
@@ -93,6 +94,7 @@
     <string name="ui_6ea8bdf5fd9f" formatted="false">无法加载来源详情，您仍可添加此种子。</string>
     <string name="ui_5cbc510fd460" formatted="false">无法加载此资源，请重新打开以重试。</string>
     <string name="ui_b8b71a01afec" formatted="false">无法管理文件</string>
+    <string name="ui_043e16ed23b9" formatted="false">无法打开 Torrbaby</string>
     <string name="ui_bf0f3a2d2c62" formatted="false">无法获取此种子，请重试。</string>
     <string name="ui_6e157c5da441" formatted="false">创建</string>
     <string name="ui_bdbcfa0af077" formatted="false">创建用户</string>

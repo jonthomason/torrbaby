@@ -1,10 +1,14 @@
 import SwiftUI
+#if os(macOS)
+import Darwin
+#endif
 
 @main
 struct TorrbabyApp: App {
     init() {
         #if os(macOS)
-        // Ignore the system's automatic tab preference. Explicit New Tab still works.
+        MacInstance.enforce()
+        // The library is one window; playback has its own windows.
         NSWindow.allowsAutomaticWindowTabbing = false
         #endif
     }
@@ -15,26 +19,24 @@ struct TorrbabyApp: App {
     #if os(macOS)
     @AppStorage("showMenuBarRates") private var showMenuBarRates = true
     #endif
-    var body: some Scene {
-        WindowGroup(id: "main") {
-            #if os(tvOS)
-            LocalizedInterface { ProfileGate { TVRootView() } }.environmentObject(store).tint(Theme.mint).preferredColorScheme(.dark)
-            #else
-            LocalizedInterface { ProfileGate { RootView() } }
-                .environmentObject(store)
-                .tint(Theme.mint)
-                .preferredColorScheme(.dark)
-                #if os(macOS)
-                .frame(minWidth: 900, minHeight: 640)
-                .background(MacLibraryWindow())
-                #endif
+    @ViewBuilder private var mainContent: some View {
+        #if os(tvOS)
+        LocalizedInterface { ProfileGate { TVRootView() } }.environmentObject(store).tint(Theme.mint).preferredColorScheme(.dark)
+        #else
+        LocalizedInterface { ProfileGate { RootView() } }
+            .environmentObject(store).tint(Theme.mint).preferredColorScheme(.dark)
+            #if os(macOS)
+            .frame(minWidth: 900, minHeight: 640).background(MacLibraryWindow())
             #endif
-        }
+        #endif
+    }
+    var body: some Scene {
         #if os(macOS)
-        .defaultSize(width: 1180, height: 820)
-        .commands {
-            TorrbabyCommands(store: store)
-        }
+        Window("Torrbaby", id: "main") { mainContent }
+            .defaultSize(width: 1180, height: 820)
+            .commands { TorrbabyCommands(store: store) }
+        #else
+        WindowGroup(id: "main") { mainContent }
         #endif
         #if os(macOS)
         Settings {
@@ -176,8 +178,6 @@ private struct TorrbabyCommands: Commands {
     @FocusedValue(\.searchContent) private var searchContent
     var body: some Commands {
         CommandGroup(after: .newItem) {
-            Button("New Tab") { MacLibraryTabs.create { openWindow(id: "main") } }
-                .keyboardShortcut("t", modifiers: .command)
             Button("Add Torrent…") { addTorrent?() }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
                 .disabled(addTorrent == nil || !store.connected)
@@ -204,6 +204,40 @@ private struct MacSettingsView: View {
         SettingsView(showConnect: $showConnect)
             .frame(width: 600, height: 700)
             .sheet(isPresented: $showConnect) { LocalizedInterface { ConnectionView() } }
+    }
+}
+#endif
+
+#if os(macOS)
+/// A process-wide kernel lock also covers direct executable launches and other install paths.
+@MainActor
+private enum MacInstance {
+    private static var descriptor: Int32 = -1
+    static func enforce() {
+        let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Torrbaby")
+        do { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+        catch { fail() }
+        descriptor = Darwin.open(folder.appendingPathComponent("mac-client.lock").path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { fail() }
+        let acquired = flock(descriptor, LOCK_EX | LOCK_NB) == 0
+        let other = NSWorkspace.shared.runningApplications.first {
+            $0.processIdentifier != ProcessInfo.processInfo.processIdentifier &&
+            ["org.torrbaby.mac", "org.torrbaby.app"].contains($0.bundleIdentifier ?? "") && !$0.isTerminated
+        }
+        if !acquired || other != nil {
+            if let other {
+                other.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+            }
+            // Never unlink the lock: all copies must lock the same inode.
+            exit(0)
+        }
+    }
+    private static func fail() -> Never {
+        let alert = NSAlert()
+        alert.messageText = L10n.text("Couldn’t open Torrbaby")
+        alert.informativeText = L10n.text("Check access to your Application Support folder and try again.")
+        alert.runModal()
+        exit(1)
     }
 }
 #endif

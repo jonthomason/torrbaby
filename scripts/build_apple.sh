@@ -2,6 +2,7 @@
 # Apple tooling only. Signing configuration stays in environment/local files.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+python3 "$ROOT/scripts/check_localizations.py"
 PLATFORM="${1:-ios}"
 BUILD_NUMBER="${TORRBABY_BUILD_NUMBER:-$(git -C "$ROOT" rev-list --count HEAD)}"
 OUTPUT="${TORRBABY_BUILD_ROOT:-$ROOT/local-state/apple}"

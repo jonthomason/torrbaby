@@ -560,3 +560,5 @@ Undo	撤销
 Choose a release, then add it.	请选择版本，然后添加。
 Couldn’t retrieve this torrent. Try again.	无法获取此种子，请重试。
 This release has no downloadable torrent.	此版本没有可下载的种子。
+Couldn’t open Torrbaby	无法打开 Torrbaby
+Check access to your Application Support folder and try again.	请检查应用程序支持文件夹的访问权限，然后重试。
