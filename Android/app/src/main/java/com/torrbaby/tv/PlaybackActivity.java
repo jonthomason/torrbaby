@@ -17,6 +17,8 @@ import org.json.*;
 
 @androidx.annotation.OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)
 public class PlaybackActivity extends Activity {
+  @Override protected void attachBaseContext(android.content.Context base) { super.attachBaseContext(L10n.wrap(base)); }
+
   private static final float[] SPEEDS = {.5f, .75f, 1, 1.25f, 1.5f, 1.75f, 2};
   private static final String[] SPEED_NAMES = {
     "0.5×", "0.75×", "1×", "1.25×", "1.5×", "1.75×", "2×"
@@ -25,7 +27,11 @@ public class PlaybackActivity extends Activity {
   private JSONObject subtitlePreferences;
   private volatile boolean cancelled;
   private ExoPlayer player;
+  private boolean subtitleChoiceMade;
   private PlayerView view;
+  private Button nextEpisodeButton;
+  private boolean controlsVisible, advancingEpisode;
+  private int progressTicks;
   private MediaSession mediaSession;
   private final ExecutorService io = Executors.newSingleThreadExecutor();
   private final Handler main = new Handler(Looper.getMainLooper());
@@ -36,8 +42,9 @@ public class PlaybackActivity extends Activity {
   private final Runnable ticker =
       new Runnable() {
         public void run() {
-          report(false);
-          main.postDelayed(this, 10000);
+          updateNextEpisodeButton();
+          if (++progressTicks % 10 == 0) report(false);
+          main.postDelayed(this, 1000);
         }
       };
 
@@ -54,10 +61,10 @@ public class PlaybackActivity extends Activity {
     loading.setGravity(Gravity.CENTER);
     loading.setBackgroundColor(Ui.BG);
     Ui.add(loading, Ui.title(this, getIntent().getStringExtra("title"), 24), -2, 50);
-    TextView opening = Ui.text(this, "Opening video…", 15, Ui.MUTED);
+    TextView opening = Ui.text(this, L10n.t("Opening video…"), 15, Ui.MUTED);
     Ui.add(loading, opening, -2, 40);
     Ui.gap(loading, 12);
-    Button cancel = Ui.button(this, "Cancel", this::finish);
+    Button cancel = Ui.button(this, L10n.t("Cancel"), this::finish);
     Ui.add(loading, cancel, 140, 44);
     cancel.requestFocus();
     setContentView(loading);
@@ -66,6 +73,7 @@ public class PlaybackActivity extends Activity {
           try {
             api = new SecureStore(this).load();
             if (api == null) throw new Exception("Link this TV to your server again.");
+            if (api.profile.isEmpty()) throw new Exception("Choose a user before starting playback.");
             ProgressQueue.flush(this, api);
             String id = getIntent().getStringExtra("asset");
             List<MediaItem.SubtitleConfiguration> subtitles = new ArrayList<>();
@@ -181,12 +189,18 @@ public class PlaybackActivity extends Activity {
     player.addListener(
         new Player.Listener() {
           @Override
+          public void onTracksChanged(Tracks tracks) {
+            if (!subtitleChoiceMade) Subtitles.selectInitialTrack(subtitlePreferences, player, tracks);
+          }
+
+          @Override
           public void onPlaybackStateChanged(int s) {
             if (s == Player.STATE_READY) ready = true;
             if (s == Player.STATE_ENDED && !finished) {
               finished = true;
               report(true);
-              endDialog();
+              if (hasNextEpisode()) advanceNextEpisode();
+              else endDialog();
             }
           }
 
@@ -220,17 +234,27 @@ public class PlaybackActivity extends Activity {
         .setOnClickListener(v -> playbackSettings());
     view.findViewById(androidx.media3.ui.R.id.exo_subtitle)
         .setOnClickListener(v -> tracks(C.TRACK_TYPE_TEXT));
+    nextEpisodeButton = Ui.button(this, L10n.t("Next episode"), this::advanceNextEpisode);
+    nextEpisodeButton.setId(View.generateViewId());
+    android.widget.FrameLayout.LayoutParams nextLayout = new android.widget.FrameLayout.LayoutParams(Ui.dp(this, 190), Ui.dp(this, 48), Gravity.BOTTOM | Gravity.END);
+    nextLayout.setMargins(0, 0, Ui.dp(this, 40), Ui.dp(this, 100));
+    view.addView(nextEpisodeButton, nextLayout);
+    nextEpisodeButton.setVisibility(View.GONE);
+    View playPause = view.findViewById(androidx.media3.ui.R.id.exo_play_pause);
+    nextEpisodeButton.setNextFocusDownId(playPause.getId());
+    playPause.setNextFocusUpId(nextEpisodeButton.getId());
+    view.setControllerVisibilityListener((PlayerView.ControllerVisibilityListener) visibility -> {
+      controlsVisible = visibility == View.VISIBLE;
+      updateNextEpisodeButton();
+    });
     view.showController();
     view.findViewById(androidx.media3.ui.R.id.exo_play_pause).requestFocus();
-    main.postDelayed(ticker, 10000);
+    main.postDelayed(ticker, 1000);
   }
 
-  // Native dialogs give every track choice a reliable D-pad focus target on TV firmware.
+  // Own the row layout: vendor AlertDialog list layouts differ across TV firmware.
   private void playbackSettings() {
-    new AlertDialog.Builder(this)
-        .setTitle("Playback")
-        .setItems(
-            new String[] {"Audio", "Subtitles", "Playback speed"},
+    showChoices("Playback", new String[] {"Audio", "Subtitles", "Playback speed"}, -1,
             (dialog, which) -> {
               if (which < 2) tracks(which == 0 ? C.TRACK_TYPE_AUDIO : C.TRACK_TYPE_TEXT);
               else {
@@ -239,11 +263,7 @@ public class PlaybackActivity extends Activity {
                 int checked = 2;
                 for (int i = 0; i < speeds.length; i++)
                   if (Math.abs(player.getPlaybackParameters().speed - speeds[i]) < .01) checked = i;
-                new AlertDialog.Builder(this)
-                    .setTitle("Playback speed")
-                    .setSingleChoiceItems(
-                        names,
-                        checked,
+                showChoices("Playback speed", names, checked,
                         (d, w) -> {
                           player.setPlaybackSpeed(speeds[w]);
                           getSharedPreferences("player", MODE_PRIVATE)
@@ -251,12 +271,53 @@ public class PlaybackActivity extends Activity {
                               .putFloat("speed", speeds[w])
                               .apply();
                           d.dismiss();
-                        })
-                    .setNegativeButton("Cancel", null)
-                    .show();
+                        });
               }
-            })
-        .show();
+            });
+  }
+
+  private void showChoices(String title, String[] labels, int selected,
+      DialogInterface.OnClickListener listener) {
+    Dialog dialog = new Dialog(this);
+    dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+    LinearLayout panel = Ui.column(this);
+    Ui.pad(panel, 24, 20);
+    panel.setBackground(Ui.shape(Ui.PANEL, 0, this));
+    Ui.add(panel, Ui.title(this, title, 24), -1, -2);
+    Ui.gap(panel, 16);
+    ScrollView scroll = new ScrollView(this);
+    LinearLayout rows = Ui.column(this);
+    scroll.addView(rows);
+    Button initial = null;
+    for (int i = 0; i < labels.length; i++) {
+      final int index = i;
+      Button row = Ui.button(this, (i == selected ? "✓  " : "") + labels[i], () -> {
+        dialog.dismiss();
+        listener.onClick(dialog, index);
+      });
+      row.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+      row.setContentDescription(labels[i] + (i == selected ? ", selected" : ""));
+      Ui.add(rows, row, -1, 48);
+      Ui.gap(rows, 6);
+      if (i == Math.max(0, selected)) initial = row;
+    }
+    int maxHeight = getResources().getDisplayMetrics().heightPixels * 55 / 100;
+    panel.addView(scroll, new LinearLayout.LayoutParams(-1,
+        Math.min(Ui.dp(this, labels.length * 54), maxHeight)));
+    Ui.gap(panel, 12);
+    Ui.add(panel, Ui.button(this, L10n.t("Cancel"), dialog::dismiss), -1, 48);
+    dialog.setContentView(panel);
+    Window window = dialog.getWindow();
+    if (window != null) {
+      window.setBackgroundDrawableResource(android.R.color.transparent);
+      window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+      window.setDimAmount(.65f);
+    }
+    dialog.show();
+    if (window != null) window.setLayout(
+        Math.min(Ui.dp(this, 440), getResources().getDisplayMetrics().widthPixels * 85 / 100),
+        WindowManager.LayoutParams.WRAP_CONTENT);
+    if (initial != null) initial.requestFocus();
   }
 
   private static int subtitlePriority(String language) {
@@ -322,12 +383,10 @@ public class PlaybackActivity extends Activity {
       overrides.clear(); overrides.addAll(sortedOverrides);
       selected = player.getTrackSelectionParameters().disabledTrackTypes.contains(type) ? 0 : sortedSelection;
     }
-    new AlertDialog.Builder(this)
-        .setTitle(type == C.TRACK_TYPE_TEXT ? "Subtitles" : "Audio")
-        .setSingleChoiceItems(
-            labels.toArray(new String[0]),
-            selected,
+    showChoices(type == C.TRACK_TYPE_TEXT ? "Subtitles" : "Audio",
+            labels.toArray(new String[0]), selected,
             (dialog, which) -> {
+              if (type == C.TRACK_TYPE_TEXT) subtitleChoiceMade = true;
               TrackSelectionParameters.Builder builder =
                   player
                       .getTrackSelectionParameters()
@@ -362,9 +421,7 @@ public class PlaybackActivity extends Activity {
                 }
               }
               dialog.dismiss();
-            })
-        .setNegativeButton("Cancel", null)
-        .show();
+            });
   }
 
   private void report(boolean ended) {
@@ -379,38 +436,55 @@ public class PlaybackActivity extends Activity {
               .put("sequence", ++sequence)
               .put("position", Math.min(player.getCurrentPosition(), duration) / 1000.0)
               .put("duration", duration / 1000.0)
-              .put("ended", ended);
+              .put("ended", ended)
+              .put("watched_eligible", player.isPlaying())
+              .put("reached_end", player.getPlaybackState() == Player.STATE_ENDED);
       ProgressQueue.save(this, api, update);
       io.execute(() -> ProgressQueue.flush(this, api));
     } catch (Exception ignored) {
     }
   }
 
+  private boolean hasNextEpisode() {
+    ArrayList<String> ids = getIntent().getStringArrayListExtra("queue_ids");
+    ArrayList<String> names = getIntent().getStringArrayListExtra("queue_names");
+    return ids != null && names != null && !ids.isEmpty() && ids.size() == names.size();
+  }
+
+  private void updateNextEpisodeButton() {
+    if (nextEpisodeButton == null || player == null) return;
+    boolean show = controlsVisible && !advancingEpisode
+        && EpisodeAdvance.offer(player.getCurrentPosition(), player.getDuration(), hasNextEpisode());
+    if (!show && nextEpisodeButton.hasFocus())
+      view.findViewById(androidx.media3.ui.R.id.exo_play_pause).requestFocus();
+    nextEpisodeButton.setVisibility(show ? View.VISIBLE : View.GONE);
+  }
+
+  private void advanceNextEpisode() {
+    if (advancingEpisode || !hasNextEpisode()) return;
+    advancingEpisode = true;
+    report(true);
+    finished = true;
+    if (player != null) player.pause();
+    ArrayList<String> ids = getIntent().getStringArrayListExtra("queue_ids");
+    ArrayList<String> names = getIntent().getStringArrayListExtra("queue_names");
+    Intent next = new Intent(this, PlaybackActivity.class);
+    next.putExtra("asset", ids.get(0));
+    next.putExtra("title_id", getIntent().getStringExtra("title_id"));
+    next.putExtra("title", getIntent().getStringExtra("title"));
+    next.putExtra("name", names.get(0));
+    next.putStringArrayListExtra("queue_ids", new ArrayList<>(ids.subList(1, ids.size())));
+    next.putStringArrayListExtra("queue_names", new ArrayList<>(names.subList(1, names.size())));
+    startActivity(next);
+    finish();
+  }
+
   private void endDialog() {
-    ArrayList<String> ids = getIntent().getStringArrayListExtra("queue_ids"),
-        names = getIntent().getStringArrayListExtra("queue_names");
-    String next = ids == null || ids.isEmpty() ? null : ids.get(0);
-    AlertDialog.Builder b =
-        new AlertDialog.Builder(this)
-            .setTitle("Finished watching")
-            .setNegativeButton("Back to library", (d, w) -> finish());
-    if (next != null)
-      b.setPositiveButton(
-          "Next episode",
-          (d, w) -> {
-            Intent i = new Intent(this, PlaybackActivity.class);
-            i.putExtra("asset", next);
-            i.putExtra("title_id", getIntent().getStringExtra("title_id"));
-            i.putExtra("title", getIntent().getStringExtra("title"));
-            i.putExtra("name", names.get(0));
-            i.putStringArrayListExtra("queue_ids", new ArrayList<>(ids.subList(1, ids.size())));
-            i.putStringArrayListExtra(
-                "queue_names", new ArrayList<>(names.subList(1, names.size())));
-            startActivity(i);
-            finish();
-          });
-    else b.setPositiveButton("Play again", (d, w) -> restart(true));
-    b.setOnCancelListener(d -> finish()).show();
+    new AlertDialog.Builder(this)
+        .setTitle(L10n.t("Finished watching"))
+        .setNegativeButton(L10n.t("Back to library"), (d, w) -> finish())
+        .setPositiveButton(L10n.t("Play again"), (d, w) -> restart(true))
+        .setOnCancelListener(d -> finish()).show();
   }
 
   private void restart(boolean beginning) {
@@ -423,10 +497,10 @@ public class PlaybackActivity extends Activity {
   private void failure(String message) {
     if (isFinishing() || isDestroyed()) return;
     new AlertDialog.Builder(this)
-        .setTitle("Unable to play")
+        .setTitle(L10n.t("Unable to play"))
         .setMessage(message)
-        .setPositiveButton("Retry", (d, w) -> restart(false))
-        .setNegativeButton("Back to library", (d, w) -> finish())
+        .setPositiveButton(L10n.t("Retry"), (d, w) -> restart(false))
+        .setNegativeButton(L10n.t("Back to library"), (d, w) -> finish())
         .setOnCancelListener(d -> finish())
         .show();
   }
@@ -468,7 +542,7 @@ public class PlaybackActivity extends Activity {
     stopped = false;
     if (player != null) {
       player.setPlayWhenReady(wasPlaying);
-      main.postDelayed(ticker, 10000);
+      main.postDelayed(ticker, 1000);
     }
   }
 

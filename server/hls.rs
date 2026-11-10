@@ -80,6 +80,25 @@ impl Manager {
         );
         Ok(job)
     }
+    pub fn purge_assets(&self, assets: &std::collections::BTreeSet<String>) -> Result<()> {
+        let mut jobs = self.jobs.lock().map_err(|_| anyhow::anyhow!("HLS cache unavailable"))?;
+        ensure!(!jobs.values().any(|j| assets.contains(&j.asset) && j.state == "preparing"), "Waiting for playback preparation to finish");
+        let ids: Vec<_> = jobs.values().filter(|j| assets.contains(&j.asset)).map(|j|j.id.clone()).collect();
+        for id in ids {
+            ensure!(valid(&id), "Invalid cache identity");
+            let path = self.root.join(&id);
+            match fs::symlink_metadata(&path) {
+                Ok(info) => {
+                    ensure!(info.is_dir() && !info.file_type().is_symlink(), "Unsafe HLS cache path");
+                    fs::remove_dir_all(path)?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                Err(error) => return Err(error.into()),
+            }
+            jobs.remove(&id);
+        }
+        Ok(())
+    }
     pub fn status(&self, id: &str) -> Result<Value> {
         let j = self.job(id)?;
         Ok(

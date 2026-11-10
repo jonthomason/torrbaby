@@ -12,6 +12,8 @@ import java.util.concurrent.*;
 import org.json.*;
 
 public class MainActivity extends Activity {
+  @Override protected void attachBaseContext(android.content.Context base) { super.attachBaseContext(L10n.wrap(base)); }
+
   private final ExecutorService io = Executors.newSingleThreadExecutor();
   private Api api;
   private ServerDiscovery discovery;
@@ -24,11 +26,14 @@ public class MainActivity extends Activity {
   private LinearLayout root, content, nav;
   private String section = "Home", query = "", genre = "", detailId = "", restoreId = "";
   private int sort = 0, season = -1;
-  private boolean loading = false, played = false;
+  private boolean showingCast;
+  private boolean loading = false, played = false, selectingProfile, switchingProfile;
   private TextView status;
   private String collectionName = "", restoreShelf = "";
   private ArrayList<String> collectionIds = new ArrayList<>();
   private JSONArray torrents;
+  private JSONArray libraryOperations;
+  private String libraryOperationsError = "";
   private final Map<String, Long> removedTorrents = new HashMap<>();
   private String torrentCategory = "Downloading";
   private boolean torrentsLoading, torrentStale;
@@ -64,6 +69,7 @@ public class MainActivity extends Activity {
     if (state != null) {
       section = state.getString("section", "Home");
       detailId = state.getString("detail", "");
+      showingCast = state.getBoolean("cast", false);
       query = state.getString("query", "");
       genre = state.getString("genre", "");
       sort = state.getInt("sort");
@@ -86,7 +92,9 @@ public class MainActivity extends Activity {
     if (api == null) discover("");
     else {
       art = new Art(this, api);
-      load();
+      if (getIntent().getBooleanExtra("switch_profile", false)) { getIntent().removeExtra("switch_profile"); chooseProfile(true); }
+      else if (api.profile.isEmpty()) chooseProfile(false);
+      else load();
     }
   }
 
@@ -95,12 +103,18 @@ public class MainActivity extends Activity {
     super.onSaveInstanceState(s);
     s.putString("section", section);
     s.putString("detail", detailId);
+    s.putBoolean("cast", showingCast);
     s.putString("query", query);
     s.putString("genre", genre);
     s.putInt("sort", sort);
     s.putInt("season", season);
     s.putString("collection", collectionName);
     s.putStringArrayList("collection_ids", collectionIds);
+  }
+
+  @Override protected void onNewIntent(Intent intent) {
+    super.onNewIntent(intent);setIntent(intent);
+    if(intent.getBooleanExtra("switch_profile",false) && api!=null){intent.removeExtra("switch_profile");chooseProfile(true);}
   }
 
   @Override
@@ -116,10 +130,32 @@ public class MainActivity extends Activity {
       });
       foregroundView.postInvalidateOnAnimation();
     }
+    refreshProfileAppearance();
     if (!discoveringScreen && api != null && library != null) {
       if (played) { played = false; load(); }
       else refreshLibrary();
     }
+  }
+
+  private void refreshProfileAppearance() {
+    final Api requested = api;
+    if (requested == null || requested.profile.isEmpty() || selectingProfile) return;
+    io.execute(() -> {
+      try {
+        JSONArray people = requested.request("GET", "/v1/profiles", null).getJSONArray("profiles");
+        for (int i = 0; i < people.length(); i++) {
+          JSONObject person = people.getJSONObject(i);
+          if (!requested.profile.equals(person.optString("id"))) continue;
+          runOnUiThread(() -> {
+            if (isDestroyed() || api != requested) return;
+            requested.profileAppearance = person;
+            try { store.save(requested); } catch (Exception ignored) { }
+            ProfileUi.refreshBadges(this, getWindow().getDecorView(), requested);
+          });
+          break;
+        }
+      } catch (Exception ignored) { /* Keep the cached avatar when the server is unavailable. */ }
+    });
   }
 
   @Override
@@ -140,6 +176,7 @@ public class MainActivity extends Activity {
     root = Ui.column(this);
     root.setBackgroundColor(Ui.BG);
     Ui.pad(root, 40, 20);
+    Ui.add(root, ProfileUi.header(this, api, () -> chooseProfile(true)), -1, 52);
     setContentView(root);
   }
 
@@ -160,7 +197,7 @@ public class MainActivity extends Activity {
       Button b =
           Ui.button(
               this,
-              label,
+              L10n.t(label),
               () -> {
                 section = label;
                 collectionName = "";
@@ -178,7 +215,7 @@ public class MainActivity extends Activity {
     }
     View spacer = new View(this);
     nav.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
-    Button settings = Ui.button(this, "Settings", this::settings);
+    Button settings = Ui.button(this, L10n.t("Settings"), this::settings);
     Ui.tab(settings, false);
     Ui.add(nav, settings, -2, 40);
     Ui.add(root, nav, -1, 44);
@@ -188,7 +225,8 @@ public class MainActivity extends Activity {
   }
 
   private void load() {
-    if (loading) return;
+    if (loading || selectingProfile) return;
+    if (api.profile.isEmpty()) { chooseProfile(false); return; }
     StartupTrace.mark("Library load enqueued");
     loading = true;
     boolean refreshingExistingScreen = library != null;
@@ -210,15 +248,22 @@ public class MainActivity extends Activity {
                 String cachedRaw = new String(saved, java.nio.charset.StandardCharsets.UTF_8);
                 JSONObject snapshot = CatalogJson.parse(cachedRaw);
                 Library cached = Library.parse(snapshot);
+                requested.libraryRevision = snapshot.optString("revision");
+                requested.libraryRaw = cachedRaw;
                 StartupTrace.mark("Cached catalog parsed");
                 runOnUiThread(() -> {
-                  if (isDestroyed() || api != requested || library != null) return;
+                  if (isDestroyed() || selectingProfile || api != requested || library != null) return;
                   library = cached; librarySnapshot = cachedRaw; StartupTrace.mark("Cached render started"); render(); StartupTrace.mark("Cached render returned");
                 });
               }
             } catch (Exception ignored) {}
           }
           try {
+            if (!requested.libraryChanged()) {
+              runOnUiThread(() -> { if(api==requested)loading=false; });
+              try { requested.register(); ProgressQueue.flush(this,requested); } catch(Exception ignored) {}
+              return;
+            }
             JSONObject response = requested.request("GET", "/v1/library", null);
             Library result = Library.parse(response);
             String liveRaw = requested.libraryRaw;
@@ -227,14 +272,16 @@ public class MainActivity extends Activity {
                 () -> {
                   if (isDestroyed()) return;
                   loading = false;
-                  if (api != requested) return;
+                  if (api != requested || selectingProfile) return;
                   boolean firstScreen = library == null;
                   library = result;
                   // Cached content is already usable. Refresh the model without tearing
                   // down the screen immediately before its first frame.
-                  if (firstScreen || refreshingExistingScreen) {
+                  if (firstScreen || refreshingExistingScreen || !liveRaw.equals(librarySnapshot)) {
                     librarySnapshot = liveRaw;
-                    StartupTrace.mark("Live render started"); render();
+                    StartupTrace.mark("Live render started");
+                    if(firstScreen || !detailId.isEmpty())render();
+                    else updateBrowse(root);
                   }
                 });
             StartupTrace.mark("Catalog cache write started");
@@ -247,19 +294,21 @@ public class MainActivity extends Activity {
                 () -> {
                   if (isDestroyed()) return;
                   loading = false;
+                  if (api != requested || selectingProfile) return;
                   if (library != null) {
+                    render();
                     Toast.makeText(this, "Could not refresh. " + message(e), Toast.LENGTH_LONG)
                         .show();
                     return;
                   }
                   shell();
-                  Ui.add(content, Ui.title(this, "Your library is unavailable", 25), -1, 45);
+                  Ui.add(content, Ui.title(this, L10n.t("Your library is unavailable"), 25), -1, 45);
                   Ui.add(content, Ui.text(this, message(e), 15, Ui.MUTED), -1, -2);
                   Ui.gap(content, 20);
-                  Button retry = Ui.button(this, "Try again", this::load);
+                  Button retry = Ui.button(this, L10n.t("Try again"), this::load);
                   Ui.add(content, retry, 180, 44);
                   Ui.gap(content, 10);
-                  Ui.add(content, Ui.button(this, "Connection settings", this::settings), 220, 44);
+                  Ui.add(content, Ui.button(this, L10n.t("Connection settings"), this::settings), 220, 44);
                   retry.requestFocus();
                 });
           }
@@ -275,19 +324,25 @@ public class MainActivity extends Activity {
 
   private void render() {
     if (library == null) return;
+    if (art != null) art.beginScreen();
     shell();
+    root.setTag(new ArrayList<Runnable>());
+    root.getViewTreeObserver().addOnGlobalFocusChangeListener((oldFocus,newFocus) -> { if(art!=null)art.prioritize(); });
+    root.getViewTreeObserver().addOnScrollChangedListener(() -> { if(art!=null)art.prioritize(); });
     StartupTrace.mark("Library view construction started");
     View drawingRoot = root;
     drawingRoot.getViewTreeObserver().addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
       public boolean onPreDraw() {
         drawingRoot.getViewTreeObserver().removeOnPreDrawListener(this);
-        StartupTrace.mark("First library frame ready"); return true;
+        StartupTrace.mark("First library frame ready");
+        if(art!=null)art.prioritize();
+        return true;
       }
     });
     inLibrary = true;
     Library.Title detail = library.find(detailId);
     if (detail != null) {
-      details(detail);
+      if (showingCast) castPage(detail); else details(detail);
       return;
     }
     detailId = "";
@@ -334,31 +389,29 @@ public class MainActivity extends Activity {
   }
 
   private ScrollView scroll(LinearLayout parent) {
-    ScrollView s = new ScrollView(this);
+    ScrollView s = new TvScrollView(this);
     s.setFillViewport(false);
     s.setClipToPadding(false);
     s.setVerticalScrollBarEnabled(false);
-    Ui.add(parent, s, -1, -1);
+    parent.addView(s, new LinearLayout.LayoutParams(-1, 0, 1));
     return s;
   }
 
   private void ambient(Library.Title title) {
-    if (Build.VERSION.SDK_INT < 31 || title == null || title.backdrop.isEmpty()) return;
+    if (title == null || title.backdrop.isEmpty()) return;
     FrameLayout backdrop = new FrameLayout(this);
     backdrop.setBackgroundColor(Ui.BG);
     ImageView image = new ImageView(this);
     image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-    image.setAlpha(.22f);
-    image.setRenderEffect(
-        android.graphics.RenderEffect.createBlurEffect(
-            Ui.dp(this, 45), Ui.dp(this, 45), android.graphics.Shader.TileMode.CLAMP));
+    // A quiet backdrop avoids a full-screen live blur pass on television GPUs.
+    image.setAlpha(.08f);
     backdrop.addView(image, new FrameLayout.LayoutParams(-1, -1));
     if (root.getParent() instanceof android.view.ViewGroup)
       ((android.view.ViewGroup) root.getParent()).removeView(root);
     root.setBackgroundColor(android.graphics.Color.TRANSPARENT);
     backdrop.addView(root, new FrameLayout.LayoutParams(-1, -1));
     setContentView(backdrop);
-    art.load(image, title.id, "backdrop");
+    art.load(image, title.id, "backdrop", title.backdrop);
   }
 
   private void home() {
@@ -368,13 +421,13 @@ public class MainActivity extends Activity {
     List<Library.Title> recent = library.filter("", "", "", 0);
     if (recent.isEmpty()) {
       Ui.pad(page, 40, 25);
-      Ui.add(page, Ui.title(this, "Your library is empty", 26), -1, 60);
+      Ui.add(page, Ui.title(this, L10n.t("Your library is empty"), 26), -1, 60);
       Ui.add(
           page,
-          Ui.text(this, "Add media on your Torrbaby server, then refresh here.", 15, Ui.MUTED),
+          Ui.text(this, L10n.t("Add media on your Torrbaby server, then refresh here."), 15, Ui.MUTED),
           -1,
           40);
-      Ui.add(page, Ui.button(this, "Refresh", this::load), 160, 44);
+      Ui.add(page, Ui.button(this, L10n.t("Refresh"), this::load), 160, 44);
       return;
     }
     Library.Title featured = recent.get(0);
@@ -422,7 +475,7 @@ public class MainActivity extends Activity {
     Ui.add(heading, Ui.title(this, collectionName, 28), -2, 48);
     View spacer = new View(this);
     heading.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
-    Ui.add(heading, Ui.button(this, "Back", this::onBackPressed), -2, 40);
+    Ui.add(heading, Ui.button(this, L10n.t("Back"), this::onBackPressed), -2, 40);
     Ui.add(content, heading, -1, 50);
     Ui.gap(content, 16);
     List<Library.Title> titles = new ArrayList<>();
@@ -439,7 +492,7 @@ public class MainActivity extends Activity {
     ImageView image = new ImageView(this);
     image.setScaleType(ImageView.ScaleType.CENTER_CROP);
     frame.addView(image, new FrameLayout.LayoutParams(-1, -1));
-    art.load(image, t.id, t.backdrop.isEmpty() ? "poster" : "backdrop");
+    art.load(image, t.id, t.backdrop.isEmpty() ? "poster" : "backdrop", t.backdrop.isEmpty() ? t.poster : t.backdrop);
     View shade = new View(this);
     shade.setBackground(
         new GradientDrawable(
@@ -464,32 +517,60 @@ public class MainActivity extends Activity {
       Button play =
           Ui.button(
               this,
-              asset != null && asset.position > 0 && !asset.watched ? "▶  Resume" : "▶  Play",
+              playbackLabel(t, asset),
               () -> {
                 if (asset == null) error("This title has no complete media files on the server.");
                 else play(t, asset, false);
               });
       Ui.primary(play);
       play.setTag("hero");
-      Ui.add(buttons, play, -2, 40);
+      Ui.add(buttons, play, t.kind.equals("tv") ? 390 : -2, 48);
       Ui.gap(buttons, 12);
-      Ui.add(buttons, Ui.button(this, "More…", () -> assetOptions(t, asset)), -2, 40);
-      Ui.gap(buttons, 12);
-      Ui.add(buttons, Ui.button(this, "Find releases", () -> {
-        Intent intent = new Intent(this, TorrentSearchActivity.class).putExtra("query", t.title);
-        if (t.kind.equals("movie")) { try { intent.putExtra("year", Integer.parseInt(t.year)); } catch (Exception ignored) {} }
-        else if (season >= 0) intent.putExtra("season", season);
-        startActivity(intent);
-      }), -2, 40);
-      Ui.add(info, buttons, -1, 40);
+
+      Ui.add(info, buttons, -1, 48);
+      if (asset != null) {
+        Ui.gap(info, 12);
+        if(t.isContinuing()) {
+          Ui.add(info,Ui.button(this,L10n.t("Remove from Continue Watching"),()->setContinueWatchingHidden(t,true)),-2,40);
+        }
+        LinearLayout actions = Ui.row(this);
+        Ui.add(actions, Ui.button(this, asset.watched ? L10n.t("Mark as Unwatched") : L10n.t("Mark as Watched"), () -> mark(asset)), -2, 40);
+        if (asset.complete) {
+          Ui.gap(actions, 12);
+          Ui.add(actions, Ui.button(this, L10n.t("Manage files"), () -> new LibraryFileActions(this, api, io, asset.id, this::load).show()), -2, 40);
+          if (t.cast != null && t.cast.length() > 0) {
+            Ui.gap(actions, 12);
+            Button cast = Ui.button(this, L10n.t("Cast"), () -> { showingCast = true; render(); });
+            cast.setTag("cast");
+            Ui.add(actions, cast, -2, 40);
+          }
+          if (asset.position > 0) {
+            Ui.gap(actions, 12);
+            Ui.add(actions, Ui.button(this, L10n.t("Start from beginning"), () -> play(t, asset, true)), -2, 40);
+          }
+        }
+        Ui.add(info, actions, -1, 40);
+      }
       play.requestFocus();
     } else {
-      Ui.add(info, Ui.title(this, "▶  Explore", 17), -1, 23);
+      Ui.add(info, Ui.title(this, L10n.t("▶  Explore"), 17), -1, 23);
       frame.setFocusable(true);
       frame.setFocusableInTouchMode(true);
       frame.setContentDescription("Explore " + t.title);
       frame.setTag("hero");
       frame.setOnClickListener(v -> open(t));
+      onCatalogUpdate(() -> {
+        Library.Title latest=null;
+        for(Library.Title candidate:library.titles)
+          if(!candidate.playable().isEmpty() && (latest==null || candidate.latestPlayed()>latest.latestPlayed()))latest=candidate;
+        if(latest==null)return;
+        final Library.Title selected=latest;
+        name.setText(selected.title);
+        ((TextView)info.getChildAt(2)).setText(selected.metadata());
+        frame.setContentDescription("Explore "+selected.title);
+        frame.setOnClickListener(v -> open(selected));
+        art.load(image,selected.id,selected.backdrop.isEmpty()?"poster":"backdrop",selected.backdrop.isEmpty()?selected.poster:selected.backdrop);
+      });
       View line = new View(this);
       line.setBackgroundColor(Ui.ACCENT);
       line.setVisibility(View.INVISIBLE);
@@ -504,13 +585,13 @@ public class MainActivity extends Activity {
   }
 
   private void shelf(LinearLayout body, String name, List<Library.Title> list) {
-    if (list.isEmpty()) return;
-    Ui.gap(body, 20);
+    View shelfGap=new View(this);
+    Ui.add(body,shelfGap,1,20);
     LinearLayout heading = Ui.row(this);
     Ui.add(heading, Ui.title(this, name, 18), -2, 38);
     View spacer = new View(this);
     heading.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
-    Button all = Ui.button(this, "See All  ›", () -> openCollection(name, list));
+    Button all = Ui.button(this, L10n.t("See All  ›"), () -> openCollection(name, list));
     all.setTag("shelf:" + name);
     all.setId(View.generateViewId());
     Ui.add(heading, all, -2, 38);
@@ -525,6 +606,24 @@ public class MainActivity extends Activity {
     row.setClipChildren(false);
     sc.addView(row);
     Ui.add(body, sc, -1, 265);
+    int visibility=list.isEmpty()?View.GONE:View.VISIBLE;
+    shelfGap.setVisibility(visibility); heading.setVisibility(visibility); sc.setVisibility(visibility);
+    Runnable sizeCards=() -> {
+      int available=sc.getWidth()-sc.getPaddingLeft()-sc.getPaddingRight();
+      if(available<=0)return;
+      int gap=Ui.dp(this,20),columns=Math.max(3,(available+gap)/Ui.dp(this,150));
+      int width=(available-gap*(columns-1))/columns;
+      int height=width*3/2+Ui.dp(this,66);
+      for(int i=0;i<row.getChildCount();i+=2) {
+        View child=row.getChildAt(i);
+        if(child.getLayoutParams().width!=width || child.getLayoutParams().height!=height) {
+          child.getLayoutParams().width=width;child.getLayoutParams().height=height;child.requestLayout();
+        }
+      }
+      if(sc.getLayoutParams().height!=height+Ui.dp(this,14)) {
+        sc.getLayoutParams().height=height+Ui.dp(this,14);sc.requestLayout();
+      }
+    };
     // Reserve the shelf's space, but construct posters only near the viewport.
     // Headings remain focusable so D-pad navigation can enter an unloaded shelf.
     Runnable populate = () -> {
@@ -537,63 +636,87 @@ public class MainActivity extends Activity {
         Ui.add(row, posterCard, 120, 247);
         Ui.gap(row, 20);
       }
+      sizeCards.run();
     };
     all.setOnFocusChangeListener((v, focused) -> { if (focused) populate.run(); });
     if (body.getChildCount() <= 3) populate.run();
     Runnable nearViewport = () -> {
       if (row.getChildCount() != 0 || !sc.isShown()) return;
       int[] location = new int[2]; sc.getLocationOnScreen(location);
-      int height = getResources().getDisplayMetrics().heightPixels;
-      if (location[1] < height + Ui.dp(this, 300) && location[1] + sc.getHeight() > 0)
+      android.graphics.Rect viewport=new android.graphics.Rect();
+      content.getGlobalVisibleRect(viewport);
+      if (location[1] < viewport.bottom + sc.getHeight() && location[1] + sc.getHeight() > viewport.top)
         populate.run();
     };
     sc.getViewTreeObserver().addOnScrollChangedListener(nearViewport::run);
-    sc.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> nearViewport.run());
+    sc.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> { sizeCards.run(); nearViewport.run(); });
+    onCatalogUpdate(() -> {
+      List<Library.Title> fresh=shelfTitles(name);
+      list.clear(); list.addAll(fresh);
+      int visible=fresh.isEmpty()?View.GONE:View.VISIBLE;
+      shelfGap.setVisibility(visible); heading.setVisibility(visible); sc.setVisibility(visible);
+      if(row.getChildCount()==0) { sc.post(nearViewport); return; }
+      Map<String,View> existing=new HashMap<>();
+      View focus=row.findFocus();
+      for(int i=0;i<row.getChildCount();i++) {
+        View child=row.getChildAt(i);
+        if(child instanceof PosterCard)existing.put((String)child.getTag(),child);
+      }
+      List<Library.Title> shown=fresh.subList(0,Math.min(10,fresh.size()));
+      boolean reordered=existing.size()!=shown.size();
+      for(int i=0;!reordered && i<shown.size();i++)
+        reordered=!Objects.equals(row.getChildAt(i*2).getTag(),"title:"+shown.get(i).id);
+      if(!reordered)return;
+      row.removeAllViews();
+      for(Library.Title title:shown) {
+        View child=existing.get("title:"+title.id);
+        if(child==null)child=card(title);
+        if(child.getId()==View.NO_ID)child.setId(View.generateViewId());
+        child.setNextFocusUpId(all.getId());
+        if(row.getChildCount()==0)all.setNextFocusDownId(child.getId());
+        Ui.add(row,child,120,247); Ui.gap(row,20);
+      }
+      sizeCards.run();
+      if(focus!=null) {
+        if(focus.getParent()==row)focus.requestFocus();
+        else if(row.getChildCount()>0)row.getChildAt(0).requestFocus();
+        else all.requestFocus();
+      }
+    });
+  }
+
+  private boolean continueWatchingMenu(Library.Title title) {
+    if(!title.isContinuing())return false;
+    new AlertDialog.Builder(this).setTitle(title.title)
+        .setItems(new String[]{L10n.t("Remove from Continue Watching")},(dialog,which)->setContinueWatchingHidden(title,true)).show();
+    return true;
+  }
+  private void setContinueWatchingHidden(Library.Title title, boolean hidden) {
+    Api requested=api;
+    io.execute(()->{try {
+      requested.request("POST","/v1/library/continue-watching",new JSONObject().put("title_id",title.id).put("hidden",hidden));
+      runOnUiThread(()->{
+        if(isDestroyed() || api!=requested)return;
+        Library.Title latest=library.find(title.id);if(latest!=null)latest.continueWatchingHidden=hidden;
+        render();load();
+        if(hidden)showContinueWatchingUndo(title,requested);
+      });
+    }catch(Exception error){runOnUiThread(()->{if(!isDestroyed() && api==requested)error(message(error));});}});
+  }
+  private void showContinueWatchingUndo(Library.Title title, Api requested) {
+    android.view.ViewGroup host=findViewById(android.R.id.content);
+    LinearLayout banner=Ui.row(this);Ui.pad(banner,18,12);banner.setBackground(Ui.shape(Ui.PANEL,Ui.ACCENT,this));
+    Ui.add(banner,Ui.text(this,L10n.t("Removed from Continue Watching"),16,Ui.TEXT),-2,-2);Ui.gap(banner,18);
+    Button undo=Ui.button(this,L10n.t("Undo"),()->{host.removeView(banner);if(api==requested)setContinueWatchingHidden(title,false);});
+    Ui.add(banner,undo,-2,44);
+    FrameLayout.LayoutParams params=new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);params.bottomMargin=Ui.dp(this,24);
+    host.addView(banner,params);undo.requestFocus();banner.postDelayed(()->host.removeView(banner),10000);
   }
 
   private View card(Library.Title t) {
-    LinearLayout card = Ui.column(this);
-    card.setFocusable(true);
-    card.setFocusableInTouchMode(true);
-    card.setClipChildren(false);
-    Ui.pad(card, 0, 0);
-    card.setTag("title:" + t.id);
-    card.setContentDescription(
-        t.title + ", " + t.year + (t.resume() != null ? ", in progress" : ""));
-    card.setOnClickListener(v -> open(t));
-    card.setOnFocusChangeListener(
-        (v, f) -> {
-          if (f) restoreId = t.id;
-          View posterView = ((LinearLayout) v).getChildAt(0);
-          posterView
-              .animate()
-              .scaleX(f ? 1.06f : 1f)
-              .scaleY(f ? 1.06f : 1f)
-              .setDuration(160)
-              .start();
-          posterView.setElevation(Ui.dp(this, f ? 10 : 0));
-          posterView.setForeground(f ? Ui.shape(0x00000000, Ui.ACCENT, this) : null);
-        });
-    ImageView poster = new ImageView(this);
-    poster.setScaleType(ImageView.ScaleType.CENTER_CROP);
-    poster.setBackgroundColor(Ui.PANEL);
-    Ui.round(poster, 12);
-    Ui.add(card, poster, -1, 180);
-    art.load(poster, t.id, "poster");
-    Ui.gap(card, 10);
-    TextView name = Ui.title(this, t.title, 14);
-    name.setMaxLines(2);
-    name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-    Ui.add(card, name, -1, 34);
-    Library.Asset resume = t.resume();
-    String sub = resume != null ? resume.status() : t.watched() ? "Watched" : t.year;
-    Ui.add(card, Ui.text(this, sub, 11, Ui.MUTED), -1, 17);
-    if (resume != null && resume.duration > 0) {
-      ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-      bar.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.ACCENT));
-      bar.setProgress((int) (100 * resume.position / resume.duration));
-      Ui.add(card, bar, -1, 3);
-    }
+    PosterCard card = new PosterCard(this, art, this::open, item -> restoreId = item.id);
+    card.bind(t);
+    card.setOnLongClickListener(v -> continueWatchingMenu(t));
     return card;
   }
 
@@ -629,7 +752,7 @@ public class MainActivity extends Activity {
       search.setHintTextColor(Ui.MUTED);
       search.setTextSize(16);
       search.setSingleLine();
-      search.setHint("Search titles, genres or year");
+      search.setHint(L10n.t("Search titles, genres or year"));
       search.setText(query);
       search.setInputType(InputType.TYPE_CLASS_TEXT);
       if (query.isEmpty()) search.post(search::requestFocus);
@@ -639,7 +762,7 @@ public class MainActivity extends Activity {
           controls,
           Ui.button(
               this,
-              "Search",
+              L10n.t("Search"),
               () -> {
                 query = search.getText().toString();
                 restoreId = "";
@@ -663,12 +786,12 @@ public class MainActivity extends Activity {
         controls,
         Ui.button(
             this,
-            genre.isEmpty() ? "All genres" : genre,
+            genre.isEmpty() ? L10n.t("All genres") : genre,
             () -> {
               List<String> gs = library.genres(kind);
               gs.add(0, "All genres");
               new AlertDialog.Builder(this)
-                  .setTitle("Genre")
+                  .setTitle(L10n.t("Genre"))
                   .setItems(
                       gs.toArray(new String[0]),
                       (d, w) -> {
@@ -689,7 +812,7 @@ public class MainActivity extends Activity {
             sorts[sort],
             () ->
                 new AlertDialog.Builder(this)
-                    .setTitle("Sort by")
+                    .setTitle(L10n.t("Sort by"))
                     .setSingleChoiceItems(
                         sorts,
                         sort,
@@ -705,12 +828,12 @@ public class MainActivity extends Activity {
     Ui.add(content, controls, -1, 48);
     Ui.gap(content, 12);
     if (section.equals("Search") && query.trim().isEmpty()) {
-      Ui.add(content, Ui.text(this, "Search movies and TV shows", 17, Ui.MUTED), -1, 70);
+      Ui.add(content, Ui.text(this, L10n.t("Search movies and TV shows"), 17, Ui.MUTED), -1, 70);
       return;
     }
     List<Library.Title> items = library.filter(kind, query, genre, sort);
     if (items.isEmpty()) {
-      Ui.add(content, Ui.text(this, "No matching titles", 18, Ui.MUTED), -1, 70);
+      Ui.add(content, Ui.text(this, L10n.t("No matching titles"), 18, Ui.MUTED), -1, 70);
       controls.post(
           () -> {
             View field = firstFocusable(controls);
@@ -722,7 +845,7 @@ public class MainActivity extends Activity {
   }
 
   private void posterGrid(List<Library.Title> items) {
-    GridView grid = new GridView(this);
+    GridView grid = new PosterGrid(this);
     grid.setNumColumns(6);
     grid.setHorizontalSpacing(Ui.dp(this, 20));
     grid.setVerticalSpacing(Ui.dp(this, 20));
@@ -744,12 +867,37 @@ public class MainActivity extends Activity {
           }
 
           public View getView(int i, View old, android.view.ViewGroup p) {
-            View v = card(items.get(i));
+            PosterCard v = old instanceof PosterCard ? (PosterCard) old
+                : new PosterCard(MainActivity.this, art, MainActivity.this::open, item -> restoreId = item.id);
+            Library.Title latest = library.find(items.get(i).id);
+            v.bind(latest == null ? items.get(i) : latest);
             v.setFocusable(false);
-            v.setLayoutParams(new AbsListView.LayoutParams(-1, Ui.dp(MainActivity.this, 247)));
+            v.focusAppearance(i == grid.getSelectedItemPosition());
+            v.setLayoutParams(new AbsListView.LayoutParams(-1, -2));
             return v;
           }
         });
+    final String gridKind=section.equals("Movies")?"movie":section.equals("TV Shows")?"tv":"";
+    final String gridQuery=query, gridGenre=genre;
+    final int gridSort=sort;
+    final String gridCollection=collectionName;
+    onCatalogUpdate(() -> {
+      List<Library.Title> fresh;
+      if(gridCollection.isEmpty())fresh=library.filter(gridKind,gridQuery,gridGenre,gridSort);
+      else fresh=shelfTitles(gridCollection);
+      int selected=grid.getSelectedItemPosition();
+      String selectedId=selected>=0&&selected<items.size()?items.get(selected).id:"";
+      boolean reordered=items.size()!=fresh.size();
+      for(int i=0;!reordered&&i<items.size();i++)reordered=!items.get(i).id.equals(fresh.get(i).id);
+      items.clear();items.addAll(fresh);
+      if(reordered) {
+        ((BaseAdapter)grid.getAdapter()).notifyDataSetChanged();
+        int restored=Math.min(Math.max(0,selected),items.size()-1);
+        for(int i=0;i<items.size();i++)if(items.get(i).id.equals(selectedId))restored=i;
+        if(restored>=0)grid.setSelection(restored);
+      }
+    });
+    grid.setOnItemLongClickListener((parent,view,position,id) -> continueWatchingMenu(items.get(position)));
     grid.setOnItemClickListener(
         (p, v, pos, id) -> {
           restoreId = items.get(pos).id;
@@ -761,11 +909,25 @@ public class MainActivity extends Activity {
 
           public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
             restoreId = items.get(pos).id;
+            int nextRow=(pos/grid.getNumColumns()+1)*grid.getNumColumns();
+            for(int i=nextRow;i<Math.min(items.size(),nextRow+grid.getNumColumns());i++)art.prefetch(items.get(i));
+            art.prioritize();
+            for (int i = 0; i < grid.getChildCount(); i++) {
+              View child = grid.getChildAt(i);
+              if (child instanceof PosterCard) ((PosterCard) child).focusAppearance(child == v);
+            }
           }
         });
-    grid.setSelector(Ui.shape(0x18ffffff, 0xffc4d0d4, this));
+    grid.setSelector(android.R.color.transparent);
     grid.setDrawSelectorOnTop(true);
-    Ui.add(content, grid, -1, -1);
+    content.addView(grid, new LinearLayout.LayoutParams(-1, 0, 1));
+    grid.setPadding(Ui.dp(this,8),Ui.dp(this,12),Ui.dp(this,8),Ui.dp(this,12));
+    grid.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob) -> {
+      if (r-l != or-ol) {
+        int columns = Math.max(3, (r-l + Ui.dp(this,20)) / Ui.dp(this,150));
+        if(grid.getNumColumns()!=columns)grid.setNumColumns(columns);
+      }
+    });
     int index = 0;
     for (int i = 0; i < items.size(); i++) if (items.get(i).id.equals(restoreId)) index = i;
     grid.setSelection(index);
@@ -791,11 +953,11 @@ public class MainActivity extends Activity {
     }
     View space = new View(this);
     controls.addView(space, new LinearLayout.LayoutParams(0, 1, 1));
-    Ui.add(controls, Ui.button(this, "Find torrents", () -> startActivity(new Intent(this, TorrentSearchActivity.class))), -2, 42);
+    Ui.add(controls, Ui.button(this, L10n.t("Find torrents"), () -> startActivity(new Intent(this, TorrentSearchActivity.class))), -2, 42);
     Ui.gap(controls, 12);
-    Ui.add(controls, Ui.button(this, "Manage", () -> torrentActions.manage()), -2, 42);
+    Ui.add(controls, Ui.button(this, L10n.t("Manage"), () -> torrentActions.manage()), -2, 42);
     Ui.gap(controls, 12);
-    Ui.add(controls, Ui.button(this, "Refresh", () -> fetchTorrents()), -2, 42);
+    Ui.add(controls, Ui.button(this, L10n.t("Refresh"), () -> fetchTorrents()), -2, 42);
     Ui.add(content, controls, -1, 44);
     Ui.gap(content, 10);
     String[] choices =
@@ -828,9 +990,9 @@ public class MainActivity extends Activity {
         Ui.text(
             this,
             torrentStale
-                ? "Offline · showing the last server status"
+                ? L10n.t("Offline · showing the last server status")
                 : torrentUpdated == 0
-                    ? "Server transfers"
+                    ? L10n.t("Server transfers")
                     : "Server transfers · updated "
                         + new java.text.SimpleDateFormat("HH:mm:ss", Locale.getDefault())
                             .format(new java.util.Date(torrentUpdated)),
@@ -838,8 +1000,8 @@ public class MainActivity extends Activity {
             Ui.MUTED);
     Ui.add(content, torrentStatus, -1, 26);
     Ui.gap(content, 8);
-    if (torrents == null) {
-      Ui.add(content, Ui.text(this, "Loading server activity…", 16, Ui.MUTED), -1, 50);
+    if (torrents == null && libraryOperations == null) {
+      Ui.add(content, Ui.text(this, L10n.t("Loading server activity…"), 16, Ui.MUTED), -1, 50);
       fetchTorrents();
       controls
           .getChildAt(
@@ -852,7 +1014,7 @@ public class MainActivity extends Activity {
     scroll.addView(rows);
     int count = 0;
     List<JSONObject> sorted = new ArrayList<>();
-    for (int i = 0; i < torrents.length(); i++)
+    for (int i = 0; torrents != null && i < torrents.length(); i++)
       if (torrents.optJSONObject(i) != null) sorted.add(torrents.optJSONObject(i));
     sorted.sort(
         (a, b) -> {
@@ -873,7 +1035,9 @@ public class MainActivity extends Activity {
       double progress = item.optDouble("percent_done", 0);
       boolean complete = progress >= 1;
       int state = item.optInt("status");
-      if (torrentCategory.equals("Downloading")
+      JSONObject fileOperation = item.optJSONObject("file_operation");
+      boolean junk = fileOperation != null && fileOperation.optString("action").equals("junk");
+      if (fileOperation != null ? !torrentCategory.equals("Seeding") : torrentCategory.equals("Downloading")
           ? complete
           : torrentCategory.equals("Seeding")
               ? (!complete || state != 6)
@@ -891,6 +1055,13 @@ public class MainActivity extends Activity {
           -1,
           -2);
       Ui.gap(row, 10);
+      if (fileOperation != null) {
+        String operationError = fileOperation.isNull("error") ? "" : fileOperation.optString("error");
+        String operationLabel = junk ? "Junk · delete after seeding" : "Deleting files…";
+        Ui.add(row, Ui.text(this, operationError.isEmpty() ? operationLabel : operationLabel + " · " + operationError,
+            14, operationError.isEmpty() ? Ui.ACCENT : 0xffff8a80), -1, -2);
+        Ui.gap(row, 8);
+      }
       long size = 0;
       JSONArray files = item.optJSONArray("files");
       if (files != null)
@@ -933,7 +1104,41 @@ public class MainActivity extends Activity {
       Ui.add(rows, row, -1, -2);
       Ui.gap(rows, 14);
     }
-    if (count == 0) Ui.add(rows, Ui.text(this, "No torrents", 18, Ui.MUTED), -1, 60);
+    if (torrentCategory.equals("Seeding")) {
+      if (!libraryOperationsError.isEmpty())
+        Ui.add(rows, Ui.text(this, "Couldn’t refresh file operations: " + libraryOperationsError, 14, 0xffff8a80), -1, -2);
+      java.util.Set<String> shown = new java.util.HashSet<>();
+      for (JSONObject item : sorted) {
+        JSONObject operation = item.optJSONObject("file_operation");
+        if (operation != null) shown.add(operation.optString("id"));
+      }
+      for (int i = 0; libraryOperations != null && i < libraryOperations.length(); i++) {
+        JSONObject operation = libraryOperations.optJSONObject(i);
+        if (operation == null || operation.optString("phase").equals("done") || shown.contains(operation.optString("id"))) continue;
+        count++;
+        String name = "Library files";
+        try { name = new JSONObject(operation.optString("preview")).optString("name", name); }
+        catch (Exception ignored) { }
+        LinearLayout row = Ui.column(this);
+        Ui.focus(row);
+        row.setTag("operation:" + operation.optString("id"));
+        row.setOnFocusChangeListener((v, focused) -> Ui.secondaryContrast(v, focused));
+        Ui.pad(row, 16, 14);
+        Ui.add(row, Ui.title(this, name, 16), -1, -2);
+        String phase = operation.optString("phase");
+        String label = phase.equals("seeding") ? "In Junk · delete after seeding"
+            : phase.equals("moving") || phase.equals("verifying") ? "Moving to Junk…"
+            : phase.equals("cleanup") ? "Finishing cleanup…" : "Removing from library…";
+        Ui.add(row, Ui.text(this, label, 14, Ui.MUTED), -1, -2);
+        if (!operation.isNull("error") && !operation.optString("error").isEmpty()) {
+          Ui.add(row, Ui.text(this, operation.optString("error"), 14, 0xffff8a80), -1, -2);
+          Ui.add(row, Ui.text(this, L10n.t("The server will retry automatically."), 12, Ui.MUTED), -1, -2);
+        }
+        Ui.add(rows, row, -1, -2);
+        Ui.gap(rows, 10);
+      }
+    }
+    if (count == 0) Ui.add(rows, Ui.text(this, L10n.t("No torrents"), 18, Ui.MUTED), -1, 60);
     controls
         .getChildAt(
             torrentCategory.equals("Seeding") ? 2 : torrentCategory.equals("Complete") ? 4 : 0)
@@ -982,43 +1187,35 @@ public class MainActivity extends Activity {
     Api requested = api;
     io.execute(
         () -> {
-          try {
-            JSONArray result = requested.array("/v1/torrents");
-            runOnUiThread(
-                () -> {
-                  torrentsLoading = false;
-                  if (requested != api || isDestroyed()) return;
-                  torrents = visibleTorrents(result);
-                  torrentStale = false;
-                  torrentUpdated = System.currentTimeMillis();
-                  if (section.equals("Torrents") && !isDestroyed()) {
-                    View focus = getCurrentFocus();
-                    Object tag = focus == null ? null : focus.getTag();
-                    String button =
-                        focus instanceof Button ? ((Button) focus).getText().toString() : "";
-                    render();
-                    View restore = tag == null ? null : root.findViewWithTag(tag);
-                    if (restore != null) restore.requestFocus();
-                    else if (!button.isEmpty()) restoreButton(root, button);
-                  }
-                });
-          } catch (Exception e) {
-            runOnUiThread(
-                () -> {
-                  torrentsLoading = false;
-                  if (requested != api || isDestroyed()) return;
-                  torrentStale = true;
-                  if (torrentStatus != null)
-                    torrentStatus.setText("Offline · showing the last server status");
-                  if (section.equals("Torrents") && torrents == null) {
-                    content.removeAllViews();
-                    Ui.add(content, Ui.text(this, message(e), 16, Ui.MUTED), -1, 65);
-                    Button retry = Ui.button(this, "Try again", this::fetchTorrents);
-                    Ui.add(content, retry, 180, 44);
-                    retry.requestFocus();
-                  }
-                });
-          }
+          JSONArray operationResult = null;
+          String operationFailure = "";
+          try { operationResult = ((JSONObject) requested.request("GET", "/v1/library/operations", null)).getJSONArray("operations"); }
+          catch (Exception e) { operationFailure = message(e); }
+          JSONArray torrentResult = null;
+          try { torrentResult = requested.array("/v1/torrents"); }
+          catch (Exception ignored) { }
+          final JSONArray receivedOperations = operationResult, receivedTorrents = torrentResult;
+          final String operationError = operationFailure;
+          runOnUiThread(() -> {
+            torrentsLoading = false;
+            if (requested != api || isDestroyed()) return;
+            if (receivedOperations != null) libraryOperations = receivedOperations;
+            libraryOperationsError = operationError;
+            torrentStale = receivedTorrents == null;
+            if (receivedTorrents != null) {
+              torrents = visibleTorrents(receivedTorrents);
+              torrentUpdated = System.currentTimeMillis();
+            } else if (torrents == null) torrents = new JSONArray();
+            if (section.equals("Torrents")) {
+              View focus = getCurrentFocus();
+              Object tag = focus == null ? null : focus.getTag();
+              String button = focus instanceof Button ? ((Button) focus).getText().toString() : "";
+              render();
+              View restore = tag == null ? null : root.findViewWithTag(tag);
+              if (restore != null) restore.requestFocus();
+              else if (!button.isEmpty()) restoreButton(root, button);
+            }
+          });
         });
   }
 
@@ -1035,14 +1232,59 @@ public class MainActivity extends Activity {
     return false;
   }
 
+  @SuppressWarnings("unchecked")
+  private void onCatalogUpdate(Runnable binding) {
+    if(root.getTag() instanceof List)((List<Runnable>)root.getTag()).add(binding);
+  }
+  @SuppressWarnings("unchecked")
+  private void updateBrowse(LinearLayout view) {
+    if(view==null)return;
+    if(view.getTag() instanceof List)for(Runnable binding:new ArrayList<>((List<Runnable>)view.getTag()))binding.run();
+    updatePosters(view);
+  }
+  private List<Library.Title> shelfTitles(String name) {
+    if(name.equals("Continue watching"))return library.continuing();
+    if(name.equals("Recently watched"))return library.recentlyWatched();
+    if(name.equals("Recently added"))return library.filter("","","",0);
+    if(name.equals("Movies"))return library.filter("movie","","",0);
+    if(name.equals("TV Shows"))return library.filter("tv","","",0);
+    return library.filter("","",name,0);
+  }
+
+  private void updatePosters(View view) {
+    if(view instanceof PosterCard && view.getTag() instanceof String) {
+      String tag=(String)view.getTag();
+      Library.Title title=library.find(tag.substring("title:".length()));
+      if(title!=null)((PosterCard)view).bind(title);
+    }
+    if(view instanceof ViewGroup) {
+      ViewGroup group=(ViewGroup)view;
+      for(int i=0;i<group.getChildCount();i++)updatePosters(group.getChildAt(i));
+    }
+  }
+
+  private boolean sameDetail(Library.Title a,Library.Title b) {
+    if(a==null || b==null)return a==b;
+    if(!Objects.toString(a.cast,"").equals(Objects.toString(b.cast,""))||!a.title.equals(b.title)||!a.summary.equals(b.summary)||!a.poster.equals(b.poster)||!a.backdrop.equals(b.backdrop)||!a.metadata().equals(b.metadata())||a.assets.size()!=b.assets.size())return false;
+    for(int i=0;i<a.assets.size();i++) {
+      Library.Asset x=a.assets.get(i),y=b.assets.get(i);
+      if(!x.id.equals(y.id)||!x.name.equals(y.name)||!x.summary.equals(y.summary)||x.position!=y.position||x.duration!=y.duration||x.watched!=y.watched||x.complete!=y.complete||!x.mediaInfo.toString().equals(y.mediaInfo.toString()))return false;
+    }
+    return true;
+  }
+
   private void refreshLibrary() {
-    if (refreshingLibrary || loading) return;
+    if (refreshingLibrary || loading || selectingProfile) return;
     refreshingLibrary = true;
     Api requested = api;
     int generation = connectionGeneration;
     io.execute(
         () -> {
           try {
+            if (!requested.libraryChanged()) {
+              runOnUiThread(() -> refreshingLibrary = false);
+              return;
+            }
             JSONObject response = requested.request("GET", "/v1/library", null);
             String snapshot = requested.libraryRaw;
             new BrowseCache(this, requested).write("library", snapshot.getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -1061,14 +1303,30 @@ public class MainActivity extends Activity {
                   Object tag = focus == null ? null : focus.getTag();
                   String label =
                       focus instanceof Button ? ((Button) focus).getText().toString() : "";
+                  Library.Title oldDetail=library.find(detailId),newDetail=updated.find(detailId);
                   library = updated;
-                  render();
+                  if (detailId.isEmpty()) {
+                    updateBrowse(root);
+                    updateBrowse(savedBrowseRoot);
+                    return;
+                  }
+                  updateBrowse(savedBrowseRoot);
+                  if (showingCast) return;
+                  if (sameDetail(oldDetail,newDetail)) return;
+                  int scrollY=content.getChildCount()>0?content.getChildAt(0).getScrollY():0;
+                  content.removeAllViews();
+                  if(newDetail!=null) {
+                    details(newDetail);
+                    content.getChildAt(0).post(() -> content.getChildAt(0).scrollTo(0,scrollY));
+                  } else { detailId=""; render(); }
                   View restore = tag == null ? null : root.findViewWithTag(tag);
                   if (restore != null) restore.post(restore::requestFocus);
                   else if (!label.isEmpty()) restoreButton(root, label);
                 });
           } catch (Exception e) {
-            runOnUiThread(() -> refreshingLibrary = false);
+            runOnUiThread(() -> {
+              refreshingLibrary = false;
+            });
           }
         });
   }
@@ -1109,6 +1367,86 @@ public class MainActivity extends Activity {
     }
   }
 
+  private String playbackLabel(Library.Title title, Library.Asset asset) {
+    if (asset == null) return "▶  Start";
+    boolean resume = asset.position > 0 && !asset.watched;
+    if (!title.kind.equals("tv") || asset.episode <= 0) return resume ? "▶  Resume" : "▶  Play";
+    String episode = "S" + asset.season + "E" + asset.episode;
+    String remaining = resume && asset.duration > asset.position
+        ? " (" + (int)Math.ceil((asset.duration - asset.position) / 60) + " min remaining)" : "";
+    return "▶  " + (resume ? "Resume " : "Start ") + episode + remaining;
+  }
+
+  private void castPage(Library.Title title) {
+    LinearLayout heading = Ui.row(this);
+    Ui.pad(heading, 36, 18);
+    Ui.add(heading, Ui.button(this, L10n.t("Back"), this::onBackPressed), -2, 44);
+    Ui.gap(heading, 20);
+    Ui.add(heading, Ui.title(this, "Cast · " + title.title, 26), -1, -2);
+    Ui.add(content, heading, -1, -2);
+    // Bound the data as well as the view count. ListView recycles its visible rows.
+    ArrayList<String[]> rows = new ArrayList<>();
+    outer: for (int i = 0; title.cast != null && i < title.cast.length(); i++) {
+      JSONObject person = title.cast.optJSONObject(i);
+      if (person == null) continue;
+      JSONArray roles = person.optJSONArray("roles");
+      if (roles != null && roles.length() > 0) {
+        for (int j = 0; j < roles.length(); j++) {
+          JSONObject role = roles.optJSONObject(j);
+          if (role == null) continue;
+          rows.add(new String[]{Library.string(person,"name"), Library.string(role,"character"), Library.string(role,"episode_count")});
+          if (rows.size() > 150) break outer;
+        }
+      } else {
+        rows.add(new String[]{Library.string(person,"name"), Library.string(person,"character"), Library.string(person,"total_episode_count")});
+        if (rows.size() > 150) break;
+      }
+    }
+    boolean truncated = rows.size() > 150;
+    if (truncated) rows.remove(150);
+    LinearLayout columns = Ui.row(this);
+    Ui.pad(columns, 50, 10);
+    columns.addView(Ui.text(this, L10n.t("Actor"), 14, Ui.MUTED), new LinearLayout.LayoutParams(0, -2, 1));
+    columns.addView(Ui.text(this, L10n.t("Character"), 14, Ui.MUTED), new LinearLayout.LayoutParams(0, -2, 1));
+    TextView episodes = Ui.text(this, title.kind.equals("tv") ? L10n.t("Episodes") : "", 14, Ui.MUTED);
+    episodes.setGravity(Gravity.END);
+    Ui.add(columns, episodes, 90, -2);
+    Ui.add(content, columns, -1, -2);
+    if (truncated) {
+      TextView note = Ui.text(this, L10n.t("Showing the first 150 cast entries."), 13, Ui.MUTED);
+      Ui.pad(note, 50, 8); Ui.add(content, note, -1, -2);
+    }
+    ListView list = new ListView(this);
+    list.setDividerHeight(Ui.dp(this, 6));
+    list.setSelector(Ui.shape(0xff304d49, Ui.ACCENT, this));
+    list.setPadding(Ui.dp(this, 36), 0, Ui.dp(this, 36), Ui.dp(this, 24));
+    list.setAdapter(new BaseAdapter() {
+      public int getCount() { return rows.size(); }
+      public Object getItem(int position) { return rows.get(position); }
+      public long getItemId(int position) { return position; }
+      public View getView(int position, View recycled, ViewGroup parent) {
+        LinearLayout row;
+        if (recycled instanceof LinearLayout) row = (LinearLayout)recycled;
+        else {
+          row = Ui.row(MainActivity.this);
+          Ui.pad(row, 14, 14);
+          row.setMinimumHeight(Ui.dp(MainActivity.this, 60));
+          for (int col = 0; col < 3; col++) {
+            TextView text = Ui.text(MainActivity.this, "", 18, col == 0 ? Ui.TEXT : Ui.MUTED);
+            text.setMaxLines(3); text.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            row.addView(text, col < 2 ? new LinearLayout.LayoutParams(0,-2,1) : new LinearLayout.LayoutParams(Ui.dp(MainActivity.this,90),-2));
+            if (col == 2) text.setGravity(Gravity.END);
+          }
+        }
+        String[] entry = rows.get(position);
+        for (int col = 0; col < 3; col++) ((TextView)row.getChildAt(col)).setText(col == 2 && !title.kind.equals("tv") ? "" : entry[col]);
+        return row;
+      }
+    });
+    content.addView(list, new LinearLayout.LayoutParams(-1, 0, 1));
+    list.requestFocus();
+  }
+
   private void details(Library.Title t) {
     ambient(t);
     ScrollView sc = scroll(content);
@@ -1144,7 +1482,7 @@ public class MainActivity extends Activity {
         Button button =
             Ui.button(
                 this,
-                number == 0 ? "Specials" : "Season " + number,
+                number == 0 ? L10n.t("Specials") : "Season " + number,
                 () -> {
                   season = number;
                   render();
@@ -1170,7 +1508,7 @@ public class MainActivity extends Activity {
       for (Library.Asset a : t.assets)
         if (!a.extra() && !a.hasSeason) {
           if (!heading) {
-            Ui.add(body, Ui.title(this, "Other episodes", 18), -1, 36);
+            Ui.add(body, Ui.title(this, L10n.t("Other episodes"), 18), -1, 36);
             heading = true;
           }
           episode(body, t, a);
@@ -1181,7 +1519,7 @@ public class MainActivity extends Activity {
       if (a.extra()) {
         if (!extras) {
           Ui.gap(body, 16);
-          Ui.add(body, Ui.title(this, "Special features", 18), -1, 36);
+          Ui.add(body, Ui.title(this, L10n.t("Special features"), 18), -1, 36);
           extras = true;
         }
         episode(body, t, a);
@@ -1191,7 +1529,7 @@ public class MainActivity extends Activity {
         body,
         Ui.button(
             this,
-            "Back to library",
+            L10n.t("Back to library"),
             () -> {
               detailId = "";
               render();
@@ -1211,7 +1549,7 @@ public class MainActivity extends Activity {
       image.setScaleType(ImageView.ScaleType.CENTER_CROP);
       Ui.round(image, 5);
       Ui.add(row, image, 125, 70);
-      art.load(image, a.id, "episode");
+      art.load(image, a.id, "episode", a.thumbnail);
       Ui.gap(row, 14);
     }
     TextView playIcon = Ui.title(this, a.watched ? "✓" : "▶", 18);
@@ -1247,6 +1585,14 @@ public class MainActivity extends Activity {
       Ui.add(text, bar, -1, 4);
     }
     row.addView(text, new LinearLayout.LayoutParams(0, -2, 1));
+    Ui.gap(row, 12);
+    Button watched = Ui.button(this, a.watched ? "✓" : "○", () -> mark(a));
+    watched.setContentDescription(a.watched ? L10n.t("Mark as unwatched") : L10n.t("Mark as watched"));
+    watched.setTag("watched:" + a.id);
+    watched.setTextColor(Ui.ACCENT);
+    Ui.add(row, watched, 48, 48);
+    row.setGravity(Gravity.CENTER_VERTICAL);
+
     row.setOnClickListener(
         v -> {
           if (a.complete) play(t, a, false);
@@ -1272,9 +1618,9 @@ public class MainActivity extends Activity {
   private void assetOptions(Library.Title t, Library.Asset a) {
     if (a == null) {
       new AlertDialog.Builder(this)
-          .setTitle("Not yet available")
-          .setMessage("This title has no complete media files on the server.")
-          .setPositiveButton("OK", null)
+          .setTitle(L10n.t("Not yet available"))
+          .setMessage(L10n.t("This title has no complete media files on the server."))
+          .setPositiveButton(L10n.t("OK"), null)
           .show();
       return;
     }
@@ -1283,7 +1629,8 @@ public class MainActivity extends Activity {
       labels.add(a.position > 0 && !a.watched ? "Resume" : "Play");
       if (a.position > 0) labels.add("Start from beginning");
     }
-    labels.add(a.watched ? "Mark unwatched" : "Mark watched");
+    labels.add(a.watched ? "Mark as Unwatched" : "Mark as Watched");
+    if (a.complete) labels.add("Manage files");
     new AlertDialog.Builder(this)
         .setTitle(a.name)
         .setItems(
@@ -1291,6 +1638,8 @@ public class MainActivity extends Activity {
             (d, w) -> {
               String action = labels.get(w);
               if (action.startsWith("Mark")) mark(a);
+              else if (action.equals("Manage files"))
+                new LibraryFileActions(this, api, io, a.id, this::load).show();
               else play(t, a, action.equals("Start from beginning"));
             })
         .show();
@@ -1324,43 +1673,179 @@ public class MainActivity extends Activity {
     i.putExtra("name", a.label());
     i.putExtra("beginning", beginning);
     ArrayList<String> ids = new ArrayList<>(), names = new ArrayList<>();
-    boolean after = false;
-    if (t.kind.equals("tv"))
-      for (Library.Asset item : t.playable()) {
-        if (after) {
-          ids.add(item.id);
-          names.add(item.label());
-        }
-        if (item.id.equals(a.id)) after = true;
-      }
+    Library.Asset next = t.next(a.id);
+    Set<String> queued = new HashSet<>();
+    while (next != null && queued.add(next.id)) {
+      ids.add(next.id);
+      names.add(next.label());
+      next = t.next(next.id);
+    }
     i.putStringArrayListExtra("queue_ids", ids);
     i.putStringArrayListExtra("queue_names", names);
     startActivity(i);
+  }
+
+  private void chooseProfile(boolean switching) {
+    selectingProfile = true;
+    final Api requested = api;
+    base();
+    Ui.add(root, Ui.title(this, L10n.t("Who's watching?"), 30), -1, 56);
+    ProgressBar spinner = new ProgressBar(this);
+    Ui.add(root, spinner, 44, 44);
+    io.execute(() -> {
+      try {
+        requested.register();
+        JSONObject state = requested.request("GET", "/v1/devices/" + Api.part(requested.client) + "/profile", null);
+        JSONArray people = state.getJSONArray("profiles");
+        String selected = Library.string(state, "profile_id");
+        if (!switching && !selected.isEmpty()) {
+          for (int n = 0; n < people.length(); n++) {
+            JSONObject person = people.getJSONObject(n);
+            if (selected.equals(person.getString("id"))) {
+              activateProfile(requested, person, false);
+              return;
+            }
+          }
+          throw new Exception("Your selected profile is unavailable. Choose a user to continue.");
+        }
+        runOnUiThread(() -> {
+          if (isDestroyed() || api != requested) return;
+          base();
+          Ui.add(root, Ui.title(this, L10n.t("Who's watching?"), 30), -1, 56);
+          ScrollView scroll = new ScrollView(this);
+          LinearLayout list = Ui.column(this);
+          scroll.addView(list);
+          root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+          for (int n = 0; n < people.length(); n++) {
+            JSONObject person = people.optJSONObject(n);
+            if (person == null) continue;
+            LinearLayout card = Ui.row(this);card.setGravity(Gravity.CENTER_VERTICAL);
+            LinearLayout button = Ui.row(this);button.setGravity(Gravity.CENTER_VERTICAL);Ui.focus(button);Ui.pad(button,16,12);
+            button.addView(ProfileUi.avatar(this,person,64));Ui.gap(button,20);
+            TextView label = Ui.title(this,person.optString("name"),22);
+            button.addView(label,new LinearLayout.LayoutParams(0,-2,1));
+            if(requested.profile.equals(person.optString("id")))Ui.add(button,Ui.text(this,"✓",22,Ui.ACCENT),36,-2);
+            button.setOnClickListener(v -> {
+              if (switchingProfile || api != requested) return;
+              switchingProfile = true;showProfileSwitchProgress();
+              io.execute(() -> activateProfile(requested, person, true));
+            });
+            card.addView(button,new LinearLayout.LayoutParams(0,-2,1));Ui.gap(card,12);
+            Button edit = Ui.button(this,"✎",()->editProfile(requested,person));edit.setContentDescription(L10n.t("Edit profile"));Ui.add(card,edit,48,48);
+            Ui.add(list,card,600,-2);Ui.gap(list,16);
+            if (n == 0) button.requestFocus();
+          }
+          Ui.add(list, Ui.button(this, L10n.t("Create user"), () -> createProfile(requested)), 420, 56);
+          if (!requested.profile.isEmpty()) {
+            Ui.gap(list, 12);
+            Ui.add(list, Ui.button(this, L10n.t("Back to library"), () -> { selectingProfile = false; render(); }), 420, 56);
+          }
+        });
+      } catch (Exception e) {
+        runOnUiThread(() -> {
+          if (isDestroyed() || api != requested) return;
+          base();
+          Ui.add(root, Ui.title(this, L10n.t("Could not load users"), 28), -1, 56);
+          Ui.add(root, Ui.text(this, message(e), 16, Ui.MUTED), -1, -2);
+          Button retry = Ui.button(this, L10n.t("Try again"), () -> chooseProfile(switching));
+          Ui.add(root, retry, 260, 56);
+          retry.requestFocus();
+        });
+      }
+    });
+  }
+
+  private void createProfile(Api requested) { editProfile(requested,null); }
+  private void editProfile(Api requested,JSONObject prior) {
+    if(switchingProfile || api!=requested)return;
+    ProfileUi.editor(this,prior,(values,dialog)->{
+      if(switchingProfile || api!=requested)return;
+      switchingProfile=true;dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
+      io.execute(()->{
+        try {
+          JSONObject person=requested.request(prior==null?"POST":"PATCH",prior==null?"/v1/profiles":"/v1/profiles/"+Api.part(prior.optString("id")),values);
+          if(prior==null){runOnUiThread(dialog::dismiss);activateProfile(requested,person,true);}
+          else runOnUiThread(()->{
+            switchingProfile=false;if(api!=requested)return;
+            if(person.optString("id").equals(api.profile)){
+              api.profileAppearance=person;try{store.save(api);}catch(Exception e){error(message(e));return;}
+            }
+            dialog.dismiss();chooseProfile(true);
+          });
+        } catch(Exception e){runOnUiThread(()->{switchingProfile=false;dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);error(message(e));});}
+      });
+    });
+  }
+
+  // Replace the immutable connection instead of changing a profile underneath in-flight work.
+  private void showProfileSwitchProgress() {
+    base();
+    Ui.add(root, Ui.title(this, L10n.t("Switching user…"), 30), -1, 56);
+    Ui.add(root, new ProgressBar(this), 44, 44);
+  }
+
+  private void activateProfile(Api requested, JSONObject person, boolean persist) {
+    try {
+      String id = person.getString("id"), name = person.getString("name");
+      if (persist) requested.request("PUT", "/v1/devices/" + Api.part(requested.client) + "/profile",
+          new JSONObject().put("profile_id", id));
+      Api selected = new Api(requested.base, requested.token, requested.client, id, name);
+      selected.profileAppearance = person;
+      runOnUiThread(() -> {
+        switchingProfile = false;
+        if (isDestroyed() || api != requested) return;
+        try {
+          store.save(selected);
+          api = selected;
+          if (art != null) art.close();
+          art = new Art(this, selected);
+          library = null;
+          librarySnapshot = "";
+          savedBrowseView = savedBrowseFocus = null;
+          savedBrowseRoot = savedBrowseContent = savedBrowseNav = null;
+          savedBrowseApi = null;
+          detailId = collectionName = restoreId = query = genre = restoreShelf = "";
+          collectionIds.clear();
+          section = "Home";
+          season = -1;
+          selectingProfile = false;
+          loading = refreshingLibrary = false;
+          load();
+        } catch (Exception e) { chooseProfile(true); error(message(e)); }
+      });
+    } catch (Exception e) { runOnUiThread(() -> {
+      switchingProfile = false;
+      if (isDestroyed() || api != requested) return;
+      chooseProfile(true);
+      error(message(e));
+    }); }
   }
 
   private void settings() {
     new AlertDialog.Builder(this)
         .setTitle("Torrbaby " + BuildConfig.VERSION_NAME + " · build " + BuildConfig.VERSION_CODE)
         .setItems(
-            new String[] {
+            L10n.labels(new String[] {
               "Refresh library",
               "Change server connection",
               "Default subtitles",
               "Startup diagnostics",
-              "Disconnect this TV"
-            },
+              "Disconnect this TV",
+              "Follow system language"
+            }),
             (d, w) -> {
               if (w == 0) load();
               else if (w == 1) discover("");
               else if (w == 2) Subtitles.edit(this, api, io, null);
-              else if (w == 3) new AlertDialog.Builder(this).setTitle("Startup timings").setMessage(StartupTrace.text()).setPositiveButton("Close", null).show();
+              else if (w == 3) new AlertDialog.Builder(this).setTitle(L10n.t("Startup timings")).setMessage(StartupTrace.text()).setPositiveButton(L10n.t("Close"), null).show();
+              else if (w == 5) L10n.system(this);
               else
                 new AlertDialog.Builder(this)
-                    .setTitle("Disconnect this TV?")
-                    .setMessage("Your library and viewing history stay on the server.")
-                    .setNegativeButton("Cancel", null)
+                    .setTitle(L10n.t("Disconnect this TV?"))
+                    .setMessage(L10n.t("Your library and viewing history stay on the server."))
+                    .setNegativeButton(L10n.t("Cancel"), null)
                     .setPositiveButton(
-                        "Disconnect",
+                        L10n.t("Disconnect"),
                         (x, y) -> {
                           store.clear();
                           api = null;
@@ -1423,10 +1908,10 @@ public class MainActivity extends Activity {
     if (spinner != null) spinner.setVisibility(View.GONE);
     label.setText(reason);
     Ui.gap(root, 24);
-    Button retry = Ui.button(this, "Try again", () -> discover(""));
+    Button retry = Ui.button(this, L10n.t("Try again"), () -> discover(""));
     Ui.add(root, retry, 200, 44);
     Ui.gap(root, 12);
-    Ui.add(root, Ui.button(this, "Enter server address", () -> setup("")), 230, 44);
+    Ui.add(root, Ui.button(this, L10n.t("Enter server address"), () -> setup("")), 230, 44);
     retry.requestFocus();
   }
 
@@ -1454,7 +1939,7 @@ public class MainActivity extends Activity {
           discoveryHandler.postDelayed(() -> connectLan(server.getValue(), message, generation), 700);
         } else {
           root.findViewWithTag("connection_spinner").setVisibility(View.GONE);
-          message.setText("Choose your server");
+          message.setText(L10n.t("Choose your server"));
           for (Map.Entry<String, String> server : servers.entrySet()) {
             Ui.gap(choices, 12);
             Ui.add(choices, Ui.button(MainActivity.this, server.getKey(), () -> {
@@ -1495,7 +1980,7 @@ public class MainActivity extends Activity {
             StartupTrace.mark("LAN registration finished");
             Api connected =
                 new Api(address, credential.getString("token"), credential.getString("client_id"));
-            Library result = Library.parse(connected.request("GET", "/v1/library", null));
+
             runOnUiThread(
                 () -> {
                   if (generation != connectionGeneration || isDestroyed() || isFinishing()) return;
@@ -1506,12 +1991,12 @@ public class MainActivity extends Activity {
                     api = connected;
                     StartupTrace.connected(api);
                     art = new Art(this, api);
-                    library = result;
+                    library = null;
                     section = "Home";
                     detailId = "";
                     collectionName = "";
                     restoreId = "";
-                    render();
+                    chooseProfile(false);
                   } catch (Exception e) {
                     connectingLan = false;
                     connectionFailed(message, message(e));
@@ -1534,8 +2019,8 @@ public class MainActivity extends Activity {
   private void setup(String note) {
     base();
     int generation = connectionGeneration;
-    Ui.add(root, Ui.title(this, "Welcome home", 28), -1, 50);
-    Ui.add(root, Ui.text(this, "Connect to your Torrbaby server", 16, Ui.MUTED), -1, 35);
+    Ui.add(root, Ui.title(this, L10n.t("Welcome home"), 28), -1, 50);
+    Ui.add(root, Ui.text(this, L10n.t("Connect to your Torrbaby server"), 16, Ui.MUTED), -1, 35);
     EditText server = input("http://diamond.local:8765", false);
     if (api != null) server.setText(api.base);
     Ui.add(root, server, 600, 50);
@@ -1544,7 +2029,7 @@ public class MainActivity extends Activity {
     Ui.add(
         root,
         Ui.button(
-            this, "Connect", () -> {
+            this, L10n.t("Connect"), () -> {
               String address = server.getText().toString();
               base();
               TextView label = connectionScreen();
@@ -1553,10 +2038,10 @@ public class MainActivity extends Activity {
         170,
         44);
     Ui.gap(root, 12);
-    Ui.add(root, Ui.button(this, "Find servers", () -> discover("")), 170, 44);
+    Ui.add(root, Ui.button(this, L10n.t("Find servers"), () -> discover("")), 170, 44);
     if (api != null) {
       Ui.gap(root, 12);
-      Ui.add(root, Ui.button(this, "Back to library", this::render), 190, 44);
+      Ui.add(root, Ui.button(this, L10n.t("Back to library"), () -> { selectingProfile = false; render(); }), 190, 44);
     }
     server.requestFocus();
   }
@@ -1579,20 +2064,34 @@ public class MainActivity extends Activity {
     new AlertDialog.Builder(this)
         .setTitle("Torrbaby")
         .setMessage(s)
-        .setPositiveButton("OK", null)
+        .setPositiveButton(L10n.t("OK"), null)
         .show();
   }
 
   @Override
   public void onBackPressed() {
+    if (showingCast) {
+      showingCast = false; render();
+      View cast = root.findViewWithTag("cast");
+      if (cast != null) cast.requestFocus();
+      return;
+    }
+
+    if (switchingProfile) return;
+    if (selectingProfile) {
+      if (api == null || api.profile.isEmpty()) finish();
+      else { selectingProfile = false; render(); }
+      return;
+    }
     if (!detailId.isEmpty()) {
       detailId = "";
       if (savedBrowseView != null && savedBrowseApi == api) {
         long started = SystemClock.elapsedRealtime();
         connectionGeneration++;
         root = savedBrowseRoot; content = savedBrowseContent; nav = savedBrowseNav;
+        if(art!=null)art.beginScreen();
         setContentView(savedBrowseView);
-        librarySnapshot = savedBrowseSnapshot;
+        updateBrowse(root);
         inLibrary = true;
         if (savedBrowseFocus != null) savedBrowseFocus.requestFocus();
         savedBrowseView = null; savedBrowseFocus = null;
@@ -1612,9 +2111,9 @@ public class MainActivity extends Activity {
       render();
     } else
       new AlertDialog.Builder(this)
-          .setTitle("Leave Torrbaby?")
-          .setNegativeButton("Stay", null)
-          .setPositiveButton("Exit", (d, w) -> finish())
+          .setTitle(L10n.t("Leave Torrbaby?"))
+          .setNegativeButton(L10n.t("Stay"), null)
+          .setPositiveButton(L10n.t("Exit"), (d, w) -> finish())
           .show();
   }
 }

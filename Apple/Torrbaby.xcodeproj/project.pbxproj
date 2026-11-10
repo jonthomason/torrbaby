@@ -18,6 +18,8 @@
 				<string>YES</string>
 				<key>CLANG_ENABLE_OBJC_ARC</key>
 				<string>YES</string>
+				<key>SWIFT_EMIT_LOC_STRINGS</key>
+				<string>YES</string>
 			</dict>
 			<key>isa</key>
 			<string>XCBuildConfiguration</string>
@@ -31,6 +33,7 @@
 			<key>files</key>
 			<array>
 				<string>716E9590E60B3AFA6E62BF18</string>
+				<string>C32665754D325ECF0A72C1BB</string>
 			</array>
 			<key>isa</key>
 			<string>PBXResourcesBuildPhase</string>
@@ -237,6 +240,8 @@
 				<string>DF58CFE57E7FDBF59314E784</string>
 				<string>A9BCA438417D62B8BB39B2EE</string>
 				<string>3685E330EC5277A9DD5661C6</string>
+				<string>DDFDA7D0CEFB8C6B7C53EE6A</string>
+				<string>0ABAE98C3689AE0A1E7C3BF9</string>
 			</array>
 			<key>isa</key>
 			<string>PBXGroup</string>
@@ -492,6 +497,7 @@
 			<key>knownRegions</key>
 			<array>
 				<string>en</string>
+				<string>zh-Hans</string>
 				<string>Base</string>
 			</array>
 			<key>mainGroup</key>
@@ -552,6 +558,7 @@
 				<string>E9ACACC5C8F21FD48C7E6429</string>
 				<string>2A537C4DBDC6EED3BAAE4556</string>
 				<string>D7693334FE5864081CBB4379</string>
+				<string>E2D5DFB30CF1C0D666283507</string>
 			</array>
 			<key>isa</key>
 			<string>PBXSourcesBuildPhase</string>
@@ -627,6 +634,8 @@
 				<string>YES</string>
 				<key>CLANG_ENABLE_OBJC_ARC</key>
 				<string>YES</string>
+				<key>SWIFT_EMIT_LOC_STRINGS</key>
+				<string>YES</string>
 			</dict>
 			<key>isa</key>
 			<string>XCBuildConfiguration</string>
@@ -670,6 +679,42 @@
 			<string>Detail.swift</string>
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
+		</dict>
+		<key>DDFDA7D0CEFB8C6B7C53EE6A</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>text.json.xcstrings</string>
+			<key>path</key>
+			<string>Localizable.xcstrings</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
+		<key>C32665754D325ECF0A72C1BB</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>DDFDA7D0CEFB8C6B7C53EE6A</string>
+		</dict>
+		<key>0ABAE98C3689AE0A1E7C3BF9</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>Localization.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
+		<key>E2D5DFB30CF1C0D666283507</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>0ABAE98C3689AE0A1E7C3BF9</string>
 		</dict>
 	</dict>
 	<key>rootObject</key>

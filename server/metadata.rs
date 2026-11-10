@@ -37,8 +37,9 @@ pub fn parse_name(name: &str) -> (String, String, &'static str) {
     // A title may itself start with a year or contain one (1917, 2001, Blade Runner 2049).
     // The release year is the last year token before episode/encoding markers,
     // and must have a nonempty title before it.
+    static ENCODING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b(?:1080p|2160p|720p|bluray|webrip|web-dl|hdtv)\b").unwrap());
     let boundary = season.as_ref().map(|m|m.start()).into_iter()
-        .chain(TECHNICAL.find(&name).map(|m|m.start())).min().unwrap_or(name.len());
+        .chain(ENCODING.find(&name).map(|m|m.start())).min().unwrap_or(name.len());
     let year = YEAR.captures_iter(&name).filter(|c| c.get(1).is_some_and(|m|
         m.start() > 0 && m.start() < boundary
         && name[..m.start()].chars().any(|c|c.is_alphanumeric()))).last();
@@ -296,6 +297,15 @@ impl Metadata {
             json!({"status":if !selected.is_null(){"matched"}else if candidates.is_empty(){"no_match"}else{"review"},"query":query,"candidates":candidates,"selected":selected}),
         )
     }
+    pub async fn cast(&self, entity: &Value) -> Result<Value> {
+        let kind=entity["kind"].as_str().context("Missing media kind")?;
+        anyhow::ensure!(["movie","tv"].contains(&kind), "Invalid media kind");
+        let id=entity["provider_id"].as_str().context("Missing metadata ID")?.parse::<u64>()?;
+        let route=if kind=="tv" {"aggregate_credits"} else {"credits"};
+        let credits=self.request(&format!("{kind}/{id}/{route}"), &[("language","en-US")]).await?;
+        Ok(cast_rows(&credits["cast"]))
+    }
+
     pub async fn enrich(&self, candidate: &Value) -> Result<Value> {
         if candidate["provider"] != "TMDB" {
             bail!("Choose a TMDB match for standalone metadata");
@@ -310,7 +320,7 @@ impl Metadata {
             .parse::<u64>()?;
         let key = format!("tmdb:{kind}:{id}");
         if let Some(entity) = self.cache.lock().await.get(&key) {
-            if crate::storage::now() - entity["fetched_at"].as_f64().unwrap_or(0.0) < 86400.0 {
+            if entity["cast"].is_array() && crate::storage::now() - entity["fetched_at"].as_f64().unwrap_or(0.0) < 86400.0 {
                 return Ok(entity.clone());
             }
         }
@@ -319,7 +329,7 @@ impl Metadata {
                 &format!("{kind}/{id}"),
                 &[
                     ("language", "en-US"),
-                    ("append_to_response", "images,release_dates,content_ratings"),
+                    ("append_to_response", if kind=="tv" {"images,release_dates,content_ratings,aggregate_credits"} else {"images,release_dates,content_ratings,credits"}),
                     ("include_image_language", "en,zh,null"),
                 ],
             )
@@ -343,6 +353,7 @@ impl Metadata {
         entity["release_date"] = json!(date);
         entity["year"] = json!(date.get(..4).unwrap_or(""));
         entity["summary"] = detail["overview"].clone();
+        entity["cast"] = cast_rows(&detail[if kind=="tv" {"aggregate_credits"} else {"credits"}]["cast"]);
         entity["thumbnail"] = image(&detail["poster_path"], "w500");
         entity["backdrop"] = image(&detail["backdrop_path"], "w1280");
         entity["genres"] = json!(
@@ -403,6 +414,28 @@ impl Metadata {
         entity["fetched_at"] = json!(crate::storage::now());
         self.cache.lock().await.insert(key, entity.clone());
         Ok(entity)
+    }
+}
+
+// Preserve TMDB's fields and ordering; do not infer roles or aggregate episode counts.
+fn cast_rows(value: &Value) -> Value {
+    json!(array(value).iter().filter(|person| person["name"].as_str().is_some_and(|name| !name.is_empty())).map(|person| {
+        let mut row=json!({"id":person["id"],"name":person["name"]});
+        for field in ["character","total_episode_count"] { if !person[field].is_null() { row[field]=person[field].clone(); } }
+        if let Some(roles)=person["roles"].as_array() { row["roles"]=json!(roles.iter().map(|role| json!({"character":role["character"],"episode_count":role["episode_count"]})).collect::<Vec<_>>()); }
+        row
+    }).collect::<Vec<_>>())
+}
+
+#[cfg(test)]
+mod cast_tests {
+    use super::*;
+    #[test]
+    fn credits_preserve_supplied_roles_and_counts() {
+        let rows=cast_rows(&json!([{"id":1,"name":"Actor","total_episode_count":23,"roles":[{"character":"First role","episode_count":20},{"character":"Second role","episode_count":8}]}]));
+        assert_eq!(rows[0]["total_episode_count"],23);
+        assert_eq!(rows[0]["roles"][1]["episode_count"],8);
+        assert_eq!(cast_rows(&json!([{"name":"Actor","character":"Character"}]))[0]["character"],"Character");
     }
 }
 

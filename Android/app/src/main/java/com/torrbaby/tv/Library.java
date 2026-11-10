@@ -57,8 +57,8 @@ public final class Library {
 
   public List<Title> continuing() {
     List<Title> result = new ArrayList<>();
-    for (Title t : titles) if (t.resume() != null) result.add(t);
-    result.sort(Comparator.comparingDouble((Title t) -> t.resume().lastPlayed).reversed());
+    for (Title t : titles) if (t.isContinuing()) result.add(t);
+    result.sort(Comparator.comparingDouble(Title::continueWatchingAt).reversed());
     return result;
   }
 
@@ -74,8 +74,13 @@ public final class Library {
     public final double added, minutes;
     public final List<String> genres = new ArrayList<>();
     public final List<Asset> assets = new ArrayList<>();
+    public final JSONArray cast;
+    public boolean continueWatchingHidden;
+    public boolean isContinuing() { return !continueWatchingHidden && resume()!=null; }
 
     Title(JSONObject j) {
+      continueWatchingHidden=j.optBoolean("continue_watching_hidden",false);
+      cast=j.optJSONArray("cast");
       id = string(j, "id");
       kind = string(j, "kind");
       title = string(j, "title");
@@ -113,7 +118,20 @@ public final class Library {
       for (Asset a : playable())
         if (!a.watched && a.position > 0 && (found == null || a.lastPlayed > found.lastPlayed))
           found = a;
+      Asset latest = null;
+      for (Asset a : playable())
+        if (a.lastPlayed > 0 && (latest == null || a.lastPlayed > latest.lastPlayed)) latest = a;
+      if (latest != null && latest.watched && (found == null || latest.lastPlayed >= found.lastPlayed)) {
+        Asset next = next(latest.id);
+        if (next != null && !next.watched) return next;
+      }
       return found;
+    }
+
+    public double continueWatchingAt() {
+      double time = 0;
+      for (Asset a : playable()) time = Math.max(time, a.lastPlayed);
+      return time;
     }
 
     public Asset preferred() {
@@ -124,9 +142,18 @@ public final class Library {
     }
 
     public Asset next(String id) {
-      List<Asset> all = playable();
-      for (int i = 0; i < all.size() - 1; i++)
-        if (all.get(i).id.equals(id)) return kind.equals("tv") ? all.get(i + 1) : null;
+      if (!kind.equals("tv")) return null;
+      Asset current = null;
+      for (Asset a : assets) if (a.id.equals(id) && !a.extra() && a.hasSeason) current = a;
+      if (current == null) return null;
+      boolean laterInSeason = false;
+      for (Asset a : assets) {
+        if (a.extra() || !a.hasSeason) continue;
+        if (a.season == current.season && a.episode > current.episode) laterInSeason = true;
+        if (a.season == current.season && a.episode == current.episode + 1 && a.complete) return a;
+      }
+      if (!laterInSeason && current.season > 0)
+        for (Asset a : playable()) if (a.season == current.season + 1 && a.episode == 1) return a;
       return null;
     }
 

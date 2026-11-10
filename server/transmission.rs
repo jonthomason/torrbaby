@@ -101,6 +101,8 @@ pub const FIELDS: &[&str] = &[
     "upload_ratio",
     "seed_ratio_limit",
     "seed_ratio_mode",
+    "seed_idle_limit",
+    "seed_idle_mode",
     "added_date",
     "activity_date",
     "peers_connected",
@@ -109,4 +111,5 @@ pub const FIELDS: &[&str] = &[
     "uploaded_ever",
     "labels",
     "is_stalled",
+    "is_finished",
 ];

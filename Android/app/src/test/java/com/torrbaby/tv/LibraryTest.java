@@ -36,6 +36,26 @@ public class LibraryTest {
   }
 
   @Test
+  public void nextUnstartedEpisodeLeadsContinueWatchingAfterCompletion() throws Exception {
+    JSONArray show = new JSONArray().put(asset("one", 1, 1, true, true, 120, 400))
+        .put(asset("two", 1, 2, true, false, 0, 0));
+    JSONArray movie = new JSONArray().put(asset("film", 0, 0, true, false, 30, 200));
+    Library library = Library.parse(new JSONObject().put("titles", new JSONArray()
+        .put(title("movie", "movie", "Movie", "2020", 1, movie))
+        .put(title("show", "tv", "Show", "2020", 1, show))));
+    assertEquals("show", library.continuing().get(0).id);
+    assertEquals("two", library.continuing().get(0).resume().id);
+    assertEquals(0, library.continuing().get(0).resume().position, 0);
+    // Unwatched history under another profile must not create an Up next entry.
+    Library.Title fresh = new Library.Title(title("fresh", "tv", "Show", "2020", 1,
+        new JSONArray().put(asset("one", 1, 1, true, false, 0, 0)).put(asset("two", 1, 2, true, false, 0, 0))));
+    assertNull(fresh.resume());
+    Library.Title gap = new Library.Title(title("gap", "tv", "Gap", "2020", 1,
+        new JSONArray().put(asset("one", 1, 1, true, true, 120, 400)).put(asset("three", 1, 3, true, false, 0, 0))));
+    assertNull(gap.resume());
+  }
+
+  @Test
   public void episodeOrderAndResumeIgnoreExtrasIncompleteAndWatched() throws Exception {
     JSONArray a =
         new JSONArray()
@@ -44,7 +64,7 @@ public class LibraryTest {
             .put(asset("first", 1, 1, true, false, 10, 10))
             .put(asset("unfinished", 1, 3, false, false, 40, 100))
             .put(asset("extra", 0, 0, true, false, 30, 200).put("role", "extra"))
-            .put(asset("seen", 1, 4, true, true, 118, 300));
+            .put(asset("seen", 1, 4, true, true, 118, 5));
     Library l =
         Library.parse(
             new JSONObject()
@@ -52,7 +72,7 @@ public class LibraryTest {
     Library.Title t = l.find("t");
     assertEquals("second", t.preferred().id);
     assertEquals("first", t.playable().get(0).id);
-    assertEquals("seen", t.next("second").id);
+    assertNull(t.next("second"));
     assertEquals(1, l.continuing().size());
     assertFalse(t.watched());
   }

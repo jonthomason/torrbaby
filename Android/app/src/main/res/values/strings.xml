@@ -1,0 +1,527 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_e9c9f7bc39bb" formatted="false">1h</string>
+    <string name="ui_027795961131" formatted="false">24h</string>
+    <string name="ui_8d61fd6a4ee0" formatted="false">6h</string>
+    <string name="ui_1e568cd5d4d7" formatted="false">&lt;1m remaining</string>
+    <string name="ui_eaca5bbaf44c" formatted="false">API TOKEN</string>
+    <string name="ui_6b21fb791ac0" formatted="false">About</string>
+    <string name="ui_cbd19b5c397e" formatted="false">Actor</string>
+    <string name="ui_61cc55aa0453" formatted="false">Add</string>
+    <string name="ui_d584a46acc6a" formatted="false">Add Torrent…</string>
+    <string name="ui_73d9c5ee15ad" formatted="false">Add a torrent</string>
+    <string name="ui_d76863c63c2f" formatted="false">Add magnet link</string>
+    <string name="ui_8985db712c53" formatted="false">Add magnet link to server</string>
+    <string name="ui_676f036428f3" formatted="false">Add media on your Torrbaby server, then refresh here.</string>
+    <string name="ui_dbe5ad51cb48" formatted="false">Add paused</string>
+    <string name="ui_ebf1fd2504e7" formatted="false">Add torrent</string>
+    <string name="ui_b68734c25910" formatted="false">Added</string>
+    <string name="ui_a98648e9368b" formatted="false">Added to Transmission</string>
+    <string name="ui_802e94122566" formatted="false">Adding download</string>
+    <string name="ui_9295ef6a9cf8" formatted="false">Adding download…</string>
+    <string name="ui_ffb2e628b0e9" formatted="false">Adding…</string>
+    <string name="ui_6a72085653e4" formatted="false">All</string>
+    <string name="ui_360e1182021a" formatted="false">All clear</string>
+    <string name="ui_09ac5f615d7d" formatted="false">All genres</string>
+    <string name="ui_9d12608fc0bd" formatted="false">Alphabetical</string>
+    <string name="ui_f2de57952082" formatted="false">Already in your torrents</string>
+    <string name="ui_dcc38ee5a416" formatted="false">Applies to torrents that use the server\'s default</string>
+    <string name="ui_ad4f3c956b19" formatted="false">Ask trackers for peers</string>
+    <string name="ui_acdac205f5e2" formatted="false">Audio</string>
+    <string name="ui_ac9041e76816" formatted="false">Automatic</string>
+    <string name="ui_6f3eae86037f" formatted="false">Automatic subtitles paused</string>
+    <string name="ui_a15fde5173db" formatted="false">Automation</string>
+    <string name="ui_1cf7876da26c" formatted="false">Automation paused</string>
+    <string name="ui_7c62a1424469" formatted="false">Available</string>
+    <string name="ui_7631b26ea80b" formatted="false">Avatar</string>
+    <string name="ui_eab9b46602ed" formatted="false">Avatar must be an initial, emoji or printable symbol</string>
+    <string name="ui_b52b36b7269f" formatted="false">Back</string>
+    <string name="ui_f0926a5af237" formatted="false">Back to library</string>
+    <string name="ui_1a0371e373ff" formatted="false">Background color</string>
+    <string name="ui_f12e36bd83ed" formatted="false">Background opacity</string>
+    <string name="ui_8c84989bcc5e" formatted="false">Bytes/sec</string>
+    <string name="ui_77dfd2135f4d" formatted="false">Cancel</string>
+    <string name="ui_67bb11d08df2" formatted="false">Cancel download</string>
+    <string name="ui_60745aef336b" formatted="false">Cast</string>
+    <string name="ui_64fbd995d3b6" formatted="false">Change</string>
+    <string name="ui_d4223134a9c8" formatted="false">Change server connection</string>
+    <string name="ui_bf83da1053c7" formatted="false">Change server seeding target?</string>
+    <string name="ui_ee9946c82d4a" formatted="false">Character</string>
+    <string name="ui_e185048ce3c0" formatted="false">Check again</string>
+    <string name="ui_2ce5dd0d6f18" formatted="false">Check now</string>
+    <string name="ui_ffe5184940bc" formatted="false">Check the server address and network connection.</string>
+    <string name="ui_8e6b214072c4" formatted="false">Check the year and episodes before applying.</string>
+    <string name="ui_07369df4cdcc" formatted="false">Checking files…</string>
+    <string name="ui_80b0becd67a4" formatted="false">Checking languages…</string>
+    <string name="ui_d2eaf2aa1512" formatted="false">China</string>
+    <string name="ui_15dc18865567" formatted="false">Chinese</string>
+    <string name="ui_78bba35bec31" formatted="false">Chinese (Simplified)</string>
+    <string name="ui_db2dff441f0d" formatted="false">Chinese (Traditional)</string>
+    <string name="ui_f47537b34855" formatted="false">Choose a profile</string>
+    <string name="ui_bf1604f52dd4" formatted="false">Choose a release</string>
+    <string name="ui_9d6a2b12fd09" formatted="false">Choose a release, then add it.</string>
+    <string name="ui_0acf0708ca28" formatted="false">Choose a user before starting playback.</string>
+    <string name="ui_0772fa16aa51" formatted="false">Choose the right title</string>
+    <string name="ui_82be318f7bae" formatted="false">Choose your server</string>
+    <string name="ui_412226715c56" formatted="false">Clear filters</string>
+    <string name="ui_a5a18ce21516" formatted="false">Click to prioritize this title in the subtitle queue</string>
+    <string name="ui_bbfa773e5a63" formatted="false">Close</string>
+    <string name="ui_ba5e1c3ff6e7" formatted="false">Closed captions</string>
+    <string name="ui_402e2cc39017" formatted="false">Collecting history…</string>
+    <string name="ui_d2f76731e1e1" formatted="false">Comfortable view</string>
+    <string name="ui_e3719eae891e" formatted="false">Compact view</string>
+    <string name="ui_1f5a1abf2f08" formatted="false">Complete</string>
+    <string name="ui_04a212215ef9" formatted="false">Confirm</string>
+    <string name="ui_b65463cb6a42" formatted="false">Connect</string>
+    <string name="ui_d9c85ddf1ada" formatted="false">Connect to Torrbaby</string>
+    <string name="ui_5ff4e73045a5" formatted="false">Connect to server</string>
+    <string name="ui_0cfb70250af2" formatted="false">Connect to this server?</string>
+    <string name="ui_21b5f5d88904" formatted="false">Connect to your Torrbaby server</string>
+    <string name="ui_c2f9b7b4897f" formatted="false">Connected</string>
+    <string name="ui_fd3e79699426" formatted="false">Connecting…</string>
+    <string name="ui_6512ee1541e9" formatted="false">Connection</string>
+    <string name="ui_618aac54b120" formatted="false">Connection settings</string>
+    <string name="ui_8fca30f77496" formatted="false">Continue watching</string>
+    <string name="ui_c0d06c3ff543" formatted="false">Could not connect.</string>
+    <string name="ui_3498c19c828e" formatted="false">Could not find your server</string>
+    <string name="ui_47dd74c0c423" formatted="false">Could not load users</string>
+    <string name="ui_3bcad4a3da4b" formatted="false">Could not refresh.</string>
+    <string name="ui_f3f2d926eb9b" formatted="false">Couldn’t add torrent</string>
+    <string name="ui_bdbad1e91c63" formatted="false">Couldn’t complete that action</string>
+    <string name="ui_105483da313b" formatted="false">Couldn’t complete the request</string>
+    <string name="ui_91c43091f2aa" formatted="false">Couldn’t confirm removal. Reconnect and refresh the torrent list before trying again.</string>
+    <string name="ui_6ea8bdf5fd9f" formatted="false">Couldn’t load source details. You can still add this torrent.</string>
+    <string name="ui_5cbc510fd460" formatted="false">Couldn’t load this release. Please reopen it to retry.</string>
+    <string name="ui_b8b71a01afec" formatted="false">Couldn’t manage files</string>
+    <string name="ui_bf0f3a2d2c62" formatted="false">Couldn’t retrieve this torrent. Try again.</string>
+    <string name="ui_6e157c5da441" formatted="false">Create</string>
+    <string name="ui_bdbcfa0af077" formatted="false">Create user</string>
+    <string name="ui_f06a7a6fb077" formatted="false">Currently unlimited</string>
+    <string name="ui_564af6829fbc" formatted="false">DOWNLOAD</string>
+    <string name="ui_45bfe6a546ee" formatted="false">DOWNLOADING</string>
+    <string name="ui_48e6659a58ed" formatted="false">Daemon</string>
+    <string name="ui_56ab7aaee895" formatted="false">Date added</string>
+    <string name="ui_808d7dca8a74" formatted="false">Default</string>
+    <string name="ui_1ed9b82ce00f" formatted="false">Default seed ratio</string>
+    <string name="ui_41c93ce4c7fe" formatted="false">Default subtitles</string>
+    <string name="ui_f6fdbe48dc54" formatted="false">Delete</string>
+    <string name="ui_a9ec7cf46a7d" formatted="false">Delete Permanently</string>
+    <string name="ui_c6e535e716bb" formatted="false">Delete after playback</string>
+    <string name="ui_d41b502f0510" formatted="false">Delete download</string>
+    <string name="ui_3ddb8541a199" formatted="false">Delete files from server…</string>
+    <string name="ui_e63b5153bde0" formatted="false">Delete permanently</string>
+    <string name="ui_b14c902794f5" formatted="false">Delete this device’s download?</string>
+    <string name="ui_72d3c49b323c" formatted="false">Delete this download?</string>
+    <string name="ui_2e4bc4ccc662" formatted="false">Delete torrent and its files?</string>
+    <string name="ui_cc7192d76413" formatted="false">Deleting files…</string>
+    <string name="ui_55f8ebc805e6" formatted="false">Description</string>
+    <string name="ui_d56e2646caaa" formatted="false">Device linked</string>
+    <string name="ui_df485c871329" formatted="false">Devices</string>
+    <string name="ui_ed28e0686e12" formatted="false">Disconnect</string>
+    <string name="ui_d9835d7b9245" formatted="false">Disconnect this TV</string>
+    <string name="ui_3e06b932237a" formatted="false">Disconnect this TV?</string>
+    <string name="ui_dc83cd803134" formatted="false">Dismiss notification</string>
+    <string name="ui_e9b450d14bc2" formatted="false">Done</string>
+    <string name="ui_a479c9c34e87" formatted="false">Download</string>
+    <string name="ui_4d53d7ff3f86" formatted="false">Download Specials</string>
+    <string name="ui_9f86fc7f9614" formatted="false">Download and seeding updates</string>
+    <string name="ui_95efb337ce26" formatted="false">Download complete</string>
+    <string name="ui_c6cf3bcf805a" formatted="false">Download limit (GB)</string>
+    <string name="ui_9c8fe84bfbc4" formatted="false">Download progress</string>
+    <string name="ui_2d4ee79253e4" formatted="false">Download storage</string>
+    <string name="ui_2a18b6447c5a" formatted="false">Download to this device</string>
+    <string name="ui_c61970292546" formatted="false">Downloaded</string>
+    <string name="ui_9b4592f9ae45" formatted="false">Downloading</string>
+    <string name="ui_a862c2b21b5e" formatted="false">Downloads</string>
+    <string name="ui_022410e4af2e" formatted="false">Downloads unavailable</string>
+    <string name="ui_b3171b22b733" formatted="false">Edit connection</string>
+    <string name="ui_15141eab3a28" formatted="false">Edit profile</string>
+    <string name="ui_9c98222b05e5" formatted="false">Enable device notifications</string>
+    <string name="ui_649df08a448e" formatted="false">English</string>
+    <string name="ui_ec6f5bc52086" formatted="false">English (CC)</string>
+    <string name="ui_341df26b4074" formatted="false">Enter a magnet link beginning with magnet:?</string>
+    <string name="ui_7e5fe97f0e96" formatted="false">Enter a name</string>
+    <string name="ui_cd8763c98e0a" formatted="false">Enter a value</string>
+    <string name="ui_5069655cee71" formatted="false">Enter server address</string>
+    <string name="ui_8669aa56ebc3" formatted="false">Episode</string>
+    <string name="ui_49d641ba8893" formatted="false">Episodes</string>
+    <string name="ui_e8642ee5ad7e" formatted="false">Estimating…</string>
+    <string name="ui_f83b6fe3aebf" formatted="false">Exit</string>
+    <string name="ui_b965ae66fcc4" formatted="false">Explore</string>
+    <string name="ui_c3c5fb3f17e9" formatted="false">Extracting</string>
+    <string name="ui_f5febee5e9e1" formatted="false">Extracting subtitles</string>
+    <string name="ui_9fb4f1d17ef8" formatted="false">FILES</string>
+    <string name="ui_09fef5d8d9a3" formatted="false">Failed</string>
+    <string name="ui_11b2dac9eb17" formatted="false">File list unavailable</string>
+    <string name="ui_df12077fa702" formatted="false">Files and details</string>
+    <string name="ui_b677e2df8e0a" formatted="false">Files removed</string>
+    <string name="ui_df251b06eefd" formatted="false">Find</string>
+    <string name="ui_16689b7611c8" formatted="false">Find a torrent</string>
+    <string name="ui_2893768e025f" formatted="false">Find servers</string>
+    <string name="ui_26e31d51a583" formatted="false">Find the proper title</string>
+    <string name="ui_fce33b5fafaf" formatted="false">Find torrents</string>
+    <string name="ui_d46f03ac24a4" formatted="false">Find your next watch</string>
+    <string name="ui_ea4dab10bf35" formatted="false">Finding your library…</string>
+    <string name="ui_6383e55e9190" formatted="false">Find…</string>
+    <string name="ui_355bcc577d71" formatted="false">Finished</string>
+    <string name="ui_28ba2e16d87b" formatted="false">Finished watching</string>
+    <string name="ui_7a021eb3a208" formatted="false">Finishes seeding, then deletes the files.</string>
+    <string name="ui_dfdda95a2fb2" formatted="false">Finishing cleanup…</string>
+    <string name="ui_7e568a90221d" formatted="false">First name</string>
+    <string name="ui_e82b1912c8d1" formatted="false">First name must not be empty</string>
+    <string name="ui_b2b163a7935b" formatted="false">Folders on your server</string>
+    <string name="ui_ddc61f82d863" formatted="false">Follow system language</string>
+    <string name="ui_b97c4d4cddf2" formatted="false">Font</string>
+    <string name="ui_6f1b97e4c290" formatted="false">Forced</string>
+    <string name="ui_ba4e72261283" formatted="false">Forward</string>
+    <string name="ui_8eefdd52ad2d" formatted="false">Generated</string>
+    <string name="ui_a1af0d20ca98" formatted="false">Generated subtitles</string>
+    <string name="ui_2aa31fca5e4f" formatted="false">Genre</string>
+    <string name="ui_90ccd6497400" formatted="false">History</string>
+    <string name="ui_70f8bb9a8a53" formatted="false">Home</string>
+    <string name="ui_98f55db57c8e" formatted="false">Ignore</string>
+    <string name="ui_114d8bdfc753" formatted="false">Ignore for organization</string>
+    <string name="ui_d86fde95dbbf" formatted="false">Ignore organization</string>
+    <string name="ui_e88dc41ad40e" formatted="false">Ignore organization?</string>
+    <string name="ui_8ed49e014b77" formatted="false">Import connection file…</string>
+    <string name="ui_9ea8b1168411" formatted="false">In Junk · delete after seeding</string>
+    <string name="ui_1590b4aa625e" formatted="false">In Junk · finishing seeding</string>
+    <string name="ui_fc2d046feac3" formatted="false">Individual torrent limits take precedence.</string>
+    <string name="ui_8bfa1406b66d" formatted="false">Initial or emoji</string>
+    <string name="ui_9407e9ca65ce" formatted="false">Interface language</string>
+    <string name="ui_50be3afcff74" formatted="false">Interrupted</string>
+    <string name="ui_08c0c7e5fa43" formatted="false">Junk · delete after seeding</string>
+    <string name="ui_44d9c7e94283" formatted="false">Keep file extensions and episode numbers.</string>
+    <string name="ui_0ecad4174400" formatted="false">Keep files on server</string>
+    <string name="ui_ed7e27d64487" formatted="false">Keep free (GB)</string>
+    <string name="ui_89b86ab0e66f" formatted="false">Language</string>
+    <string name="ui_db07be184479" formatted="false">Languages</string>
+    <string name="ui_4ece8db0cba2" formatted="false">Languages unavailable</string>
+    <string name="ui_88a68e0e00b7" formatted="false">Leave Torrbaby?</string>
+    <string name="ui_b8100f5ba8bd" formatted="false">Library</string>
+    <string name="ui_16add3775c70" formatted="false">Library files</string>
+    <string name="ui_e35ac2febb1c" formatted="false">Library metadata</string>
+    <string name="ui_152e8ef91c16" formatted="false">Library unavailable</string>
+    <string name="ui_e716356061f3" formatted="false">Link a device</string>
+    <string name="ui_aaee331bfc80" formatted="false">Link this TV to your server again.</string>
+    <string name="ui_d6b61171cda1" formatted="false">Loading details…</string>
+    <string name="ui_78df555a3a52" formatted="false">Loading library…</string>
+    <string name="ui_4f96be70a1f2" formatted="false">Loading server activity…</string>
+    <string name="ui_23f94ec39630" formatted="false">Loading subtitles…</string>
+    <string name="ui_d219c68101f5" formatted="false">Location</string>
+    <string name="ui_82b4b1ef514f" formatted="false">Look up again</string>
+    <string name="ui_27d9ea3d190c" formatted="false">Looking up…</string>
+    <string name="ui_3f4fc9a34ef7" formatted="false">Lookup will retry</string>
+    <string name="ui_1268d8430d1c" formatted="false">MIT License</string>
+    <string name="ui_30c744051243" formatted="false">Magnet link</string>
+    <string name="ui_a3019db80899" formatted="false">Magnet links</string>
+    <string name="ui_bf58d17e561b" formatted="false">Manage</string>
+    <string name="ui_56cc6f0bc82e" formatted="false">Manage Files</string>
+    <string name="ui_90a419f73723" formatted="false">Manage files</string>
+    <string name="ui_31e9697d43a1" formatted="false">Mark</string>
+    <string name="ui_d53e6c60a414" formatted="false">Mark as Unwatched</string>
+    <string name="ui_714c410b2b80" formatted="false">Mark as Watched</string>
+    <string name="ui_1a82db488b82" formatted="false">Mark as unwatched</string>
+    <string name="ui_d1cc3212f6bd" formatted="false">Mark as watched</string>
+    <string name="ui_df7ea09cbb64" formatted="false">Mark unwatched</string>
+    <string name="ui_46b250bb0a3a" formatted="false">Mark watched</string>
+    <string name="ui_2f28e570a801" formatted="false">Menu bar</string>
+    <string name="ui_9188f98eea10" formatted="false">Metadata is being gathered on Diamond</string>
+    <string name="ui_216fcddff2f9" formatted="false">Monospace</string>
+    <string name="ui_4bab2d8fe13f" formatted="false">More</string>
+    <string name="ui_f49ac09d3a35" formatted="false">More to explore</string>
+    <string name="ui_f1f9e40dfd55" formatted="false">Move the entire package to Junk?</string>
+    <string name="ui_960728c07953" formatted="false">Move this package to Junk?</string>
+    <string name="ui_d1b65f7eb7e8" formatted="false">Move to Complete at target ratio</string>
+    <string name="ui_0f86501b5086" formatted="false">Move to Junk</string>
+    <string name="ui_3b0085b2395a" formatted="false">Move to Junk and finish seeding</string>
+    <string name="ui_332e5c3e48e1" formatted="false">Movie, show, or release</string>
+    <string name="ui_d301bc43b0a4" formatted="false">Movies</string>
+    <string name="ui_b688ba1879d4" formatted="false">Movies and TV shows</string>
+    <string name="ui_5df5902ecdb5" formatted="false">Moving to Junk…</string>
+    <string name="ui_709a23220f2c" formatted="false">Name</string>
+    <string name="ui_a126722ec044" formatted="false">Needs attention</string>
+    <string name="ui_bbeec6fc8b45" formatted="false">New Tab</string>
+    <string name="ui_dfdde1f46ede" formatted="false">New Tab (⌘T)</string>
+    <string name="ui_6499c7afe865" formatted="false">New code</string>
+    <string name="ui_9e627c7b1aec" formatted="false">New name</string>
+    <string name="ui_834ae0b1f228" formatted="false">Next Episode</string>
+    <string name="ui_882f1a46548e" formatted="false">Next episode</string>
+    <string name="ui_a3047eafa5d4" formatted="false">Next episode…</string>
+    <string name="ui_a66974cfe156" formatted="false">No available next episode</string>
+    <string name="ui_7f91412671b3" formatted="false">No confident match yet</string>
+    <string name="ui_9367342a5e79" formatted="false">No downloads</string>
+    <string name="ui_cd0af6cfca75" formatted="false">No matches</string>
+    <string name="ui_b0b087bbea50" formatted="false">No matches. You can still enter a name above.</string>
+    <string name="ui_839030590e08" formatted="false">No matching titles</string>
+    <string name="ui_7678770667a6" formatted="false">No movies or shows yet.</string>
+    <string name="ui_28d608ea4298" formatted="false">No peers and no activity for over 5 minutes</string>
+    <string name="ui_6a52f1d4b635" formatted="false">No recent activity</string>
+    <string name="ui_6fd4ab12ee28" formatted="false">No releases found</string>
+    <string name="ui_74cd1304973c" formatted="false">No server found</string>
+    <string name="ui_3e36b40ea99d" formatted="false">No subtitle jobs</string>
+    <string name="ui_34649c3ae595" formatted="false">No titles match your search.</string>
+    <string name="ui_879b4a9bb1c8" formatted="false">No torrents</string>
+    <string name="ui_6eef6648406c" formatted="false">None</string>
+    <string name="ui_5fe04f57e34d" formatted="false">Not downloaded</string>
+    <string name="ui_0008c8375b5d" formatted="false">Not progressing</string>
+    <string name="ui_5a28f15df569" formatted="false">Not yet available</string>
+    <string name="ui_753a22b2eb61" formatted="false">Notifications</string>
+    <string name="ui_8c9bc3ae4603" formatted="false">Now processing</string>
+    <string name="ui_9ce3bd4224c8" formatted="false">OK</string>
+    <string name="ui_e3de5ab0ca4c" formatted="false">Off</string>
+    <string name="ui_e01fa717bacc" formatted="false">Offline</string>
+    <string name="ui_66cf318223c2" formatted="false">Offline mode</string>
+    <string name="ui_cdac56f89fbf" formatted="false">Offline · showing the last server status</string>
+    <string name="ui_e0049a66519c" formatted="false">On</string>
+    <string name="ui_6c913a0dd748" formatted="false">On your connected device</string>
+    <string name="ui_976905271718" formatted="false">Open Torrbaby</string>
+    <string name="ui_1d24f33a5d2e" formatted="false">Open Torrbaby on your iPhone or iPad and choose Scan connection code.</string>
+    <string name="ui_170cbab1dce2" formatted="false">Opening video…</string>
+    <string name="ui_f5713d02fe43" formatted="false">Operation status is unavailable. The server may still be processing it.</string>
+    <string name="ui_11bff9c0b568" formatted="false">Organize completed downloads</string>
+    <string name="ui_c0a8060f3b11" formatted="false">Original</string>
+    <string name="ui_7a38047cc7f2" formatted="false">Original quality · Native player</string>
+    <string name="ui_c9d98984ac76" formatted="false">Other episodes</string>
+    <string name="ui_ca07ceefc22c" formatted="false">PEERS</string>
+    <string name="ui_7039298d0ff9" formatted="false">Paste your server token</string>
+    <string name="ui_519e39132bb9" formatted="false">Path</string>
+    <string name="ui_781961bc81c2" formatted="false">Pause</string>
+    <string name="ui_1a699ae89a2c" formatted="false">Pause download</string>
+    <string name="ui_c7dfb6f1d9c5" formatted="false">Paused</string>
+    <string name="ui_32fbb44008c1" formatted="false">Peers connected, but no activity for over 5 minutes</string>
+    <string name="ui_eed277a1aa9d" formatted="false">Permanently delete these files?</string>
+    <string name="ui_e9e82aac397b" formatted="false">Permanently delete this torrent’s downloaded files, including partial downloads.</string>
+    <string name="ui_01b2675f9904" formatted="false">Personal watch history and downloaded copies on other devices are kept.</string>
+    <string name="ui_5d12bd53552c" formatted="false">Play</string>
+    <string name="ui_576766d387ec" formatted="false">Play again</string>
+    <string name="ui_dc3b71c61700" formatted="false">Play or resume original file</string>
+    <string name="ui_c8e308704911" formatted="false">Playback</string>
+    <string name="ui_92cab0e68fa9" formatted="false">Playback finished</string>
+    <string name="ui_a017f09f772d" formatted="false">Playback history</string>
+    <string name="ui_850a3625cfbb" formatted="false">Playback settings</string>
+    <string name="ui_6ff42b75c926" formatted="false">Playback speed</string>
+    <string name="ui_83a6fd7b7878" formatted="false">Please try again.</string>
+    <string name="ui_3480a027386f" formatted="false">Prepare translations automatically</string>
+    <string name="ui_96a9b7cdbe40" formatted="false">Preparing</string>
+    <string name="ui_f9b13bce28d6" formatted="false">Preparing download</string>
+    <string name="ui_8be25e2451fb" formatted="false">Preparing next episode</string>
+    <string name="ui_de58cdcf6ca3" formatted="false">Preparing playback…</string>
+    <string name="ui_0f255a84a82a" formatted="false">Preparing subtitles…</string>
+    <string name="ui_0b1d6c0b1a56" formatted="false">Preparing…</string>
+    <string name="ui_5af3161d2251" formatted="false">Prioritize subtitles</string>
+    <string name="ui_cee5b42e2dc8" formatted="false">Profile colors must use #RRGGBB</string>
+    <string name="ui_79e0a2b26494" formatted="false">Profile name must contain 1–80 printable characters</string>
+    <string name="ui_c009b451b816" formatted="false">Profile not found</string>
+    <string name="ui_1b90271d66cf" formatted="false">Progress</string>
+    <string name="ui_6a599877d753" formatted="false">Queued</string>
+    <string name="ui_fd97ceed201e" formatted="false">Queued for verification</string>
+    <string name="ui_71e9c73be501" formatted="false">Queued to download</string>
+    <string name="ui_3280edae54c2" formatted="false">Queued to seed</string>
+    <string name="ui_90d650a94e13" formatted="false">Queuing…</string>
+    <string name="ui_bd84fa7fc4ce" formatted="false">Quit Torrbaby</string>
+    <string name="ui_034f14206811" formatted="false">RATIO</string>
+    <string name="ui_03e91053622d" formatted="false">REMAINING</string>
+    <string name="ui_794f65e9d206" formatted="false">Ratio</string>
+    <string name="ui_20c7c5522fc2" formatted="false">Ready</string>
+    <string name="ui_b10fbdb5d835" formatted="false">Ready to watch</string>
+    <string name="ui_1bded3d08e57" formatted="false">Reannounce to trackers</string>
+    <string name="ui_72d5617f3f47" formatted="false">Recent activity</string>
+    <string name="ui_5369634238e2" formatted="false">Recently added</string>
+    <string name="ui_de23e71b8ca8" formatted="false">Recently watched</string>
+    <string name="ui_9ef937556efe" formatted="false">Recommended</string>
+    <string name="ui_56e3badc4e6c" formatted="false">Refresh</string>
+    <string name="ui_564fe5e2d6a3" formatted="false">Refresh library</string>
+    <string name="ui_d41f56cea1ac" formatted="false">Release</string>
+    <string name="ui_91315eed232f" formatted="false">Release date</string>
+    <string name="ui_e1490e4ce2b7" formatted="false">Release tags</string>
+    <string name="ui_e963907dac5c" formatted="false">Remove</string>
+    <string name="ui_b589f73a82dc" formatted="false">Remove from Continue Watching</string>
+    <string name="ui_63db985f6027" formatted="false">Remove torrent</string>
+    <string name="ui_41b8f0cd711e" formatted="false">Remove torrent and delete files</string>
+    <string name="ui_e512d90885bf" formatted="false">Remove torrent, keep files</string>
+    <string name="ui_1b8ce9f15cc0" formatted="false">Remove torrent, keeping files?</string>
+    <string name="ui_3e0feffd1ffa" formatted="false">Remove torrent…</string>
+    <string name="ui_24062e0e3221" formatted="false">Removed from Continue Watching</string>
+    <string name="ui_8ed77723b4d4" formatted="false">Remove…</string>
+    <string name="ui_ea2bc2e40726" formatted="false">Removing from library…</string>
+    <string name="ui_9631a003b576" formatted="false">Removing stops this torrent and removes it from Transmission.</string>
+    <string name="ui_dd2b37f1a2d5" formatted="false">Removing torrent…</string>
+    <string name="ui_d3f4cb898fbe" formatted="false">Rename</string>
+    <string name="ui_f013e1dcb608" formatted="false">Rename through Transmission</string>
+    <string name="ui_7d1e95ef4177" formatted="false">Rename torrent</string>
+    <string name="ui_b3bd0b5a7049" formatted="false">Resume</string>
+    <string name="ui_b5ed1ec09384" formatted="false">Resume download</string>
+    <string name="ui_a15dffd81328" formatted="false">Resumes after playback</string>
+    <string name="ui_9f5cd8a2e880" formatted="false">Retry</string>
+    <string name="ui_b053804a25ad" formatted="false">Retry artwork</string>
+    <string name="ui_c03d34373e3c" formatted="false">Retry organization</string>
+    <string name="ui_5f1f46e2112f" formatted="false">Review a new name</string>
+    <string name="ui_094386f681e2" formatted="false">Revoke access</string>
+    <string name="ui_73989d9c5926" formatted="false">Running</string>
+    <string name="ui_c24ea1cb444a" formatted="false">SEEDING</string>
+    <string name="ui_0b25507fa566" formatted="false">SERVER ADDRESS</string>
+    <string name="ui_ecc39dc53993" formatted="false">Sans serif</string>
+    <string name="ui_efc007a393f6" formatted="false">Save</string>
+    <string name="ui_f597c0e8201d" formatted="false">Save profile</string>
+    <string name="ui_3b36f730de5c" formatted="false">Save seeding settings</string>
+    <string name="ui_913aba9f96cf" formatted="false">Save settings</string>
+    <string name="ui_c0ae8f6ea841" formatted="false">Saved</string>
+    <string name="ui_f6ab55dd3509" formatted="false">Scan again</string>
+    <string name="ui_b3b48e971d6e" formatted="false">Scan connection code</string>
+    <string name="ui_875f33d23a6c" formatted="false">Scan media library</string>
+    <string name="ui_d28ae0c30b7e" formatted="false">Scan the QR code</string>
+    <string name="ui_bce06414177f" formatted="false">Search</string>
+    <string name="ui_c4cfc9981ae1" formatted="false">Search movies and TV shows</string>
+    <string name="ui_06040cbe6a6a" formatted="false">Search movies and TV shows.</string>
+    <string name="ui_df65659012e9" formatted="false">Search online</string>
+    <string name="ui_d561e23a04d5" formatted="false">Search rate limited</string>
+    <string name="ui_c33f99863bee" formatted="false">Search region</string>
+    <string name="ui_c51ba3511ecd" formatted="false">Search titles, genres or year</string>
+    <string name="ui_d499e5b1e322" formatted="false">Search torrents</string>
+    <string name="ui_1a6a5ba8c23d" formatted="false">Searching…</string>
+    <string name="ui_62255f5671e8" formatted="false">Season</string>
+    <string name="ui_8196e42428ff" formatted="false">See All</string>
+    <string name="ui_e41966be6687" formatted="false">See All  ›</string>
+    <string name="ui_2ac9cd891f0d" formatted="false">Seeding</string>
+    <string name="ui_fd877c9a4fd7" formatted="false">Seeding target</string>
+    <string name="ui_6f27fe72ee93" formatted="false">Seeding will stop. All server files listed on this page will be permanently deleted for everyone. This cannot be undone.</string>
+    <string name="ui_a7c66748478a" formatted="false">Seeding will stop. These server files will be permanently deleted. This cannot be undone.</string>
+    <string name="ui_a5c78a86fab1" formatted="false">Serif</string>
+    <string name="ui_cb0cb170d106" formatted="false">Server</string>
+    <string name="ui_d83a107297bb" formatted="false">Server torrents</string>
+    <string name="ui_fad23a8672e6" formatted="false">Server transfers</string>
+    <string name="ui_ed99436dccac" formatted="false">Server updated</string>
+    <string name="ui_c7f73bb54d92" formatted="false">Settings</string>
+    <string name="ui_aef97bb06af4" formatted="false">Settings saved</string>
+    <string name="ui_c0f6e98ebf63" formatted="false">Settings → Link a device</string>
+    <string name="ui_4589080623ff" formatted="false">Show download and upload rates</string>
+    <string name="ui_3437b8727d9f" formatted="false">Show torrent</string>
+    <string name="ui_56b7696a10e7" formatted="false">Showing the first 150 cast entries.</string>
+    <string name="ui_b7152342a267" formatted="false">Size</string>
+    <string name="ui_336d9bdb4d4c" formatted="false">Size unavailable</string>
+    <string name="ui_b5eedcf44417" formatted="false">Size…</string>
+    <string name="ui_adc4e96a478b" formatted="false">Sort</string>
+    <string name="ui_a2a5bdeca939" formatted="false">Sort by</string>
+    <string name="ui_454237aa01ec" formatted="false">Source details unavailable.</string>
+    <string name="ui_2d37f6721074" formatted="false">Source languages</string>
+    <string name="ui_2eb56be3c2d9" formatted="false">Sources</string>
+    <string name="ui_4df6c61fc071" formatted="false">Sources unavailable</string>
+    <string name="ui_2e51c9be1bab" formatted="false">Special features</string>
+    <string name="ui_adc3296dff7b" formatted="false">Specials</string>
+    <string name="ui_2d2cb022bc3d" formatted="false">Speed</string>
+    <string name="ui_952f375412e8" formatted="false">Start</string>
+    <string name="ui_ee6fad6de0db" formatted="false">Start from beginning</string>
+    <string name="ui_b1bfaa46b94a" formatted="false">Startup diagnostics</string>
+    <string name="ui_cd7984197a67" formatted="false">Startup timings</string>
+    <string name="ui_f261ff7629df" formatted="false">Status unavailable</string>
+    <string name="ui_ae768f766f75" formatted="false">Stay</string>
+    <string name="ui_9e253470c876" formatted="false">Stop</string>
+    <string name="ui_8cf498a528c2" formatted="false">Stop tracking the torrent in Transmission. Keep all downloaded files on Diamond.</string>
+    <string name="ui_99a0efc6cfd8" formatted="false">Style</string>
+    <string name="ui_25bdf9860e96" formatted="false">Submitting…</string>
+    <string name="ui_e159d05a124c" formatted="false">Subtitle</string>
+    <string name="ui_a0744ab06c56" formatted="false">Subtitle preferences</string>
+    <string name="ui_f777f345eac3" formatted="false">Subtitle preferences saved</string>
+    <string name="ui_2e86ef3a303d" formatted="false">Subtitle style</string>
+    <string name="ui_17770471cb9f" formatted="false">Subtitles</string>
+    <string name="ui_fd035728d654" formatted="false">Subtitles on this TV</string>
+    <string name="ui_bb959ff245cd" formatted="false">Subtitles on this device</string>
+    <string name="ui_1f591ba0ae14" formatted="false">Subtitles unavailable</string>
+    <string name="ui_35b854e73ba9" formatted="false">Swipe left to delete this download</string>
+    <string name="ui_8fa8e660a5af" formatted="false">Switch to comfortable view</string>
+    <string name="ui_00089d46aa53" formatted="false">Switch to compact view</string>
+    <string name="ui_a2c22e9a14e3" formatted="false">Switch user</string>
+    <string name="ui_707377baaabb" formatted="false">Switching user…</string>
+    <string name="ui_bc0792d8dc81" formatted="false">System</string>
+    <string name="ui_84f9e6206a7c" formatted="false">TOTAL SIZE</string>
+    <string name="ui_1197e8e3035f" formatted="false">TRANSFER HISTORY</string>
+    <string name="ui_09bb08ece119" formatted="false">TV Shows</string>
+    <string name="ui_ac32c5b119ff" formatted="false">TV shows</string>
+    <string name="ui_987f5ab80eb3" formatted="false">Target upload/download ratio</string>
+    <string name="ui_1c7a30e57131" formatted="false">Text color</string>
+    <string name="ui_83e097038017" formatted="false">Text opacity</string>
+    <string name="ui_9a212ea4c5bb" formatted="false">The entire package will be hidden from everyone, continue seeding, and be permanently deleted when seeding finishes.</string>
+    <string name="ui_fa9822b1acbe" formatted="false">The entire package will be hidden now, continue seeding, and be permanently deleted when seeding finishes.</string>
+    <string name="ui_d3fdb91c3f77" formatted="false">The saved connection could not be opened.</string>
+    <string name="ui_9b8b91a1710b" formatted="false">The server did not supply this torrent\'s identity.</string>
+    <string name="ui_03a02769fe24" formatted="false">The server is deleting this package.</string>
+    <string name="ui_201454323279" formatted="false">The server is taking longer than expected. Refresh to check the result.</string>
+    <string name="ui_be694571db36" formatted="false">The server will continue this operation after you leave this screen.</string>
+    <string name="ui_2dee52785f6e" formatted="false">The server will continue this operation if you close this screen.</string>
+    <string name="ui_1bab38b72a4a" formatted="false">The server will retry automatically.</string>
+    <string name="ui_6ddf94adca4b" formatted="false">The torrent is still listed. Refresh in a moment to check whether removal finished.</string>
+    <string name="ui_196686e4c2fc" formatted="false">The video stream was interrupted. Check the server and network connection.</string>
+    <string name="ui_a3594939d5f3" formatted="false">This affects the entire download package and everyone’s library.</string>
+    <string name="ui_1d3888fca6b7" formatted="false">This code has expired.</string>
+    <string name="ui_fa5a6dd9d249" formatted="false">This device</string>
+    <string name="ui_6aacdc553205" formatted="false">This device could not decode the video or audio format.</string>
+    <string name="ui_f85d694d9581" formatted="false">This episode is not yet available on the server.</string>
+    <string name="ui_f71f96454e21" formatted="false">This file couldn’t play</string>
+    <string name="ui_6ca3d776fe97" formatted="false">This media file is not yet available on the server.</string>
+    <string name="ui_b38d0b241735" formatted="false">This package is in Junk. The server will finish seeding and delete it automatically.</string>
+    <string name="ui_951eb7043b7a" formatted="false">This release has no downloadable torrent.</string>
+    <string name="ui_d9c227c96cdb" formatted="false">This removes the file from everyone’s library.</string>
+    <string name="ui_ecd01d877069" formatted="false">This server has not enabled automatic connection for this network.</string>
+    <string name="ui_8607ce0e91d1" formatted="false">This title has no complete media files on the server.</string>
+    <string name="ui_2e1fcceaec2e" formatted="false">This torrent is no longer in Transmission.</string>
+    <string name="ui_f577c9312507" formatted="false">This video could not be played.</string>
+    <string name="ui_6c82e6dd8680" formatted="false">Time</string>
+    <string name="ui_22cd3c65b98a" formatted="false">Time range</string>
+    <string name="ui_768e0c1c6957" formatted="false">Title</string>
+    <string name="ui_44a4597b5507" formatted="false">Title A–Z</string>
+    <string name="ui_625fdd6c399e" formatted="false">Torrbaby transfer rates</string>
+    <string name="ui_7b518ca84399" formatted="false">Torrent CSV</string>
+    <string name="ui_0dcf2b602af0" formatted="false">Torrent action</string>
+    <string name="ui_cb6d24a29606" formatted="false">Torrent added</string>
+    <string name="ui_b05aed6afa6a" formatted="false">Torrent details</string>
+    <string name="ui_c0fdf7497ff3" formatted="false">Torrent removed</string>
+    <string name="ui_3e8f36b12ffb" formatted="false">Torrents</string>
+    <string name="ui_cbb4cc49824b" formatted="false">Transfer</string>
+    <string name="ui_8ad8302d110b" formatted="false">Translations</string>
+    <string name="ui_9a14b54f2d98" formatted="false">Transmission reports this torrent as stalled</string>
+    <string name="ui_c17f217d8b8e" formatted="false">Try a different title.</string>
+    <string name="ui_bcabdf3a5848" formatted="false">Try a shorter title or another source.</string>
+    <string name="ui_042c862e4467" formatted="false">Try again</string>
+    <string name="ui_8310b022d173" formatted="false">Try reconnecting</string>
+    <string name="ui_3c45be13a1a6" formatted="false">UPLOAD</string>
+    <string name="ui_9241930fa68d" formatted="false">UPLOAD HISTORY</string>
+    <string name="ui_c096eba0f2ba" formatted="false">UPLOADING</string>
+    <string name="ui_e7010042ce25" formatted="false">Unable to play</string>
+    <string name="ui_39fc72124884" formatted="false">Undo</string>
+    <string name="ui_b8bef37b7153" formatted="false">Unlimited</string>
+    <string name="ui_8bdf057f91e7" formatted="false">Upload</string>
+    <string name="ui_2fb6cfd6c7df" formatted="false">Use Torrbaby for magnet links</string>
+    <string name="ui_952de75621d0" formatted="false">Use available space</string>
+    <string name="ui_7669011536cd" formatted="false">Use this name</string>
+    <string name="ui_9f8a2389a20c" formatted="false">User</string>
+    <string name="ui_7a3d72b59826" formatted="false">User switched</string>
+    <string name="ui_5093d4d42052" formatted="false">Verify downloaded data</string>
+    <string name="ui_d1f2c4d8c84b" formatted="false">Verify files</string>
+    <string name="ui_6f7d05c24127" formatted="false">Verify files?</string>
+    <string name="ui_536244f4cc64" formatted="false">Verifying</string>
+    <string name="ui_31a7604a3c74" formatted="false">View source</string>
+    <string name="ui_33d30632848d" formatted="false">Waiting</string>
+    <string name="ui_91df8bb76aa2" formatted="false">Waiting for activity</string>
+    <string name="ui_0736f273254e" formatted="false">Waiting for peers</string>
+    <string name="ui_83ed73bbc425" formatted="false">Waiting for playback to finish</string>
+    <string name="ui_640215e9fe28" formatted="false">Waiting to verify</string>
+    <string name="ui_e304f9d1f888" formatted="false">Watch your downloaded movies and episodes.</string>
+    <string name="ui_de9a3242d1b8" formatted="false">Watched</string>
+    <string name="ui_7ab362f0a437" formatted="false">Welcome home</string>
+    <string name="ui_abec97b96eea" formatted="false">Who\'s watching?</string>
+    <string name="ui_119cbce6316b" formatted="false">Wi-Fi only</string>
+    <string name="ui_70c07ec18ef8" formatted="false">World</string>
+    <string name="ui_879e32326c52" formatted="false">Year</string>
+    <string name="ui_41bb0474a997" formatted="false">Your library</string>
+    <string name="ui_fc3b45ef8cc9" formatted="false">Your library and viewing history stay on the server.</string>
+    <string name="ui_edd9ec4fc336" formatted="false">Your library is empty</string>
+    <string name="ui_eb57b880868f" formatted="false">Your library is unavailable</string>
+    <string name="ui_19d4fb4f3901" formatted="false">Your selected profile is unavailable. Choose a user to continue.</string>
+    <string name="ui_8f3182a89e24" formatted="false">tb · Offline</string>
+    <string name="ui_42aef171c1c0" formatted="false">track</string>
+    <string name="ui_76ffb15387e1" formatted="false">▶  Explore</string>
+    <string name="ui_4159b402b262" formatted="false">▶  Play</string>
+    <string name="ui_dfb6d85fbc2f" formatted="false">▶  Resume</string>
+    <string name="ui_3afbe2dee41f" formatted="false">▶  Start</string>
+</resources>

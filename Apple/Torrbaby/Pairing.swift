@@ -14,6 +14,7 @@ private struct PairingPayload: Codable {
 }
 
 struct PairingCodeView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) private var dismiss
     @State private var grant: Grant?
@@ -33,12 +34,12 @@ struct PairingCodeView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 18) {
-                Text(paired ? "Device linked" : "Link a device").font(.title.bold())
+                Text(LocalizedStringKey(paired ? "Device linked" : "Link a device")).font(.title.bold())
                 if paired {
                     Image(systemName: "checkmark.circle.fill").font(.system(size: 80)).foregroundStyle(Theme.mint)
                     Button("Done") { dismiss() }.buttonStyle(.borderedProminent)
                 } else if let error {
-                    Text(error).foregroundStyle(.orange)
+                    Text(L10n.text(error)).foregroundStyle(.orange)
                     Button("New code") { generation = UUID() }
                 } else if let grant, let qr {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -80,6 +81,7 @@ struct PairingCodeView: View {
 
 #if os(iOS)
 struct PairingScannerView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) private var dismiss
     let connected: () -> Void
@@ -96,10 +98,10 @@ struct PairingScannerView: View {
                             Image(systemName: "network").font(.largeTitle)
                             Text("Connect to this server?").font(.title2.bold())
                             Text(payload.server).font(.callout).textSelection(.enabled)
-                            Button(busy ? "Connecting…" : "Connect") { Task { await redeem(payload) } }
+                            Button(LocalizedStringKey(busy ? "Connecting…" : "Connect")) { Task { await redeem(payload) } }
                                 .buttonStyle(.borderedProminent).disabled(busy)
                             Button("Scan again") { self.payload = nil; error = nil; scannerID = UUID() }.disabled(busy)
-                            if let error { Text(error).foregroundStyle(.orange) }
+                            if let error { Text(L10n.text(error)).foregroundStyle(.orange) }
                         }.frame(maxWidth: .infinity).padding(24)
                     }
                 } else {
@@ -114,7 +116,7 @@ struct PairingScannerView: View {
                                 Image(systemName: "qrcode.viewfinder").font(.system(size: 40)).foregroundStyle(Theme.mint)
                                 Text("Scan the QR code").font(.headline)
                                 if let error {
-                                    Text(error).font(.caption).foregroundStyle(.orange)
+                                    Text(L10n.text(error)).font(.caption).foregroundStyle(.orange)
                                     Button("Try again") { self.error = nil; scannerID = UUID() }
                                 }
                             }.multilineTextAlignment(.center)
@@ -170,6 +172,7 @@ struct PairingScannerView: View {
 }
 
 private struct CameraScanner: UIViewControllerRepresentable {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let scanned: (String) -> Void
     let failed: (String) -> Void
     final class Controller: UIViewController, AVCaptureMetadataOutputObjectsDelegate {

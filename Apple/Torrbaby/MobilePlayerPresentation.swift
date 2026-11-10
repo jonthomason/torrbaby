@@ -6,6 +6,7 @@ import Combine
 /// Presents AVKit itself, rather than embedding it in a SwiftUI sheet.
 /// Retains the playback session while AVKit is running in Picture in Picture.
 struct MobilePlayerPresentation: UIViewControllerRepresentable {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @Binding var playback: Playback?
     let store: Store
 
@@ -13,10 +14,78 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
         var appeared: (() -> Void)?
         override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); appeared?() }
     }
-    final class PlayerController: KeyboardPlayerController {
+    final class PlayerController: KeyboardPlayerController, UIGestureRecognizerDelegate {
         var disappeared: (() -> Void)?
+        var advanceEpisode: (() -> Void)?
+        var nextEpisodeAvailable = false { didSet { updateNextButton() } }
+        var inPictureInPicture = false { didSet { updateNextButton() } }
+        private let nextButton = UIButton(type: .system)
+        private var interactionDeadline = Date.distantPast
+        private var hideNextButton: Task<Void, Never>?
+
+        override func viewDidLoad() {
+            super.viewDidLoad()
+            var configuration = UIButton.Configuration.filled()
+            configuration.title = L10n.text("Next Episode")
+            configuration.image = UIImage(systemName: "forward.end.fill")
+            configuration.imagePadding = 10
+            configuration.baseBackgroundColor = .white
+            configuration.baseForegroundColor = .black
+            configuration.cornerStyle = .capsule
+            configuration.contentInsets = NSDirectionalEdgeInsets(top: 14, leading: 20, bottom: 14, trailing: 20)
+            nextButton.configuration = configuration
+            nextButton.translatesAutoresizingMaskIntoConstraints = false
+            nextButton.isHidden = true
+            nextButton.addAction(UIAction { [weak self] _ in
+                guard let self, self.nextEpisodeAvailable, !self.inPictureInPicture else { return }
+                self.nextEpisodeAvailable = false
+                self.advanceEpisode?()
+            }, for: .touchUpInside)
+            // A sibling above AVKit's view content receives touches without changing
+            // its native controls. contentOverlayView is for noninteractive content.
+            view.addSubview(nextButton)
+            NSLayoutConstraint.activate([
+                nextButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -24),
+                nextButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -130)
+            ])
+            let interaction = UITapGestureRecognizer(target: self, action: #selector(showNextButton))
+            interaction.cancelsTouchesInView = false
+            interaction.delegate = self
+            view.addGestureRecognizer(interaction)
+        }
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            showNextButton()
+        }
+        override func viewDidLayoutSubviews() {
+            super.viewDidLayoutSubviews()
+            view.bringSubviewToFront(nextButton)
+        }
+        @objc private func showNextButton() {
+            interactionDeadline = Date().addingTimeInterval(6)
+            updateNextButton()
+            hideNextButton?.cancel()
+            hideNextButton = Task { @MainActor [weak self] in
+                do { try await Task.sleep(for: .seconds(6)) } catch { return }
+                self?.updateNextButton()
+            }
+        }
+        private func updateNextButton() {
+            nextButton.isHidden = !nextEpisodeAvailable || inPictureInPicture
+                || Date() >= interactionDeadline
+        }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            // Native control touches (including scrubbing) should reveal the action too.
+            showNextButton()
+            return !(touch.view?.isDescendant(of: nextButton) ?? false)
+        }
         override func viewDidDisappear(_ animated: Bool) {
             super.viewDidDisappear(animated)
+            hideNextButton?.cancel()
+            interactionDeadline = .distantPast
+            nextButton.isHidden = true
             disappeared?()
         }
 
@@ -35,6 +104,10 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
         var pictureInPicture = false
         var restoring = false
         var errorObservation: AnyCancellable?
+        var preparationObservation: AnyCancellable?
+        var completionObservation: AnyCancellable?
+        var nextEpisodeObservation: AnyCancellable?
+        weak var preparationSpinner: UIActivityIndicatorView?
         var backgroundObserver: NSObjectProtocol?
         init(_ parent: MobilePlayerPresentation) { self.parent = parent }
         func presentIfNeeded() {
@@ -62,6 +135,10 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
                 self.finish()
             }
             self.controller = controller
+            controller.advanceEpisode = { [weak model] in model?.advanceToNextEpisode() }
+            nextEpisodeObservation = model.$canAdvanceEpisode.removeDuplicates().sink { [weak controller] available in
+                controller?.nextEpisodeAvailable = available
+            }
             Self.active = self
             backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification,
                                                                          object: nil, queue: .main) { [weak self] _ in
@@ -71,6 +148,29 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
                 guard let self else { return }
                 self.parent.store.actionError = message
                 self.close()
+            }
+            controller.loadViewIfNeeded()
+            if let overlay = controller.contentOverlayView {
+                let spinner = UIActivityIndicatorView(style: .large)
+                spinner.color = .white
+                spinner.hidesWhenStopped = true
+                spinner.accessibilityLabel = L10n.text("Preparing next episode")
+                spinner.translatesAutoresizingMaskIntoConstraints = false
+                overlay.addSubview(spinner)
+                NSLayoutConstraint.activate([
+                    spinner.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+                    spinner.centerYAnchor.constraint(equalTo: overlay.centerYAnchor)
+                ])
+                preparationSpinner = spinner
+                preparationObservation = model.$preparingNext.sink { [weak spinner] preparing in
+                    if preparing { spinner?.startAnimating() } else { spinner?.stopAnimating() }
+                }
+            }
+            completionObservation = model.$endMessage.compactMap { $0 }.sink { [weak self] message in
+                guard let self, let controller = self.controller else { return }
+                let alert = UIAlertController(title: message, message: nil, preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: L10n.text("Close"), style: .default) { [weak self] _ in self?.close() })
+                controller.present(alert, animated: true)
             }
             host.present(controller, animated: true)
         }
@@ -88,20 +188,26 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
             if parent.playback?.id == playbackID { parent.playback = nil }
             model = nil; controller = nil; playbackID = nil; pictureInPicture = false
             errorObservation = nil
+            preparationObservation = nil; completionObservation = nil
+            nextEpisodeObservation = nil
+            preparationSpinner?.removeFromSuperview(); preparationSpinner = nil
             if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver); self.backgroundObserver = nil }
             if Self.active === self { Self.active = nil }
         }
         func playerViewControllerWillStartPictureInPicture(_ playerViewController: AVPlayerViewController) {
             pictureInPicture = true
+            controller?.inPictureInPicture = true
             model?.report()
         }
         func playerViewControllerShouldAutomaticallyDismissAtPictureInPictureStart(_ playerViewController: AVPlayerViewController) -> Bool { true }
         func playerViewController(_ playerViewController: AVPlayerViewController, failedToStartPictureInPictureWithError error: Error) {
             pictureInPicture = false
+            controller?.inPictureInPicture = false
             parent.store.actionError = error.localizedDescription
         }
         func playerViewControllerDidStopPictureInPicture(_ playerViewController: AVPlayerViewController) {
             pictureInPicture = false
+            controller?.inPictureInPicture = false
             model?.report()
             if !restoring && playerViewController.presentingViewController == nil { finish() }
         }

@@ -111,6 +111,7 @@ private struct TorrentSearchDetails: Decodable {
 }
 
 struct TorrentSearchView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @State private var query: String
     @State private var year: Int?
@@ -141,7 +142,7 @@ struct TorrentSearchView: View {
                     if response.items.isEmpty && !searching {
                         if !response.providers.isEmpty && response.providers.allSatisfy({ $0.error != nil }) {
                             let limited = response.providers.contains { $0.error?.contains("rate limiting") == true }
-                            ContentUnavailableView(limited ? "Search rate limited" : "Sources unavailable", systemImage: limited ? "clock" : "network.slash", description: Text(response.providers.compactMap(\.error).first ?? "Try again shortly."))
+                            ContentUnavailableView(limited ? "Search rate limited" : "Sources unavailable", systemImage: limited ? "clock" : "network.slash", description: Text(LocalizedStringKey(response.providers.compactMap(\.error).first ?? "Try again shortly.")))
                         } else {
                             ContentUnavailableView("No releases found", systemImage: "magnifyingglass", description: Text("Try a shorter title or another source."))
                         }
@@ -200,7 +201,7 @@ struct TorrentSearchView: View {
                 searchField
                     .focused($searchFocused)
                     .onSubmit(search).autocorrectionDisabled().textFieldStyle(.plain)
-                Button(action: search) { Text(searching ? "Searching…" : "Search") }
+                Button(action: search) { Text(LocalizedStringKey(searching ? "Searching…" : "Search")) }
                     .buttonStyle(.borderedProminent)
                     .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || searching)
             }.padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
@@ -232,7 +233,7 @@ struct TorrentSearchView: View {
                     Button("Clear filters") { year = nil; season = nil; episode = nil; search() }
                 }.font(.caption).foregroundStyle(.secondary)
             }
-            if let error { Text(error).font(.caption).foregroundStyle(.orange) }
+            if let error { Text(L10n.text(error)).font(.caption).foregroundStyle(.orange) }
             if let response {
                 ForEach(response.providers.filter { $0.error != nil }, id: \.provider) { provider in
                     Text("\(TorrentSearchSource.label(provider.provider)): \(provider.error ?? "")")
@@ -290,6 +291,7 @@ struct TorrentSearchView: View {
 }
 
 private struct SearchReleaseArtwork: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let name: String
     @State private var data: Data?
@@ -349,6 +351,7 @@ private enum SearchReleaseSizes {
 }
 
 private struct TorrentSearchRow: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let item: TorrentSearchItem
     @State private var fetchedSize: String?
@@ -382,6 +385,7 @@ private struct TorrentSearchRow: View {
 }
 
 private struct TorrentSearchDetail: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) private var dismiss
     let item: TorrentSearchItem

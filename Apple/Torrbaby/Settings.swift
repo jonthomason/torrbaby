@@ -9,6 +9,7 @@ import AppKit
 #endif
 
 struct AutomationView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     var body: some View {
         ScrollView {
@@ -19,13 +20,13 @@ struct AutomationView: View {
                             HStack {
                                 Image(systemName: status.settings.paused ? "pause.circle.fill" : "sparkles").font(.title).foregroundStyle(Theme.mint)
                                 VStack(alignment: .leading, spacing: 5) {
-                                    Text(status.settings.paused ? "Paused" : "Running").font(.headline)
+                                    Text(LocalizedStringKey(status.settings.paused ? "Paused" : "Running")).font(.headline)
                                     Text("Checks every \(Int(status.settings.pollSeconds)) seconds").font(.caption).foregroundStyle(Theme.muted)
                                 }
                                 Spacer()
-                                Button(status.settings.paused ? "Resume" : "Pause") { store.toggleAutomation() }.buttonStyle(.bordered)
+                                Button(LocalizedStringKey(status.settings.paused ? "Resume" : "Pause")) { store.toggleAutomation() }.buttonStyle(.bordered)
                             }
-                            if let error = status.lastError { Text(error).foregroundStyle(.orange) }
+                            if let error = status.lastError { Text(L10n.text(error)).foregroundStyle(.orange) }
                             if let error = status.scanError { Label("Library: " + error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
                             HStack {
                                 Text("\(status.jobs.values.filter { $0.phase == "done" }.count) organized")
@@ -67,7 +68,7 @@ struct AutomationView: View {
                                 if let hash = event.hash, let torrent = store.torrents.first(where: { $0.id == hash }) {
                                     Text(torrent.displayName).font(.caption).foregroundStyle(Theme.muted).lineLimit(2)
                                 }
-                                if let error = event.error { Text(error).font(.caption).foregroundStyle(.orange) }
+                                if let error = event.error { Text(L10n.text(error)).font(.caption).foregroundStyle(.orange) }
                                 if let destination = event.destination { Text(destination).font(.caption2).foregroundStyle(Theme.muted) }
                             }
                             Spacer()
@@ -82,6 +83,7 @@ struct AutomationView: View {
 }
 
 struct SettingsView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @Binding var showConnect: Bool
     @State private var source = ""
@@ -92,6 +94,7 @@ struct SettingsView: View {
     @AppStorage("activityAlerts") private var activityAlerts = true
     @State private var notificationStatus: String?
     #if os(macOS)
+    @Environment(\.openWindow) private var openWindow
     @AppStorage("showMenuBarRates") private var showMenuBarRates = true
     #endif
     @State private var magnetStatus: String?
@@ -102,9 +105,20 @@ struct SettingsView: View {
             SwiftUI.Section("Torrbaby") {
                 Text(AppRelease.description).monospacedDigit()
             }
+            SwiftUI.Section("Interface language") { InterfaceLanguageSettings() }
+            SwiftUI.Section("User") {
+                Text(store.activeProfile?.name ?? "Choose a user")
+                Button("Switch user") {
+                    store.choosingProfile = true
+                    #if os(macOS)
+                    openWindow(id: "main")
+                    NSApp.activate(ignoringOtherApps: true)
+                    #endif
+                }
+            }
             SwiftUI.Section("Playback") {
                 Button("Default subtitles") { showSubtitles = true }
-                    .sheet(isPresented: $showSubtitles) { SubtitlePreferencesView() }
+                    .sheet(isPresented: $showSubtitles) { LocalizedInterface { SubtitlePreferencesView() } }
             }
             SwiftUI.Section("Translations") {
                 BackgroundSubtitlesView()
@@ -136,7 +150,7 @@ struct SettingsView: View {
             SwiftUI.Section("Devices") {
                 Button { showPairing = true } label: { Label("Link a device", systemImage: "qrcode") }
                     .disabled(!store.connected)
-                    .sheet(isPresented: $showPairing) { PairingCodeView() }
+                    .sheet(isPresented: $showPairing) { LocalizedInterface { PairingCodeView() } }
                 ForEach(store.clients) { client in
                     HStack {
                         DeviceNameRow(client: client, isCurrent: client.id == store.clientId)
@@ -159,7 +173,7 @@ struct SettingsView: View {
                 TextField("Downloads", text: $source)
                 TextField("Movies", text: $movies)
                 TextField("TV shows", text: $tv)
-                Button(saved ? "Saved" : "Save settings") {
+                Button(LocalizedStringKey(saved ? "Saved" : "Save settings")) {
                     store.perform {
                         try await store.send("PATCH", "/v1/settings", body: ["source": source, "movies": movies, "tv": tv, "poll_seconds": interval])
                         saved = true
@@ -195,6 +209,7 @@ struct SettingsView: View {
 }
 
 struct SeedingSettings: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @State private var available = false
     @State private var enabled = true
@@ -210,7 +225,7 @@ struct SeedingSettings: View {
                         .disabled(!enabled)
                     Text("Individual torrent limits take precedence.")
                         .font(.caption).foregroundStyle(.secondary)
-                    Button(saved ? "Saved" : "Save seeding settings") {
+                    Button(LocalizedStringKey(saved ? "Saved" : "Save seeding settings")) {
                         store.perform {
                             let policy: Policy = try await store.request("PATCH", "/v1/seeding", body: ["enabled":enabled, "ratio":ratio])
                             enabled = policy.enabled; ratio = policy.ratio; saved = true
@@ -230,6 +245,7 @@ struct SeedingSettings: View {
 }
 
 struct ConnectionView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) var dismiss
     @State private var address = ""
@@ -264,7 +280,7 @@ struct ConnectionView: View {
                         .font(.headline).padding(.horizontal, 12).padding(.vertical, 10)
                 }
                 .buttonStyle(.borderedProminent).foregroundStyle(Theme.canvas)
-                .sheet(isPresented: $showScanner) { PairingScannerView { dismiss() } }
+                .sheet(isPresented: $showScanner) { LocalizedInterface { PairingScannerView { dismiss() } } }
                 Spacer()
                 Spacer().frame(height: 40)
             }.padding(30).frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -289,12 +305,12 @@ struct ConnectionView: View {
                         #endif
                     Button("Import connection file…") { importProfile = true }.font(.caption)
                 }
-                if let error = store.connectionError { Text(error).font(.caption).foregroundStyle(.orange) }
+                if let error = store.connectionError { Text(L10n.text(error)).font(.caption).foregroundStyle(.orange) }
                 Button {
                     store.server = address; store.token = token
                     Task { await store.connect(); if store.connected { dismiss() } }
                 } label: {
-                    HStack { Spacer(); if store.isConnecting { ProgressView().controlSize(.small) }; Text(store.isConnecting ? "Connecting…" : "Connect to server").fontWeight(.semibold); Spacer() }.padding(.vertical, 7)
+                    HStack { Spacer(); if store.isConnecting { ProgressView().controlSize(.small) }; Text(LocalizedStringKey(store.isConnecting ? "Connecting…" : "Connect to server")).fontWeight(.semibold); Spacer() }.padding(.vertical, 7)
                 }.buttonStyle(.borderedProminent).foregroundStyle(Theme.canvas).disabled(address.isEmpty || token.isEmpty || store.isConnecting)
                 Spacer(minLength: 0)
             }.padding(30).background(Theme.canvas)
@@ -333,6 +349,7 @@ func canonicalMagnet(_ input: String) -> String {
 }
 
 struct AddTorrentView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) var dismiss
     @State private var magnet = ""
@@ -402,6 +419,7 @@ struct AddTorrentView: View {
 }
 
 struct DeviceNameRow: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let client: ClientDevice
     let isCurrent: Bool
@@ -422,6 +440,7 @@ struct DeviceNameRow: View {
 
 
 struct BackgroundSubtitlesView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     var body: some View {
         if let status = store.status {
@@ -433,7 +452,7 @@ struct BackgroundSubtitlesView: View {
                 Text("\(preparation.translated) translated · \(preparation.scanned) scanned").font(.callout).foregroundStyle(.secondary)
                 if let job = preparation.current {
                     let asset = store.library?.titles.flatMap(\.assets).first { $0.id == job.assetId }
-                    Text(asset?.name ?? "Translating subtitles…").lineLimit(2)
+                    Text(LocalizedStringKey(asset?.name ?? "Translating subtitles…")).lineLimit(2)
                     if job.totalCues > 0 {
                         ProgressView(value: Double(job.completedCues), total: Double(job.totalCues))
                         Text("\(Int(Double(job.completedCues) / Double(job.totalCues) * 100))%").monospacedDigit().font(.caption)

@@ -37,7 +37,8 @@ final class SecureStore {
 
   synchronized void save(Api api) throws Exception {
     JSONObject j =
-        new JSONObject().put("server", api.base).put("token", api.token).put("client", api.client);
+        new JSONObject().put("server", api.base).put("token", api.token).put("client", api.client)
+            .put("profile", api.profile).put("profile_name", api.profileName).put("profile_appearance", api.profileAppearance);
     Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
     cipher.init(Cipher.ENCRYPT_MODE, key());
     String encrypted =
@@ -62,7 +63,10 @@ final class SecureStore {
         new JSONObject(
             new String(
                 cipher.doFinal(Base64.decode(value, Base64.NO_WRAP)), StandardCharsets.UTF_8));
-    return new Api(j.getString("server"), j.getString("token"), j.getString("client"));
+    Api api = new Api(j.getString("server"), j.getString("token"), j.getString("client"),
+        j.optString("profile"), j.optString("profile_name"));
+    if (j.optJSONObject("profile_appearance") != null) api.profileAppearance = j.optJSONObject("profile_appearance");
+    return api;
   }
 
   void clear() {

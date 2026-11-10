@@ -19,4 +19,36 @@ PRAGMA foreign_keys=ON;
         CREATE TABLE IF NOT EXISTS subtitle_preferences (scope TEXT PRIMARY KEY, document TEXT NOT NULL, updated REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS media_inventory (asset_id TEXT PRIMARY KEY, revision TEXT NOT NULL, document TEXT NOT NULL, updated REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS subtitle_priorities (asset_id TEXT PRIMARY KEY, priority INTEGER NOT NULL);
-        PRAGMA user_version=9;
+
+CREATE TABLE IF NOT EXISTS library_operations (
+ id TEXT PRIMARY KEY,
+ package_id TEXT NOT NULL UNIQUE,
+ action TEXT NOT NULL CHECK(action IN ('delete','junk')),
+ phase TEXT NOT NULL CHECK(phase IN ('accepted','moving','verifying','seeding','detaching','deleting','cleanup','done')),
+ preview TEXT NOT NULL,
+ destination TEXT,
+ error TEXT,
+ created REAL NOT NULL,
+ updated REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS library_operation_assets (
+ asset_id TEXT PRIMARY KEY,
+ operation_id TEXT NOT NULL REFERENCES library_operations(id)
+);
+
+CREATE TABLE IF NOT EXISTS library_operation_runtime (
+ operation_id TEXT PRIMARY KEY REFERENCES library_operations(id),
+ document TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS library_operation_archive (
+ id TEXT PRIMARY KEY,
+ package_id TEXT NOT NULL,
+ document TEXT NOT NULL,
+ archived REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS profile_hidden_titles (
+ profile_id TEXT NOT NULL REFERENCES profiles(id), title_id TEXT NOT NULL,
+ hidden_at REAL NOT NULL, PRIMARY KEY(profile_id,title_id)
+);

@@ -8,6 +8,36 @@ struct TorrentFile: Codable, Hashable {
     var isVideo: Bool { ["mp4", "m4v", "mov", "mkv", "avi", "webm", "ts", "m2ts", "mpg", "mpeg", "wmv"].contains((name as NSString).pathExtension.lowercased()) }
 }
 
+struct TorrentFileOperation: Codable, Hashable {
+    let id: String
+    let action: String
+    let phase: String
+    let error: String?
+    var label: String {
+        if let error, !error.isEmpty { return (action == "junk" ? "Junk · " : "Deletion · ") + error }
+        return action == "junk" ? "Junk · delete after seeding" : "Deleting files…"
+    }
+}
+struct PendingLibraryOperation: Decodable, Identifiable {
+    let id: String
+    let action: String
+    let phase: String
+    let error: String?
+    let preview: String
+    var name: String {
+        guard let data = preview.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let name = object["name"] as? String else { return L10n.text("Library files") }
+        return name
+    }
+    var label: String {
+        if phase == "seeding" { return L10n.text("In Junk · delete after seeding") }
+        if phase == "moving" || phase == "verifying" { return L10n.text("Moving to Junk…") }
+        if phase == "cleanup" { return L10n.text("Finishing cleanup…") }
+        return action == "junk" ? "Removing from library…" : "Deleting files…"
+    }
+}
+struct PendingLibraryOperations: Decodable { let operations: [PendingLibraryOperation] }
 struct Torrent: Codable, Identifiable, Hashable {
     let hashString: String
     let name: String
@@ -29,6 +59,8 @@ struct Torrent: Codable, Identifiable, Hashable {
     let downloadedEver: Int64?
     let uploadedEver: Int64?
     let isStalled: Bool
+    var fileOperation: TorrentFileOperation? = nil
+    var isJunk: Bool { fileOperation?.action == "junk" }
     var id: String { hashString }
     var completed: Bool { percentDone >= 1 }
     var needsAttention: Bool { progressIssue != nil }
@@ -36,23 +68,24 @@ struct Torrent: Codable, Identifiable, Hashable {
         guard !completed else { return error != 0 ? errorString : nil }
         if error != 0 { return errorString }
         guard status != 0 else { return nil }
-        if isStalled { return "Transmission reports this torrent as stalled" }
+        if isStalled { return L10n.text("Transmission reports this torrent as stalled") }
         if status == 4 && rateDownload == 0 && Date().timeIntervalSince1970 - max(addedDate, activityDate) > 300 {
             return peersConnected == 0 ? "No peers and no activity for over 5 minutes" : "Peers connected, but no activity for over 5 minutes"
         }
         return nil
     }
     var stateName: String {
-        if error != 0 { return "Needs attention" }
+        if let operation = fileOperation { return operation.label }
+        if error != 0 { return L10n.text("Needs attention") }
         switch status {
-        case 0: return "Paused"
-        case 1: return "Waiting to verify"
-        case 2: return "Verifying"
-        case 3: return "Queued"
+        case 0: return L10n.text("Paused")
+        case 1: return L10n.text("Waiting to verify")
+        case 2: return L10n.text("Verifying")
+        case 3: return L10n.text("Queued")
         case 4: return isStalled ? "Waiting for peers" : "Downloading"
-        case 5: return "Queued to seed"
-        case 6: return "Seeding"
-        default: return "Status unavailable"
+        case 5: return L10n.text("Queued to seed")
+        case 6: return L10n.text("Seeding")
+        default: return L10n.text("Status unavailable")
         }
     }
     var displayName: String {
@@ -63,15 +96,15 @@ struct Torrent: Codable, Identifiable, Hashable {
     var size: Int64 { files.reduce(0) { $0 + $1.length } }
     var downloaded: Int64 { files.reduce(0) { $0 + $1.bytesCompleted } }
     var etaText: String {
-        if completed { return "Complete" }
-        if status == 0 { return "Paused" }
+        if completed { return L10n.text("Complete") }
+        if status == 0 { return L10n.text("Paused") }
         if status != 4 { return stateName }
-        if isStalled { return "Waiting for activity" }
-        guard let estimate = smoothedEta, estimate >= 0 else { return "Estimating…" }
-        if estimate < 60 { return "<1m remaining" }
-        if estimate < 3600 { return "~\(max(1, estimate / 60))m remaining" }
-        if estimate < 86400 { return "~\(estimate / 3600)h \((estimate % 3600) / 60)m remaining" }
-        return "~\(estimate / 86400)d \((estimate % 86400) / 3600)h remaining"
+        if isStalled { return L10n.text("Waiting for activity") }
+        guard let estimate = smoothedEta, estimate >= 0 else { return L10n.text("Estimating…") }
+        if estimate < 60 { return L10n.text("<1m remaining") }
+        if estimate < 3600 { return L10n.format("~%lldm remaining", max(1, estimate / 60)) }
+        if estimate < 86400 { return L10n.format("~%lldh %lldm remaining", estimate / 3600, (estimate % 3600) / 60) }
+        return L10n.format("~%lldd %lldh remaining", estimate / 86400, (estimate % 86400) / 3600)
     }
 }
 

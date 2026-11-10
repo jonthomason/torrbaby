@@ -13,7 +13,47 @@ import java.util.concurrent.*;
 final class Art {
   private final Api api;
   private final BrowseCache disk;
-  private final ExecutorService pool = Executors.newFixedThreadPool(3);
+  private final ThreadPoolExecutor pool = new ThreadPoolExecutor(3, 3, 0, TimeUnit.MILLISECONDS,
+      new PriorityBlockingQueue<Runnable>());
+  private final java.util.concurrent.atomic.AtomicLong sequence = new java.util.concurrent.atomic.AtomicLong();
+  private final Map<String, Job> jobs = new HashMap<>();
+  private final class Job implements Runnable, Comparable<Job> {
+    final String key;
+    final long order = sequence.getAndIncrement();
+    final Runnable work;
+    volatile int priority;
+    Job(String key, int priority, Runnable work) { this.key=key; this.priority=priority; this.work=work; }
+    public int compareTo(Job other) { int c=Integer.compare(priority,other.priority); return c!=0?c:Long.compare(order,other.order); }
+    public void run() { work.run(); }
+  }
+
+  // Drop obsolete queued requests when switching screens; the three active reads can finish into cache.
+  void beginScreen() {
+    synchronized(waiting) {
+      for(Runnable task:new ArrayList<>(pool.getQueue())) {
+        Job job=(Job)task;
+        if(pool.remove(job)) { waiting.remove(job.key); jobs.remove(job.key); }
+      }
+    }
+  }
+
+  void prioritize() {
+    synchronized(waiting) {
+      for(Job job:jobs.values()) {
+        int priority=3;
+        List<WeakReference<ImageView>> group=waiting.get(job.key);
+        if(group!=null)for(WeakReference<ImageView> ref:group) {
+          ImageView view=ref.get();
+          if(view==null || !job.key.equals(view.getTag()))continue;
+          android.graphics.Rect rect=new android.graphics.Rect();
+          if(view.getGlobalVisibleRect(rect))priority=Math.min(priority,1);
+          for(android.view.ViewParent p=view.getParent();p instanceof android.view.View;p=p.getParent())
+            if(((android.view.View)p).isFocused()) { priority=0;break; }
+        }
+        if(priority!=job.priority && pool.remove(job)) { job.priority=priority;pool.execute(job); }
+      }
+    }
+  }
   private final Handler main = new Handler(Looper.getMainLooper());
   private final Map<String, List<WeakReference<ImageView>>> waiting = new HashMap<>();
   private final LruCache<String, Bitmap> cache =
@@ -28,30 +68,33 @@ final class Art {
     disk = new BrowseCache(context, a);
   }
 
-  void load(ImageView view, String id, String variant) {
-    String key = id + "/" + variant;
-    view.setTag(key);
-    view.setImageDrawable(null);
+  void load(ImageView view, String id, String variant, String revision) {
+    String key = id + "/" + variant + "/" + revision;
+    if (view != null) {
+      if (key.equals(view.getTag()) && view.getDrawable() != null) return;
+      view.setTag(key);
+      view.setImageDrawable(null);
+    }
     Bitmap cached = cache.get(key);
     if (cached != null) {
-      view.setImageBitmap(cached);
+      if(view!=null)view.setImageBitmap(cached);
       return;
     }
     synchronized (waiting) {
       List<WeakReference<ImageView>> group = waiting.get(key);
       if (group != null) {
-        group.add(new WeakReference<>(view));
+        if(view!=null)group.add(new WeakReference<>(view));
         return;
       }
       group = new ArrayList<>();
-      group.add(new WeakReference<>(view));
+      if(view!=null)group.add(new WeakReference<>(view));
       waiting.put(key, group);
     }
-    pool.execute(
+    Job job = new Job(key, view==null?3:variant.equals("backdrop")?0:2,
         () -> {
           Bitmap result = null;
           try {
-            byte[] raw = disk.read("art/" + key, 7L * 24 * 60 * 60 * 1000);
+            byte[] raw = disk.read("art/" + key, 0);
             if (raw == null) {
               raw = Base64.decode(api.request("GET", "/v1/library/artwork/" + Api.part(id) + "/" + variant, null).getString("data"), Base64.DEFAULT);
               disk.write("art/" + key, raw);
@@ -73,6 +116,7 @@ final class Art {
                 List<WeakReference<ImageView>> group;
                 synchronized (waiting) {
                   group = waiting.remove(key);
+                  jobs.remove(key);
                 }
                 if (group != null && bitmap != null)
                   for (WeakReference<ImageView> ref : group) {
@@ -85,12 +129,16 @@ final class Art {
                   }
               });
         });
+    synchronized(waiting) { jobs.put(key,job); }
+    pool.execute(job);
   }
+
+  void prefetch(Library.Title title) { load(null,title.id,"poster",title.poster); }
 
   void close() {
     pool.shutdownNow();
     synchronized (waiting) {
-      waiting.clear();
+      waiting.clear(); jobs.clear();
     }
     cache.evictAll();
   }

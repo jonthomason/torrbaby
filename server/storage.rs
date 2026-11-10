@@ -32,11 +32,19 @@ impl Database {
         let connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_secs(10))?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version > 9 {
+        if version > 10 {
             bail!("Database is newer than this server supports");
+        }
+        if version > 0 && version < 10 {
+            // SQLite produces a consistent snapshot including committed WAL data.
+            let backup = path.with_file_name(format!("state-before-profiles-{}.sqlite3", uuid::Uuid::new_v4()));
+            connection.execute("VACUUM INTO ?", [backup.to_str().context("Invalid backup path")?])?;
+            fs::set_permissions(&backup, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
         }
         connection.execute_batch(include_str!("schema.sql"))?;
         let mut database = Self { connection };
+        database.migrate_profiles(version)?;
+        database.initialize_catalog_revision()?;
         let existing: Option<String> = database
             .connection
             .query_row("SELECT document FROM organizer_state WHERE id=1", [], |r| {
@@ -125,12 +133,14 @@ impl Database {
     }
     pub fn begin(
         &mut self,
+        profile: &str,
         hash: &str,
         index: u64,
         name: &str,
         length: u64,
         client: &str,
     ) -> Result<Value> {
+        self.require_profile(profile)?;
         let tx = self.connection.transaction()?;
         let exists: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM clients WHERE id=?)",
@@ -140,34 +150,36 @@ impl Database {
         if !exists {
             bail!("Register the client before starting playback");
         }
+        tx.execute("DELETE FROM profile_hidden_titles WHERE profile_id=? AND title_id IN (SELECT json_extract(document,'$.entity_id') FROM library_assets WHERE json_extract(document,'$.torrent_hash')=? AND COALESCE(json_extract(document,'$.file_index'),0)=?)",params![profile,hash,i64::try_from(index)?])?;
         let media = format!("{hash}:{index}");
         let session = uuid::Uuid::new_v4().to_string();
         let time = now();
         tx.execute("INSERT INTO media VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,length=excluded.length", params![media,hash,i64::try_from(index)?,name,i64::try_from(length)?])?;
         tx.execute(
-            "INSERT OR IGNORE INTO playback(media_id) VALUES(?)",
-            [&media],
+            "INSERT OR IGNORE INTO profile_playback(profile_id,media_id) VALUES(?,?)",
+            params![profile,media],
         )?;
         let resume: f64 = tx.query_row(
-            "SELECT CASE WHEN watched THEN 0 ELSE position END FROM playback WHERE media_id=?",
-            [&media],
+            "SELECT CASE WHEN watched THEN 0 ELSE position END FROM profile_playback WHERE profile_id=? AND media_id=?",
+            params![profile,media],
             |r| r.get(0),
         )?;
         tx.execute(
             "INSERT INTO playback_sessions(id,media_id,client_id,started) VALUES(?,?,?,?)",
             params![session, media, client, time],
         )?;
+        tx.execute("INSERT INTO session_profiles VALUES(?,?)", params![session,profile])?;
         tx.execute(
-            "UPDATE playback SET active_session=?,client_id=?,last_played=? WHERE media_id=?",
-            params![session, client, time, media],
+            "UPDATE profile_playback SET active_session=?,client_id=?,last_played=? WHERE profile_id=? AND media_id=?",
+            params![session, client, time, profile, media],
         )?;
         tx.execute(
             "UPDATE clients SET last_seen=? WHERE id=?",
             params![time, client],
         )?;
-        tx.execute("DELETE FROM playback_sessions WHERE started<? AND id NOT IN (SELECT active_session FROM playback WHERE active_session IS NOT NULL)", [time-90.0*86400.0])?;
+        tx.execute("DELETE FROM playback_sessions WHERE started<? AND id NOT IN (SELECT active_session FROM profile_playback WHERE active_session IS NOT NULL)", [time-90.0*86400.0])?;
         tx.commit()?;
-        Ok(json!({"session_id":session,"media_id":media,"resume_position":resume}))
+        Ok(json!({"session_id":session,"media_id":media,"profile_id":profile,"resume_position":resume}))
     }
     pub fn progress(
         &mut self,
@@ -177,6 +189,10 @@ impl Database {
         duration: f64,
         ended: bool,
     ) -> Result<Value> {
+        self.progress_with_evidence(session, sequence, position, duration, ended, true, false)
+    }
+    pub fn progress_with_evidence(&mut self, session: &str, sequence: i64, position: f64,
+        duration: f64, ended: bool, watched_eligible: bool, reached_end: bool) -> Result<Value> {
         if sequence < 0
             || !position.is_finite()
             || !duration.is_finite()
@@ -187,15 +203,15 @@ impl Database {
             bail!("Invalid playback progress");
         }
         let tx = self.connection.transaction()?;
-        let record: Option<(String,String,i64,bool,Option<String>,bool)> = tx.query_row("SELECT s.media_id,s.client_id,s.sequence,s.ended,p.active_session,p.watched FROM playback_sessions s JOIN playback p ON p.media_id=s.media_id WHERE s.id=?", [session], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?;
-        let (media, client, previous, finished, active, watched) =
+        let record: Option<(String,String,i64,bool,Option<String>,bool,String)> = tx.query_row("SELECT s.media_id,s.client_id,s.sequence,s.ended,p.active_session,p.watched,sp.profile_id FROM playback_sessions s JOIN session_profiles sp ON sp.session_id=s.id JOIN profile_playback p ON p.media_id=s.media_id AND p.profile_id=sp.profile_id WHERE s.id=?", [session], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).optional()?;
+        let (media, client, previous, finished, active, watched, profile) =
             record.context("Playback session not found")?;
         if active.as_deref() != Some(session) || sequence <= previous || finished {
             return Ok(json!({"accepted":false,"reason":"superseded_or_stale"}));
         }
-        let watched = watched || position >= duration * 0.95;
+        let watched = watched || reached_end || (watched_eligible && crate::profiles::completed(position, duration));
         let time = now();
-        tx.execute("UPDATE playback SET position=?,duration=?,watched=?,last_played=?,client_id=? WHERE media_id=?", params![position.min(duration),duration,watched,time,client,media])?;
+        tx.execute("UPDATE profile_playback SET position=?,duration=?,watched=?,last_played=?,client_id=? WHERE profile_id=? AND media_id=?", params![position.min(duration),duration,watched,time,client,profile,media])?;
         tx.execute(
             "UPDATE playback_sessions SET sequence=?,ended=? WHERE id=?",
             params![sequence, ended, session],
@@ -207,27 +223,30 @@ impl Database {
         tx.commit()?;
         Ok(json!({"accepted":true,"watched":watched}))
     }
-    pub fn history(&self) -> Result<Vec<Value>> {
-        self.rows("SELECT m.*,p.position,p.duration,p.watched,p.last_played,p.client_id,c.name AS client_name FROM playback p JOIN media m ON m.id=p.media_id LEFT JOIN clients c ON c.id=p.client_id ORDER BY p.last_played DESC", [])
+    pub fn history(&self, profile: &str) -> Result<Vec<Value>> {
+        self.require_profile(profile)?;
+        self.rows("SELECT m.*,p.position,p.duration,p.watched,p.last_played,p.client_id,c.name AS client_name FROM profile_playback p JOIN media m ON m.id=p.media_id LEFT JOIN clients c ON c.id=p.client_id WHERE p.profile_id=? ORDER BY p.last_played DESC", [profile])
     }
     pub fn mark(
         &mut self,
+        profile: &str,
         hash: &str,
         index: u64,
         name: &str,
         length: u64,
         watched: bool,
     ) -> Result<Value> {
+        self.require_profile(profile)?;
         let media = format!("{hash}:{index}");
         let tx = self.connection.transaction()?;
         tx.execute("INSERT INTO media VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,length=excluded.length", params![media,hash,i64::try_from(index)?,name,i64::try_from(length)?])?;
         tx.execute(
-            "INSERT OR IGNORE INTO playback(media_id) VALUES(?)",
-            [&media],
+            "INSERT OR IGNORE INTO profile_playback(profile_id,media_id) VALUES(?,?)",
+            params![profile,media],
         )?;
         tx.execute(
-            "UPDATE playback SET watched=?,position=0,active_session=NULL WHERE media_id=?",
-            params![watched, media],
+            "UPDATE profile_playback SET watched=?,position=0,active_session=NULL,last_played=? WHERE profile_id=? AND media_id=?",
+            params![watched, now(), profile, media],
         )?;
         tx.commit()?;
         Ok(json!({"media_id":media,"watched":watched}))

@@ -27,19 +27,44 @@ impl Database {
             row["document"].as_str().context("Invalid asset document")?,
         )?)
     }
-    pub fn catalog(&self) -> Result<Value> {
+    /// Durable invalidation token: unrelated transfer polling and device heartbeats do not change it.
+    pub fn initialize_catalog_revision(&self) -> Result<()> {
+        self.connection.execute_batch("CREATE TABLE IF NOT EXISTS catalog_revision (id INTEGER PRIMARY KEY CHECK(id=1), epoch TEXT NOT NULL, revision INTEGER NOT NULL); INSERT OR IGNORE INTO catalog_revision VALUES(1, lower(hex(randomblob(16))), 0);")?;
+        for (table, condition) in [
+            ("library_assets", "OLD.document IS NOT NEW.document"),
+            ("library_entities", "OLD.document IS NOT NEW.document"),
+            ("media_inventory", "OLD.document IS NOT NEW.document"),
+            ("profile_hidden_titles", "1"), ("profile_playback", "1"), ("playback", "1"), ("media", "1"),
+            ("library_operations", "OLD.package_id IS NOT NEW.package_id"),
+            ("library_operation_assets", "1"),
+        ] {
+            for event in ["INSERT", "UPDATE", "DELETE"] {
+                let when = if event == "UPDATE" { format!(" WHEN {condition}") } else { String::new() };
+                self.connection.execute_batch(&format!("CREATE TRIGGER IF NOT EXISTS catalog_revision_{table}_{event} AFTER {event} ON {table}{when} BEGIN UPDATE catalog_revision SET revision=revision+1 WHERE id=1; END;"))?;
+            }
+        }
+        self.connection.execute_batch("CREATE TRIGGER IF NOT EXISTS catalog_revision_scan AFTER UPDATE ON organizer_state WHEN json_extract(OLD.document,'$.library_scan') IS NOT json_extract(NEW.document,'$.library_scan') BEGIN UPDATE catalog_revision SET revision=revision+1 WHERE id=1; END;")?;
+        Ok(())
+    }
+
+    pub fn catalog_revision(&self) -> Result<String> {
+        Ok(self.connection.query_row("SELECT epoch || ':' || revision FROM catalog_revision WHERE id=1", [], |r|r.get(0))?)
+    }
+
+    pub fn catalog(&self, profile: &str) -> Result<Value> {
         let entities: BTreeMap<String, Value> = self
             .documents("entities")?
             .into_iter()
             .filter_map(|v| v["id"].as_str().map(str::to_owned).map(|id| (id, v)))
             .collect();
         let history: BTreeMap<String, Value> = self
-            .history()?
+            .history(profile)?
             .into_iter()
             .filter_map(|v| v["id"].as_str().map(str::to_owned).map(|id| (id, v)))
             .collect();
+        let hidden: std::collections::HashSet<String> = self.rows("SELECT title_id FROM profile_hidden_titles WHERE profile_id=?",[profile])?.iter().filter_map(|v|v["title_id"].as_str().map(str::to_owned)).collect();
         let mut titles = BTreeMap::<String, Value>::new();
-        let assets = self.documents("assets")?;
+        let assets = self.visible_assets()?;
         for asset in &assets {
             if asset["available"] != true || asset["complete"] != true || asset["role"] == "extra"
                 || asset["library_ready"] == false || asset["status"] != "matched" || !asset["entity_id"].as_str().is_some_and(|id|entities.contains_key(id)) {
@@ -66,10 +91,10 @@ impl Database {
                 .or(asset["series_name"].as_str())
                 .unwrap_or(&fallback);
             let title=titles.entry(entity_id.to_owned()).or_insert_with(||json!({
-                "id":entity_id,"kind":kind,"title":name,"original_title":entity["original_title"],
+                "id":entity_id,"continue_watching_hidden":hidden.contains(entity_id),"kind":kind,"title":name,"original_title":entity["original_title"],
                 "year":entity["year"],"release_date":entity["release_date"],"genres":entity.get("genres").unwrap_or(&json!([])),
                 "summary":entity["summary"].as_str().unwrap_or(""),"content_rating":entity["content_rating"],"duration_minutes":entity["duration_minutes"],
-                "poster":entity["thumbnail"],"backdrop":entity["backdrop"],"logo":entity["logo"],"provider":entity["provider"],"source_url":entity["source_url"],
+                "poster":entity["thumbnail"],"backdrop":entity["backdrop"],"logo":entity["logo"],"cast":entity["cast"],"provider":entity["provider"],"source_url":entity["source_url"],
                 "added_at":asset["added_at"],"status":asset["status"],"assets":[]
             }));
             if asset["added_at"].as_f64().unwrap_or(0.0) > title["added_at"].as_f64().unwrap_or(0.0)
@@ -146,7 +171,7 @@ impl Database {
     /// Prefer shared torrent ownership, then a dedicated extras folder, when there
     /// is one parent title. Collections with multiple films stay unlinked.
     pub fn link_extras(&self) -> Result<()> {
-        let assets = self.documents("assets")?;
+        let assets = self.visible_assets()?;
         for extra in assets.iter().filter(|a| a["role"] == "extra") {
             let path = std::path::Path::new(extra["path"].as_str().unwrap_or(""));
             let anchor = path
@@ -209,6 +234,76 @@ impl Database {
                 )?;
             }
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod completion_tests {
+    use super::*;
+    #[test]
+    fn catalog_revision_ignores_heartbeats_but_tracks_library_changes() -> Result<()> {
+        let mut db=Database {connection:rusqlite::Connection::open_in_memory()?};
+        db.connection.execute_batch(include_str!("schema.sql"))?;
+        db.migrate_profiles(9)?;
+        db.initialize_catalog_revision()?;
+        db.connection.execute("INSERT INTO organizer_state VALUES(1,'{}')",[])?;
+        let first=db.catalog_revision()?;
+        db.connection.execute("UPDATE organizer_state SET document='{\"last_poll\":42}'",[])?;
+        db.connection.execute("INSERT INTO clients VALUES('test','TV','other',0,0)",[])?;
+        assert_eq!(first,db.catalog_revision()?);
+        db.connection.execute("INSERT INTO library_assets VALUES('a','{}')",[])?;
+        let asset=db.catalog_revision()?;
+        assert_ne!(first,asset);
+        db.connection.execute("UPDATE library_assets SET document='{}'",[])?;
+        assert_eq!(asset,db.catalog_revision()?);
+        db.connection.execute("UPDATE library_assets SET document='{\"complete\":true}'",[])?;
+        assert_ne!(asset,db.catalog_revision()?);
+        let changed=db.catalog_revision()?;
+        db.initialize_catalog_revision()?;
+        assert_eq!(changed,db.catalog_revision()?);
+        db.connection.execute("UPDATE organizer_state SET document='{\"library_scan\":{\"error\":\"failed\"}}'",[])?;
+        assert_ne!(changed,db.catalog_revision()?);
+        Ok(())
+    }
+
+    #[test]
+    fn incomplete_assets_never_create_library_titles() -> Result<()> {
+        let mut db = Database { connection: rusqlite::Connection::open_in_memory()? };
+        db.connection.execute_batch(include_str!("schema.sql"))?;
+        db.migrate_profiles(9)?;
+        db.connection.execute("INSERT INTO organizer_state VALUES(1, ?)", ["{}"])?;
+        db.connection.execute("INSERT INTO library_entities VALUES('friends',?)",[r#"{"id":"friends","kind":"tv","title":"Friends"}"#])?;
+        for complete in [false, true] {
+            let asset = json!({"id":"episode", "available":true,"complete":complete,
+                "path":"/TV/Friends S01E01.mkv", "season":1,"episode":1,"entity_id":"friends","status":"matched","library_ready":true});
+            db.connection.execute("INSERT OR REPLACE INTO library_assets VALUES(?,?)",
+                rusqlite::params!["episode",asset.to_string()])?;
+            assert_eq!(db.catalog(crate::profiles::LEGACY_PROFILE)?["titles"].as_array().unwrap().len(), usize::from(complete));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod continue_watching_tests {
+    use super::*;
+    #[test]
+    fn hiding_preserves_progress_and_next_play_restores_only_that_profile() -> Result<()> {
+        let mut db=Database{connection:rusqlite::Connection::open_in_memory()?};
+        db.connection.execute_batch(include_str!("schema.sql"))?;
+        db.migrate_profiles(0)?;
+        let other=db.create_profile("Other")?["id"].as_str().unwrap().to_owned();
+        let profile=crate::profiles::LEGACY_PROFILE;
+        let client=uuid::Uuid::new_v4().to_string();db.register(&client,"TV","other")?;
+        db.connection.execute("INSERT INTO library_assets(id,document) VALUES(?,?)",["asset",r#"{"id":"asset","entity_id":"show","torrent_hash":"hash","file_index":0}"#])?;
+        db.begin(profile,"hash",0,"Episode",100,&client)?;
+        db.connection.execute("UPDATE profile_playback SET position=123,duration=1000 WHERE profile_id=?",[profile])?;
+        for person in [profile,other.as_str()] {db.connection.execute("INSERT INTO profile_hidden_titles VALUES(?,'show',1)",[person])?;}
+        let next=db.begin(profile,"hash",0,"Episode",100,&client)?;
+        assert_eq!(next["resume_position"],123.0);
+        assert_eq!(db.rows("SELECT profile_id FROM profile_hidden_titles",[])?.len(),1);
+        assert_eq!(db.rows("SELECT profile_id FROM profile_hidden_titles",[])?[0]["profile_id"],other);
         Ok(())
     }
 }

@@ -81,6 +81,7 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
         let Some(root) = torrent["download_dir"].as_str() else {
             continue;
         };
+        if [&config.source,&config.movies,&config.tv].iter().any(|managed|Path::new(root).starts_with(Path::new(managed).join("Junk"))) { continue; }
         if let Some(files) = torrent["files"].as_array() {
             let package_complete = package_complete(files) && files.iter().all(|file| {
                 let Some(name) = file["name"].as_str() else { return false; };
@@ -147,6 +148,7 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
                     continue;
                 }
                 if kind.is_dir() {
+                    if entry.path() == Path::new(root).join("Junk") { continue; }
                     pending.push(entry.path());
                 } else if kind.is_file() && video(&entry.path()) {
                     candidates.entry(entry.path()).or_insert_with(
@@ -187,8 +189,9 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
             continue;
         }
         let metadata = match fs::metadata(&path) {
-            Ok(metadata) if metadata.is_file() => metadata,
+            Ok(metadata) if metadata.is_file() => Some(metadata),
             Ok(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && info["torrent_present"] == true => None,
             Err(error) => {
                 if error.kind() != std::io::ErrorKind::NotFound {
                     errors.push(format!("{}: {error}", path.display()));
@@ -196,14 +199,14 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
                 continue;
             }
         };
-        let inode = format!("{}:{}", metadata.dev(), metadata.ino());
+        let inode = metadata.as_ref().map(|m| format!("{}:{}", m.dev(), m.ino()));
         let name = path.to_string_lossy();
         let previous = info["torrent_hash"]
             .as_str()
             .zip(info["file_index"].as_u64())
             .and_then(|key| by_torrent.get(&key).copied())
             .or_else(|| by_path.get(name.as_ref()).copied())
-            .or_else(|| by_inode.get(inode.as_str()).copied());
+            .or_else(|| inode.as_ref().and_then(|inode| by_inode.get(inode.as_str()).copied()));
         let mut asset = previous.cloned().unwrap_or(
             json!({"id":format!("asset-{}",uuid::Uuid::new_v4().simple()),"status":"pending"}),
         );
@@ -212,13 +215,19 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
             .as_object_mut()
             .unwrap()
             .extend(info.as_object().unwrap().clone());
+        // A filesystem walk cannot certify completion of a known incomplete package
+        // when Transmission is unavailable (or the download was removed).
+        if info["torrent_present"] != true && previous.is_some_and(|a|a["torrent_hash"].is_string() && a["complete"] != true) {
+            asset["complete"] = json!(false);
+        }
         asset["path"] = json!(name);
         asset["library_ready"] = json!(path.starts_with(&config.movies) || path.starts_with(&config.tv));
         asset["inode"] = json!(inode);
-        asset["available"] = json!(true);
+        asset["available"] = json!(metadata.is_some());
+        if metadata.is_none() { asset["complete"] = json!(false); }
         asset["seen_at"] = json!(now());
         if info["torrent_present"] != true || asset["size"].as_u64().unwrap_or(0) == 0 {
-            asset["size"] = json!(metadata.len());
+            asset["size"] = json!(metadata.as_ref().map(|m|m.len()).unwrap_or(0));
         }
         if let Some(previous) = previous {
             asset["added_at"] = previous["added_at"].clone();
@@ -266,6 +275,7 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
         if seen.contains(asset["id"].as_str().unwrap_or("")) {
             continue;
         }
+        asset["torrent_present"] = json!(false);
         if let Some(path) = asset["path"].as_str() {
             if matches!(fs::metadata(path),Err(e) if e.kind()==std::io::ErrorKind::NotFound) {
                 asset["available"] = json!(false);
@@ -279,6 +289,61 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pending_package_keeps_identity_and_matches_through_completion_and_move() {
+        let root = std::env::temp_dir().join(format!("torrbaby-pending-{}",uuid::Uuid::new_v4()));
+        let config: Config = serde_json::from_value(json!({
+            "listen_host":"127.0.0.1","listen_port":8765,"token_file":"unused","state_file":"unused",
+            "transmission_url":"http://127.0.0.1:9091","transmission_auth_file":null,
+            "source":root.join("Downloads"),"movies":root.join("Movies"),"tv":root.join("TV"),"poll_seconds":60
+        })).unwrap();
+        for directory in [&config.source,&config.movies,&config.tv] { fs::create_dir_all(directory).unwrap(); }
+        let mut torrent = json!({"hash_string":"pending","download_dir":config.source,"name":"Show S01",
+            "files":[{"name":"Show S01E01.mkv","length":100,"bytes_completed":0},
+                     {"name":"Show S01E02.mkv","length":100,"bytes_completed":0}]});
+        let mut pending = inventory(&config,vec![],vec![torrent.clone()]).assets;
+        assert_eq!(pending.len(),2);
+        for asset in &mut pending {
+            assert_eq!(asset["available"],false);
+            assert_eq!(asset["complete"],false);
+            assert_eq!(asset["season"],1);
+            asset["entity_id"] = json!("show");
+            asset["confirmed"] = json!(true);
+        }
+        let ids: HashSet<_> = pending.iter().map(|a|a["id"].as_str().unwrap().to_owned()).collect();
+        fs::write(Path::new(&config.source).join("Show S01E01.mkv"),vec![0;100]).unwrap();
+        torrent["files"][0]["bytes_completed"] = json!(100);
+        let partial = inventory(&config,pending,vec![torrent.clone()]).assets;
+        assert!(partial.iter().all(|a|a["complete"] == false));
+        assert_eq!(partial.iter().filter(|a|a["available"] == true).count(),1);
+        fs::write(Path::new(&config.source).join("Show S01E02.mkv"),vec![0;100]).unwrap();
+        torrent["files"][1]["bytes_completed"] = json!(100);
+        let complete = inventory(&config,partial,vec![torrent.clone()]).assets;
+        assert!(complete.iter().all(|a|a["complete"] == true && a["available"] == true));
+        for name in ["Show S01E01.mkv","Show S01E02.mkv"] {
+            fs::rename(Path::new(&config.source).join(name),Path::new(&config.tv).join(name)).unwrap();
+        }
+        torrent["download_dir"] = json!(config.tv);
+        let moved = inventory(&config,complete,vec![torrent.clone()]).assets;
+        assert_eq!(moved.len(),2);
+        assert!(moved.iter().all(|a|ids.contains(a["id"].as_str().unwrap()) && a["entity_id"] == "show" && a["confirmed"] == true));
+        // RPC completion alone cannot publish a package with a missing file.
+        fs::remove_file(Path::new(&config.tv).join("Show S01E02.mkv")).unwrap();
+        let missing = inventory(&config,moved,vec![torrent]).assets;
+        assert!(missing.iter().all(|a|a["complete"] == false));
+        let rpc_unavailable = inventory(&config,missing,vec![]).assets;
+        assert!(rpc_unavailable.iter().all(|a|a["complete"] == false));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn finished_episode_waits_for_entire_package() {
+        let done = json!({"length":100,"bytes_completed":100});
+        let partial = json!({"length":100,"bytes_completed":99});
+        assert!(!package_complete(&[done.clone(), partial]));
+        assert!(package_complete(&[done.clone(), done]));
+        assert!(!package_complete(&[]));
+        assert!(!package_complete(&[json!({})]));
+    }
     #[test]
     fn complete_series_is_tv_but_movie_collections_stay_movies() {
         let parse = crate::metadata::parse_name;

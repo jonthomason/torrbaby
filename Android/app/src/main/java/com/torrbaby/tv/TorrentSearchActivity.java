@@ -12,6 +12,8 @@ import org.json.*;
 
 /** Explicit remote indexer searches, separate from the retained media browser. */
 public final class TorrentSearchActivity extends Activity {
+  @Override protected void attachBaseContext(android.content.Context base) { super.attachBaseContext(L10n.wrap(base)); }
+
   private final ExecutorService io = Executors.newFixedThreadPool(2);
   private final ExecutorService sizeIo = Executors.newSingleThreadExecutor();
   private final Set<String> sizeRequests = new HashSet<>();
@@ -26,6 +28,7 @@ public final class TorrentSearchActivity extends Activity {
   private int source, generation;
   private boolean china;
   private boolean inDetail;
+  private JSONObject selectedItem;
   private final Set<String> added = new HashSet<>();
   private static final String[] SOURCE_NAMES = {"Recommended", "The Pirate Bay", "Nyaa", "Torrent CSV"};
 
@@ -35,42 +38,64 @@ public final class TorrentSearchActivity extends Activity {
     try { api = new SecureStore(this).load(); } catch (Exception ignored) {}
     if (api == null) { finish(); return; }
     resultsRoot = page();
-    Ui.add(resultsRoot, Ui.title(this, "Find torrents", 28), -1, 48);
+    Ui.add(resultsRoot, Ui.title(this, L10n.t("Find torrents"), 28), -1, 48);
     china = getPreferences(MODE_PRIVATE).getBoolean("china", false);
     RadioGroup markets = new RadioGroup(this); markets.setOrientation(LinearLayout.HORIZONTAL);
-    RadioButton world = new RadioButton(this); world.setText("World"); world.setId(View.generateViewId()); world.setTextColor(Ui.TEXT);
-    RadioButton chinese = new RadioButton(this); chinese.setText("China"); chinese.setId(View.generateViewId()); chinese.setTextColor(Ui.TEXT);
+    RadioButton world = new RadioButton(this); world.setText(L10n.t("World")); world.setId(View.generateViewId()); world.setTextColor(Ui.TEXT);
+    RadioButton chinese = new RadioButton(this); chinese.setText(L10n.t("China")); chinese.setId(View.generateViewId()); chinese.setTextColor(Ui.TEXT);
     markets.addView(world); markets.addView(chinese); markets.check(china ? chinese.getId() : world.getId());
     Ui.add(resultsRoot, markets, -1, 48);
     markets.setOnCheckedChangeListener((group,id) -> {
       china = id == chinese.getId(); getPreferences(MODE_PRIVATE).edit().putBoolean("china",china).apply();
-      ++generation; source=0; sourceButton.setText("Recommended"); results=new JSONArray();
+      ++generation; source=0; sourceButton.setText(L10n.t("Recommended")); results=new JSONArray();
       ((BaseAdapter)list.getAdapter()).notifyDataSetChanged(); status.setText(""); search.setEnabled(true); list.setEnabled(true);
       if(query.getText().toString().trim().length()>=2)search();
     });
     LinearLayout controls = Ui.row(this);
-    query = new EditText(this); query.setSingleLine(true); query.setHint("Search torrents");
+    query = new EditText(this); query.setSingleLine(true); query.setHint(L10n.t("Search torrents"));
     query.setTextColor(Ui.TEXT); query.setHintTextColor(Ui.MUTED); query.setTextSize(17);
     query.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
     query.setOnEditorActionListener((v, action, event) -> { if (action == EditorInfo.IME_ACTION_SEARCH || (event != null && event.getAction() == KeyEvent.ACTION_UP && event.getKeyCode() == KeyEvent.KEYCODE_ENTER)) { search(); return true; } return false; });
     controls.addView(query, new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1));
-    search = Ui.button(this, "Search", this::search); Ui.add(controls, search, 120, 46);
+    search = Ui.button(this, L10n.t("Search"), this::search); Ui.add(controls, search, 120, 46);
     Ui.gap(controls, 12);
-    sourceButton = Ui.button(this, SOURCE_NAMES[0], () -> new AlertDialog.Builder(this).setTitle("Sources")
-        .setSingleChoiceItems(sourceNames(), source, (dialog, which) -> { source=which; sourceButton.setText(sourceNames()[which]); dialog.dismiss(); }).show());
+    sourceButton = Ui.button(this, L10n.t(SOURCE_NAMES[0]), () -> new AlertDialog.Builder(this).setTitle(L10n.t("Sources"))
+        .setSingleChoiceItems(L10n.labels(sourceNames()), source, (dialog, which) -> { source=which; sourceButton.setText(L10n.t(sourceNames()[which])); dialog.dismiss(); }).show());
     Ui.add(controls, sourceButton, 180, 46); Ui.add(resultsRoot, controls, -1, 48);
     status = Ui.text(this, "", 14, Ui.MUTED); Ui.add(resultsRoot, status, -1, 36);
     list = new ListView(this); list.setDivider(null); list.setDividerHeight(Ui.dp(this, 10));
     list.setAdapter(new Results()); list.setOnItemClickListener((parent, view, position, id) -> details(results.optJSONObject(position)));
     resultsRoot.addView(list, new LinearLayout.LayoutParams(-1,0,1));
+    resultsRoot.addView(ProfileUi.header(this, api), 0);
     setContentView(resultsRoot); query.requestFocus();
     String initial = getIntent().getStringExtra("query");
-    if(initial != null && !initial.isEmpty()) { query.setText(initial); search(); }
+    if (state != null) {
+      query.setText(state.getString("query", ""));
+      source = state.getInt("source", 0);
+      sourceButton.setText(L10n.t(sourceNames()[source]));
+      try { results = new JSONArray(state.getString("results", "[]")); } catch (JSONException ignored) { }
+      added.addAll(state.getStringArrayList("added") == null ? Collections.emptyList() : state.getStringArrayList("added"));
+      ((BaseAdapter)list.getAdapter()).notifyDataSetChanged();
+      list.setSelection(state.getInt("position", 0));
+      if (state.containsKey("selected")) {
+        try { details(new JSONObject(state.getString("selected"))); } catch (JSONException ignored) { }
+      } else if (state.getBoolean("searching")) search();
+    } else if(initial != null && !initial.isEmpty()) { query.setText(initial); search(); }
+  }
+  @Override protected void onSaveInstanceState(Bundle state) {
+    super.onSaveInstanceState(state);
+    state.putString("query", query.getText().toString());
+    state.putInt("source", source);
+    state.putString("results", results.toString());
+    state.putStringArrayList("added", new ArrayList<>(added));
+    state.putInt("position", list.getFirstVisiblePosition());
+    state.putBoolean("searching", !search.isEnabled());
+    if (inDetail && selectedItem != null) state.putString("selected", selectedItem.toString());
   }
   private LinearLayout page() { LinearLayout root=Ui.column(this); root.setBackgroundColor(Ui.BG); Ui.pad(root,36,24); return root; }
   private void search() {
     String value=query.getText().toString().trim(); if (value.length()<2) return;
-    int request=++generation; int provider=source; boolean requestChina=china; search.setEnabled(false); list.setEnabled(false); status.setText("Searching…");
+    int request=++generation; int provider=source; boolean requestChina=china; search.setEnabled(false); list.setEnabled(false); status.setText(L10n.t("Searching…"));
     ((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(query.getWindowToken(),0);
     io.execute(() -> {
       try {
@@ -146,23 +171,23 @@ public final class TorrentSearchActivity extends Activity {
     }
   }
   private void details(JSONObject item) {
-    if(item==null)return;inDetail=true;int request=++generation;
+    if(item==null)return;selectedItem=item;inDetail=true;int request=++generation;
     LinearLayout root=page();TextView name=Ui.title(this,item.optString("name"),24);name.setMaxLines(3);Ui.add(root,name,-1,-2);
     Ui.gap(root,12);Ui.add(root,Ui.text(this,summary(item),14,Ui.MUTED),-1,30);
-    LinearLayout actions=Ui.row(this);Ui.add(actions,Ui.button(this,"Back",this::onBackPressed),100,44);Ui.gap(actions,12);
-    CheckBox paused=new CheckBox(this);paused.setText("Add paused");paused.setTextColor(Ui.TEXT);Ui.add(actions,paused,150,44);
-    String hash=item.optString("info_hash").isEmpty()?item.optString("name"):item.optString("info_hash");Button add=Ui.button(this,added.contains(hash)?"Added":"Add torrent",()->{});
+    LinearLayout actions=Ui.row(this);Ui.add(actions,Ui.button(this,L10n.t("Back"),this::onBackPressed),100,44);Ui.gap(actions,12);
+    CheckBox paused=new CheckBox(this);paused.setText(L10n.t("Add paused"));paused.setTextColor(Ui.TEXT);Ui.add(actions,paused,150,44);
+    String hash=item.optString("info_hash").isEmpty()?item.optString("name"):item.optString("info_hash");Button add=Ui.button(this,added.contains(hash)?L10n.t("Added"):L10n.t("Add torrent"),()->{});
     add.setEnabled(!added.contains(hash));add.setOnClickListener(v -> add(item,paused.isChecked(),add));Ui.primary(add);Ui.add(actions,add,190,44);Ui.add(root,actions,-1,50);
     if(!tags(item).isEmpty())Ui.add(root,Ui.text(this,"Release tags · "+tags(item),14,Ui.MUTED),-1,40);
     Spinner attachments = new Spinner(this); attachments.setVisibility(View.GONE); Ui.add(root,attachments,-1,48);
     ListView files=new ListView(this);TextView description=Ui.text(this,"",15,Ui.TEXT);Ui.pad(description,0,14);files.addHeaderView(description,null,false);
-    TextView note=Ui.text(this,"Loading details…",14,Ui.MUTED);files.addHeaderView(note,null,false);
+    TextView note=Ui.text(this,L10n.t("Loading details…"),14,Ui.MUTED);files.addHeaderView(note,null,false);
     root.addView(files,new LinearLayout.LayoutParams(-1,0,1));root.addView(ProfileUi.header(this, api),0);setContentView(root);add.requestFocus();
     JSONArray sources=item.optJSONArray("sources");JSONObject chosen=null;
     if(sources!=null)for(int i=0;i<sources.length();i++)if(sources.optJSONObject(i).optString("provider").equals("tpb")){chosen=sources.optJSONObject(i);break;}
     if(chosen==null && sources!=null)for(int i=0;i<sources.length();i++)if(sources.optJSONObject(i).optString("provider").equals("nyaa")){chosen=sources.optJSONObject(i);break;}
     if(chosen==null && sources!=null)chosen=sources.optJSONObject(0);
-    if(chosen==null){note.setText("Source details unavailable.");return;}
+    if(chosen==null){note.setText(L10n.t("Source details unavailable."));return;}
     JSONObject source=chosen;
     io.execute(() -> {try{
       JSONObject response=api.request("POST","/v1/search/torrents/detail",new JSONObject().put("provider",source.optString("provider")).put("id",source.optString("id")));
@@ -178,7 +203,7 @@ public final class TorrentSearchActivity extends Activity {
             public void onItemSelected(AdapterView<?> p,View v,int position,long id){
               JSONObject resolved=releases.optJSONObject(position).optJSONObject("item");
               if(!Boolean.TRUE.equals(add.getTag())) {
-              add.setEnabled(!added.contains(resolved.optString("info_hash")));add.setText(added.contains(resolved.optString("info_hash"))?"Added":"Add torrent");
+              add.setEnabled(!added.contains(resolved.optString("info_hash")));add.setText(added.contains(resolved.optString("info_hash"))?L10n.t("Added"):L10n.t("Add torrent"));
               add.setOnClickListener(view->add(resolved,paused.isChecked(),add));
               }
               JSONArray fs=releases.optJSONObject(position).optJSONArray("files");List<String> labels=new ArrayList<>();
@@ -187,8 +212,8 @@ public final class TorrentSearchActivity extends Activity {
             }
           });
         }
-        note.setText(entries==null?"File list unavailable":names.size()+" files");files.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,names){public View getView(int p,View old,ViewGroup parent){TextView row=(TextView)super.getView(p,old,parent);row.setTextColor(Ui.TEXT);row.setTextSize(14);return row;}});});
-    }catch(Exception error){runOnUiThread(()->{if(!isDestroyed()&&request==generation)note.setText(item.optString("magnet").isEmpty()?"Couldn’t load this release. Please reopen it to retry.":"Couldn’t load source details. You can still add this torrent.");});}});
+        note.setText(entries==null?L10n.t("File list unavailable"):names.size()+" files");files.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,names){public View getView(int p,View old,ViewGroup parent){TextView row=(TextView)super.getView(p,old,parent);row.setTextColor(Ui.TEXT);row.setTextSize(14);return row;}});});
+    }catch(Exception error){runOnUiThread(()->{if(!isDestroyed()&&request==generation)note.setText(item.optString("magnet").isEmpty()?L10n.t("Couldn’t load this release. Please reopen it to retry."):L10n.t("Couldn’t load source details. You can still add this torrent."));});}});
   }
   private static String sourceLanguages(JSONObject response) {
     StringBuilder text=new StringBuilder();
@@ -203,7 +228,7 @@ public final class TorrentSearchActivity extends Activity {
   }
   private void add(JSONObject item, boolean paused, Button button) {
     if(Boolean.TRUE.equals(button.getTag()))return;
-    button.setTag(true);button.setEnabled(false);button.setText("Adding…");
+    button.setTag(true);button.setEnabled(false);button.setText(L10n.t("Adding…"));
     io.execute(()->{try{
       JSONObject payload=new JSONObject().put("paused",paused);
       if(!item.optString("magnet").isEmpty() && !item.has("selected_attachment"))payload.put("magnet",item.getString("magnet"));
@@ -217,16 +242,16 @@ public final class TorrentSearchActivity extends Activity {
         JSONArray choices=resolution.optJSONArray("choices");
         if(choices!=null && choices.length()>0){
           String[] labels=new String[choices.length()];for(int i=0;i<labels.length;i++)labels[i]=choices.getJSONObject(i).getString("name");
-          runOnUiThread(()->{if(isDestroyed())return;button.setTag(false);button.setEnabled(true);button.setText("Add torrent");
-            new AlertDialog.Builder(this).setTitle("Choose a release").setItems(labels,(dialog,index)->{
+          runOnUiThread(()->{if(isDestroyed())return;button.setTag(false);button.setEnabled(true);button.setText(L10n.t("Add torrent"));
+            new AlertDialog.Builder(this).setTitle(L10n.t("Choose a release")).setItems(labels,(dialog,index)->{
               try{JSONObject selected=new JSONObject(item.toString()).put("selected_attachment",choices.getJSONObject(index).getString("id"));add(selected,paused,button);}catch(JSONException ignored){}
-            }).setNegativeButton("Cancel",null).show();});return;
+            }).setNegativeButton(L10n.t("Cancel"),null).show();});return;
         }
         payload.put("metainfo",resolution.getString("metainfo"));
       }
       JSONObject response=api.request("POST","/v1/torrents",payload);
-      runOnUiThread(()->{if(isDestroyed())return;added.add(item.optString("info_hash").isEmpty()?item.optString("name"):item.optString("info_hash"));button.setText("Added");Toast.makeText(this,response.has("torrent_duplicate")?"Already in your torrents":"Torrent added",Toast.LENGTH_LONG).show();});
-    }catch(Exception error){runOnUiThread(()->{if(!isDestroyed()){button.setTag(false);button.setEnabled(true);button.setText("Add torrent");new AlertDialog.Builder(this).setTitle("Couldn’t add torrent").setMessage(MainActivity.message(error)).setPositiveButton("Close",null).show();}});}});
+      runOnUiThread(()->{if(isDestroyed())return;added.add(item.optString("info_hash").isEmpty()?item.optString("name"):item.optString("info_hash"));button.setText(L10n.t("Added"));Toast.makeText(this,response.has("torrent_duplicate")?L10n.t("Already in your torrents"):L10n.t("Torrent added"),Toast.LENGTH_LONG).show();});
+    }catch(Exception error){runOnUiThread(()->{if(!isDestroyed()){button.setTag(false);button.setEnabled(true);button.setText(L10n.t("Add torrent"));new AlertDialog.Builder(this).setTitle(L10n.t("Couldn’t add torrent")).setMessage(MainActivity.message(error)).setPositiveButton(L10n.t("Close"),null).show();}});}});
   }
   public void onBackPressed(){if(inDetail){inDetail=false;generation++;setContentView(resultsRoot);list.requestFocus();}else super.onBackPressed();}
   protected void onDestroy(){generation++;sizeIo.shutdownNow();io.shutdownNow();super.onDestroy();}

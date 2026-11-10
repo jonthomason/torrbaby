@@ -147,6 +147,7 @@ pub fn parse_srt(input: &str) -> Result<Vec<TimedCue>> {
     let gap = regex::Regex::new(r"(?m)(-->[^\n]+)\n(?:[ \t]*\n)+([ \t]*[^\d\s][^\n]*)").unwrap();
     let normalized = gap.replace_all(&normalized, "$1\n$2");
     let mut cues = Vec::new();
+    let mut seen = HashSet::new();
     let mut block = Vec::new();
     for line in normalized.lines().chain(std::iter::once("")) {
         if !line.trim().is_empty() {
@@ -168,9 +169,36 @@ pub fn parse_srt(input: &str) -> Result<Vec<TimedCue>> {
         let (start, end) = block[timing_index]
             .split_once("-->")
             .context("Missing subtitle timing")?;
-        let start_ms = parse_timestamp(start.trim())?;
         let end_ms = parse_timestamp(end.trim())?;
+        let start_ms = parse_timestamp(start.trim()).or_else(|original| {
+            // Some damaged SRT exports lose the leading hour/minute characters.
+            // Recover only an exact suffix of a full clock, close to this cue's end.
+            let start = start.trim();
+            let end = end.trim();
+            if start.len() >= 8 && start.len() < 12 && end.len() == 12
+                && start.is_ascii() && end.is_ascii() {
+                let candidate = format!("{}{}", &end[..12 - start.len()], start);
+                if let Ok(time) = parse_timestamp(&candidate) {
+                    if time < end_ms && end_ms - time <= 30_000 {
+                        return Ok(time);
+                    }
+                }
+            }
+            Err(original)
+        })?;
         ensure!(end_ms > start_ms, "Subtitle ends before it starts");
+        let raw = block[timing_index + 1..].join("\n");
+        ensure!(raw.len() <= 16_384, "Subtitle cue too large");
+        // Flatten common formatting before translation. Unknown markup remains
+        // literal text and is escaped when writing WebVTT, never executed as markup.
+        let text = plain_text(&raw);
+        ensure!(!text.trim().is_empty(), "Empty subtitle text");
+        // Damaged exporters can append a repeated tail, including a truncated clock.
+        // Ignore exact duplicates before enforcing chronological order.
+        if !seen.insert((start_ms, end_ms, text.clone())) {
+            block.clear();
+            continue;
+        }
         if let Some(previous) = cues.last() {
             let previous: &TimedCue = previous;
             ensure!(
@@ -178,12 +206,6 @@ pub fn parse_srt(input: &str) -> Result<Vec<TimedCue>> {
                 "Subtitle cues are out of order"
             );
         }
-        let raw = block[timing_index + 1..].join("\n");
-        ensure!(raw.len() <= 16_384, "Subtitle cue too large");
-        // Flatten common formatting before translation. Unknown markup remains
-        // literal text and is escaped when writing WebVTT, never executed as markup.
-        let text = plain_text(&raw);
-        ensure!(!text.trim().is_empty(), "Empty subtitle text");
         cues.push(TimedCue {
             start_ms,
             end_ms,
@@ -456,6 +478,21 @@ pub fn read_sidecar(media: &Path, id: &str) -> Result<String> {
 #[cfg(test)]
 mod sidecar_tests {
     use super::*;
+    #[test]
+    fn duplicated_damaged_tail_does_not_discard_valid_subtitles() {
+        let cues = parse_srt("1\n02:09:07,965 --> 02:09:11,423\nGrowls\n\n2\n02:09:47,442 --> 02:09:48,932\nBeeping\n\n9:07,965 --> 02:09:11,423\nGrowls\n\n3\n02:09:47,442 --> 02:09:48,932\nBeeping\n").unwrap();
+        assert_eq!(cues.len(), 2);
+    }
+
+    #[test]
+    fn recovers_truncated_start_only_when_close_to_full_end() {
+        let cues = parse_srt("1\n02:09:01,000 --> 02:09:04,000\nBefore\n\n2\n9:07,965 --> 02:09:11,423\nAfter\n").unwrap();
+        assert_eq!(cues[1].start_ms, 7_747_965);
+        assert_eq!(cues[1].end_ms, 7_751_423);
+        assert!(parse_srt("1\n8:07,965 --> 02:09:11,423\nInvalid\n").is_err());
+        assert!(parse_srt("1\n9:17,965 --> 02:09:11,423\nInvalid\n").is_err());
+    }
+
     #[test]
     fn blank_line_before_dialogue_does_not_reject_track() {
         let cues = parse_srt("1\n00:00:01,000 --> 00:00:02,000\n\n ... juicy ... \n\n2\n00:00:03,000 --> 00:00:04,000\nNext line\n").unwrap();

@@ -142,6 +142,32 @@ impl Manager {
         )
     }
     /// Include manually requested and recovered work as well as background jobs.
+    pub fn purge_assets(&self, assets: &std::collections::BTreeSet<String>) -> Result<()> {
+        let pending = self.pending.lock().map_err(|_| anyhow::anyhow!("Subtitle queue unavailable"))?;
+        let mut ids = Vec::new();
+        for entry in fs::read_dir(&self.root)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(id) = name.to_str().and_then(|n| n.strip_suffix(".json")).filter(|id|valid(id)) else { continue; };
+            let job = self.read(id)?;
+            if assets.contains(&job.asset_id) {
+                ensure!(!pending.contains(id), "Waiting for subtitle preparation to finish");
+                ids.push(id.to_owned());
+            }
+        }
+        for id in ids {
+            // Keep the identity record until every associated artifact is removed.
+            for ext in ["vtt", "progress", "vtt.tmp", "progress.tmp", "json.tmp", "json"] {
+                let path = self.root.join(format!("{id}.{ext}"));
+                match fs::symlink_metadata(&path) {
+                    Ok(info) => { ensure!(info.is_file() && !info.file_type().is_symlink(), "Unsafe subtitle cache path"); fs::remove_file(path)?; }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        Ok(())
+    }
     pub fn all_statuses(&self) -> Result<Vec<Value>> {
         let mut result = Vec::new();
         for entry in fs::read_dir(&self.root)? {

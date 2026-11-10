@@ -34,8 +34,8 @@ pub struct Service {
     metadata_lock: tokio::sync::Mutex<()>,
     pub(crate) mutation_lock: tokio::sync::Mutex<()>,
     pub(crate) subtitle_jobs: Arc<crate::subtitle_jobs::Manager>,
-    hls: Arc<crate::hls::Manager>,
-    virtual_media: Arc<crate::virtual_media::Manager>,
+    pub(crate) hls: Arc<crate::hls::Manager>,
+    pub(crate) virtual_media: Arc<crate::virtual_media::Manager>,
     lan_limiter: crate::lan::Limiter,
     torrent_search: crate::torrent_search::Search,
 }
@@ -226,6 +226,13 @@ pub async fn serve(
                 tokio::time::sleep(std::time::Duration::from_secs_f64(seconds)).await;
             }
         }));
+        let removals = service.clone();
+        workers.push(tokio::spawn(async move {
+            loop {
+                if let Err(error) = crate::library_files::tick(&removals).await { eprintln!("File management: {error}"); }
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        }));
         let scanner = service.clone();
         workers.push(tokio::spawn(async move {
             loop {
@@ -250,6 +257,15 @@ pub async fn serve(
         }));
     }
     if !preview {
+        let artwork_service = service.clone();
+        workers.push(tokio::spawn(async move {
+            loop {
+                if let Err(error) = prefetch_library_artwork(&artwork_service).await {
+                    tracing::warn!(%error, "Library artwork preparation failed");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        }));
         let background = service.clone();
         workers.push(tokio::spawn(async move {
             loop {
@@ -511,7 +527,14 @@ async fn dispatch(
             }
         }
     };
-    match handle(&s, &method, uri.path(), body).await {
+    let profile = match headers.get("x-torrbaby-profile") {
+        Some(value) => match value.to_str() {
+            Ok(value) if !value.is_empty() => value,
+            _ => return (StatusCode::BAD_REQUEST, Json(json!({"error":"Invalid profile header"}))).into_response(),
+        },
+        None => crate::profiles::LEGACY_PROFILE,
+    };
+    match handle(&s, &method, uri.path(), body, profile).await {
         Ok(value) => ([("Cache-Control", "no-store")], Json(value)).into_response(),
         Err(error) => (
             StatusCode::BAD_REQUEST,
@@ -526,7 +549,49 @@ fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
         .with_context(|| format!("{key} must be text"))
 }
 
-async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> Result<Value> {
+async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, profile: &str) -> Result<Value> {
+    if method == Method::GET {
+        if let Some(id) = path.strip_prefix("/v1/library/assets/").and_then(|p| p.strip_suffix("/manage-files")) {
+            return crate::library_files::preview(s, id).await;
+        }
+    }
+    if method == Method::POST {
+        if let Some(id) = path.strip_prefix("/v1/library/assets/").and_then(|p|p.strip_suffix("/manage-files")) {
+            if s.preview { bail!("File operations are disabled in migration preview mode"); }
+            return crate::library_files::submit(s,id,text(&body,"action")?,text(&body,"confirmation_token")?).await;
+        }
+    }
+    if method == Method::GET && path == "/v1/library/operations" {
+        let db = s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+        return Ok(json!({"operations":db.library_operations()?}));
+    }
+    if path == "/v1/profiles" {
+        let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+        if method == Method::GET { return Ok(json!({"profiles":db.profiles()?})); }
+        if method == Method::POST { return db.write_profile(None, &body); }
+    }
+    if let Some(id) = path.strip_prefix("/v1/profiles/").filter(|id| !id.contains('/')) {
+        if method == Method::PATCH {
+            let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+            return db.write_profile(Some(id), &body);
+        }
+    }
+    if let Some(client) = path.strip_prefix("/v1/devices/").and_then(|p|p.strip_suffix("/profile")) {
+        let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+        if method == Method::GET { return db.device_profile(client); }
+        if method == Method::PUT { return db.select_profile(client, text(&body, "profile_id")?); }
+    }
+    if method == Method::POST && path == "/v1/library/continue-watching" {
+        let id=text(&body,"title_id")?;
+        let hidden=body["hidden"].as_bool().context("hidden must be boolean")?;
+        let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+        db.require_profile(profile)?;
+        if hidden {
+            anyhow::ensure!(db.documents("entities")?.iter().any(|v|v["id"]==id),"Title not found");
+            db.connection.execute("INSERT INTO profile_hidden_titles(profile_id,title_id,hidden_at) VALUES(?,?,?) ON CONFLICT(profile_id,title_id) DO UPDATE SET hidden_at=excluded.hidden_at",rusqlite::params![profile,id,crate::storage::now()])?;
+        } else { db.connection.execute("DELETE FROM profile_hidden_titles WHERE profile_id=? AND title_id=?",[profile,id])?; }
+        return Ok(json!({"hidden":hidden}));
+    }
     if method == Method::POST && path == "/v1/search/torrents" {
         return Ok(serde_json::to_value(
             s.torrent_search
@@ -697,7 +762,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             let db =
                 s.db.lock()
                     .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
-            return crate::offline::shared_progress(&db, id);
+            return crate::offline::shared_progress(&db, id, profile);
         }
     }
     if method == Method::POST {
@@ -917,6 +982,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             let asset = db.asset(id)?;
             let hash = asset["torrent_hash"].as_str().unwrap_or(id);
             return db.mark(
+                profile,
                 hash,
                 asset["file_index"].as_u64().unwrap_or(0),
                 std::path::Path::new(text(&asset, "path")?)
@@ -943,6 +1009,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
                     .lock()
                     .map_err(|_| anyhow::anyhow!("Database lock failed"))?
                     .mark(
+                        profile,
                         &hash.to_ascii_lowercase(),
                         index,
                         &path.file_name().unwrap_or_default().to_string_lossy(),
@@ -1093,31 +1160,34 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             .strip_prefix("/v1/library/assets/")
             .and_then(|s| s.strip_suffix("/play"))
         {
-            return playback_link(s, id, &body).await;
+            return playback_link(s, id, &body, profile).await;
         }
         if let Some(hash) = path
             .strip_prefix("/v1/torrents/")
             .and_then(|s| s.strip_suffix("/play"))
         {
-            return playback_link(s, hash, &body).await;
+            return playback_link(s, hash, &body, profile).await;
         }
     }
     if method == Method::GET && path == "/v1/torrents" {
-        if let Some((updated, torrents)) = s
+        let cached = s
             .torrents
             .lock()
             .map_err(|_| anyhow::anyhow!("Torrent cache lock failed"))?
             .as_ref()
-        {
-            if updated.elapsed().as_secs() < 15 {
-                return Ok(json!(torrents));
-            }
+            .filter(|(updated, _)| updated.elapsed().as_secs() < 15)
+            .map(|(_, torrents)| json!(torrents));
+        if let Some(torrents) = cached {
+            let operations = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.library_operations()?;
+            return Ok(crate::library_files::annotate_torrents(torrents, &operations));
         }
-        return Ok(s
+        let torrents = s
             .rpc
             .call("torrent_get", json!({"fields":crate::transmission::FIELDS}))
             .await?["torrents"]
-            .take());
+            .take();
+        let operations = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.library_operations()?;
+        return Ok(crate::library_files::annotate_torrents(torrents, &operations));
     }
     let effective = if path == "/v1/status" {
         Some(s.effective_config()?)
@@ -1160,8 +1230,13 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
     match (method.as_str(),path) {
         ("GET","/v1/subtitle-preferences") => db.subtitle_preferences(None),
         ("PUT","/v1/subtitle-preferences") => db.save_subtitle_preferences(None, body),
-        ("GET","/v1/library") => db.catalog(),
-        ("GET","/v1/library/matches") => Ok(json!(db.documents("assets")?.into_iter().filter(|a|a["available"]==true && a["status"]!="matched" && a["role"]!="extra").collect::<Vec<_>>())),
+        ("GET","/v1/library/revision") => Ok(json!({"revision":db.catalog_revision()?})),
+        ("GET","/v1/library") => {
+            let mut catalog = db.catalog(profile)?;
+            catalog["revision"] = json!(db.catalog_revision()?);
+            Ok(catalog)
+        },
+        ("GET","/v1/library/matches") => Ok(json!(db.visible_assets()?.into_iter().filter(|a|a["available"]==true && a["status"]!="matched" && a["role"]!="extra").collect::<Vec<_>>())),
         ("GET","/v1/status") => {
             let state = db.state()?;
             let config = effective.as_ref().context("Missing settings")?;
@@ -1172,7 +1247,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
         ("GET","/v1/events") => Ok(db.state()?["events"].take()),
         ("GET","/v1/clients") => Ok(json!(db.rows("SELECT clients.*, EXISTS(SELECT 1 FROM device_credentials WHERE client_id=clients.id) AS paired_credential FROM clients ORDER BY last_seen DESC",[])?)),
         ("POST","/v1/clients") => db.register(text(&body,"client_id")?,text(&body,"name")?,text(&body,"platform")?),
-        ("GET","/v1/playback") => Ok(json!(db.history()?)),
+        ("GET","/v1/playback") => Ok(json!(db.history(profile)?)),
         ("POST","/v1/playback/end") => {
             let session=text(&body,"session_id")?;
             let tx=db.connection.transaction()?;
@@ -1181,7 +1256,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             tx.commit()?;
             Ok(json!({"accepted":true}))
         },
-        ("POST","/v1/playback/progress") => db.progress(text(&body,"session_id")?,body["sequence"].as_i64().context("Invalid sequence")?,body["position"].as_f64().context("Invalid position")?,body["duration"].as_f64().context("Invalid duration")?, match body.get("ended") {None => false,Some(v)=>v.as_bool().context("ended must be boolean")?}),
+        ("POST","/v1/playback/progress") => db.progress_with_evidence(text(&body,"session_id")?,body["sequence"].as_i64().context("Invalid sequence")?,body["position"].as_f64().context("Invalid position")?,body["duration"].as_f64().context("Invalid duration")?, match body.get("ended") {None => false,Some(v)=>v.as_bool().context("ended must be boolean")?}, body.get("watched_eligible").map(|v|v.as_bool().context("watched_eligible must be boolean")).transpose()?.unwrap_or(true), body.get("reached_end").map(|v|v.as_bool().context("reached_end must be boolean")).transpose()?.unwrap_or(false)),
         ("GET","/v1/rates") => Ok(json!(db.rows("SELECT CAST(time/60 AS INTEGER)*60 AS time,AVG(download) AS download,AVG(upload) AS upload FROM transfer_rates WHERE time>=? GROUP BY CAST(time/60 AS INTEGER) ORDER BY time",[now()-86400.0])?)),
         ("GET","/v1/metadata") => {
             let records = db.rows("SELECT document FROM metadata",[])?;
@@ -1230,6 +1305,13 @@ pub(crate) fn checked_path(root: &std::path::Path, relative: &str) -> Result<Pat
 }
 
 pub(crate) async fn media_file(s: &Service, hash: &str, index: u64) -> Result<PathBuf> {
+    {
+        let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+        if hash.starts_with("asset-") {
+            if db.hidden_asset(&db.asset(hash)?)? { bail!("This title has been removed from the library"); }
+        } else if db.hidden_package(hash)? { bail!("This package has been removed from the library"); }
+    }
+
     if hash.starts_with("asset-") {
         if index != 0 {
             bail!("Invalid asset file index");
@@ -1323,7 +1405,8 @@ async fn torrent_media_file(s: &Service, hash: &str, index: u64) -> Result<PathB
     Ok(path)
 }
 
-async fn playback_link(s: &Service, hash: &str, body: &Value) -> Result<Value> {
+async fn playback_link(s: &Service, hash: &str, body: &Value, profile: &str) -> Result<Value> {
+    let _mutation = s.mutation_lock.lock().await;
     let index = if hash.starts_with("asset-") {
         0
     } else {
@@ -1373,6 +1456,7 @@ async fn playback_link(s: &Service, hash: &str, body: &Value) -> Result<Value> {
             (hash.to_owned(), index)
         };
         let progress = db.begin(
+            profile,
             &media_hash,
             media_index,
             &path.file_name().unwrap_or_default().to_string_lossy(),
@@ -1696,7 +1780,6 @@ fn byte_range(header: Option<&str>, size: u64) -> Result<(u64, u64)> {
 
 async fn artwork(s: &Service, id: &str, variant: &str) -> Result<Value> {
     use base64::Engine;
-    use sha2::Digest;
     if !["poster", "backdrop", "logo", "episode"].contains(&variant) {
         bail!("Unknown artwork variant");
     }
@@ -1741,21 +1824,25 @@ async fn artwork(s: &Service, id: &str, variant: &str) -> Result<Value> {
     let Some(url) = url else {
         return Ok(json!({"data":null}));
     };
-    let key = sha2::Sha256::digest(url.as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
+    if url.starts_with('/') { return Ok(json!({"data":null})); }
+    let bytes = cached_artwork(s, &url).await?;
+    Ok(json!({"data":base64::engine::general_purpose::STANDARD.encode(bytes)}))
+}
+
+fn artwork_key(url: &str) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(url.as_bytes()).iter().map(|b|format!("{b:02x}")).collect()
+}
+
+async fn cached_artwork(s: &Service, url: &str) -> Result<Vec<u8>> {
+    let key = artwork_key(url);
     let cache = s.data_dir.join("artwork");
     tokio::fs::create_dir_all(&cache).await?;
     let path = cache.join(format!("{key}.image"));
     let bytes = if path.exists() {
         tokio::fs::read(&path).await?
     } else {
-        // Legacy Plex references are deliberately not fetched by the standalone server.
-        if url.starts_with('/') {
-            return Ok(json!({"data":null}));
-        }
-        let parsed = reqwest::Url::parse(&url)?;
+        let parsed = reqwest::Url::parse(url)?;
         if parsed.scheme() != "https"
             || ![Some("image.tmdb.org"), Some("static.tvmaze.com")].contains(&parsed.host_str())
             || !parsed.username().is_empty()
@@ -1787,7 +1874,96 @@ async fn artwork(s: &Service, id: &str, variant: &str) -> Result<Value> {
     if bytes.len() > 8 * 1024 * 1024 {
         bail!("Artwork too large");
     }
-    Ok(json!({"data":base64::engine::general_purpose::STANDARD.encode(bytes)}))
+    Ok(bytes)
+}
+
+fn library_artwork_urls(assets: &[Value], entities: &[Value]) -> std::collections::BTreeSet<String> {
+    let mut urls = std::collections::BTreeSet::new();
+    for asset in assets.iter().filter(|a| a["available"] == true || a["torrent_present"] == true) {
+        let Some(entity) = entities.iter().find(|e|e["id"] == asset["entity_id"] && e["id"].is_string()) else { continue; };
+        for field in ["thumbnail", "backdrop", "logo"] {
+            if let Some(url) = entity[field].as_str().filter(|url|url.starts_with("https://")) { urls.insert(url.to_owned()); }
+        }
+        if let Some(episode) = entity["episodes"].as_array().and_then(|episodes|episodes.iter().find(|e|
+            e["season"] == asset["season"] && e["episode"] == asset["episode"] && e["episode"].is_number())) {
+            if let Some(url) = episode["thumbnail"].as_str().filter(|url|url.starts_with("https://")) { urls.insert(url.to_owned()); }
+        }
+    }
+    urls
+}
+
+fn artwork_retry_delay(attempts: u64) -> f64 { (60u64 * (1u64 << attempts.min(6))).min(3600) as f64 }
+
+#[cfg(test)]
+mod artwork_preparation_tests {
+    use super::*;
+    #[test]
+    fn pending_assets_prepare_shared_artwork_and_only_their_episode_images() {
+        let assets = vec![json!({"entity_id":"show","available":false,"torrent_present":true,"complete":false,"season":1,"episode":1}),
+            json!({"entity_id":"show","available":true,"season":1,"episode":2}),
+            json!({"entity_id":"gone","available":false,"torrent_present":false})];
+        let entities = vec![json!({"id":"show","thumbnail":"https://image.tmdb.org/poster",
+            "backdrop":"https://image.tmdb.org/backdrop","logo":"https://image.tmdb.org/logo",
+            "episodes":[{"season":1,"episode":1,"thumbnail":"https://image.tmdb.org/one"},
+                {"season":1,"episode":2,"thumbnail":"https://image.tmdb.org/two"},
+                {"season":1,"episode":3,"thumbnail":"https://image.tmdb.org/not-downloaded"}]}),
+            json!({"id":"gone","thumbnail":"https://image.tmdb.org/gone"})];
+        let urls = library_artwork_urls(&assets,&entities);
+        assert_eq!(urls.len(),5);
+        assert!(urls.contains("https://image.tmdb.org/one"));
+        assert!(urls.contains("https://image.tmdb.org/two"));
+        assert!(!urls.contains("https://image.tmdb.org/not-downloaded"));
+        assert!(!urls.contains("https://image.tmdb.org/gone"));
+        assert_eq!(artwork_retry_delay(1),120.0);
+        assert_eq!(artwork_retry_delay(u64::MAX),3600.0);
+    }
+}
+
+async fn prefetch_library_artwork(s: &Service) -> Result<()> {
+    use futures_util::{stream, StreamExt};
+    let urls = {
+        let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+        // visible_assets excludes removal intent; it deliberately includes pending downloads.
+        let mut urls = library_artwork_urls(&db.visible_assets()?, &db.documents("entities")?);
+        for record in db.documents("metadata")? {
+            if db.hidden_package(record["hash"].as_str().unwrap_or(""))? { continue; }
+            if let Some(url) = record["selected"]["thumbnail"].as_str().filter(|u|u.starts_with("https://")) {
+                urls.insert(url.to_owned());
+            }
+        }
+        urls
+    };
+    let cache = s.data_dir.join("artwork");
+    tokio::fs::create_dir_all(&cache).await?;
+    stream::iter(urls).map(|url| {
+        let cache = &cache;
+        async move {
+            let key = artwork_key(&url);
+            if tokio::fs::try_exists(cache.join(format!("{key}.image"))).await? { return Ok::<(),anyhow::Error>(()); }
+            let state_path = cache.join(format!("{key}.fetch.json"));
+            let previous: Value = match tokio::fs::read(&state_path).await {
+                Ok(data) => serde_json::from_slice(&data).unwrap_or(Value::Null),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Value::Null,
+                Err(error) => return Err(error.into()),
+            };
+            if previous["retry_at"].as_f64().unwrap_or(0.0) > now() { return Ok(()); }
+            match cached_artwork(s, &url).await {
+                Ok(_) => { let _ = tokio::fs::remove_file(state_path).await; }
+                Err(error) => {
+                    let attempts = previous["attempts"].as_u64().unwrap_or(0).saturating_add(1);
+                    let state = json!({"url":url,"attempts":attempts,"retry_at":now()+artwork_retry_delay(attempts),"error":error.to_string()});
+                    let temporary = cache.join(format!("{key}.{}.tmp", uuid::Uuid::new_v4()));
+                    tokio::fs::write(&temporary, serde_json::to_vec(&state)?).await?;
+                    tokio::fs::rename(&temporary, &state_path).await?;
+                    tracing::debug!(%url,%error,"Artwork will retry in background");
+                }
+            }
+            Ok(())
+        }
+    }).buffer_unordered(4).for_each(|result| async move {
+        if let Err(error) = result { tracing::warn!(%error,"Could not persist artwork preparation state"); }
+    }).await;
+    Ok(())
 }
 
 async fn scan_library(s: &Service) -> Result<()> {
@@ -1920,9 +2096,25 @@ async fn collect_metadata(s: &Service) -> Result<()> {
     let Ok(_guard) = s.metadata_lock.try_lock() else {
         return Ok(());
     };
+    let entities=s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.documents("entities")?;
+    for entity in entities.iter().filter(|entity| entity["provider"]=="TMDB" && !entity["cast"].is_array()) {
+        match s.metadata.cast(entity).await {
+            Ok(cast) => {
+                let id=text(entity,"id")?;
+                let db=s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+                if let Some(row)=db.rows("SELECT document FROM library_entities WHERE id=?",[id])?.first() {
+                    let mut current:Value=serde_json::from_str(text(row,"document")?)?;
+                    current["cast"]=cast;
+                    db.connection.execute("UPDATE library_entities SET document=? WHERE id=?",[current.to_string(),id.to_string()])?;
+                }
+            }
+            Err(error)=>eprintln!("Cast metadata: {error}"),
+        }
+    }
     if let Ok(torrents) = crate::organizer::torrents(s).await {
         for torrent in torrents {
             let hash = text(&torrent, "hash_string")?;
+            if s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.hidden_package(hash)? { continue; }
             let old = torrent_metadata(s, hash)?;
             if old.as_ref().is_some_and(|r| {
                 r["confirmed"] == true
@@ -1933,10 +2125,6 @@ async fn collect_metadata(s: &Service) -> Result<()> {
                             900.0
                         }
             }) {
-                // Warm the disk cache even for metadata collected before artwork prefetch existed.
-                if let Err(error) = artwork(s, &format!("torrent:{hash}"), "poster").await {
-                    tracing::debug!(%hash, %error, "Torrent artwork is not available yet");
-                }
                 continue;
             }
             let mut record = match s.metadata.search(text(&torrent, "name")?).await {
@@ -1948,17 +2136,14 @@ async fn collect_metadata(s: &Service) -> Result<()> {
             record["hash"] = json!(hash);
             record["updated_at"] = json!(now());
             save_torrent_metadata(s, &record)?;
-            if let Err(error) = artwork(s, &format!("torrent:{hash}"), "poster").await {
-                tracing::debug!(%hash, %error, "Torrent artwork is not available yet");
-            }
         }
     }
     let assets =
         s.db.lock()
             .map_err(|_| anyhow::anyhow!("Database lock failed"))?
-            .documents("assets")?;
+            .visible_assets()?;
     for asset in &assets {
-        if asset["available"] != true || asset["role"] == "extra" || asset["confirmed"] == true {
+        if (asset["available"] != true && asset["torrent_present"] != true) || asset["role"] == "extra" || asset["confirmed"] == true {
             continue;
         }
         if let Some(hash) = asset["torrent_hash"].as_str().filter(|_|!asset["metadata_query"].is_string()) {

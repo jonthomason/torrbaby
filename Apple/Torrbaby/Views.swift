@@ -25,6 +25,7 @@ enum Section: String, CaseIterable, Identifiable {
 }
 
 struct SubtitleQueueView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @Environment(\.scenePhase) private var phase
     private let groups = [("Waiting", ["queued", "scanning", "interrupted"]), ("Finished", ["ready"]), ("Needs attention", ["failed", "stale", "expired"])]
@@ -47,15 +48,15 @@ struct SubtitleQueueView: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text(item.title).font(.headline).lineLimit(2)
                                     HStack {
-                                        Label(item.target == nil ? "Extracting" : (item.target == "en" ? "English" : "简体中文"), systemImage: "captions.bubble")
+                                        Label(LocalizedStringKey(item.target == nil ? "Extracting" : (item.target == "en" ? "English" : "Chinese (Simplified)")), systemImage: "captions.bubble")
                                         Spacer()
-                                        Text(item.state == "scanning" ? "Checking languages" : item.state.capitalized)
+                                        Text(LocalizedStringKey(item.state == "scanning" ? "Checking languages" : item.state.capitalized))
                                     }.font(.caption).foregroundStyle(.secondary)
                                     if item.totalCues > 0 && item.state != "ready" {
                                         ProgressView(value: Double(item.completedCues), total: Double(item.totalCues))
                                         Text("\(item.completedCues) / \(item.totalCues)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                                     }
-                                    if let error = item.error { Text(error).font(.caption).foregroundStyle(.orange) }
+                                    if let error = item.error { Text(L10n.text(error)).font(.caption).foregroundStyle(.orange) }
                                 }.padding(.vertical, 6)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
@@ -77,7 +78,7 @@ struct SubtitleQueueView: View {
                     Label("Now processing", systemImage: "captions.bubble").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     Text(item.title).font(.headline).lineLimit(2)
                     HStack {
-                        Text(item.target == nil ? "Extracting subtitles" : item.target == "en" ? "English" : "简体中文")
+                        Text(LocalizedStringKey(item.target == nil ? "Extracting subtitles" : item.target == "en" ? "English" : "Chinese (Simplified)"))
                         Spacer()
                         if item.totalCues > 0 { Text("\(item.completedCues) / \(item.totalCues)").monospacedDigit() }
                     }.font(.caption).foregroundStyle(.secondary)
@@ -115,7 +116,11 @@ private struct TorrentDraft: Identifiable {
 }
 
 struct RootView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
+    #if os(macOS)
+    @Environment(\.openWindow) private var openWindow
+    #endif
     @Environment(\.scenePhase) var phase
     private struct Location: Equatable {
         var section: Section? = .library
@@ -148,6 +153,12 @@ struct RootView: View {
                 .help("Back").disabled(past.isEmpty)
             Button(action: forward) { Image(systemName: "chevron.right") }
                 .help("Forward").disabled(future.isEmpty)
+            #if os(macOS)
+            Button {
+                MacLibraryTabs.create { openWindow(id: "main") }
+            } label: { Image(systemName: "plus") }
+                .help("New Tab (⌘T)").accessibilityLabel("New Tab")
+            #endif
         }
     }
     @State private var showConnect = false
@@ -165,24 +176,24 @@ struct RootView: View {
                 List(selection: Binding(get: { location.section }, set: { navigate(Location(section: $0)) })) {
                     SwiftUI.Section("Library") {
                         ForEach([Section.library, .findTorrents, .movies, .shows]) { section in
-                            Label(section.rawValue, systemImage: section.icon).padding(.vertical, 5).tag(section)
+                            Label(LocalizedStringKey(section.rawValue), systemImage: section.icon).padding(.vertical, 5).tag(section)
                         }
                     }
                     SwiftUI.Section("Torrents") {
                         ForEach([Section.active, .seeding, .complete, .subtitles, .attention]) { section in
-                            Label(section.rawValue, systemImage: section.icon).padding(.vertical, 5).tag(section)
+                            Label(LocalizedStringKey(section.rawValue), systemImage: section.icon).padding(.vertical, 5).tag(section)
                         }
                     }
                     SwiftUI.Section("Server") {
                         ForEach([Section.automation, .settings]) { section in
-                            Label(section.rawValue, systemImage: section.icon).padding(.vertical, 5).tag(section)
+                            Label(LocalizedStringKey(section.rawValue), systemImage: section.icon).padding(.vertical, 5).tag(section)
                         }
                     }
                 }.listStyle(.sidebar)
                 VStack(alignment: .leading, spacing: 9) {
                     HStack(spacing: 7) {
                         Circle().fill(store.connected ? Theme.mint : .orange).frame(width: 6, height: 6)
-                        Text(store.connected ? "Connected" : (store.offline ? "Offline mode" : "Connecting…")).font(.caption.weight(.semibold))
+                        Text(LocalizedStringKey(store.connected ? "Connected" : (store.offline ? "Offline mode" : "Connecting…"))).font(.caption.weight(.semibold))
                     }
                     if store.status?.settings.paused == true {
                         Label("Automation paused", systemImage: "pause.circle").font(.caption2).foregroundStyle(.orange)
@@ -204,15 +215,17 @@ struct RootView: View {
                     else { TorrentListView(section: selection ?? .active) }
                 }
                 .background(Theme.canvas)
-                .navigationTitle(selection?.rawValue ?? "Torrbaby")
+                .navigationTitle(L10n.text(selection?.rawValue ?? "Torrbaby"))
                 .toolbar {
                     historyControls
                     ToolbarItemGroup(placement: .primaryAction) {
                         if store.busy { ProgressView().controlSize(.small) }
-                        Button { Task { await store.refresh() } } label: { Image(systemName: "arrow.clockwise") }
-                            .help("Refresh").disabled(!store.configured)
-                        Button { torrentDraft = TorrentDraft() } label: { Image(systemName: "plus") }.help("Add torrent")
-                            .disabled(!store.connected)
+                        if [.active, .seeding, .complete, .attention].contains(selection) {
+                            Button { torrentDraft = TorrentDraft() } label: { Label("Add torrent", systemImage: "plus") }
+                                .disabled(!store.connected)
+                            Button { Task { await store.refresh() } } label: { Image(systemName: "arrow.clockwise") }
+                                .help("Refresh").disabled(!store.configured)
+                        }
                     }
                 }
                 .navigationDestination(for: String.self) { hash in TorrentDetail(hash: hash).navigationBarBackButtonHidden().toolbar { historyControls } }
@@ -240,10 +253,10 @@ struct RootView: View {
         .focusedSceneValue(\.goForward, future.isEmpty ? nil : { forward() })
         .background(MouseHistoryNavigation(back: { back() }, forward: { forward() }))
         #endif
-        .sheet(isPresented: $showConnect) { ConnectionView() }
+        .overlay(alignment: .bottom) { ContinueWatchingUndoBanner() }
+        .sheet(isPresented: $showConnect) { LocalizedInterface { ConnectionView() } }
         .sheet(item: $torrentDraft) { draft in
-            AddTorrentView(initialMagnet: draft.magnet).id(draft.id)
-        }
+             LocalizedInterface { AddTorrentView(initialMagnet: draft.magnet).id(draft.id) } }
         .onOpenURL { url in
             if url.scheme?.lowercased() == "magnet" {
                 torrentDraft = TorrentDraft(magnet: canonicalMagnet(url.absoluteString))
@@ -261,7 +274,7 @@ struct RootView: View {
         }
         .alert("Couldn’t complete that action", isPresented: Binding(get: { store.actionError != nil }, set: { if !$0 { store.actionError = nil } })) {
             Button("OK") { store.actionError = nil }
-        } message: { Text(store.actionError ?? "") }
+        } message: { Text(LocalizedStringKey(store.actionError ?? "")) }
         .task(id: phase) {
             if !store.configured { showConnect = true }
             #if !os(macOS)
@@ -275,6 +288,7 @@ struct RootView: View {
 }
 
 struct TorrentListView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let section: Section
     @AppStorage("torrentSort.downloading") private var downloadingSort = TorrentSort.progress
@@ -301,11 +315,11 @@ struct TorrentListView: View {
         sortSelection.wrappedValue.ordered(store.torrents.filter { t in
             let included: Bool
             switch section {
-            case .active: included = !t.completed
-            case .seeding: included = t.completed && t.status == 6
-            case .complete: included = t.completed && t.status != 6
-            case .attention: included = t.needsAttention
-            case .library: included = t.files.contains { $0.isVideo && $0.complete }
+            case .active: included = t.fileOperation == nil && !t.completed
+            case .seeding: included = t.fileOperation != nil || (t.completed && t.status == 6)
+            case .complete: included = t.fileOperation == nil && t.completed && t.status != 6
+            case .attention: included = !t.isJunk && t.needsAttention
+            case .library: included = !t.isJunk && t.files.contains { $0.isVideo && $0.complete }
             default: included = true
             }
             return included && (search.isEmpty || t.name.localizedCaseInsensitiveContains(search))
@@ -315,7 +329,7 @@ struct TorrentListView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 if !compact { VStack(alignment: .leading, spacing: 6) {
-                    Text(section.rawValue)
+                    Text(LocalizedStringKey(section.rawValue))
                         .font(.system(size: 30, weight: .bold, design: .rounded))
                 } }
                 if !compact { ViewThatFits(in: .horizontal) {
@@ -328,15 +342,20 @@ struct TorrentListView: View {
                     }.font(.caption.monospacedDigit())
                 }
                 TransferHistoryView(compact: compact)
+                if section == .seeding { LibraryOperationStatus(search: search) }
+                if let error = store.torrentError {
+                    Label("Couldn’t refresh torrents: " + error, systemImage: "exclamationmark.triangle")
+                        .font(.callout).foregroundStyle(.orange)
+                }
                 HStack {
                     Text("\(filtered.count) \(filtered.count == 1 ? "TORRENT" : "TORRENTS")").font(.caption.weight(.semibold)).tracking(1.6).foregroundStyle(Theme.muted)
                     Spacer()
                     Picker("Sort", selection: sortSelection) {
-                        ForEach(TorrentSort.choices(section.rawValue)) { Text($0.label).tag($0) }
+                        ForEach(TorrentSort.choices(section.rawValue)) { Text(LocalizedStringKey($0.label)).tag($0) }
                     }.pickerStyle(.menu).fixedSize()
                 }
-                if filtered.isEmpty {
-                    ContentUnavailableView(search.isEmpty ? "All clear" : "No matches", systemImage: search.isEmpty ? "checkmark.circle" : "magnifyingglass", description: Text(search.isEmpty ? "" : "Try a different title."))
+                if filtered.isEmpty && (section != .seeding || store.detachedLibraryOperations.isEmpty) {
+                    ContentUnavailableView(search.isEmpty ? "All clear" : "No matches", systemImage: search.isEmpty ? "checkmark.circle" : "magnifyingglass", description: Text(LocalizedStringKey(search.isEmpty ? "" : "Try a different title.")))
                         .padding(.vertical, 40)
                 } else {
                     LazyVStack(spacing: compact ? 4 : 10) {
@@ -353,14 +372,14 @@ struct TorrentListView: View {
                             .contextMenu {
                                 Button { store.action(torrent, "start") } label: {
                                     Label("Start", systemImage: "play.fill")
-                                }.disabled(store.busy || !store.connected || torrent.status != 0)
+                                }.disabled(store.busy || !store.connected || torrent.status != 0 || torrent.fileOperation != nil)
                                 Button { store.action(torrent, "stop") } label: {
                                     Label("Stop", systemImage: "stop.fill")
-                                }.disabled(store.busy || !store.connected || torrent.status == 0)
+                                }.disabled(store.busy || !store.connected || torrent.status == 0 || torrent.fileOperation != nil)
                                 Divider()
                                 Button(role: .destructive) { removing = torrent } label: {
                                     Label("Remove…", systemImage: "trash")
-                                }.disabled(store.busy || !store.connected)
+                                }.disabled(store.busy || !store.connected || torrent.fileOperation != nil)
                             }
                             #if os(macOS)
                             if !compact && (!torrent.completed || torrent.status == 6) {
@@ -378,11 +397,11 @@ struct TorrentListView: View {
         .searchFocused($searchFocused)
         .focusedSceneValue(\.searchContent, { searchFocused = true })
         #endif
-        .sheet(item: $removing) { RemoveTorrentView(torrent: $0) }
+        .sheet(item: $removing) { item in LocalizedInterface { RemoveTorrentView(torrent: item) } }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button { compact.toggle() } label: {
-                    Label(compact ? "Comfortable view" : "Compact view", systemImage: compact ? "rectangle.grid.1x2" : "list.bullet")
+                    Label(LocalizedStringKey(compact ? "Comfortable view" : "Compact view"), systemImage: compact ? "rectangle.grid.1x2" : "list.bullet")
                 }.help(compact ? "Switch to comfortable view" : "Switch to compact view")
             }
         }
@@ -395,6 +414,7 @@ struct TorrentListView: View {
     }
 }
 struct Metric: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let title: String
     let value: String
     let symbol: String
@@ -403,7 +423,7 @@ struct Metric: View {
         Card {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(title).font(.system(size: 10, weight: .semibold)).tracking(1.5).foregroundStyle(Theme.muted)
+                    Text(LocalizedStringKey(title)).font(.system(size: 10, weight: .semibold)).tracking(1.5).foregroundStyle(Theme.muted)
                     Text(value).font(.system(size: 21, weight: .semibold, design: .rounded)).monospacedDigit().lineLimit(1)
                 }
                 Spacer(minLength: 15)
@@ -415,6 +435,7 @@ struct Metric: View {
 }
 
 struct TorrentRow: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let torrent: Torrent
     var showReason = false
     var color: Color { torrent.needsAttention ? .orange : torrent.completed ? .cyan : Theme.mint }
@@ -425,7 +446,7 @@ struct TorrentRow: View {
             VStack(alignment: .leading, spacing: 9) {
                 Text(torrent.displayName).font(.system(size: 15, weight: .semibold)).lineLimit(2).multilineTextAlignment(.leading)
                 HStack(spacing: 8) {
-                    Text(torrent.stateName).foregroundStyle(color)
+                    Text(LocalizedStringKey(torrent.stateName)).foregroundStyle(color)
                     Text("·").foregroundStyle(Theme.muted)
                     Text(bytes(torrent.size)).foregroundStyle(Theme.muted)
                     Spacer(minLength: 0)
@@ -450,6 +471,7 @@ struct TorrentRow: View {
 }
 
 struct CompactTorrentRow: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let torrent: Torrent
     let showReason: Bool
     var body: some View {
@@ -459,7 +481,7 @@ struct CompactTorrentRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(torrent.displayName).font(.system(size: 13, weight: .medium)).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                 HStack(spacing: 6) {
-                    Text(torrent.stateName).foregroundStyle(torrent.needsAttention ? .orange : torrent.completed ? .cyan : Theme.mint)
+                    Text(LocalizedStringKey(torrent.stateName)).foregroundStyle(torrent.needsAttention ? .orange : torrent.completed ? .cyan : Theme.mint)
                         .frame(width: 76, alignment: .leading)
                     Text("\(bytes(torrent.downloaded)) / \(bytes(torrent.size))")
                         .monospacedDigit().frame(width: 150, alignment: .trailing)
@@ -471,8 +493,12 @@ struct CompactTorrentRow: View {
                     TransferRate(value: torrent.rateUpload, upload: true)
                     Text("Ratio \(max(0, torrent.uploadRatio), specifier: "%.2f")")
                         .frame(width: 82, alignment: .trailing).foregroundStyle(.purple.opacity(0.9))
-                    if !torrent.completed { Text(torrent.etaText).frame(width: 160, alignment: .leading) }
+                    if !torrent.completed { Text(LocalizedStringKey(torrent.etaText)).frame(width: 160, alignment: .leading) }
                 }.font(.caption2.monospacedDigit()).foregroundStyle(Theme.muted)
+                if let operation = torrent.fileOperation {
+                    Text(LocalizedStringKey(operation.label)).font(.caption2).foregroundStyle(operation.error == nil ? Color.secondary : Color.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if showReason, let reason = torrent.progressIssue { Text(reason).font(.caption2).foregroundStyle(.orange).lineLimit(2) }
             }
             Spacer(minLength: 0)
@@ -489,6 +515,7 @@ struct CompactTorrentRow: View {
 /// Two deliberate layouts: compact columns on iPad, a short card on narrow screens.
 /// Never turn every activity field into a separate line.
 private struct MobileTorrentRow: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let torrent: Torrent
     let showReason: Bool
     let compact: Bool
@@ -508,7 +535,7 @@ private struct MobileTorrentRow: View {
                         .lineLimit(compact ? 2 : 3).multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     HStack {
-                        Text(torrent.stateName).foregroundStyle(color)
+                        Text(LocalizedStringKey(torrent.stateName)).foregroundStyle(color)
                         Spacer(minLength: 8)
                         Label("\(torrent.peersConnected)", systemImage: "person.2")
                             .foregroundStyle(Theme.muted)
@@ -525,11 +552,11 @@ private struct MobileTorrentRow: View {
                     .foregroundStyle(.purple).frame(width: 65, alignment: .trailing)
             }.font(.caption2.monospacedDigit()).lineLimit(1)
             HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text(torrent.completed ? bytes(torrent.size) : "\(bytes(torrent.downloaded)) / \(bytes(torrent.size))")
+                Text(LocalizedStringKey(torrent.completed ? bytes(torrent.size) : "\(bytes(torrent.downloaded)) / \(bytes(torrent.size))"))
                     .monospacedDigit()
                 Spacer(minLength: 0)
                 if !torrent.completed {
-                    Text(torrent.etaText).monospacedDigit().multilineTextAlignment(.trailing)
+                    Text(LocalizedStringKey(torrent.etaText)).monospacedDigit().multilineTextAlignment(.trailing)
                 }
             }.font(.caption2).foregroundStyle(Theme.muted).lineLimit(1).minimumScaleFactor(0.85)
             if showReason, let reason = torrent.progressIssue {
@@ -544,13 +571,14 @@ private struct MobileTorrentRow: View {
 private func peerCount(_ count: Int) -> String { "\(count) " + (count == 1 ? "peer" : "peers") }
 
 private struct TransferRate: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let value: Int64
     let upload: Bool
     var numberWidth: CGFloat = 82
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: upload ? "arrow.up" : "arrow.down").frame(width: 12)
-            Text(value == 0 ? "0 KB/s" : rate(value))
+            Text(LocalizedStringKey(value == 0 ? "0 KB/s" : rate(value)))
                 .monospacedDigit().frame(width: numberWidth, alignment: .trailing)
         }.foregroundStyle(upload ? Color.cyan : Theme.mint)
             .fixedSize(horizontal: true, vertical: false)
@@ -558,6 +586,7 @@ private struct TransferRate: View {
 }
 
 private struct TorrentThumbnail: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let torrent: Torrent
     private var thumbnail: String? { store.metadata.first { $0.hash == torrent.id }?.selected?.thumbnail }
@@ -576,6 +605,7 @@ private struct TorrentThumbnail: View {
 }
 
 struct TorrentProgressGauge: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let value: Double
     var color = Color(red: 0.70, green: 0.43, blue: 1.0)
     private var fraction: Double { value.isFinite ? min(1, max(0, value)) : 0 }
@@ -598,6 +628,7 @@ struct TorrentProgressGauge: View {
 }
 
 struct TorrentActivity: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let torrent: Torrent
     var body: some View {
         if !torrent.completed {
@@ -605,7 +636,7 @@ struct TorrentActivity: View {
         }
         TransferRate(value: torrent.rateUpload, upload: true)
         Text("\(peerCount(torrent.peersConnected)) · \(torrent.peersSendingToUs) sending").frame(width: 160, alignment: .leading)
-        if !torrent.completed { Text(torrent.etaText) }
+        if !torrent.completed { Text(LocalizedStringKey(torrent.etaText)) }
         Text("Ratio \(max(0, torrent.uploadRatio), specifier: "%.2f")")
         if let uploaded = torrent.uploadedEver { Text("\(bytes(uploaded)) uploaded") }
         if torrent.activityDate > 0 {
@@ -615,6 +646,7 @@ struct TorrentActivity: View {
 }
 
 struct TransferHistoryView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let compact: Bool
     var torrentHash: String? = nil
@@ -630,7 +662,7 @@ struct TransferHistoryView: View {
        if torrentHash == nil || torrentSamples != nil {
         VStack(alignment: .leading, spacing: compact ? 6 : 12) {
             HStack {
-                Text(uploadOnly ? "UPLOAD HISTORY" : "TRANSFER HISTORY").font(.caption2.weight(.semibold)).tracking(1)
+                Text(LocalizedStringKey(uploadOnly ? "UPLOAD HISTORY" : "TRANSFER HISTORY")).font(.caption2.weight(.semibold)).tracking(1)
                 Spacer()
                 Picker("Time range", selection: $hours) {
                     Text("1h").tag(1)
@@ -676,6 +708,7 @@ struct TransferHistoryView: View {
 }
 
 struct NoticeBanner: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     var showTorrent: (String) -> Void
     var body: some View {
@@ -712,6 +745,7 @@ struct NoticeBanner: View {
 #if os(macOS)
 /// Local event handling stays scoped to this window and never captures another app's mouse input.
 private struct MouseHistoryNavigation: NSViewRepresentable {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let back: () -> Void
     let forward: () -> Void
     final class HistoryView: NSView {

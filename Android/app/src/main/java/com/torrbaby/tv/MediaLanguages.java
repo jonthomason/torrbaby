@@ -13,7 +13,7 @@ final class MediaLanguages {
       if (totals.get(label) > 1) {
         int number = counts.getOrDefault(label, 0) + 1;
         counts.put(label, number);
-        labels.set(i, label + " track " + number);
+        labels.set(i, label + " " + L10n.t("track") + " " + number);
       }
     }
   }
@@ -21,8 +21,8 @@ final class MediaLanguages {
   static String name(String code) {
     if (code == null || code.isEmpty() || code.equals("und") || code.equals("null")) return "";
     String tag = code.toLowerCase(Locale.ROOT).replace('_', '-');
-    if (tag.equals("zh-hans")) return "Chinese (Simplified)";
-    if (tag.equals("zh-hant")) return "Chinese (Traditional)";
+    if (tag.equals("zh-hans")) return L10n.t("Chinese (Simplified)");
+    if (tag.equals("zh-hant")) return L10n.t("Chinese (Traditional)");
     switch (tag) {
       case "eng": tag = "en"; break;
       case "zho": case "chi": tag = "zh"; break;
@@ -31,7 +31,7 @@ final class MediaLanguages {
       case "fra": case "fre": tag = "fr"; break;
       case "deu": case "ger": tag = "de"; break;
     }
-    String result = Locale.forLanguageTag(tag).getDisplayName(Locale.ENGLISH);
+    String result = Locale.forLanguageTag(tag).getDisplayName(L10n.locale());
     return result.isEmpty() ? code : result;
   }
 
@@ -41,33 +41,39 @@ final class MediaLanguages {
     if (tracks != null) for (int i = 0; i < tracks.length(); i++) {
       JSONObject track = tracks.optJSONObject(i);
       if (track != null) {
+        if (key.equals("subtitle_tracks") && track.optString("codec").equals("unsupported")) continue;
         String language = name(track.optString("language", "und"));
         if (!language.isEmpty()) names.add(language);
       }
     }
-    return names.isEmpty() ? "None" : String.join(" · ", names);
+    return names.isEmpty() ? L10n.t("None") : String.join(" · ", names);
   }
 
   static List<String> lines(JSONObject info) {
     List<String> lines = new ArrayList<>();
     if (info == null || !info.optString("state").equals("ready")) {
       lines.add(info != null && info.optString("state").equals("failed")
-          ? "Languages unavailable" : "Checking languages…");
+          ? L10n.t("Languages unavailable") : L10n.t("Checking languages…"));
       return lines;
     }
-    lines.add("Audio  ·  " + tracks(info, "audio_tracks"));
+    lines.add(L10n.t("Audio") + "  ·  " + tracks(info, "audio_tracks"));
     String nativeLanguages = tracks(info, "subtitle_tracks");
     TreeSet<String> generated = new TreeSet<>();
+    TreeSet<String> originals = new TreeSet<>();
+    if (!nativeLanguages.equals(L10n.t("None"))) originals.addAll(Arrays.asList(nativeLanguages.split(" · ")));
     JSONArray prepared = info.optJSONArray("prepared");
     if (prepared != null) for (int i = 0; i < prepared.length(); i++) {
       JSONObject track = prepared.optJSONObject(i);
-      if (track != null && track.optBoolean("generated") && track.optString("state").equals("ready"))
-        generated.add(name(track.optString("language", "und")));
+      if (track != null && track.optString("state").equals("ready")) {
+        String language = name(track.optString("language", "und"));
+        if (!language.isEmpty()) (track.optBoolean("generated") ? generated : originals).add(language);
+      }
     }
     List<String> subtitles = new ArrayList<>();
-    if (!nativeLanguages.equals("None")) subtitles.add(nativeLanguages);
+    subtitles.addAll(originals);
+    generated.removeAll(originals);
     for (String language : generated) if (!language.isEmpty()) subtitles.add(language + " \uFFFC");
-    lines.add("Subtitles  ·  " + (subtitles.isEmpty() ? "None" : String.join(" · ", subtitles)));
+    lines.add(L10n.t("Subtitles") + "  ·  " + (subtitles.isEmpty() ? L10n.t("None") : String.join(" · ", subtitles)));
     return lines;
   }
 }

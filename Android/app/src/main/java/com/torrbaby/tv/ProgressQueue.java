@@ -13,7 +13,7 @@ final class ProgressQueue {
   static synchronized void save(Context c, Api api, JSONObject update) {
     try {
       JSONObject envelope =
-          new JSONObject().put("server", api.base).put("client", api.client).put("update", update);
+          new JSONObject().put("server", api.base).put("client", api.client).put("profile", api.profile).put("update", update);
       prefs(c)
           .edit()
           .putString(api.base + "|" + update.getString("session_id"), envelope.toString())
@@ -28,7 +28,8 @@ final class ProgressQueue {
         JSONObject envelope = new JSONObject((String) e.getValue());
         if (!api.base.equals(envelope.optString("server"))
             || !api.client.equals(envelope.optString("client"))) continue;
-        api.request("POST", "/v1/playback/progress", envelope.getJSONObject("update"));
+        Api owner = new Api(api.base, api.token, api.client, envelope.optString("profile"), "");
+        owner.request("POST", "/v1/playback/progress", envelope.getJSONObject("update"));
         synchronized (ProgressQueue.class) {
           if (e.getValue().equals(prefs(c).getString(e.getKey(), "")))
             prefs(c).edit().remove(e.getKey()).commit();

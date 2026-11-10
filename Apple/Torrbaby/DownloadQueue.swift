@@ -57,9 +57,9 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         }
     }
     func attach(_ store: Store) { self.store = store; pump() }
-    private func reload() {
+    func reload() {
         guard let storage else { return }
-        items = storage.items; policy = storage.policy
+        items = storage.items.map { $0.forProfile(store?.activeProfile?.id ?? "") }; policy = storage.policy
         do { used = try storage.accountedBytes(received: received) } catch { self.error = error.localizedDescription }
     }
     func setPolicy(_ next: DownloadStorage.Policy) {
@@ -71,19 +71,23 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     }
     func enqueue(_ asset: LibraryAsset, title: LibraryTitle) async {
         guard let store, let storage else { return }
-        let server = store.server
+        let server = store.server, identity = store.profileIdentity
+        if let existing=items.first(where: { $0.server == server && $0.assetID == asset.id && $0.state != .removed }) {
+            if existing.state == .failed { resume(existing.id) }
+            return
+        }
         do {
             struct Info: Decodable { let name: String; let size: Int64; let etag: String }
             let link = try await store.mediaPlaybackLink(asset: asset, titleID: title.id, startSession: false)
             let virtualJob = URLComponents(string: link.path)?.queryItems?.first(where: { $0.name == "virtual" })?.value
             let info: Info = try await store.request("POST", "/v1/library/assets/\(asset.id)/download-info", body: virtualJob.map { ["virtual_job": $0] } ?? [:])
-            guard store.server == server else { return }
+            guard store.server == server, store.profileIdentity == identity else { return }
             let item = try storage.enqueue(server: server, assetID: asset.id, titleID: title.id,
                                     title: title.title, name: asset.name ?? info.name,
                                     season: asset.season, episode: asset.episode, revision: info.etag,
                                     size: info.size, fileExtension: URL(fileURLWithPath: info.name).pathExtension, virtualJob: virtualJob)
             try storage.rememberEpisodeOrder(item.id, episodes: title.episodeOrder)
-            try storage.importProgress(item.id, position: asset.position, duration: asset.duration,
+            try storage.importProgress(item.id, profile: store.activeProfile?.id ?? "", position: asset.position, duration: asset.duration,
                                        watched: asset.watched, recordedAt: Date(timeIntervalSince1970: asset.lastPlayed))
             reload(); pump()
             await cachePoster(for: item)
@@ -197,12 +201,12 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     func preparePlayback(_ id: UUID) async -> Playback? {
         if let store, let storage, store.connected,
            let item = items.first(where: { $0.id == id && $0.server == store.server && $0.state == .ready }) {
-            let server = store.server
+            let server = store.server, identity = store.profileIdentity
             struct Progress: Decodable { let position: Double; let duration: Double; let watched: Bool; let lastPlayed: Double }
             do {
                 let progress: Progress = try await store.request("GET", "/v1/library/assets/\(item.assetID)/progress", timeout: 3)
-                if store.server == server {
-                    try storage.importProgress(id, position: progress.position, duration: progress.duration,
+                if store.server == server && store.profileIdentity == identity {
+                    try storage.importProgress(id, profile: store.activeProfile?.id ?? "", position: progress.position, duration: progress.duration,
                                                watched: progress.watched, recordedAt: Date(timeIntervalSince1970: progress.lastPlayed))
                     reload()
                 }
@@ -233,7 +237,9 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         }
         return "No more episodes available"
     }
-    func nextPlayback(after currentPlayback: Playback) async -> Playback? {
+    private enum NextSelection { case local(UUID); case stream(LibraryTitle, LibraryAsset) }
+    func hasNextEpisode(after playback: Playback) -> Bool { nextSelection(after: playback) != nil }
+    private func nextSelection(after currentPlayback: Playback) -> NextSelection? {
         let local = items.first { $0.id == currentPlayback.localDownloadID }
         let titleID = local?.titleID ?? currentPlayback.libraryTitleID
         let server = local?.server ?? store?.server
@@ -249,23 +255,34 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         }
         guard let number = EpisodeNumber(season: season, episode: episode).next(in: known, allowSeasonChange: !(catalogOrder ?? []).isEmpty) else { return nil }
         if let next = localSeries.first(where: { $0.season == number.season && $0.episode == number.episode && $0.state == .ready }) {
-            return await preparePlayback(next.id)
+            return .local(next.id)
         }
-        guard let store, store.server == server, store.connected, let title,
+        guard let store, store.server == server, let title,
               let asset = title.assets.first(where: { $0.role != "extra" && $0.season == number.season && $0.episode == number.episode && $0.complete }) else { return nil }
-        do {
-            try await store.registerClient()
-            let link = try await store.mediaPlaybackLink(asset: asset, titleID: title.id)
-            return Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0,
-                            url: try store.endpoint(link.path), name: asset.name ?? title.title,
-                            libraryAssetID: asset.id, libraryTitleID: title.id)
-        } catch { return nil }
+        return .stream(title, asset)
+    }
+    func nextPlayback(after currentPlayback: Playback) async throws -> Playback? {
+        guard let selection = nextSelection(after: currentPlayback) else { return nil }
+        switch selection {
+        case .local(let id): return await preparePlayback(id)
+        case .stream(let title, let asset):
+        guard let store, store.connected else { throw APIError(message: "Reconnect to your library to play the next episode.") }
+        let identity = store.profileIdentity
+        await store.flushProgress()
+        try Task.checkCancellation()
+        try await store.registerClient()
+        let link = try await store.mediaPlaybackLink(asset: asset, titleID: title.id)
+        guard store.profileIdentity == identity else { throw CancellationError() }
+        return Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0,
+                        url: try store.endpoint(link.path), name: asset.name ?? title.title,
+                        libraryAssetID: asset.id, libraryTitleID: title.id)
+        }
     }
     @discardableResult
-    func report(_ id: UUID, position: Double, duration: Double, reachedEnd: Bool) -> Bool {
+    func report(_ id: UUID, profile: String, position: Double, duration: Double, reachedEnd: Bool, watchedEligible: Bool = true) -> Bool {
         guard let storage, position.isFinite, duration.isFinite, duration > 0, position >= 0 else { return false }
         do {
-            try storage.recordPlayback(id, position: position, duration: duration, reachedEnd: reachedEnd)
+            try storage.recordPlayback(id, profile: profile, position: position, duration: duration, reachedEnd: reachedEnd, watchedEligible: watchedEligible)
             reload()
             Task { await syncProgress() }
             return true
@@ -283,7 +300,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
                     try storage.rememberEpisodeOrder(item.id, episodes: title.episodeOrder)
                 }
                 guard let asset = byID[item.assetID] else { continue }
-                try storage.importProgress(item.id, position: asset.position, duration: asset.duration,
+                try storage.importProgress(item.id, profile: store.activeProfile?.id ?? "", position: asset.position, duration: asset.duration,
                                            watched: asset.watched, recordedAt: Date(timeIntervalSince1970: asset.lastPlayed))
             }
             reload()
@@ -296,22 +313,24 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         let server = store.server, client = store.clientId
         do {
             try await store.registerClient()
-            for item in storage.items where item.server == server && item.progressNeedsSync {
+            for item in storage.items where item.server == server {
+              for (profile, value) in item.allViewing where value.progressNeedsSync {
                 guard store.server == server && store.clientId == client else { return }
-                guard let event = item.progressEventID, let recorded = item.progressRecordedAt else { continue }
+                guard let event = value.progressEventID, let recorded = value.progressRecordedAt else { continue }
                 do {
                     struct Acknowledgment: Decodable { let acknowledged: Bool }
                     let reply: Acknowledgment = try await store.request("POST", "/v1/playback/offline", body: [
                         "event_id": event.uuidString, "client_id": client, "asset_id": item.assetID,
-                        "position": item.position, "duration": item.duration,
-                        "recorded_at": recorded.timeIntervalSince1970, "reached_end": item.playbackFinished
+                        "profile_id": profile, "position": value.position, "duration": value.duration,
+                        "recorded_at": recorded.timeIntervalSince1970, "reached_end": value.playbackFinished, "watched_eligible": value.watched
                     ])
                     guard store.server == server && store.clientId == client else { return }
-                    if reply.acknowledged { try storage.acknowledgeProgress(item.id, eventID: event) }
+                    if reply.acknowledged { try storage.acknowledgeProgress(item.id, profile: profile, eventID: event) }
                 } catch {
                     // One removed catalog asset must not block other reports.
                     continue
                 }
+              }
             }
             reload()
         } catch {
@@ -320,7 +339,9 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         }
     }
     func finished(_ id: UUID) {
-        do { try storage?.removeAfterPlayback(id); reload(); pump() }
+        // Shared files remain until an explicit removal when several people use this library.
+        guard let store, store.profiles.count == 1, let profile = store.activeProfile?.id else { return }
+        do { try storage?.removeAfterPlayback(id, profile: profile); reload(); pump() }
         catch { self.error = error.localizedDescription }
     }
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,

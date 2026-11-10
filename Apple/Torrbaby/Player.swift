@@ -34,12 +34,15 @@ final class PlaybackModel: ObservableObject {
     @Published var title: String
     @Published var endMessage: String?
     @Published var preparingNext = false
+    @Published var canAdvanceEpisode = false
+    private var progressTicks = 0
     private var nextEpisodeTask: Task<Void, Never>?
     private var subtitleController: SubtitlePlaybackController?
     private var observation: NSKeyValueObservation?
     private var timeObserver: Any?
     private var rateObservation: NSKeyValueObservation?
     private var speedObservation: NSKeyValueObservation?
+    private var profileObserver: NSObjectProtocol?
     private var endObserver: NSObjectProtocol?
     private var sequence = 0
     private var starting = false
@@ -47,19 +50,32 @@ final class PlaybackModel: ObservableObject {
     private var finished = false
     private var playback: Playback
     private let store: Store
+    private let profileAtStart: String
     init(playback: Playback, store: Store) {
         self.playback = playback
         self.store = store
+        self.profileAtStart = store.activeProfile?.id ?? "profile-jon"
         self.title = playback.name
         player = AVPlayer()
         player.defaultRate = PlaybackSpeeds.preferred
         load(playback)
+        profileObserver = NotificationCenter.default.addObserver(forName: .torrbabyProfileWillChange, object: store, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.stop()
+                self?.endMessage = "User switched"
+            }
+        }
         #if os(iOS) || os(tvOS)
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         try? AVAudioSession.sharedInstance().setActive(true)
         #endif
-        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 5, preferredTimescale: 600), queue: .main) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.report() }
+        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 600), queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.updateNextEpisodeAvailability()
+                self.progressTicks += 1
+                if self.progressTicks % 5 == 0 { self.report() }
+            }
         }
         rateObservation = player.observe(\.rate, options: [.new]) { [weak self] _, _ in
             Task { @MainActor [weak self] in self?.report() }
@@ -89,27 +105,8 @@ final class PlaybackModel: ObservableObject {
         player.replaceCurrentItem(with: item)
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-              self?.nextEpisodeTask = Task { @MainActor [weak self] in
-                guard let self, !self.finished, self.resumed, self.playback.id == playbackID else { return }
-                let progressSaved = self.report(ended: true, reachedEnd: true)
-                #if os(tvOS)
-                await self.advanceTVEpisode()
-                #else
-                let queue = DownloadQueue.shared
-                let episode = queue.isEpisode(self.playback)
-                if self.playback.localDownloadID != nil || episode {
-                    self.resumed = false
-                    self.player.replaceCurrentItem(with: nil)
-                    if progressSaved, let id = self.playback.localDownloadID { queue.finished(id) }
-                    if episode, let next = await queue.nextPlayback(after: self.playback) {
-                        guard !self.finished else { return }
-                        self.load(next)
-                    } else if !self.finished {
-                        self.endMessage = episode ? queue.autoplayStopMessage(after: self.playback) : "Playback finished"
-                    }
-                }
-                #endif
-              }
+                guard self?.playback.id == playbackID else { return }
+                self?.advanceToNextEpisode(reachedEnd: true)
             }
         }
         observation = item.observe(\.status, options: [.new, .initial]) { [weak self] item, _ in
@@ -128,13 +125,67 @@ final class PlaybackModel: ObservableObject {
             }
         }
     }
+    func updateNextEpisodeAvailability() {
+        let duration = player.currentItem?.duration.seconds ?? 0
+        let position = player.currentTime().seconds
+        var available = false
+        #if os(tvOS)
+        if let titleID = playback.libraryTitleID, let assetID = playback.libraryAssetID,
+           let title = store.library?.titles.first(where: { $0.id == titleID }) {
+            available = title.nextEpisode(after: assetID)?.complete == true
+        }
+        #else
+        available = DownloadQueue.shared.hasNextEpisode(after: playback)
+        #endif
+        canAdvanceEpisode = !finished && !preparingNext && resumed && available
+            && duration.isFinite && duration > 0 && position.isFinite && position >= duration * 0.9
+    }
+    func advanceToNextEpisode(reachedEnd: Bool = false) {
+        guard !finished, !preparingNext, resumed, reachedEnd || canAdvanceEpisode else { return }
+        let playbackID = playback.id
+        nextEpisodeTask = Task { @MainActor [weak self] in
+            guard let self, !self.finished, !self.preparingNext, self.resumed, self.playback.id == playbackID else { return }
+            self.canAdvanceEpisode = false
+                // Choosing Next Episode during credits is an explicit completion,
+                // including when paused. Use the same watched event as natural EOF.
+                let progressSaved = self.report(ended: true, reachedEnd: true)
+                self.player.pause()
+                #if os(tvOS)
+                await self.advanceTVEpisode()
+                #else
+                let queue = DownloadQueue.shared
+                let outgoing = self.playback
+                let episode = queue.isEpisode(outgoing)
+                if outgoing.localDownloadID != nil || episode {
+                    self.resumed = false
+                    self.preparingNext = episode
+                    defer { self.preparingNext = false }
+                    do {
+                        // Keep AVKit attached to its item while the next stream prepares.
+                        // Clearing it here can dismiss mobile playback before replacement.
+                        if episode, let next = try await queue.nextPlayback(after: outgoing) {
+                            guard !self.finished, !Task.isCancelled, self.playback.id == outgoing.id else { return }
+                            self.load(next)
+                        } else if !self.finished {
+                            self.endMessage = episode ? queue.autoplayStopMessage(after: outgoing) : "Playback finished"
+                            self.player.replaceCurrentItem(with: nil)
+                        }
+                        if progressSaved, let id = outgoing.localDownloadID { queue.finished(id) }
+                    } catch is CancellationError {
+                        return
+                    } catch {
+                        if !self.finished { self.error = "Couldn’t start the next episode. " + error.localizedDescription }
+                    }
+                }
+                #endif
+        }
+    }
     #if os(tvOS)
     private func advanceTVEpisode() async {
         guard let titleID = playback.libraryTitleID, let assetID = playback.libraryAssetID,
               let title = store.library?.titles.first(where: { $0.id == titleID }), title.kind == "tv",
               let current = title.assets.first(where: { $0.id == assetID }), current.episode != nil, current.role != "extra" else { return }
         resumed = false
-        player.replaceCurrentItem(with: nil)
         guard let next = title.nextEpisode(after: assetID), next.complete else {
             endMessage = title.autoplayStopMessage(after: assetID)
             return
@@ -177,16 +228,17 @@ final class PlaybackModel: ObservableObject {
         guard duration.isFinite, duration > 0, position.isFinite else { return false }
         #if !os(tvOS)
         if let id = playback.localDownloadID {
-            return DownloadQueue.shared.report(id, position: position, duration: duration, reachedEnd: reachedEnd)
+            return DownloadQueue.shared.report(id, profile: profileAtStart, position: position, duration: duration, reachedEnd: reachedEnd, watchedEligible: player.rate > 0)
         }
         #endif
         guard let session = playback.sessionId else { return false }
         sequence += 1
-        store.reportProgress(sessionId: session, sequence: sequence, position: position, duration: duration, ended: ended)
+        store.reportProgress(sessionId: session, sequence: sequence, position: position, duration: duration, ended: ended, watchedEligible: player.rate > 0, reachedEnd: reachedEnd)
         return true
     }
     func stop() {
         guard !finished else { return }
+        if let profileObserver { NotificationCenter.default.removeObserver(profileObserver); self.profileObserver = nil }
         nextEpisodeTask?.cancel(); nextEpisodeTask = nil
         subtitleController?.stop(); subtitleController = nil
         player.pause()
@@ -208,10 +260,15 @@ final class PlaybackModel: ObservableObject {
 
 #if os(macOS)
 struct NativePlayer: NSViewRepresentable {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let title: String
     let player: AVPlayer
     let close: () -> Void
-    class Coordinator {
+    var canAdvance = false
+    var advance: () -> Void = {}
+    class Coordinator: NSObject {
+        var advance: () -> Void = {}
+        @objc func nextEpisode(_ sender: NSMenuItem) { advance() }
         var monitor: Any?
         var mouseMonitor: Any?
         var hideWork: DispatchWorkItem?
@@ -273,6 +330,17 @@ struct NativePlayer: NSViewRepresentable {
     }
     func updateNSView(_ view: AVPlayerView, context: Context) {
         view.player = player
+        context.coordinator.advance = advance
+        if canAdvance {
+            if view.actionPopUpButtonMenu == nil {
+                let menu = NSMenu()
+                let item = NSMenuItem(title: L10n.text("Next episode"), action: #selector(Coordinator.nextEpisode(_:)), keyEquivalent: "")
+                item.target = context.coordinator
+                item.image = NSImage(systemSymbolName: "forward.end.fill", accessibilityDescription: "Next episode")
+                menu.addItem(item)
+                view.actionPopUpButtonMenu = menu
+            }
+        } else { view.actionPopUpButtonMenu = nil }
         if let window = view.window { context.coordinator.configure(window, title: title) }
     }
     static func dismantleNSView(_ view: AVPlayerView, coordinator: Coordinator) { coordinator.stop(); view.player = nil }
@@ -309,8 +377,11 @@ class KeyboardPlayerController: AVPlayerViewController {
     @objc private func exitPlayer() { close?() }
 }
 struct NativePlayer: UIViewControllerRepresentable {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let player: AVPlayer
     let close: () -> Void
+    var canAdvance = false
+    var advance: () -> Void = {}
     func makeUIViewController(context: Context) -> KeyboardPlayerController {
         let view = KeyboardPlayerController()
         view.player = player
@@ -320,11 +391,18 @@ struct NativePlayer: UIViewControllerRepresentable {
         view.allowsPictureInPicturePlayback = true
         return view
     }
-    func updateUIViewController(_ view: KeyboardPlayerController, context: Context) { view.player = player; view.close = close }
+    func updateUIViewController(_ view: KeyboardPlayerController, context: Context) {
+        view.player = player; view.close = close
+        #if os(tvOS)
+        view.transportBarCustomMenuItems = canAdvance
+            ? [UIAction(title: L10n.text("Next episode"), image: UIImage(systemName: "forward.end.fill")) { _ in advance() }] : []
+        #endif
+    }
 }
 #endif
 
 struct PlayerScreen: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let playback: Playback
     @StateObject private var model: PlaybackModel
     @Environment(\.dismiss) private var dismiss
@@ -351,9 +429,9 @@ struct PlayerScreen: View {
                 }
             } else {
                 #if os(macOS)
-                NativePlayer(title: model.title, player: model.player, close: { dismiss() })
+                NativePlayer(title: model.title, player: model.player, close: { dismiss() }, canAdvance: model.canAdvanceEpisode, advance: { model.advanceToNextEpisode() })
                 #else
-                NativePlayer(player: model.player, close: { dismiss() })
+                NativePlayer(player: model.player, close: { dismiss() }, canAdvance: model.canAdvanceEpisode, advance: { model.advanceToNextEpisode() })
                 #endif
             }
         }
@@ -467,6 +545,7 @@ final class SubtitlePlaybackController {
 }
 
 struct SubtitlePreferencesView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) private var dismiss
     @State private var preferences = SubtitlePreferences()
@@ -477,7 +556,7 @@ struct SubtitlePreferencesView: View {
     var body: some View {
         NavigationStack {
             Form {
-                if let error { Text(error).foregroundStyle(.orange) }
+                if let error { Text(L10n.text(error)).foregroundStyle(.orange) }
                 SwiftUI.Section {
                     subtitleChoice("Off", value: "off")
                     subtitleChoice("English", value: "en")
@@ -524,7 +603,7 @@ struct SubtitlePreferencesView: View {
             if value != "off" { preferences.language = value }
         } label: {
             HStack {
-                Text(title).foregroundStyle(.primary)
+                Text(LocalizedStringKey(title)).foregroundStyle(.primary)
                 Spacer()
                 if selected == value { Image(systemName: "checkmark").foregroundStyle(.tint) }
             }.contentShape(Rectangle())

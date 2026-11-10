@@ -6,10 +6,24 @@ import java.nio.charset.StandardCharsets;
 import org.json.*;
 
 final class Api {
-  final String base, token, client;
-  volatile String libraryRaw = "";
+  final String base, token, client, profile, profileName;
+  JSONObject profileAppearance = new JSONObject();
+  volatile String libraryRaw = "", libraryRevision = "";
+  private boolean supportsRevision = true;
+
+  boolean libraryChanged() throws Exception {
+    if (!supportsRevision || libraryRevision.isEmpty()) return true;
+    try { return !libraryRevision.equals(request("GET", "/v1/library/revision", null).optString("revision")); }
+    catch (HttpException e) { if(e.status==404) {supportsRevision=false;return true;} throw e; }
+  }
 
   Api(String base, String token, String client) throws Exception {
+    this(base, token, client, "", "");
+  }
+
+  Api(String base, String token, String client, String profile, String profileName) throws Exception {
+    this.profile = profile;
+    this.profileName = profileName;
     this.base = validateBase(base);
     this.token = token.trim();
     this.client = client;
@@ -76,6 +90,7 @@ final class Api {
     c.setRequestMethod(method);
     c.setInstanceFollowRedirects(false);
     c.setRequestProperty("Accept", "application/json");
+    if (!profile.isEmpty()) c.setRequestProperty("X-Torrbaby-Profile", profile);
     if (!token.isEmpty()) c.setRequestProperty("Authorization", "Bearer " + token);
     try {
       if (body != null) {
@@ -105,7 +120,7 @@ final class Api {
             Library.string(json instanceof JSONObject ? (JSONObject) json : null, "error").isEmpty()
                 ? "Server request failed (HTTP " + code + ")."
                 : Library.string(json instanceof JSONObject ? (JSONObject) json : null, "error"));
-      if (path.equals("/v1/library")) libraryRaw = json.toString();
+      if (path.equals("/v1/library")) { libraryRaw = json.toString(); libraryRevision = ((JSONObject)json).optString("revision"); }
       return json;
     } finally {
       c.disconnect();

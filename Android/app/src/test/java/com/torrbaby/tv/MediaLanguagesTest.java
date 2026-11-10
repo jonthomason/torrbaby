@@ -21,6 +21,13 @@ public class MediaLanguagesTest {
     assertTrue(MediaLanguages.lines(info).get(1).endsWith("\uFFFC"));
     assertFalse(MediaLanguages.lines(info).get(1).contains("Generated translation"));
   }
+  @Test public void unsupportedUnlabelledTrackIsNotASubtitleLanguage() throws Exception {
+    JSONObject info = new JSONObject().put("subtitle_tracks", new JSONArray()
+        .put(new JSONObject().put("language", "eng").put("codec", "tx3g"))
+        .put(new JSONObject().put("language", "eng").put("codec", "tx3g"))
+        .put(new JSONObject().put("language", "und").put("codec", "unsupported")));
+    assertEquals("English", MediaLanguages.tracks(info, "subtitle_tracks"));
+  }
   @Test public void missingInventoryIsNotReportedAsNoLanguages() throws Exception {
     assertEquals("Checking languages…", MediaLanguages.lines(null).get(0));
     assertEquals("Languages unavailable", MediaLanguages.lines(new JSONObject("{\"state\":\"failed\"}")).get(0));

@@ -23,6 +23,7 @@ private final class TVDiscovery: NSObject, ObservableObject, @preconcurrency Net
 }
 
 private struct TVConnectionView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @StateObject private var discovery = TVDiscovery()
     @State private var address = ""
@@ -37,7 +38,7 @@ private struct TVConnectionView: View {
             Text("Welcome home").font(.largeTitle.bold())
             if busy { ProgressView("Connecting…") }
             else { Label("Finding your library…", systemImage: "wifi") }
-            if let error { Text(error).font(.callout).foregroundStyle(.orange) }
+            if let error { Text(L10n.text(error)).font(.callout).foregroundStyle(.orange) }
             ForEach(discovery.addresses, id: \.self) { value in
                 Button(value) { Task { await connect(value) } }.disabled(busy)
             }
@@ -83,6 +84,7 @@ private struct TVConnectionView: View {
 }
 
 struct TVRootView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @Environment(\.scenePhase) var phase
     @State private var settings = false
@@ -99,13 +101,15 @@ struct TVRootView: View {
                     TorrentSearchView().tabItem { Label("Find torrents", systemImage: "magnifyingglass") }
                     TVTorrentView().tabItem { Label("Torrents", systemImage: "arrow.down.circle") }
                     TVSearchView().tabItem { Label("Search", systemImage: "magnifyingglass") }
+                    Button("Switch user") { store.choosingProfile = true }
+                        .tabItem { Label(store.activeProfile?.name ?? "User", systemImage: "person.crop.circle") }
                     VStack(spacing: 30) {
                         Text("Torrbaby").font(.largeTitle.bold())
                         Text(AppRelease.description).font(.headline).monospacedDigit().foregroundStyle(.secondary)
                         Image("TorrbabyLogo").resizable().frame(width: 120, height: 120)
-                        Label(store.connected ? "Connected" : "Offline", systemImage: store.connected ? "checkmark.circle" : "wifi.slash")
+                        Label(LocalizedStringKey(store.connected ? "Connected" : "Offline"), systemImage: store.connected ? "checkmark.circle" : "wifi.slash")
                         Button("Default subtitles") { showSubtitles = true }
-                            .sheet(isPresented: $showSubtitles) { SubtitlePreferencesView() }
+                            .sheet(isPresented: $showSubtitles) { LocalizedInterface { SubtitlePreferencesView() } }
                         BackgroundSubtitlesView().frame(maxWidth: 850)
                         Button("Connection settings") { settings = true }
                     }.tabItem { Label("Settings", systemImage: "gearshape") }
@@ -113,6 +117,7 @@ struct TVRootView: View {
                 .navigationDestination(for: LibraryDestination.self) { route in TVMediaDetail(titleID: route.id) }
             }
         }
+        .overlay(alignment: .bottom) { ContinueWatchingUndoBanner() }
         .task(id: phase) {
             while !Task.isCancelled && phase == .active {
                 await store.refresh()
@@ -121,11 +126,12 @@ struct TVRootView: View {
         }
         .alert("Couldn’t complete the request", isPresented: Binding(get: { store.actionError != nil }, set: { if !$0 { store.actionError = nil } })) {
             Button("OK") { store.actionError = nil }
-        } message: { Text(store.actionError ?? "") }
+        } message: { Text(LocalizedStringKey(store.actionError ?? "")) }
     }
 }
 
 private struct TVLibraryView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let kind: String?
     private var titles: [LibraryTitle] {
@@ -144,7 +150,7 @@ private struct TVLibraryView: View {
                             .overlay(alignment: .bottomLeading) {
                                 VStack(alignment: .leading, spacing: 16) {
                                     Text(featured.title).font(.system(size: 48, weight: .bold)).lineLimit(2)
-                                    Text(([featured.year ?? ""] + featured.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · "))
+                                    Text(LocalizedStringKey(([featured.year ?? ""] + featured.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · ")))
                                         .font(.headline)
                                     Label("Explore", systemImage: "play.circle.fill").font(.headline)
                                 }.foregroundStyle(.white).padding(.horizontal, 90).padding(.bottom, 55)
@@ -153,7 +159,7 @@ private struct TVLibraryView: View {
                     }.buttonStyle(TVHeroButtonStyle()).padding(.horizontal, -70).padding(.top, -40)
                 }
                 if kind == nil {
-                    let continuing = titles.filter { $0.resume != nil }.sorted { ($0.resume?.lastPlayed ?? 0) > ($1.resume?.lastPlayed ?? 0) }
+                    let continuing = titles.filter { $0.isContinuing }.sorted { $0.continueWatchingAt > $1.continueWatchingAt }
                     TVShelf(name: "Continue watching", titles: continuing)
                     TVShelf(name: "Recently added", titles: titles)
                     let watched = titles.filter { $0.assets.contains { $0.lastPlayed > 0 } }
@@ -166,11 +172,11 @@ private struct TVLibraryView: View {
                         TVShelf(name: genre, titles: titles.filter { $0.genres.contains(genre) })
                     }
                 } else {
-                    Text(kind == "movie" ? "Movies" : "TV Shows").font(.largeTitle.bold())
+                    Text(LocalizedStringKey(kind == "movie" ? "Movies" : "TV Shows")).font(.largeTitle.bold())
                     TVPosterGrid(titles: titles.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending })
                 }
                 if titles.isEmpty { ContentUnavailableView("Your library", systemImage: "film.stack") }
-                if let error = store.libraryError { Text(error).foregroundStyle(.orange) }
+                if let error = store.libraryError { Text(L10n.text(error)).foregroundStyle(.orange) }
             }.padding(.horizontal, 70).padding(.vertical, 40)
         }.ignoresSafeArea(.container, edges: .horizontal).background {
             GeometryReader { geometry in
@@ -197,6 +203,7 @@ private struct TVHeroButtonStyle: ButtonStyle {
 }
 
 private struct TVMediaDetail: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let titleID: String
     @State private var season: Int?
@@ -214,20 +221,21 @@ private struct TVMediaDetail: View {
                         LinearGradient(colors: [.clear, .black.opacity(0.95)], startPoint: .top, endPoint: .bottom)
                         VStack(alignment: .leading, spacing: 22) {
                             Text(title.title).font(.system(size: 56, weight: .bold)).lineLimit(2)
-                            Text(([title.year ?? "", title.contentRating ?? ""] + title.genres.prefix(3)).filter { !$0.isEmpty }.joined(separator: " · "))
+                            Text(LocalizedStringKey(([title.year ?? "", title.contentRating ?? ""] + title.genres.prefix(3)).filter { !$0.isEmpty }.joined(separator: " · ")))
                                 .font(.headline).foregroundStyle(.white.opacity(0.8))
                             if let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
                                 Button { play(asset, title: title) } label: {
-                                    Label(asset.position > 0 && !asset.watched ? "Resume" : "Play", systemImage: "play.fill")
-                                }.buttonStyle(.borderedProminent).disabled(loading)
+                                    Label(asset.playbackActionTitle(television: title.kind == "tv"), systemImage: "play.fill")
+                                        .frame(width: title.kind == "tv" ? 650 : nil, alignment: .leading)
+                                }.buttonStyle(.borderedProminent).tint(Theme.mint).disabled(loading)
+                                LibraryAssetActions(asset: asset, castTitle: title)
                             }
                         }.padding(.horizontal, 90).padding(.bottom, 50).frame(maxWidth: 1350, alignment: .leading)
                     }.frame(height: 650)
                     VStack(alignment: .leading, spacing: 38) {
-                        NavigationLink { TorrentSearchView(initialQuery: title.title, year: title.kind == "movie" ? Int(title.year ?? "") : nil, season: title.kind == "tv" ? season : nil) } label: { Label("Find releases", systemImage: "magnifyingglass") }
                         if loading {
                             HStack {
-                                Text(preparation.isEmpty ? "Preparing playback…" : preparation)
+                                Text(LocalizedStringKey(preparation.isEmpty ? "Preparing playback…" : preparation))
                                 Button("Cancel") { playbackTask?.cancel() }
                             }
                         }
@@ -243,7 +251,7 @@ private struct TVMediaDetail: View {
                             ScrollView(.horizontal) {
                                 HStack(spacing: 25) {
                                     ForEach(seasons, id: \.self) { number in
-                                        Button(number == 0 ? "Specials" : "Season \(number)") { season = number }
+                                        Button(LocalizedStringKey(number == 0 ? "Specials" : "Season \(number)")) { season = number }
                                             .tint(selectedSeason == number ? Theme.mint : .gray)
                                     }
                                 }.padding(15)
@@ -278,6 +286,7 @@ private struct TVMediaDetail: View {
             .onDisappear { playbackTask?.cancel() }
     }
     private func assetButton(_ asset: LibraryAsset, title: LibraryTitle) -> some View {
+        HStack(spacing: 20) {
         Button { play(asset, title: title) } label: {
             HStack(spacing: 28) {
                 if asset.thumbnail != nil {
@@ -298,6 +307,8 @@ private struct TVMediaDetail: View {
                 if asset.duration > 0 { Text("\(Int(asset.duration / 60)) min").font(.caption) }
             }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
         }.buttonStyle(.card).disabled(!asset.complete || loading)
+        LibraryEpisodeActions(asset: asset, title: title)
+        }
     }
     private func play(_ asset: LibraryAsset, title: LibraryTitle) {
         guard !loading else { return }
@@ -316,13 +327,14 @@ private struct TVMediaDetail: View {
 }
 
 private struct TVShelf: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let name: String
     let titles: [LibraryTitle]
     var body: some View {
         if !titles.isEmpty {
             VStack(alignment: .leading, spacing: 24) {
                 HStack {
-                    Text(name).font(.title2.bold())
+                    Text(L10n.text(name)).font(.title2.bold())
                     Spacer()
                     NavigationLink {
                         TVCollectionView(name: name, titleIDs: titles.map(\.id))
@@ -340,6 +352,7 @@ private struct TVShelf: View {
 
 
 private struct TVCollectionView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let name: String
     let titleIDs: [String]
@@ -350,7 +363,7 @@ private struct TVCollectionView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 40) {
-                Text(name).font(.largeTitle.bold())
+                Text(L10n.text(name)).font(.largeTitle.bold())
                 TVPosterGrid(titles: titles)
             }.padding(70)
         }.background(Theme.canvas)
@@ -358,20 +371,23 @@ private struct TVCollectionView: View {
 }
 
 private struct TVPoster: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let title: LibraryTitle
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             NavigationLink(value: LibraryDestination(id: title.id)) {
                 LibraryArtwork(id: title.id).aspectRatio(2.0 / 3.0, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
-            }.buttonStyle(.card)
+                    .overlay(alignment: .topTrailing) { if title.watched { WatchedBadge() } }
+            }.buttonStyle(.card).contextMenu { ContinueWatchingAction(title: title) }
             Text(title.title).font(.system(size: 25, weight: .semibold)).lineLimit(2)
-            Text(title.year ?? "").font(.system(size: 21)).foregroundStyle(Theme.muted)
+            Text(LocalizedStringKey(title.continuationLabel ?? title.year ?? "")).font(.system(size: 21)).foregroundStyle(Theme.muted)
         }
     }
 }
 
 private struct TVPosterGrid: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let titles: [LibraryTitle]
     var body: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 240, maximum: 300), spacing: 40)], alignment: .leading, spacing: 40) {
@@ -381,6 +397,7 @@ private struct TVPosterGrid: View {
 }
 
 private struct TVTorrentView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @State private var category = "Downloading"
     @AppStorage("torrentSort.downloading") private var downloadingSort = TorrentSort.progress
@@ -395,22 +412,30 @@ private struct TVTorrentView: View {
     }
     private var torrents: [Torrent] {
         sortSelection.wrappedValue.ordered(store.torrents.filter {
-            category == "Downloading" ? !$0.completed : category == "Seeding" ? $0.completed && $0.status == 6 : $0.completed && $0.status != 6
+            if $0.fileOperation != nil { return category == "Seeding" }
+            return category == "Downloading" ? !$0.completed : category == "Seeding" ? $0.completed && $0.status == 6 : $0.completed && $0.status != 6
         })
     }
     var body: some View {
         VStack(spacing: 30) {
             Picker("Torrents", selection: $category) {
-                ForEach(["Downloading", "Seeding", "Complete"], id: \.self) { Text($0).tag($0) }
+                ForEach(["Downloading", "Seeding", "Complete"], id: \.self) { Text(LocalizedStringKey($0)).tag($0) }
             }.pickerStyle(.segmented).padding(.horizontal, 70)
+            if let error = store.torrentError {
+                Text("Couldn’t refresh torrents: " + error).font(.caption).foregroundStyle(.orange).padding(.horizontal, 70)
+            }
             Picker("Sort", selection: sortSelection) {
-                ForEach(TorrentSort.choices(category)) { Text($0.label).tag($0) }
+                ForEach(TorrentSort.choices(category)) { Text(LocalizedStringKey($0.label)).tag($0) }
             }.pickerStyle(.segmented).padding(.horizontal, 70)
             ScrollView {
                 LazyVStack(spacing: 28) {
+                    if category == "Seeding" { LibraryOperationStatus() }
                     ForEach(torrents) { torrent in
                         VStack(alignment: .leading, spacing: 18) {
                             Text(torrent.displayName).font(.headline).lineLimit(2)
+                            if let operation = torrent.fileOperation {
+                                Text(LocalizedStringKey(operation.label)).font(.caption).foregroundStyle(operation.error == nil ? Color.secondary : Color.red)
+                            }
                             HStack(spacing: 32) {
                                 Text(bytes(torrent.size))
                                 Label(rate(torrent.rateDownload), systemImage: "arrow.down").foregroundStyle(Theme.mint)
@@ -430,7 +455,7 @@ private struct TVTorrentView: View {
                         }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
                             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 18)).focusable()
                     }
-                    if torrents.isEmpty { ContentUnavailableView("No torrents", systemImage: "arrow.down.circle") }
+                    if torrents.isEmpty && (category != "Seeding" || store.detachedLibraryOperations.isEmpty) { ContentUnavailableView("No torrents", systemImage: "arrow.down.circle") }
                 }.padding(70)
             }
         }.background(Theme.canvas)
@@ -438,6 +463,7 @@ private struct TVTorrentView: View {
 }
 
 private struct TVSearchView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @State private var query = ""
     private var results: [LibraryTitle] {

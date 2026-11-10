@@ -2,6 +2,7 @@
 import SwiftUI
 
 struct DownloadsView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @ObservedObject private var queue = DownloadQueue.shared
     @EnvironmentObject var store: Store
     #if os(macOS)
@@ -18,13 +19,13 @@ struct DownloadsView: View {
         List {
             SwiftUI.Section {
                 HStack {
-                    Label(queue.policy.useAvailableSpace ? "\(bytes(queue.used)) used · Available space" : "\(bytes(queue.used)) used · \(bytes(queue.policy.limitBytes)) limit", systemImage: "internaldrive")
+                    Label(LocalizedStringKey(queue.policy.useAvailableSpace ? "\(bytes(queue.used)) used · Available space" : "\(bytes(queue.used)) used · \(bytes(queue.policy.limitBytes)) limit"), systemImage: "internaldrive")
                         .font(.subheadline.monospacedDigit()).foregroundStyle(Theme.muted)
                     Spacer()
                     Button { settings = true } label: { Image(systemName: "slider.horizontal.3") }.help("Download storage")
                 }
                 if let error = queue.error {
-                    HStack { Text(error).foregroundStyle(.orange); Spacer(); Button { queue.error = nil } label: { Image(systemName: "xmark.circle") } }
+                    HStack { Text(L10n.text(error)).foregroundStyle(.orange); Spacer(); Button { queue.error = nil } label: { Image(systemName: "xmark.circle") } }
                 }
                 let visible = queue.items.filter { $0.state != .removed }
                 if visible.isEmpty { ContentUnavailableView("No downloads", systemImage: "arrow.down.circle") }
@@ -102,7 +103,7 @@ struct DownloadsView: View {
                 try await Task.sleep(for: .milliseconds(400))
             } catch { /* Leaving the page cancels the hint. */ }
         }
-        .sheet(isPresented: $settings) { DownloadSettingsView() }
+        .sheet(isPresented: $settings) { LocalizedInterface { DownloadSettingsView() } }
         #if os(iOS)
         .background(MobilePlayerPresentation(playback: $playback, store: store).frame(width: 0, height: 0))
         #endif
@@ -123,6 +124,7 @@ struct DownloadsView: View {
 }
 
 private struct DownloadPoster: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let url: URL?
     let isTV: Bool
     @State private var data: Data?
@@ -145,6 +147,7 @@ private struct DownloadPoster: View {
 }
 
 struct DownloadSettingsView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @ObservedObject private var queue = DownloadQueue.shared
     @Environment(\.dismiss) private var dismiss
     @State private var limit = 20.0
@@ -187,10 +190,12 @@ struct DownloadSettingsView: View {
 }
 
 struct DownloadAssetControl: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @ObservedObject private var queue = DownloadQueue.shared
     let asset: LibraryAsset
     let title: LibraryTitle
+    var compact = false
     @State private var adding = false
     @State private var confirmDelete = false
     private var item: DownloadStorage.Item? {
@@ -198,7 +203,8 @@ struct DownloadAssetControl: View {
     }
     var body: some View {
         Group {
-            if let item {
+            if compact { compactControl }
+            else if let item {
                 if item.state == .ready {
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 4) {
@@ -214,7 +220,7 @@ struct DownloadAssetControl: View {
                 } else {
                     VStack(alignment: .leading, spacing: 5) {
                         HStack {
-                            Text(item.state == .transferring ? "Downloading" : item.state.rawValue.capitalized)
+                            Text(LocalizedStringKey(item.state == .transferring ? "Downloading" : item.state.rawValue.capitalized))
                             Spacer(minLength: 4)
                             Button {
                                 if item.state == .transferring || item.state == .queued { queue.pause(item.id) }
@@ -225,7 +231,7 @@ struct DownloadAssetControl: View {
                         TorrentProgressGauge(value: item.size > 0 ? Double(queue.received[item.id] ?? item.received) / Double(item.size) : 0)
                         Text("\(bytes(queue.received[item.id] ?? item.received)) / \(bytes(item.size))")
                             .font(.caption2.monospacedDigit()).foregroundStyle(Theme.muted)
-                        if let error = item.error { Text(error).font(.caption2).foregroundStyle(.orange).lineLimit(2) }
+                        if let error = item.error { Text(L10n.text(error)).font(.caption2).foregroundStyle(.orange).lineLimit(2) }
                     }.frame(minWidth: 130, maxWidth: 280)
                 }
             } else {
@@ -233,15 +239,64 @@ struct DownloadAssetControl: View {
                     adding = true
                     Task { await queue.enqueue(asset, title: title); adding = false }
                 } label: {
-                    Label(adding ? "Preparing…" : "Download", systemImage: "arrow.down.circle")
-                        .font(.headline).padding(8)
-                }.buttonStyle(.bordered).disabled(adding || !store.connected)
+                    Label(LocalizedStringKey(adding ? "Preparing…" : "Download"), systemImage: "arrow.down.circle")
+                        .font(.headline)
+                }.libraryActionStyle().disabled(adding || !store.connected)
             }
         }
+    }
+    private var compactLabel: String {
+        guard let item else { return adding ? "Preparing download" : "Download" }
+        return item.state == .ready ? "Delete download" : "Cancel download"
+    }
+    private var compactControl: some View {
+        Button {
+            if let item {
+                if item.state == .ready { confirmDelete = true }
+                else { queue.remove(item.id) }
+            } else {
+                adding = true
+                Task { await queue.enqueue(asset, title: title); adding = false }
+            }
+        } label: {
+            if adding { ProgressView().frame(width: 44, height: 44) }
+            else { Image(systemName: item == nil ? "arrow.down.circle" : item?.state == .ready ? "trash" : "xmark.circle")
+                .font(.title2).frame(width: 44, height: 44) }
+        }.disabled(adding || (item == nil && (!store.connected || !asset.complete)))
+            .foregroundStyle(item?.state == .ready ? Color.red : Theme.mint)
+            .accessibilityLabel(compactLabel).help(compactLabel)
+            .confirmationDialog("Delete this device’s download?", isPresented: $confirmDelete, titleVisibility: .visible) {
+                Button("Delete download", role: .destructive) { if let item { queue.remove(item.id) } }
+            }
+    }
+
+}
+
+struct DownloadSeasonControl: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    @ObservedObject private var queue = DownloadQueue.shared
+    let title: LibraryTitle
+    let season: Int
+    @State private var adding = false
+    private var pending: [LibraryAsset] {
+        title.playable.filter { asset in
+            asset.season == season && !queue.items.contains { $0.server == store.server && $0.assetID == asset.id && $0.state != .removed && $0.state != .removing && $0.state != .failed }
+        }
+    }
+    var body: some View {
+        Button {
+            let assets=pending
+            adding=true
+            Task { for asset in assets { await queue.enqueue(asset, title: title) }; adding=false }
+        } label: {
+            Label(LocalizedStringKey(adding ? "Queuing…" : season == 0 ? "Download Specials" : "Download Season \(season)"), systemImage: "arrow.down.circle")
+        }.libraryActionStyle().disabled(adding || pending.isEmpty || !store.connected)
     }
 }
 
 struct DownloadTitleMenu: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @ObservedObject private var queue = DownloadQueue.shared
     let title: LibraryTitle

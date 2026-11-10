@@ -33,6 +33,15 @@ final class DownloadStorage {
 
     }
     enum State: String, Codable { case queued, transferring, paused, ready, removing, removed, failed }
+    struct Viewing: Codable {
+        var position: Double = 0
+        var duration: Double = 0
+        var watched = false
+        var playbackFinished = false
+        var progressNeedsSync = false
+        var progressEventID: UUID?
+        var progressRecordedAt: Date?
+    }
     struct Item: Codable, Identifiable {
         let id: UUID
         let server: String
@@ -57,6 +66,29 @@ final class DownloadStorage {
         var progressNeedsSync = false
         var progressEventID: UUID?
         var progressRecordedAt: Date?
+        var profileViewing: [String: Viewing]?
+        func viewing(_ profile: String) -> Viewing {
+            if let value = profileViewing?[profile] { return value }
+            if profile == "profile-jon" {
+                return Viewing(position: position, duration: duration, watched: watched,
+                    playbackFinished: playbackFinished, progressNeedsSync: progressNeedsSync,
+                    progressEventID: progressEventID, progressRecordedAt: progressRecordedAt)
+            }
+            return Viewing()
+        }
+        var allViewing: [String: Viewing] {
+            var result = profileViewing ?? [:]
+            if result["profile-jon"] == nil { result["profile-jon"] = viewing("profile-jon") }
+            return result
+        }
+        func forProfile(_ profile: String) -> Item {
+            var copy = self
+            let value = viewing(profile)
+            copy.position = value.position; copy.duration = value.duration; copy.watched = value.watched
+            copy.playbackFinished = value.playbackFinished; copy.progressNeedsSync = value.progressNeedsSync
+            copy.progressEventID = value.progressEventID; copy.progressRecordedAt = value.progressRecordedAt
+            return copy
+        }
         var posterKey: String?
         var updated = Date()
         var error: String?
@@ -299,38 +331,48 @@ final class DownloadStorage {
         do { try update(id) { $0.state = .ready; $0.received = $0.size; $0.error = nil } }
         catch { try? fm.removeItem(at: destination); throw error }
     }
-    func recordPlayback(_ id: UUID, position: Double, duration: Double, reachedEnd: Bool) throws {
+    func recordPlayback(_ id: UUID, profile: String = "profile-jon", position: Double, duration: Double, reachedEnd: Bool, watchedEligible: Bool = true) throws {
         guard position.isFinite, duration.isFinite, duration > 0, position >= 0 else { return }
-        try update(id) {
-            $0.position = min(position, duration); $0.duration = duration
-            $0.watched = reachedEnd || position / duration >= 0.95
-            $0.playbackFinished = reachedEnd
-            $0.progressNeedsSync = true
-            $0.progressEventID = UUID()
-            $0.progressRecordedAt = Date()
+        try update(id) { item in
+            var value = item.viewing(profile)
+            value.position = min(position, duration); value.duration = duration
+            value.watched = value.watched || reachedEnd || (watchedEligible && position >= duration * 0.9 && duration - position <= 600)
+            value.playbackFinished = reachedEnd
+            value.progressNeedsSync = true
+            value.progressEventID = UUID()
+            value.progressRecordedAt = Date()
+            item.profileViewing = item.allViewing
+            item.profileViewing?[profile] = value
         }
     }
-    func acknowledgeProgress(_ id: UUID, eventID: UUID) throws {
-        guard let item = items.first(where: { $0.id == id }), item.progressEventID == eventID else { return }
-        try update(id) { $0.progressNeedsSync = false }
+    func acknowledgeProgress(_ id: UUID, profile: String = "profile-jon", eventID: UUID) throws {
+        guard let item = items.first(where: { $0.id == id }), item.viewing(profile).progressEventID == eventID else { return }
+        try update(id) { item in
+            var value = item.viewing(profile)
+            value.progressNeedsSync = false
+            item.profileViewing = item.allViewing
+            item.profileViewing?[profile] = value
+        }
     }
-    func importProgress(_ id: UUID, position: Double, duration: Double, watched: Bool, recordedAt: Date) throws {
+    func importProgress(_ id: UUID, profile: String = "profile-jon", position: Double, duration: Double, watched: Bool, recordedAt: Date) throws {
         guard position.isFinite, duration.isFinite, duration >= 0, position >= 0,
               position <= duration + 2, recordedAt.timeIntervalSince1970.isFinite,
               recordedAt.timeIntervalSince1970 > 0,
               let item = items.first(where: { $0.id == id }),
-              recordedAt > (item.progressRecordedAt ?? .distantPast) else { return }
-        try update(id) {
-            $0.position = min(position, duration); $0.duration = duration; $0.watched = watched
-            $0.progressRecordedAt = recordedAt
-            $0.progressNeedsSync = false; $0.progressEventID = nil
-            // Watching elsewhere must never trigger deletion of this local copy.
-            $0.playbackFinished = false
+              recordedAt > (item.viewing(profile).progressRecordedAt ?? .distantPast) else { return }
+        try update(id) { item in
+            var value = item.viewing(profile)
+            value.position = min(position, duration); value.duration = duration; value.watched = watched
+            value.progressRecordedAt = recordedAt
+            value.progressNeedsSync = false; value.progressEventID = nil
+            value.playbackFinished = false
+            item.profileViewing = item.allViewing
+            item.profileViewing?[profile] = value
         }
     }
     /// Called only after the native player's did-play-to-end event and after releasing its file.
-    func removeAfterPlayback(_ id: UUID) throws {
-        guard let item = items.first(where: { $0.id == id }), item.playbackFinished,
+    func removeAfterPlayback(_ id: UUID, profile: String = "profile-jon") throws {
+        guard let item = items.first(where: { $0.id == id }), item.viewing(profile).playbackFinished, item.allViewing.count <= 1,
               !item.pinned, policy.deleteAfterPlayback else { return }
         try remove(id)
     }

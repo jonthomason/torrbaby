@@ -118,7 +118,7 @@ fn group_key(asset: &Value) -> String {
 fn queue_assets(db: &Database) -> Result<Vec<Value>> {
     let entities: std::collections::HashMap<String,Value> = db.documents("entities")?.into_iter()
         .filter_map(|e| e["id"].as_str().map(str::to_owned).map(|id|(id,e))).collect();
-    let mut assets=db.documents("assets")?;
+    let mut assets=db.visible_assets()?;
     for a in &mut assets {
         a["queue_title"]=a["entity_id"].as_str().and_then(|id|entities.get(id)).map(|e|e["title"].clone())
             .unwrap_or_else(||a["series_name"].clone());
@@ -135,6 +135,8 @@ fn order_assets(assets: &mut [Value], priorities: &std::collections::HashMap<Str
     assets.sort_by(|a,b| groups[&group_key(b)].cmp(&groups[&group_key(a)])
         .then_with(||title(a).cmp(&title(b)))
         .then_with(||group_key(a).cmp(&group_key(b)))
+        .then_with(|| priorities.get(b["id"].as_str().unwrap_or("")).unwrap_or(&0)
+            .cmp(priorities.get(a["id"].as_str().unwrap_or("")).unwrap_or(&0)))
         .then_with(||a["season"].as_u64().unwrap_or(0).cmp(&b["season"].as_u64().unwrap_or(0)))
         .then_with(||a["episode"].as_u64().unwrap_or(0).cmp(&b["episode"].as_u64().unwrap_or(0)))
         .then_with(||a["id"].as_str().cmp(&b["id"].as_str())));
@@ -284,7 +286,7 @@ pub fn summary(db: &Database, jobs: &crate::subtitle_jobs::Manager) -> Result<Va
 mod priority_tests {
     use super::*;
     #[test]
-    fn shows_stay_together_in_episode_order_and_priority_moves_the_show() {
+    fn shows_stay_together_but_clicked_episode_moves_to_front() {
         let mut assets=vec![
             json!({"id":"a2","entity_id":"A","queue_title":"Alpha","season":1,"episode":2}),
             json!({"id":"b2","entity_id":"B","queue_title":"Beta","season":2,"episode":1}),
@@ -295,7 +297,10 @@ mod priority_tests {
         assert_eq!(assets.iter().map(|a|a["id"].as_str().unwrap()).collect::<Vec<_>>(),vec!["a1","a2","b1","b2"]);
         priorities.insert("b2".into(),1);
         order_assets(&mut assets,&priorities);
-        assert_eq!(assets.iter().map(|a|a["id"].as_str().unwrap()).collect::<Vec<_>>(),vec!["b1","b2","a1","a2"]);
+        assert_eq!(assets.iter().map(|a|a["id"].as_str().unwrap()).collect::<Vec<_>>(),vec!["b2","b1","a1","a2"]);
+        priorities.insert("a2".into(), 2);
+        order_assets(&mut assets, &priorities);
+        assert_eq!(assets.iter().map(|a|a["id"].as_str().unwrap()).collect::<Vec<_>>(),vec!["a2","a1","b2","b1"]);
     }
     #[test]
     fn clicked_items_move_to_front_and_order_is_persistent() -> Result<()> {

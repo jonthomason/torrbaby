@@ -2,6 +2,7 @@
 import SwiftUI
 
 struct TorrentDetail: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let hash: String
     @State private var showRemove = false
@@ -29,7 +30,7 @@ struct TorrentDetail: View {
                         Card {
                             VStack(alignment: .leading, spacing: 16) {
                                 HStack {
-                                    Text(t.completed ? "Download complete" : "Download progress").font(.headline)
+                                    Text(LocalizedStringKey(t.completed ? "Download complete" : "Download progress")).font(.headline)
                                     Spacer()
                                     Text(t.percentDone, format: .percent.precision(.fractionLength(1))).monospacedDigit().foregroundStyle(Theme.mint)
                                 }
@@ -49,7 +50,7 @@ struct TorrentDetail: View {
                             Card {
                                 VStack(alignment: .leading, spacing: 10) {
                                     Label("Organizer · \(job.phase.capitalized)", systemImage: "sparkles").font(.headline)
-                                    if let error = job.error { Text(error).font(.callout).foregroundStyle(.orange) }
+                                    if let error = job.error { Text(L10n.text(error)).font(.callout).foregroundStyle(.orange) }
                                     if let destination = job.destination { Text(destination).font(.caption).foregroundStyle(Theme.muted).textSelection(.enabled) }
                                     HStack {
                                         Button("Retry organization") { store.action(t, "retry") }
@@ -78,8 +79,8 @@ struct TorrentDetail: View {
                         }
                     }.padding(24).frame(maxWidth: 1000).frame(maxWidth: .infinity)
                 }.background(Theme.canvas)
-                .sheet(isPresented: $showRemove) { RemoveTorrentView(torrent: t) }
-                .sheet(isPresented: $showRename) { RenameView(torrent: t) }
+                .sheet(isPresented: $showRemove) { LocalizedInterface { RemoveTorrentView(torrent: t) } }
+                .sheet(isPresented: $showRename) { LocalizedInterface { RenameView(torrent: t) } }
             } else {
                 ContentUnavailableView("Torrent removed", systemImage: "checkmark.circle", description: Text("This torrent is no longer in Transmission."))
             }
@@ -98,8 +99,11 @@ struct TorrentDetail: View {
         Text("\(bytes(t.downloaded)) / \(bytes(t.size))").foregroundStyle(Theme.muted)
     }
     @ViewBuilder func actions(_ t: Torrent) -> some View {
+        if let operation = t.fileOperation {
+            Text(LocalizedStringKey(operation.label)).foregroundStyle(.secondary)
+        } else {
         Button { store.action(t, t.status == 0 ? "start" : "stop") } label: {
-            Label(t.status == 0 ? "Resume" : "Pause", systemImage: t.status == 0 ? "play.fill" : "pause.fill")
+            Label(LocalizedStringKey(t.status == 0 ? "Resume" : "Pause"), systemImage: t.status == 0 ? "play.fill" : "pause.fill")
         }.buttonStyle(.borderedProminent).foregroundStyle(Theme.canvas)
         Menu {
             Button("Verify downloaded data") { store.action(t, "verify") }
@@ -109,6 +113,7 @@ struct TorrentDetail: View {
         } label: { Label("More", systemImage: "ellipsis") }.menuStyle(.borderlessButton)
         Button { showRename = true } label: { Label("Rename", systemImage: "pencil") }.buttonStyle(.bordered).disabled(!t.completed)
         Button(role: .destructive) { showRemove = true } label: { Label("Remove", systemImage: "trash") }.buttonStyle(.bordered)
+        }
     }
     func play(_ t: Torrent, _ index: Int) {
         loadingPlayback = true
@@ -130,6 +135,7 @@ struct TorrentDetail: View {
 }
 
 struct RemoveTorrentView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) var dismiss
     let torrent: Torrent
@@ -174,6 +180,7 @@ struct RemoveTorrentView: View {
 }
 
 struct RenameView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) var dismiss
     let torrent: Torrent
@@ -200,10 +207,10 @@ struct RenameView: View {
                             do { result = try await store.request("POST", "/v1/torrents/\(torrent.id)/lookup"); error = nil }
                             catch { self.error = error.localizedDescription }
                         }
-                    } label: { Label(searching ? "Looking up…" : "Search online", systemImage: "magnifyingglass") }.disabled(searching)
+                    } label: { Label(LocalizedStringKey(searching ? "Looking up…" : "Search online"), systemImage: "magnifyingglass") }.disabled(searching)
                     Text("Check the year and episodes before applying.")
                         .font(.caption).foregroundStyle(.secondary)
-                    if let error { Text(error).foregroundStyle(.orange) }
+                    if let error { Text(L10n.text(error)).foregroundStyle(.orange) }
                     if let result {
                         ForEach(result.candidates) { candidate in
                             VStack(alignment: .leading, spacing: 8) {
@@ -216,7 +223,7 @@ struct RenameView: View {
                             }.padding(.vertical, 5)
                         }
                         if result.candidates.isEmpty { Text("No matches. You can still enter a name above.").foregroundStyle(.secondary) }
-                        Text((result.provider ?? "") + " · " + result.note).font(.caption2).foregroundStyle(.secondary)
+                        Text(LocalizedStringKey((result.provider ?? "") + " · " + result.note)).font(.caption2).foregroundStyle(.secondary)
                     }
                 }
             }.formStyle(.grouped)
@@ -247,6 +254,7 @@ struct RenameView: View {
 }
 
 struct PlaybackStatusButton: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let torrent: Torrent
     let index: Int
@@ -256,7 +264,7 @@ struct PlaybackStatusButton: View {
     }
     var body: some View {
         Menu {
-            Button(history?.watched == true ? "Mark unwatched" : "Mark watched") {
+            Button(LocalizedStringKey(history?.watched == true ? "Mark unwatched" : "Mark watched")) {
                 store.action(torrent, "watched", body: ["file_index": index, "watched": history?.watched != true])
             }
         } label: {
@@ -268,6 +276,7 @@ struct PlaybackStatusButton: View {
 }
 
 struct TorrentFileRow: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let torrent: Torrent
     let index: Int
@@ -279,7 +288,7 @@ struct TorrentFileRow: View {
             Image(systemName: file.isVideo ? "play.rectangle" : "doc").foregroundStyle(file.isVideo ? Theme.mint : Theme.muted)
             VStack(alignment: .leading, spacing: 5) {
                 Text(file.name).font(.callout).textSelection(.enabled)
-                Text(bytes(file.length) + (file.complete ? "" : " · Incomplete")).font(.caption).foregroundStyle(Theme.muted)
+                Text(LocalizedStringKey(bytes(file.length) + (file.complete ? "" : " · Incomplete"))).font(.caption).foregroundStyle(Theme.muted)
             }
             Spacer()
             if file.isVideo && file.complete {
@@ -294,6 +303,7 @@ struct TorrentFileRow: View {
 }
 
 struct MetadataCard: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let torrent: Torrent
     var record: MediaMetadata? { store.metadata.first { $0.hash == torrent.id } }
@@ -303,7 +313,7 @@ struct MetadataCard: View {
                 Label("Library metadata", systemImage: "text.book.closed").font(.headline)
                 if let selected = record?.selected {
                     MetadataArtwork(hash: torrent.id, thumbnail: selected.thumbnail)
-                    Text(selected.title + (selected.year.isEmpty ? "" : " (" + selected.year + ")")).font(.title3.weight(.semibold))
+                    Text(LocalizedStringKey(selected.title + (selected.year.isEmpty ? "" : " (" + selected.year + ")"))).font(.title3.weight(.semibold))
                     Text(selected.genres.joined(separator: " · ")).foregroundStyle(Theme.muted)
                     HStack {
                         if let rating = selected.contentRating { Text(rating) }
@@ -314,7 +324,7 @@ struct MetadataCard: View {
                     if let link = selected.sourceUrl, let url = URL(string: link) { Link("Source: " + selected.provider, destination: url).font(.caption) }
                     else { Text("Source: " + selected.provider).font(.caption).foregroundStyle(Theme.muted) }
                 } else {
-                    Text(record?.status == "review" ? "Choose the right title" : record?.status == "no_match" ? "No confident match yet" : record?.status == "error" ? "Lookup will retry" : "Metadata is being gathered on Diamond")
+                    Text(LocalizedStringKey(record?.status == "review" ? "Choose the right title" : record?.status == "no_match" ? "No confident match yet" : record?.status == "error" ? "Lookup will retry" : "Metadata is being gathered on Diamond"))
                         .foregroundStyle(Theme.muted)
                     if let record {
                         ForEach(Array(record.candidates.enumerated()), id: \.offset) { index, candidate in
@@ -331,6 +341,7 @@ struct MetadataCard: View {
 }
 
 struct MetadataArtwork: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let hash: String
     let thumbnail: String?

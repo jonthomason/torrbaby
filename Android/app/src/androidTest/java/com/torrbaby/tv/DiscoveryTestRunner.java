@@ -18,13 +18,68 @@ public final class DiscoveryTestRunner extends Instrumentation {
     public void onServiceUnregistered(NsdServiceInfo info) {}
     public void onUnregistrationFailed(NsdServiceInfo info, int error) {}
   };
-  private boolean catalogCheck;
+  private boolean catalogCheck, cacheCheck, performanceCheck, castCheck, languageCheck;
   public void onCreate(Bundle args) {
     super.onCreate(args); catalogCheck = args != null && args.getBoolean("catalog", false);
     if (args != null && "true".equals(args.getString("catalog"))) catalogCheck = true;
+    cacheCheck = args != null && "true".equals(args.getString("cache"));
+    performanceCheck = args != null && "true".equals(args.getString("performance"));
+    castCheck = args != null && "true".equals(args.getString("cast"));
+    languageCheck = args != null && "true".equals(args.getString("language"));
     start();
   }
   public void onStart() {
+    if (languageCheck) {
+      android.content.Context base = getTargetContext();
+      android.content.SharedPreferences preferences = base.getSharedPreferences("interface",0);
+      String previous = preferences.getString("language",null);
+      Bundle result = new Bundle();
+      int code = -1;
+      try {
+        preferences.edit().putString("language","zh").commit(); L10n.wrap(base);
+        if (!"谁在观看？".equals(L10n.t("Who's watching?"))) throw new Exception("Chinese profile label unavailable");
+        if (!"Jon".equals(L10n.t("Jon"))) throw new Exception("Profile name was translated");
+        String[] wireValues = {"Home", "Movies"};
+        if (!"首页".equals(L10n.labels(wireValues)[0]) || !"Home".equals(wireValues[0])) throw new Exception("UI translation changed routing values");
+        preferences.edit().putString("language","en").commit(); L10n.wrap(base);
+        if (!"Who's watching?".equals(L10n.t("Who's watching?"))) throw new Exception("English override unavailable");
+        result.putString("stream","PASS: native language resources switch in both directions; names and routing values stay unchanged\n");
+      } catch (Exception e) { code=0; result.putString("stream","FAIL: "+e+"\n"); }
+      finally {
+        if(previous==null)preferences.edit().remove("language").commit();else preferences.edit().putString("language",previous).commit();
+        L10n.wrap(base);
+      }
+      finish(code,result);return;
+    }
+    if (castCheck) { castStress(); return; }
+    if(performanceCheck) { performance(); return; }
+    if (cacheCheck) {
+      Bundle result = new Bundle();
+      try {
+        android.content.Context cacheContext = new android.content.ContextWrapper(getTargetContext()) {
+          @Override public java.io.File getCacheDir() {
+            java.io.File root = new java.io.File(super.getCacheDir(), "sqlite-cache-check");
+            root.mkdirs(); return root;
+          }
+        };
+        Api jon = new Api("http://cache-test", "fixture", "device", "jon", "Jon");
+        Api alex = new Api("http://cache-test", "fixture", "device", "alex", "Alex");
+        byte[] large = new byte[3 * 1024 * 1024];
+        java.util.Arrays.fill(large, (byte) 42);
+        BrowseCache first = new BrowseCache(cacheContext, jon);
+        first.write("library", large);
+        if (!java.util.Arrays.equals(large, new BrowseCache(cacheContext, jon).read("library", 0))) throw new Exception("Large snapshot/reopen failed");
+        if (new BrowseCache(cacheContext, alex).read("library", 0) != null) throw new Exception("Profile leaked");
+        byte[] small = "empty catalog".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        first.write("library", small);
+        if (!java.util.Arrays.equals(small, first.read("library",0))) throw new Exception("Snapshot replacement retained old chunks");
+        first.write("art/fixture/poster/rev1", small);
+        if (!java.util.Arrays.equals(small,new BrowseCache(cacheContext,alex).read("art/fixture/poster/rev1",0))) throw new Exception("Artwork not shared between profiles");
+        result.putString("stream", "PASS: SQLite snapshots survive reopen, large catalogs, replacement, and profile isolation; artwork shares across profiles\n");
+        finish(-1,result);
+      } catch (Exception e) { result.putString("stream", "FAIL: " + e + "\n"); finish(0,result); }
+      return;
+    }
     if (catalogCheck) {
       Bundle result = new Bundle();
       try {
@@ -65,6 +120,119 @@ public final class DiscoveryTestRunner extends Instrumentation {
       main.postDelayed(() -> complete("Timed out discovering registered service"), 20000);
     });
   }
+  private android.view.View find(android.view.View view,String text) {
+    if(view instanceof android.widget.TextView && text.contentEquals(((android.widget.TextView)view).getText()))return view;
+    if(view instanceof android.view.ViewGroup) {
+      android.view.ViewGroup group=(android.view.ViewGroup)view;
+      for(int i=0;i<group.getChildCount();i++) { android.view.View found=find(group.getChildAt(i),text);if(found!=null)return found; }
+    }
+    return null;
+  }
+  private void key(android.app.Activity activity,int code,int repeat) {
+    long now=SystemClock.uptimeMillis();
+    runOnMainSync(() -> activity.dispatchKeyEvent(new android.view.KeyEvent(now,now,android.view.KeyEvent.ACTION_DOWN,code,repeat)));
+    waitForIdleSync(); SystemClock.sleep(30);
+    runOnMainSync(() -> activity.dispatchKeyEvent(new android.view.KeyEvent(now,SystemClock.uptimeMillis(),android.view.KeyEvent.ACTION_UP,code,0)));
+    waitForIdleSync(); SystemClock.sleep(100);
+  }
+  private void castStress() {
+    Bundle result = new Bundle();
+    try {
+      android.content.Intent intent = new android.content.Intent(getTargetContext(), MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+      android.app.Activity activity = startActivitySync(intent);
+      org.json.JSONArray cast = new org.json.JSONArray();
+      for (int i = 0; i < 10000; i++) cast.put(new org.json.JSONObject().put("name", "Actor " + i).put("character", "Character " + i).put("total_episode_count", 90));
+      org.json.JSONObject title = new org.json.JSONObject().put("id", "stress").put("title", "Large cast stress check").put("kind", "tv").put("cast", cast)
+          .put("assets", new org.json.JSONArray().put(new org.json.JSONObject().put("id", "episode").put("season",4).put("episode",1).put("complete",true)));
+      Library library = Library.parse(new org.json.JSONObject().put("titles",new org.json.JSONArray().put(title)));
+      final Exception[] failure = {null};
+      runOnMainSync(() -> {
+        try {
+          for (String name : new String[]{"library","detailId","season","showingCast"}) {
+            java.lang.reflect.Field f = MainActivity.class.getDeclaredField(name); f.setAccessible(true);
+            f.set(activity, name.equals("library") ? library : name.equals("detailId") ? "stress" : name.equals("season") ? 4 : true);
+          }
+          java.lang.reflect.Field api = MainActivity.class.getDeclaredField("api"); api.setAccessible(true);
+          api.set(activity, new Api("http://127.0.0.1:9", "fixture", "fixture", "fixture", "Fixture"));
+          java.lang.reflect.Method render = MainActivity.class.getDeclaredMethod("render"); render.setAccessible(true); render.invoke(activity);
+        } catch(Exception e) { failure[0] = e; }
+      });
+      waitForIdleSync(); if(failure[0]!=null)throw failure[0];
+      java.lang.reflect.Field field = MainActivity.class.getDeclaredField("content"); field.setAccessible(true);
+      android.widget.LinearLayout content = (android.widget.LinearLayout)field.get(activity);
+      android.widget.ListView list = (android.widget.ListView)content.getChildAt(content.getChildCount()-1);
+      if(list.getCount()!=150)throw new Exception("Cast was not capped");
+      for(int i=0;i<35;i++)key(activity,20,0);
+      runOnMainSync(() -> list.setSelection(149)); waitForIdleSync();
+      if(list.getChildCount()>20)throw new Exception("Cast rows not virtualized: " + list.getChildCount());
+      runOnMainSync(activity::onBackPressed);waitForIdleSync();
+      java.lang.reflect.Field season = MainActivity.class.getDeclaredField("season");season.setAccessible(true);
+      if(season.getInt(activity)!=4 || find(activity.getWindow().getDecorView(), "Season 4")==null)throw new Exception("Back lost selected season: season=" + season.getInt(activity) + " label=" + find(activity.getWindow().getDecorView(), "Season 4"));
+      result.putString("stream", "PASS: 10000 cast entries capped to 150; D-pad scroll and last row rendered with recycled views; Back retained season 4\n");
+      finish(-1,result);
+    }catch(Exception e){result.putString("stream", "FAIL: " + e + "\n");finish(0,result);}
+  }
+
+  private void performance() {
+    Bundle result=new Bundle();
+    try {
+      android.content.Intent intent=new android.content.Intent(getTargetContext(),MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+      android.app.Activity activity=startActivitySync(intent);
+      final android.view.View[] movies={null};
+      for(int i=0;i<100 && movies[0]==null;i++) {
+        runOnMainSync(() -> movies[0]=find(activity.getWindow().getDecorView(),"Movies"));
+        if(movies[0]==null)SystemClock.sleep(100);
+      }
+      if(movies[0]==null)throw new Exception("Library not ready");
+      runOnMainSync(() -> movies[0].performClick()); waitForIdleSync(); SystemClock.sleep(200);
+      java.lang.reflect.Field modelField=MainActivity.class.getDeclaredField("library"),rootField=MainActivity.class.getDeclaredField("root"),apiField=MainActivity.class.getDeclaredField("api");
+      modelField.setAccessible(true);rootField.setAccessible(true);apiField.setAccessible(true);
+      Library original=(Library)modelField.get(activity);
+      org.json.JSONObject changed=new org.json.JSONObject(((Api)apiField.get(activity)).libraryRaw);
+      org.json.JSONArray titles=changed.getJSONArray("titles");
+      for(int i=0;i<titles.length();i++) {
+        org.json.JSONArray assets=titles.getJSONObject(i).optJSONArray("assets");
+        if(assets!=null && assets.length()>0)assets.getJSONObject(0).put("position",123);
+      }
+      java.lang.reflect.Method update=MainActivity.class.getDeclaredMethod("updateBrowse",android.widget.LinearLayout.class);update.setAccessible(true);
+      final android.view.View[] retainedFocus={null}; final Exception[] failure={null};
+      runOnMainSync(() -> {
+        retainedFocus[0]=activity.getCurrentFocus();
+        try { modelField.set(activity,Library.parse(changed)); update.invoke(activity,rootField.get(activity)); }
+        catch(Exception e){failure[0]=e;}
+      });waitForIdleSync();
+      if(failure[0]!=null)throw failure[0];
+      if(activity.getCurrentFocus()!=retainedFocus[0])throw new Exception("Incremental progress update stole focus");
+      runOnMainSync(() -> {try {modelField.set(activity,original);update.invoke(activity,rootField.get(activity));}catch(Exception e){failure[0]=e;}});
+      if(failure[0]!=null)throw failure[0];
+      int before=PosterCard.created;
+      for(int i=0;i<16;i++) {
+        key(activity,i<8?20:19,i%8);
+        final String[] issue={null};
+        runOnMainSync(() -> {
+          android.view.View focus=activity.getCurrentFocus();
+          if(!(focus instanceof android.widget.GridView))return;
+          android.view.View selected=((android.widget.GridView)focus).getSelectedView();
+          android.graphics.Rect visible=new android.graphics.Rect();
+          if(selected==null || !selected.getGlobalVisibleRect(visible) || visible.height()<selected.getHeight()-2)issue[0]="Focused row clipped: visible="+visible+" height="+(selected==null?-1:selected.getHeight())+" grid="+focus.getHeight();
+        });
+        if(issue[0]!=null)throw new Exception(issue[0]+" at step "+i);
+      }
+      final Object[] selected={null};
+      runOnMainSync(() -> {android.view.View view=activity.getCurrentFocus();selected[0]=((android.widget.GridView)view).getSelectedView();});
+      key(activity,23,0);
+      long start=SystemClock.elapsedRealtime();
+      runOnMainSync(activity::onBackPressed);waitForIdleSync();
+      long back=SystemClock.elapsedRealtime()-start;
+      final boolean[] restored={false};
+      runOnMainSync(() -> {android.view.View view=activity.getCurrentFocus();restored[0]=view instanceof android.widget.GridView && ((android.widget.GridView)view).getSelectedView()==selected[0];});
+      if(!restored[0])throw new Exception("Back did not retain exact selected card; focus="+activity.getCurrentFocus());
+      int created=PosterCard.created-before;
+      if(created>24)throw new Exception("Poster recycling exceeded two additional visible rows: "+created);
+      result.putString("stream","PASS: incremental update retained focus; 16 D-pad row movements fully visible; recycled cards added="+created+"; exact Back selection restored in "+back+" ms\n");finish(-1,result);
+    }catch(Exception e){result.putString("stream","FAIL: "+e+"\n");finish(0,result);}
+  }
+
   private void complete(String error) {
     if (done) return;
     done = true; main.removeCallbacksAndMessages(null);

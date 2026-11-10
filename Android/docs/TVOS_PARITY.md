@@ -21,7 +21,7 @@ When the build reports a changed reference, review the changed Apple files, upda
 
 ## Upcoming profiles
 
-Shared TVs will support multiple viewers with an obvious profile switcher; mobile normally remembers one viewer. Android integration is tracked in [PROFILES.md](PROFILES.md), pending the shared server contract and tvOS picker. Current Android viewing state is still household-wide.
+Shared TVs will support multiple viewers with an obvious profile switcher; mobile normally remembers one viewer. Android integration is tracked in [PROFILES.md](PROFILES.md), pending the shared server contract and tvOS picker. Local Android profile integration now uses the server profile API; see PROFILES.md for release and validation status.
 
 ## Playback preparation review — f7f87d4
 
@@ -38,3 +38,19 @@ Appearance and default language are configured in Settings. The player has one
 subtitle selector: Off, English variants, Chinese variants, then other languages.
 Forced/SDH variants retain distinguishing labels. Selection saves the shared title
 override. Apple retains its native menu; identical ordering is not guaranteed.
+
+### Android performance pass (2026-11-10, build 30)
+
+Active scope: reusable poster views, incremental catalog updates, whole-row D-pad navigation with retained Back position, visible-first artwork and next-row prefetch, responsive consistent poster layout, and lightweight catalog revision checks.
+
+Implemented in the working tree: PosterCard recycling; PosterGrid row selection; screen-local catalog bindings for grids, shelves, and Home hero; image priority queue and obsolete-screen cancellation; removal of full-screen GPU blur; durable server catalog revision endpoint and Android polling. Server revision check verified live: 52-byte response versus 942,697-byte catalog, same revision. Focused revision invalidation test passes. JMGO cached initial frame: build 26 585 ms; preliminary build 28 591 ms (no startup improvement claimed). Physical navigation verification exposed a firmware-specific row positioning issue and a confirm-key relayout issue; corrections are being checked before final release. Evidence is under ignored `local-state/android-performance/`.
+
+Queued after the performance pass, per user:
+
+- Remove All Seasons from every client's episode selector, including Android TV and tvOS. Show one season at a time, initially the season containing the next episode to watch.
+- On download-capable clients only, the detail action should say Download Season N and enqueue that selected season, skipping already-downloaded/queued episodes. TVs remain streaming-only.
+- Add a default-collapsed Cast action on all detail pages when cast metadata exists. Expanded content is a two-column Actor / Character list; blank character cells are acceptable. Cache TMDB movie/TV credits with other metadata. Omit the action if no cast data is available. Use the supplied aggregate roles and episode counts directly (Actor / Character / Episodes for TV); no custom aggregation or episode-by-episode credit fetching.
+
+Performance completion evidence: Android release/debug builds pass. Emulator navigation check passed (16 row movements, 6 additional recycled views, Back 19 ms). The final JMGO check passed incremental progress rebinding without focus loss, all 16 row movements fully visible, one additional recycled view, exact Back title/position retained in 77 ms. Catalog revision invalidation test passes; live revision endpoint verified alongside matching catalog revision. Build 30/0.3.4 installed on JMGO and published to OTA/Downloads. TCL install requested, confirmation tracked separately. Cached startup remained approximately 0.6 seconds in the measured before/after runs; no claimed cold-start speedup. Shell-injected JMGO arrows were ignored by its firmware, so scrolling measurements use actual Activity key dispatch through the debug instrumentation runner.
+
+The queued season and cast changes above are now implemented in Apple 100 and Android 31. Credits backfill completed for all 72 live titles. Android Cast disclosure and per-row remote focus were checked on Homeland, showing the supplied Claire Danes / Carrie Mathison / 96 entry. Movie credits omit the episodes column. iOS, macOS and tvOS-simulator builds pass; Android release passes and version 31 is installed on JMGO. TCL build 31 is requested and awaiting native consent. The cast role/count projection test passes. Details in docs/release-notes.md.

@@ -25,6 +25,16 @@ final class TorrentActions {
   }
 
   void menu(JSONObject item) {
+    JSONObject operation = item.optJSONObject("file_operation");
+    if (operation != null) {
+      String status = operation.optString("action").equals("junk")
+          ? "This package is in Junk. The server will finish seeding and delete it automatically."
+          : "The server is deleting this package.";
+      if (!operation.isNull("error")) status += "\n\n" + operation.optString("error");
+      new AlertDialog.Builder(activity).setTitle(item.optString("name"))
+          .setMessage(status).setPositiveButton(L10n.t("Close"), null).show();
+      return;
+    }
     String hash = item.optString("hash_string");
     if (hash.isEmpty()) {
       error("The server did not supply this torrent's identity.");
@@ -43,7 +53,7 @@ final class TorrentActions {
     new AlertDialog.Builder(activity)
         .setTitle(item.optString("name"))
         .setItems(
-            labels,
+            L10n.labels(labels),
             (d, w) -> {
               String path = "/v1/torrents/" + Api.part(hash) + "/";
               switch (w) {
@@ -88,9 +98,9 @@ final class TorrentActions {
                   break;
                 case 7:
                   new AlertDialog.Builder(activity)
-                      .setTitle("Remove torrent")
+                      .setTitle(L10n.t("Remove torrent"))
                       .setItems(
-                          new String[] {"Keep files on server", "Delete files from server…"},
+                          L10n.labels(new String[] {"Keep files on server", "Delete files from server…"}),
                           (x, y) -> {
                             boolean delete = y == 1;
                             confirm(
@@ -107,25 +117,25 @@ final class TorrentActions {
                                         path + "remove",
                                         json("delete_data", delete, "confirm_hash", hash)));
                           })
-                      .setNegativeButton("Cancel", null)
+                      .setNegativeButton(L10n.t("Cancel"), null)
                       .show();
                   break;
               }
             })
-        .setNegativeButton("Close", null)
+        .setNegativeButton(L10n.t("Close"), null)
         .show();
   }
 
   void manage() {
     new AlertDialog.Builder(activity)
-        .setTitle("Server torrents")
+        .setTitle(L10n.t("Server torrents"))
         .setItems(
-            new String[] {"Add magnet link", "Seeding target"},
+            L10n.labels(new String[] {"Add magnet link", "Seeding target"}),
             (d, w) -> {
               if (w == 0) add();
               else seeding();
             })
-        .setNegativeButton("Close", null)
+        .setNegativeButton(L10n.t("Close"), null)
         .show();
   }
 
@@ -139,18 +149,18 @@ final class TorrentActions {
                   if (activity.isDestroyed()) return;
                   double[] ratios = {1.0, 1.2, 1.5, 2.0, 3.0};
                   new AlertDialog.Builder(activity)
-                      .setTitle("Seeding target")
+                      .setTitle(L10n.t("Seeding target"))
                       .setMessage(
                           current.optBoolean("enabled")
                               ? "Current ratio: " + current.optDouble("ratio")
-                              : "Currently unlimited")
+                              : L10n.t("Currently unlimited"))
                       .setPositiveButton(
-                          "Change",
+                          L10n.t("Change"),
                           (d, w) ->
                               new AlertDialog.Builder(activity)
-                                  .setTitle("Default seed ratio")
+                                  .setTitle(L10n.t("Default seed ratio"))
                                   .setItems(
-                                      new String[] {"1.0", "1.2", "1.5", "2.0", "3.0", "Unlimited"},
+                                      L10n.labels(new String[] {"1.0", "1.2", "1.5", "2.0", "3.0", "Unlimited"}),
                                       (x, y) ->
                                           confirm(
                                               "Change server seeding target?",
@@ -167,9 +177,9 @@ final class TorrentActions {
                                                               : current.optDouble("ratio", 1.2),
                                                           "enabled",
                                                           y < 5))))
-                                  .setNegativeButton("Cancel", null)
+                                  .setNegativeButton(L10n.t("Cancel"), null)
                                   .show())
-                      .setNegativeButton("Close", null)
+                      .setNegativeButton(L10n.t("Close"), null)
                       .show();
                 });
           } catch (Exception e) {
@@ -205,8 +215,8 @@ final class TorrentActions {
         new AlertDialog.Builder(activity)
             .setTitle(title)
             .setView(input)
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Save", null)
+            .setNegativeButton(L10n.t("Cancel"), null)
+            .setPositiveButton(L10n.t("Save"), null)
             .create();
     dialog.setOnShowListener(
         d ->
@@ -251,7 +261,7 @@ final class TorrentActions {
     new AlertDialog.Builder(activity)
         .setTitle(item.optString("name"))
         .setMessage(text)
-        .setPositiveButton("Close", null)
+        .setPositiveButton(L10n.t("Close"), null)
         .show();
   }
 
@@ -281,8 +291,8 @@ final class TorrentActions {
         new AlertDialog.Builder(activity)
             .setTitle(title)
             .setMessage(message)
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Confirm", (d, w) -> action.run())
+            .setNegativeButton(L10n.t("Cancel"), null)
+            .setPositiveButton(L10n.t("Confirm"), (d, w) -> action.run())
             .create();
     dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus());
     dialog.show();
@@ -292,7 +302,7 @@ final class TorrentActions {
     if (busy) return;
     busy = true;
     final boolean removing = path.endsWith("/remove");
-    if (removing) Toast.makeText(activity, "Removing torrent…", Toast.LENGTH_SHORT).show();
+    if (removing) Toast.makeText(activity, L10n.t("Removing torrent…"), Toast.LENGTH_SHORT).show();
     io.execute(
         () -> {
           try {
@@ -303,7 +313,7 @@ final class TorrentActions {
                   if (!activity.isDestroyed()) {
                     if (removing) removed.accept(body.optString("confirm_hash"));
                     else if (method.equals("POST") && path.equals("/v1/torrents")) removed.accept(null);
-                    Toast.makeText(activity, removing ? "Torrent removed" : "Server updated", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(activity, removing ? L10n.t("Torrent removed") : L10n.t("Server updated"), Toast.LENGTH_SHORT).show();
                     changed.run();
                   }
                 });
@@ -333,7 +343,7 @@ final class TorrentActions {
               if (activity.isDestroyed()) return;
               if (removed) {
                 this.removed.accept(body.optString("confirm_hash"));
-                Toast.makeText(activity, "Torrent removed", Toast.LENGTH_SHORT).show();
+                Toast.makeText(activity, L10n.t("Torrent removed"), Toast.LENGTH_SHORT).show();
               }
               else error(message);
               changed.run();
@@ -345,9 +355,9 @@ final class TorrentActions {
   private void error(String message) {
     if (!activity.isDestroyed() && !activity.isFinishing())
       new AlertDialog.Builder(activity)
-          .setTitle("Torrent action")
+          .setTitle(L10n.t("Torrent action"))
           .setMessage(message)
-          .setPositiveButton("OK", null)
+          .setPositiveButton(L10n.t("OK"), null)
           .show();
   }
 

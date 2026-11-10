@@ -15,6 +15,8 @@ mod pgs_subtitles;
 mod offline;
 mod organizer;
 mod pairing;
+mod profiles;
+mod library_files;
 mod remux;
 mod virtual_mkv;
 mod virtual_media;

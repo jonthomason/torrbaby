@@ -1,0 +1,562 @@
+%@ · %lld files	%@ · %lld 个文件
+%@ · %lld sending	%@ · %lld 个上传中
+%@ of %@	%@ / %@
+%@ uploaded	已上传 %@
+%@ used · %@ limit	已用 %@ · 上限 %@
+%@ used · Available space	已用 %@ · 使用可用空间
+%lld awaiting retry	%lld 项等待重试
+%lld downloading · %lld seeding	%lld 项下载中 · %lld 项做种中
+%lld episode/file records	%lld 条剧集/文件记录
+%lld min	%lld 分钟
+%lld organized	已整理 %lld 项
+%lld pending scans	%lld 项等待扫描
+%lld releases	%lld 个资源
+%lld translated · %lld scanned	已翻译 %lld 项 · 已扫描 %lld 项
+1h	1 小时
+6h	6 小时
+24h	24 小时
+About	关于
+Active %@ ago	%@前活跃
+Actor	演员
+Add	添加
+Add a torrent	添加种子
+Add paused	添加后暂停
+Add torrent	添加种子
+Add Torrent…	添加种子…
+Added to Transmission	已添加到 Transmission
+Adding download	正在添加下载
+Adding download…	正在添加下载…
+Adding…	正在添加…
+All clear	一切正常
+All genres	所有类型
+API TOKEN	API 令牌
+Automatic subtitles paused	自动字幕已暂停
+Automation	自动整理
+Automation paused	自动整理已暂停
+Back	返回
+Back to library	返回媒体库
+Background opacity	背景不透明度
+Bytes/sec	字节/秒
+Cancel	取消
+Cast	演员表
+Character	角色
+Check again	再次检查
+Check every %lld seconds	每 %lld 秒检查一次
+Check now	立即检查
+Check the year and episodes before applying.	应用前请确认年份和集数。
+Checking files…	正在检查文件…
+Checking languages…	正在检查语言…
+Checks every %lld seconds	每 %lld 秒检查一次
+China	中国
+Choose a release	选择资源
+Choose the right title	选择正确的影片
+Clear filters	清除筛选
+Click to prioritize this title in the subtitle queue	点击将此影片移至字幕队列前列
+Close	关闭
+Collecting history…	正在收集历史记录…
+Comfortable view	舒适视图
+Compact view	紧凑视图
+Connect	连接
+Connect to server	连接服务器
+Connect to this server?	连接到此服务器？
+Connect to Torrbaby	连接 Torrbaby
+Connected	已连接
+Connecting…	正在连接…
+Connection	连接
+Connection settings	连接设置
+Couldn’t complete that action	无法完成此操作
+Couldn’t complete the request	无法完成请求
+Create user	创建用户
+Daemon	后台服务
+Default	默认
+Default subtitles	默认字幕
+Delete	删除
+Delete after playback	播放后删除
+Delete download	删除下载
+Delete permanently	永久删除
+Delete Permanently	永久删除
+Delete this device’s download?	删除此设备上的下载？
+Delete this download?	删除此下载？
+Description	简介
+Device linked	设备已关联
+Devices	设备
+Dismiss notification	关闭通知
+Done	完成
+Download	下载
+Download and seeding updates	下载和做种更新
+Download complete	下载完成
+Download limit (GB)	下载空间上限（GB）
+Download progress	下载进度
+Download season %lld	下载第 %lld 季
+Download Season %lld	下载第 %lld 季
+Download Specials	下载特别篇
+Download storage	下载存储
+Download to this device	下载到此设备
+Downloaded	已下载
+Downloading	下载中
+Downloads	下载
+Edit connection	编辑连接
+Enable device notifications	启用设备通知
+English	英语
+Enter server address	输入服务器地址
+Episode %lld	第 %lld 集
+Episodes	集数
+Expires in %lld seconds	%lld 秒后过期
+Explore	查看详情
+Extracting	提取中
+Extracting subtitles	正在提取字幕
+FILES	文件
+Files · %lld	文件 · %lld
+Files removed	文件已删除
+Find	查找
+Find a torrent	查找种子
+Find the proper title	查找正确的影片
+Find torrents	查找种子
+Find your next watch	寻找下一部好片
+Find…	查找…
+Finding your library…	正在查找媒体库…
+Finishes seeding, then deletes the files.	完成做种后删除文件。
+Folders on your server	服务器上的文件夹
+Font	字体
+Forward	前进
+Generated subtitles	生成的字幕
+Genre	类型
+History	历史记录
+Home	首页
+Ignore	忽略
+Ignore for organization	整理时忽略
+Import connection file…	导入连接文件…
+In Junk · finishing seeding	已移入废弃区 · 完成做种中
+Individual torrent limits take precedence.	单个种子的限制优先。
+Keep file extensions and episode numbers.	请保留文件扩展名和剧集编号。
+Keep free (GB)	保留空闲空间（GB）
+Languages unavailable	语言信息不可用
+Library	媒体库
+Library metadata	媒体库信息
+Library unavailable	媒体库不可用
+Link a device	关联设备
+Loading details…	正在加载详情…
+Loading library…	正在加载媒体库…
+Loading subtitles…	正在加载字幕…
+Location	位置
+Look up again	重新查找
+Looking up…	正在查找…
+Lookup will retry	将重试查找
+Magnet link	磁力链接
+Magnet links	磁力链接
+Manage Files	管理文件
+Mark as unwatched	标记为未看
+Mark as Unwatched	标记为未看
+Mark as watched	标记为已看
+Mark as Watched	标记为已看
+Mark unwatched	标记为未看
+Mark watched	标记为已看
+Menu bar	菜单栏
+Metadata is being gathered on Diamond	正在 Diamond 上获取影片信息
+MIT License	MIT 许可证
+Monospace	等宽字体
+More	更多
+More to explore	发现更多
+Move the entire package to Junk?	将整个下载包移至废弃区？
+Move to Complete at target ratio	达到目标分享率后移至已完成
+Move to Junk	移至废弃区
+Movie, show, or release	电影、剧集或资源
+Movies	电影
+Movies and TV shows	电影和剧集
+Name	名称
+Needs attention	需要处理
+New code	新建代码
+New name	新名称
+New Tab	新建标签页
+New Tab (⌘T)	新建标签页（⌘T）
+Next episode…	下一集…
+No confident match yet	尚无可靠匹配
+No downloads	暂无下载
+No matches	没有匹配结果
+No matches. You can still enter a name above.	没有匹配结果，您仍可在上方输入名称。
+No movies or shows yet.	暂无电影或剧集。
+No recent activity	暂无近期活动
+No releases found	未找到资源
+No subtitle jobs	暂无字幕任务
+No titles match your search.	未找到匹配的影片。
+No torrents	暂无种子
+None	无
+Not downloaded	未下载
+Notifications	通知
+Now processing	正在处理
+Offline	离线
+Offline mode	离线模式
+OK	好
+On your connected device	在已连接的设备上
+Open Torrbaby	打开 Torrbaby
+Open Torrbaby on your iPhone or iPad and choose Scan connection code.	在 iPhone 或 iPad 上打开 Torrbaby，选择“扫描连接码”。
+Organize completed downloads	整理已完成的下载
+Organizer · %@	整理任务 · %@
+Original quality · Native player	原始画质 · 原生播放器
+Other episodes	其他剧集
+Paste your server token	粘贴服务器令牌
+Path	路径
+Pause	暂停
+Pause download	暂停下载
+Paused	已暂停
+Permanently delete these files?	永久删除这些文件？
+Permanently delete this torrent’s downloaded files, including partial downloads.	永久删除此种子已下载的文件，包括尚未完成的部分。
+Personal watch history and downloaded copies on other devices are kept.	保留个人观看记录和其他设备上的下载副本。
+Play %@	播放 %@
+Play or resume original file	播放或续播原始文件
+Playback	播放
+Playback history	播放记录
+Prepare translations automatically	自动生成字幕翻译
+Preparing…	正在准备…
+Prioritize subtitles	优先处理字幕
+Queuing…	正在加入队列…
+Quit Torrbaby	退出 Torrbaby
+Ratio %.2f	分享率 %.2f
+Reannounce to trackers	重新向 Tracker 通告
+Recent activity	近期活动
+Recommended	推荐
+Refresh	刷新
+Release	资源
+Release tags	资源标签
+Remove	移除
+Remove torrent	移除种子
+Remove torrent and delete files	移除种子并删除文件
+Remove torrent, keep files	移除种子，保留文件
+Remove…	移除…
+Removing from library…	正在从媒体库移除…
+Removing stops this torrent and removes it from Transmission.	移除会停止此种子，并将其从 Transmission 移除。
+Rename	重命名
+Rename through Transmission	通过 Transmission 重命名
+Resume	继续播放
+Resume download	继续下载
+Resumes after playback	播放结束后继续
+Retry artwork	重新获取图片
+Retry organization	重新整理
+Review a new name	确认新名称
+Revoke access	撤销访问权限
+Running	运行中
+S%lld · E%lld	第 %lld 季 · 第 %lld 集
+Sans serif	无衬线字体
+Save	保存
+Save seeding settings	保存做种设置
+Save settings	保存设置
+Saved	已保存
+Scan again	重新扫描
+Scan connection code	扫描连接码
+Scan media library	扫描媒体库
+Scan the QR code	扫描二维码
+Search	搜索
+Search movies and TV shows	搜索电影和剧集
+Search movies and TV shows.	搜索电影和剧集。
+Search online	在线搜索
+Search rate limited	搜索请求过于频繁
+Search region	搜索地区
+Searching…	正在搜索…
+Season %lld	第 %lld 季
+See All	查看全部
+Seeding	做种中
+Seeding will stop. All server files listed on this page will be permanently deleted for everyone. This cannot be undone.	做种将停止。此页列出的所有服务器文件将为所有用户永久删除。此操作无法撤销。
+Serif	衬线字体
+Server	服务器
+SERVER ADDRESS	服务器地址
+Settings	设置
+Settings → Link a device	设置 → 关联设备
+Show download and upload rates	显示下载和上传速度
+Show torrent	查看种子
+Showing the first 150 cast entries.	仅显示前 150 条演员记录。
+Size	大小
+Sort	排序
+Source languages	源语言
+Sources	来源
+Sources unavailable	来源不可用
+Special features	特别收录
+Specials	特别篇
+Start	开始
+Stop	停止
+Stop tracking the torrent in Transmission. Keep all downloaded files on Diamond.	停止在 Transmission 中跟踪此种子，保留 Diamond 上所有已下载的文件。
+Style	样式
+Submitting…	正在提交…
+Subtitle style	字幕样式
+Subtitles	字幕
+Subtitles on this device	此设备的字幕
+Swipe left to delete this download	向左滑动以删除此下载
+Switch to comfortable view	切换至舒适视图
+Switch to compact view	切换至紧凑视图
+Switch user	切换用户
+Target upload/download ratio	目标上传/下载分享率
+tb · Offline	tb · 离线
+Text opacity	文字不透明度
+The entire package will be hidden from everyone, continue seeding, and be permanently deleted when seeding finishes.	整个下载包将对所有用户隐藏，继续做种，并在做种完成后永久删除。
+The server will continue this operation after you leave this screen.	离开此页面后，服务器仍将继续此操作。
+The server will retry automatically.	服务器将自动重试。
+This affects the entire download package and everyone’s library.	此操作影响整个下载包及所有用户的媒体库。
+This code has expired.	此代码已过期。
+This device	此设备
+This file couldn’t play	无法播放此文件
+This removes the file from everyone’s library.	这将从所有用户的媒体库中移除此文件。
+This torrent is no longer in Transmission.	此种子已不在 Transmission 中。
+Time	时间
+Time range	时间范围
+Torrbaby transfer rates	Torrbaby 传输速度
+Torrent CSV	种子 CSV
+Torrent details	种子详情
+Torrent removed	种子已移除
+Torrents	种子
+Transfer	传输
+TRANSFER HISTORY	传输历史
+Translations	翻译
+Try a different title.	请尝试其他片名。
+Try a shorter title or another source.	请尝试更短的片名或其他来源。
+Try again	重试
+Try reconnecting	重新连接
+TV shows	剧集
+TV Shows	剧集
+UPLOAD HISTORY	上传历史
+Use available space	使用可用空间
+Use this name	使用此名称
+Use Torrbaby for magnet links	使用 Torrbaby 打开磁力链接
+User	用户
+Verify downloaded data	校验已下载的数据
+View source	查看来源
+Waiting for playback to finish	等待播放结束
+Watch your downloaded movies and episodes.	观看已下载的电影和剧集。
+Watched	已看
+Welcome home	欢迎回来
+Who's watching?	谁在观看？
+Wi-Fi only	仅使用 Wi-Fi
+World	全球
+Your library	您的媒体库
+Chinese (Simplified)	简体中文
+Chinese (Traditional)	繁体中文
+Chinese	中文
+Original	原始语言
+Off	关闭
+On	开启
+Follow system language	跟随系统语言
+Interface language	界面语言
+Next Episode	下一集
+Next episode	下一集
+Preparing next episode	正在准备下一集
+Preparing playback…	正在准备播放…
+Playback finished	播放结束
+User switched	用户已切换
+Play	播放
+Audio	音频
+Subtitle	字幕
+Speed	速度
+Playback settings	播放设置
+Waiting	等待中
+Finished	已完成
+Failed	失败
+Queued	排队中
+Ready	已就绪
+Paused	已暂停
+Interrupted	已中断
+Extracting	提取中
+Preparing	准备中
+Complete	已完成
+Not progressing	无进展
+Recently added	最近添加
+Recently watched	最近观看
+Continue watching	继续观看
+Title A–Z	片名 A–Z
+Year	年份
+All	全部
+Season	季
+Episode	集
+Manage files	管理文件
+Subtitle preferences	字幕偏好
+Subtitles on this TV	此电视的字幕
+Settings saved	设置已保存
+Cancel download	取消下载
+Preparing download	正在准备下载
+Downloads unavailable	下载不可用
+No available next episode	暂无可播放的下一集
+Available	可用
+English (CC)	英语（隐藏式字幕）
+Language	语言
+Languages	语言
+System	系统
+Add magnet link	添加磁力链接
+Add magnet link to server	添加磁力链接到服务器
+Add media on your Torrbaby server, then refresh here.	请在 Torrbaby 服务器上添加媒体，然后在此刷新。
+Added	已添加
+Alphabetical	按名称排序
+Already in your torrents	已在种子列表中
+Applies to torrents that use the server's default	适用于使用服务器默认设置的种子
+Ask trackers for peers	向 Tracker 请求节点
+Automatic	自动
+Change	更改
+Change server connection	更改服务器连接
+Change server seeding target?	更改服务器做种目标？
+Check the server address and network connection.	请检查服务器地址和网络连接。
+Choose a user before starting playback.	开始播放前请选择用户。
+Choose your server	选择服务器
+Confirm	确认
+Connect to your Torrbaby server	连接到 Torrbaby 服务器
+Could not find your server	找不到服务器
+Could not load users	无法加载用户
+Couldn’t add torrent	无法添加种子
+Couldn’t confirm removal. Reconnect and refresh the torrent list before trying again.	无法确认是否已移除。请重新连接并刷新种子列表后重试。
+Couldn’t load source details. You can still add this torrent.	无法加载来源详情，您仍可添加此种子。
+Couldn’t load this release. Please reopen it to retry.	无法加载此资源，请重新打开以重试。
+Couldn’t manage files	无法管理文件
+Create	创建
+Currently unlimited	当前不限量
+Date added	添加日期
+Default seed ratio	默认做种分享率
+Delete files from server…	从服务器删除文件…
+Delete torrent and its files?	删除种子及其文件？
+Deleting files…	正在删除文件…
+Disconnect	断开连接
+Disconnect this TV	断开此电视的连接
+Disconnect this TV?	断开此电视的连接？
+Enter a magnet link beginning with magnet:?	输入以 magnet:? 开头的磁力链接
+Enter a name	输入名称
+Enter a value	输入数值
+Exit	退出
+File list unavailable	文件列表不可用
+Files and details	文件与详情
+Find servers	查找服务器
+Finished watching	已看完
+Finishing cleanup…	正在完成清理…
+Ignore organization	忽略整理
+Ignore organization?	忽略整理？
+In Junk · delete after seeding	已移入废弃区 · 做种后删除
+Junk · delete after seeding	废弃区 · 做种后删除
+Keep files on server	保留服务器文件
+Leave Torrbaby?	退出 Torrbaby？
+Library files	媒体库文件
+Link this TV to your server again.	请将此电视重新关联到服务器。
+Loading server activity…	正在加载服务器活动…
+Manage	管理
+Mark	标记
+Move this package to Junk?	将此下载包移至废弃区？
+Move to Junk and finish seeding	移至废弃区并完成做种
+Moving to Junk…	正在移至废弃区…
+No matching titles	没有匹配的影片
+No server found	未找到服务器
+Not yet available	暂不可用
+Offline · showing the last server status	离线 · 显示上次的服务器状态
+Opening video…	正在打开视频…
+Operation status is unavailable. The server may still be processing it.	操作状态不可用，服务器可能仍在处理中。
+Play again	重新播放
+Playback speed	播放速度
+Please try again.	请重试。
+Progress	进度
+Queued for verification	等待校验
+Queued to download	等待下载
+Queued to seed	等待做种
+Ratio	分享率
+Ready to watch	可以观看
+Refresh library	刷新媒体库
+Remove torrent, keeping files?	移除种子并保留文件？
+Remove torrent…	移除种子…
+Removing torrent…	正在移除种子…
+Rename torrent	重命名种子
+Retry	重试
+Search titles, genres or year	搜索片名、类型或年份
+Search torrents	搜索种子
+See All  ›	查看全部  ›
+Seeding target	做种目标
+Seeding will stop. These server files will be permanently deleted. This cannot be undone.	做种将停止，这些服务器文件将被永久删除。此操作无法撤销。
+Server torrents	服务器种子
+Server transfers	服务器传输
+Server updated	服务器已更新
+Size unavailable	大小不可用
+Size…	大小…
+Sort by	排序方式
+Source details unavailable.	来源详情不可用。
+Start from beginning	从头播放
+Startup diagnostics	启动诊断
+Startup timings	启动耗时
+Status unavailable	状态不可用
+Stay	留下
+Subtitle preferences saved	字幕偏好已保存
+Switching user…	正在切换用户…
+The entire package will be hidden now, continue seeding, and be permanently deleted when seeding finishes.	整个下载包将立即隐藏，继续做种，并在做种完成后永久删除。
+The saved connection could not be opened.	无法打开已保存的连接。
+The server did not supply this torrent's identity.	服务器未提供此种子的标识。
+The server is deleting this package.	服务器正在删除此下载包。
+The server is taking longer than expected. Refresh to check the result.	服务器处理时间较长，请刷新查看结果。
+The server will continue this operation if you close this screen.	关闭此页面后，服务器仍将继续此操作。
+The torrent is still listed. Refresh in a moment to check whether removal finished.	种子仍在列表中，请稍后刷新以确认是否已移除。
+The video stream was interrupted. Check the server and network connection.	视频流已中断，请检查服务器和网络连接。
+This device could not decode the video or audio format.	此设备无法解码该视频或音频格式。
+This episode is not yet available on the server.	服务器上的此集尚不可用。
+This media file is not yet available on the server.	服务器上的此媒体文件尚不可用。
+This package is in Junk. The server will finish seeding and delete it automatically.	此下载包已在废弃区，服务器将在做种完成后自动删除。
+This server has not enabled automatic connection for this network.	此服务器尚未为此网络启用自动连接。
+This title has no complete media files on the server.	服务器上没有此影片的完整媒体文件。
+This video could not be played.	无法播放此视频。
+Torrent action	种子操作
+Torrent added	种子已添加
+Unable to play	无法播放
+Unlimited	不限量
+Verify files	校验文件
+Verify files?	校验文件？
+Verifying	校验中
+Waiting for peers	等待节点
+Your library and viewing history stay on the server.	您的媒体库和观看记录将保留在服务器上。
+Your library is empty	媒体库为空
+Your library is unavailable	媒体库不可用
+Your selected profile is unavailable. Choose a user to continue.	所选用户不可用，请选择用户以继续。
+▶  Explore	▶  查看详情
+▶  Play	▶  播放
+▶  Resume	▶  继续播放
+▶  Start	▶  开始
+First name	名字
+Avatar	头像
+Initial or emoji	首字母或表情符号
+Text color	文字颜色
+Background color	背景颜色
+Edit profile	编辑用户
+Save profile	保存用户
+Choose a profile	选择用户
+Waiting to verify	等待校验
+Waiting for activity	等待活动
+Estimating…	正在估算…
+<1m remaining	剩余不足 1 分钟
+~%lldm remaining	约剩余 %lld 分钟
+~%lldh %lldm remaining	约剩余 %lld 小时 %lld 分钟
+~%lldd %lldh remaining	约剩余 %lld 天 %lld 小时
+Resume S%lldE%lld	继续播放第 %lld 季第 %lld 集
+Resume S%lldE%lld (%lld min remaining)	继续播放第 %lld 季第 %lld 集（剩余 %lld 分钟）
+Start S%lldE%lld	开始第 %lld 季第 %lld 集
+Cast · %@	演员表 · %@
+Transmission reports this torrent as stalled	Transmission 报告此种子停滞
+No peers and no activity for over 5 minutes	超过 5 分钟没有节点或活动
+Peers connected, but no activity for over 5 minutes	已连接节点，但超过 5 分钟没有活动
+Generated	已生成
+Forced	强制字幕
+track	轨道
+Closed captions	隐藏式字幕
+Could not connect.	无法连接。
+Could not refresh.	无法刷新。
+First name	名字
+Release date	上映日期
+Title	片名
+Upload	上传
+UPLOADING	上传中
+DOWNLOADING	下载中
+SEEDING	做种中
+TOTAL SIZE	总大小
+REMAINING	剩余
+RATIO	分享率
+PEERS	节点
+UPLOAD	上传
+DOWNLOAD	下载
+Preparing subtitles…	正在准备字幕…
+Subtitles unavailable	字幕不可用
+First name must not be empty	名字不能为空
+Profile colors must use #RRGGBB	用户颜色必须使用 #RRGGBB 格式
+Avatar must be an initial, emoji or printable symbol	头像必须为首字母、表情符号或可显示的字符
+Profile not found	找不到用户
+Profile name must contain 1–80 printable characters	用户名字必须包含 1–80 个可显示的字符
+
+Remove from Continue Watching	从继续观看中移除
+Removed from Continue Watching	已从继续观看中移除
+Undo	撤销
+Choose a release, then add it.	请选择版本，然后添加。
+Couldn’t retrieve this torrent. Try again.	无法获取此种子，请重试。
+This release has no downloadable torrent.	此版本没有可下载的种子。

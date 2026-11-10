@@ -10,6 +10,6 @@ final class Bootstrap {
         : new Api(
             server,
             i.getStringExtra("test_token") == null ? "fixture" : i.getStringExtra("test_token"),
-            "android-emulator-test");
+            java.util.UUID.nameUUIDFromBytes("android-emulator-test".getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString());
   }
 }

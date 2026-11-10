@@ -89,6 +89,9 @@ pub async fn action(s: &Service, hash: &str, action: &str, body: &Value) -> Resu
     let _guard = s.mutation_lock.lock().await;
     let normalized = hash.to_ascii_lowercase();
     let hash = normalized.as_str();
+    if s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.hidden_package(hash)? {
+        bail!("This package has a library removal operation; its progress is shown in Seeding");
+    }
     let t = torrent(s, hash).await?;
     let method = match action {
         "start" => Some("torrent_start"),
@@ -211,6 +214,11 @@ pub async fn add(s: &Service, body: &Value) -> Result<Value> {
     }
     let _guard = s.mutation_lock.lock().await;
     let result = s.rpc.call("torrent_add", params).await?;
+    if let Some(hash) = result["torrent_added"]["hash_string"].as_str()
+        .or_else(||result["torrent_duplicate"]["hash_string"].as_str()) {
+        s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?
+            .restore_completed_package(&hash.to_ascii_lowercase())?;
+    }
     s.event("torrent_added", json!({"result":result}))?;
     s.invalidate_torrents();
     Ok(result)
@@ -358,6 +366,7 @@ pub async fn tick(s: &Service) -> Result<()> {
     })?;
     for t in &all {
         let hash = text(t, "hash_string")?;
+        if s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.hidden_package(hash)? { continue; }
         let previous = job(s, hash)?;
         if previous["phase"] == "ignored" {
             continue;
