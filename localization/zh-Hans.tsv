@@ -618,3 +618,5 @@ No trial made progress	所有试下载均无进展
 
 Couldn’t refresh file operations	无法刷新文件操作
 Up next	接下来播放
+%dh %dm left	剩余 %d 小时 %d 分钟
+%dm left	剩余 %d 分钟

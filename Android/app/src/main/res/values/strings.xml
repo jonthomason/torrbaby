@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="ui_b909e7d6e8c9" formatted="false">%d min remaining</string>
+    <string name="ui_660a76df86fd" formatted="false">%dh %dm left</string>
+    <string name="ui_659748ef61cf" formatted="false">%dm left</string>
     <string name="ui_e9c9f7bc39bb" formatted="false">1h</string>
     <string name="ui_027795961131" formatted="false">24h</string>
     <string name="ui_8d61fd6a4ee0" formatted="false">6h</string>

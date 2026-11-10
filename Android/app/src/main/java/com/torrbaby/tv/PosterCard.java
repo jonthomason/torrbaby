@@ -41,8 +41,8 @@ final class PosterCard extends LinearLayout {
     Ui.round(artwork,10);
     addView(artwork,new LinearLayout.LayoutParams(-1,Ui.dp(context,180)));
     Ui.gap(this,10);
-    title=Ui.title(context,"",14); title.setMaxLines(2); title.setEllipsize(TextUtils.TruncateAt.END);
-    Ui.add(this,title,-1,36);
+    title=Ui.title(context,"",14); title.setMaxLines(3); title.setEllipsize(TextUtils.TruncateAt.END);
+    Ui.add(this,title,-1,54);
     subtitle=Ui.text(context,"",11,Ui.MUTED); subtitle.setSingleLine(true); subtitle.setEllipsize(TextUtils.TruncateAt.END);
     Ui.add(this,subtitle,-1,17);
     remaining=Ui.text(context,"",11,Ui.MUTED);remaining.setSingleLine(true);Ui.add(this,remaining,-1,17);remaining.setVisibility(GONE);
@@ -78,11 +78,13 @@ final class PosterCard extends LinearLayout {
     if(!continuing || item==null)return;
     Library.Asset resume=item.resume();if(resume==null)return;
     if(item.kind.equals("tv") && resume.hasSeason) {
-      subtitle.setText((resume.position==0?L10n.t("Up next")+" · ":"")+String.format(java.util.Locale.ROOT,"S%dE%d",resume.season,resume.episode));
+      subtitle.setText((resume.position==0?L10n.t("Up next")+" · ":"")+String.format(java.util.Locale.ROOT,"S%d:E%d",resume.season,resume.episode));
       subtitle.setVisibility(VISIBLE);
     } else { subtitle.setVisibility(GONE); }
     if(resume.duration>0) {
-      remaining.setText(String.format(L10n.locale(),L10n.t("%d min remaining"),(int)Math.ceil(Math.max(0,resume.duration-resume.position)/60)));
+      int minutes=(int)Math.ceil(Math.max(0,resume.duration-resume.position)/60);
+      remaining.setText(minutes>=60 ? String.format(L10n.locale(),L10n.t("%dh %dm left"),minutes/60,minutes%60)
+          : String.format(L10n.locale(),L10n.t("%dm left"),minutes));
       remaining.setVisibility(VISIBLE);
     }
   }

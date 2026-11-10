@@ -179,7 +179,7 @@ public final class DiscoveryTestRunner extends Instrumentation {
     Bundle result = new Bundle();
     try {
       android.app.Activity activity = startActivitySync(new android.content.Intent(getTargetContext(), MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
-      org.json.JSONObject asset = new org.json.JSONObject().put("id","episode").put("name","Episode").put("complete",true).put("position",120).put("duration",3000).put("season",4).put("episode",1);
+      org.json.JSONObject asset = new org.json.JSONObject().put("id","episode").put("name","Episode").put("complete",true).put("position",120).put("duration",5160).put("season",4).put("episode",1);
       org.json.JSONObject title = new org.json.JSONObject().put("id","header-fixture").put("title","Send Help").put("kind","tv")
           .put("cast",new org.json.JSONArray().put(new org.json.JSONObject().put("name","Actor")))
           .put("assets",new org.json.JSONArray().put(asset));
@@ -230,9 +230,9 @@ public final class DiscoveryTestRunner extends Instrumentation {
           android.view.View first=activity.getWindow().getDecorView().findViewWithTag("title:header-fixture");
           if(first!=null)first.requestFocus();
         }catch(Exception e){failure[0]=e;}});
-        waitForIdleSync();SystemClock.sleep(200);if(failure[0]!=null)throw failure[0];
-        if(find(activity.getWindow().getDecorView(),"S4E1")==null)throw new Exception("Missing Continue Watching episode line");
-        if(find(activity.getWindow().getDecorView(),String.format(L10n.locale(),L10n.t("%d min remaining"),48))==null)throw new Exception("Missing separate minutes remaining line");
+        waitForIdleSync();SystemClock.sleep(800);if(failure[0]!=null)throw failure[0];
+        if(find(activity.getWindow().getDecorView(),"S4:E1")==null)throw new Exception("Missing Continue Watching episode line");
+        if(find(activity.getWindow().getDecorView(),String.format(L10n.locale(),L10n.t("%dh %dm left"),1,24))==null)throw new Exception("Missing separate minutes remaining line");
         android.graphics.Bitmap captionShot=getUiAutomation().takeScreenshot();
         try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getExternalFilesDir(null),"captions-"+language+".png"))){captionShot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
 

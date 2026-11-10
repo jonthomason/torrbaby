@@ -516,14 +516,15 @@ private struct TVPoster: View {
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                     .overlay(alignment: .topTrailing) { if title.watched { WatchedBadge() } }
             }.buttonStyle(TVPosterButtonStyle()).contextMenu { ContinueWatchingAction(title: title) }
-            Text(title.title).font(.system(size: 25, weight: .semibold)).lineLimit(2)
+            Text(title.title).font(.system(size: 25, weight: .semibold)).lineLimit(3, reservesSpace: true)
             if continuing, let asset = title.resume {
                 VStack(alignment: .leading, spacing: 5) {
                     if let season = asset.season, let episode = asset.episode {
-                        Text((asset.position == 0 ? L10n.text("Up next") + " · " : "") + EpisodeNumber(season: season, episode: episode).label)
+                        Text((asset.position == 0 ? L10n.text("Up next") + " · " : "") + "S\(season):E\(episode)")
                     }
                     if asset.duration > 0 {
-                        Text(L10n.format("%d min remaining", Int(ceil(max(0, asset.duration - asset.position) / 60))))
+                        let minutes = Int(ceil(max(0, asset.duration - asset.position) / 60))
+                        Text(minutes >= 60 ? L10n.format("%dh %dm left", minutes / 60, minutes % 60) : L10n.format("%dm left", minutes))
                     }
                 }.font(.system(size: 21)).foregroundStyle(Theme.muted)
             } else {

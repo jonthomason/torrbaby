@@ -589,7 +589,7 @@ public class MainActivity extends Activity {
       if(available<=0)return;
       int gap=Ui.dp(this,12),columns=Math.max(3,(available+gap)/Ui.dp(this,130));
       int width=(available-gap*(columns-1))/columns;
-      int height=width*3/2+Ui.dp(this,name.equals("Continue watching")?83:66);
+      int height=width*3/2+Ui.dp(this,name.equals("Continue watching")?101:84);
       for(int i=0;i<row.getChildCount();i+=2) {
         View child=row.getChildAt(i);
         if(child.getLayoutParams().width!=width || child.getLayoutParams().height!=height) {

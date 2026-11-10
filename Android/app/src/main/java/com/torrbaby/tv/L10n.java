@@ -12,6 +12,8 @@ final class L10n {
   private static final Map<String,Integer> IDS = new HashMap<>();
   static {
     IDS.put("%d min remaining", R.string.ui_b909e7d6e8c9);
+    IDS.put("%dh %dm left", R.string.ui_660a76df86fd);
+    IDS.put("%dm left", R.string.ui_659748ef61cf);
     IDS.put("1h", R.string.ui_e9c9f7bc39bb);
     IDS.put("24h", R.string.ui_027795961131);
     IDS.put("6h", R.string.ui_8d61fd6a4ee0);

@@ -10512,6 +10512,40 @@
           }
         }
       }
+    },
+    "%dh %dm left": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%dh %dm left"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "剩余 %d 小时 %d 分钟"
+          }
+        }
+      }
+    },
+    "%dm left": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%dm left"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "剩余 %d 分钟"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
