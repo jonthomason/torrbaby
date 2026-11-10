@@ -245,28 +245,12 @@ struct RootView: View {
                 .listSectionSpacing(8)
                 .contentMargins(.top, 0, for: .scrollContent)
                 #endif
-                #if os(iOS)
                 HStack(spacing: 7) {
                     Circle().fill(store.connected ? Theme.mint : .orange).frame(width: 6, height: 6)
                     Text(LocalizedStringKey(store.connected ? "Connected" : (store.offline ? "Offline mode" : "Connecting…")))
                         .font(.caption.weight(.semibold))
                     Spacer(minLength: 0)
                 }.padding(.horizontal, 18).padding(.vertical, 6)
-                #endif
-                #if !os(iOS)
-                VStack(alignment: .leading, spacing: 9) {
-                    HStack(spacing: 7) {
-                        Circle().fill(store.connected ? Theme.mint : .orange).frame(width: 6, height: 6)
-                        Text(LocalizedStringKey(store.connected ? "Connected" : (store.offline ? "Offline mode" : "Connecting…"))).font(.caption.weight(.semibold))
-                    }
-                    if store.status?.settings.paused == true {
-                        Label("Automation paused", systemImage: "pause.circle").font(.caption2).foregroundStyle(.orange)
-                    }
-                    #if !os(iOS)
-                    Button("Connection settings") { showConnect = true }.font(.caption)
-                    #endif
-                }.padding(20)
-                #endif
             }.navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
