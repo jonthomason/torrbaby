@@ -77,10 +77,10 @@ fn profile_name(name: &str) -> Result<&str> {
     Ok(name)
 }
 
-/// Shared online/offline completion rule; callers must provide valid playback times.
+/// Shared online/offline completion rule. Never infer credits from a percentage.
 pub fn completed(position: f64, duration: f64) -> bool {
     duration.is_finite() && position.is_finite() && duration > 0.0
-        && position >= duration * 0.9 && duration - position <= 600.0
+        && position >= duration
 }
 
 #[cfg(test)]
@@ -244,11 +244,13 @@ mod tests {
     }
 
     #[test]
-    fn credits_threshold_requires_both_conditions() {
+    fn completion_requires_the_actual_end() {
         assert!(!completed(7200.0, 8100.0));
-        assert!(completed(7500.0, 8100.0));
+        assert!(!completed(7500.0, 8100.0));
         assert!(!completed(2300.0, 2700.0));
-        assert!(completed(2430.0, 2700.0));
+        assert!(!completed(2430.0, 2700.0));
+        assert!(!completed(2699.0, 2700.0));
+        assert!(completed(2700.0, 2700.0));
         assert!(!completed(f64::NAN,2700.0));
     }
 }

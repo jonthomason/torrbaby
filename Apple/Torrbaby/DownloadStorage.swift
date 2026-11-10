@@ -336,7 +336,7 @@ final class DownloadStorage {
         try update(id) { item in
             var value = item.viewing(profile)
             value.position = min(position, duration); value.duration = duration
-            value.watched = value.watched || reachedEnd || (watchedEligible && position >= duration * 0.9 && duration - position <= 600)
+            value.watched = value.watched || reachedEnd || (watchedEligible && position >= duration)
             value.playbackFinished = reachedEnd
             value.progressNeedsSync = true
             value.progressEventID = UUID()
