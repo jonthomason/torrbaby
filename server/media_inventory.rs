@@ -144,6 +144,7 @@ pub(crate) fn order_assets(assets: &mut [Value], priorities: &std::collections::
         .then_with(||a["id"].as_str().cmp(&b["id"].as_str())));
 }
 
+const INVENTORY_VERSION:u64=4;
 /// Advance the subtitle stages of one file. The SQLite processing coordinator owns
 /// scheduling; artifact jobs are implementation details, never queue membership.
 pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
@@ -151,13 +152,14 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
     let input=crate::api::media_file(s,id,0).await?;
     let revision=crate::subtitle_jobs::revision(&input)?;
     let mut info={let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;cached(&db,id)?};
-    if info["state"]!="ready" {
+    // Version 4: sidecars in legacy encodings are labelled and advert-only files dropped.
+    if info["state"]!="ready" || info["language_inventory_version"].as_u64().is_none_or(|v|v<INVENTORY_VERSION) {
         let inventory=crate::native_subtitles::tracks(&input).await?;
         let sidecar_input=input.clone();
         let sidecars=tokio::task::spawn_blocking(move ||crate::subtitles::discover(&sidecar_input)).await??;
         let mut tracks=inventory["tracks"].as_array().cloned().unwrap_or_default();
         tracks.extend(sidecars.into_iter().map(|t|json!({"id":t.id,"track":1,"language":t.language,"name":t.name,"sidecar":true,"text_extractable":true,"extraction_supported":true,"forced":t.forced})));
-        info=json!({"state":"ready","language_inventory_version":3,"audio_tracks":inventory["audio_tracks"],"subtitle_tracks":tracks,"scanned_at":now()});
+        info=json!({"state":"ready","language_inventory_version":INVENTORY_VERSION,"audio_tracks":inventory["audio_tracks"],"subtitle_tracks":tracks,"scanned_at":now()});
     }
     let tracks=info["subtitle_tracks"].as_array().context("Invalid track inventory")?;
     let plan=subtitle_plan(tracks);

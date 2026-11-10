@@ -29,6 +29,7 @@ mod storage;
 mod subtitle_jobs;
 mod subtitle_preferences;
 mod subtitles;
+mod text_encoding;
 mod telemetry;
 mod torrent_search;
 mod transmission;
@@ -292,12 +293,7 @@ async fn main() -> Result<()> {
             let mut cues = if let Some(track) = track {
                 native_subtitles::extract(&input, track).await?
             } else {
-                let mut bytes = Vec::new();
-                fs::File::open(input)?
-                    .take(8_388_609)
-                    .read_to_end(&mut bytes)?;
-                anyhow::ensure!(bytes.len() <= 8_388_608, "Subtitle file too large");
-                subtitles::parse_srt(std::str::from_utf8(&bytes)?)?
+                subtitles::read_srt_file(&input, None)?
             };
             if let (Some(source), Some(target)) = (source, target) {
                 let helper = helper.unwrap_or(

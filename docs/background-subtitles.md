@@ -61,6 +61,16 @@ Matroska UTF-8/ASS extraction tolerates trailing NUL padding from muxers. Interi
 NUL characters remain invalid, and empty padding-only cues are skipped. A real
 previously failing title extracted all 1,515 cues after this correction.
 
+SRT sidecars are decoded by `server/text_encoding.rs`, not assumed to be UTF-8:
+BOMs (UTF-8/UTF-16), BOM-less UTF-16, mostly-UTF-8 files with stray bytes, and
+legacy code pages chosen from the filename language label (Windows-1252 for
+untagged Western text). Text that looks double-byte is decoded only as GB18030 or
+Big5 when common-character scoring is convincing, otherwise extraction fails
+rather than producing mojibake. Release adverts (YTS/YIFY, "synced by", …) are
+dropped as cues; an unlabelled sidecar containing only adverts is not inventoried.
+Inventory version 4 rescans unfinished assets so earlier undecodable sidecars are
+relabelled.
+
 ## Queue and validation (build 74)
 
 Mac and mobile have a Subtitles page below Complete: Working, Waiting, Finished,

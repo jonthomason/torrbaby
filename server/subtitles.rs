@@ -336,13 +336,72 @@ pub struct Sidecar {
     pub hearing_impaired: bool,
 }
 
+/// Release-group and download-site advertising inserted into otherwise normal
+/// SRT files (for example YTS/YIFY "Downloaded from ..." cues). These are not
+/// dialogue: they are dropped from extraction, playback and language detection.
+pub fn is_release_promo(text: &str) -> bool {
+    static PROMO: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\b(?:yts|yify|yify-torrents|opensubtitles|subscene|addic7ed|podnapisi|rarbg|eztv|ettv|torrentgalaxy|1337x)\b|^\W*(?:re-?)?sync(?:ed|hronized)?(?: (?:and|&) correct(?:ed|ions))? by\b|^\W*(?:subtitles?|subs|captions?|encoded|ripped|resync) by\b").expect("valid regex")
+    });
+    text.len() <= 400 && PROMO.is_match(text.trim())
+}
+
+/// Language label from a sidecar filename such as `Movie (2020).zh-Hant.forced.srt`.
+/// Used only as an encoding hint; discovery owns the authoritative labels.
+fn filename_language(path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_str()?;
+    for label in stem.rsplit('.').take(4) {
+        match label.to_ascii_lowercase().as_str() {
+            "forced" | "sdh" | "cc" | "hi" => continue,
+            "english" => return Some("en".into()),
+            "chinese" => return Some("zh".into()),
+            code if (2..=7).contains(&code.len())
+                && code.split('-').next().is_some_and(|p| (2..=3).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_alphabetic()))
+                && code.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') => return Some(code.into()),
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// Bounded read of a sidecar SRT in any common encoding, without release adverts.
+pub fn read_srt_file(path: &Path, language: Option<&str>) -> Result<Vec<TimedCue>> {
+    let cues = load_srt(path, language)?;
+    ensure!(!cues.is_empty(), "Subtitle file contains only release advertising");
+    Ok(cues)
+}
+
+fn load_srt(path: &Path, language: Option<&str>) -> Result<Vec<TimedCue>> {
+    use std::io::Read;
+    let file = std::fs::File::open(path)?;
+    ensure!(file.metadata()?.is_file(), "Subtitle is not a regular file");
+    let mut bytes = Vec::new();
+    file.take(8_388_609).read_to_end(&mut bytes)?;
+    ensure!(bytes.len() <= 8_388_608, "Subtitle file too large");
+    let hint = language.map(str::to_owned).or_else(|| filename_language(path));
+    let text = crate::text_encoding::decode(&bytes, hint.as_deref())?;
+    let mut cues = parse_srt(&text)?;
+    cues.retain(|cue| !is_release_promo(&cue.text));
+    Ok(cues)
+}
+
+enum SidecarContent { Language(Option<String>), Advertising }
+
 // Detect unlabelled text only; never infer audio language from subtitle content.
-fn detected_sidecar_language(path: &Path) -> Option<String> {
+fn detected_sidecar_language(path: &Path) -> SidecarContent {
+    // Advert-only files are not subtitles; unreadable files stay visible so
+    // their failure is reported rather than silently hidden.
+    match load_srt(path, None) {
+        Ok(cues) if cues.is_empty() => SidecarContent::Advertising,
+        Ok(cues) => SidecarContent::Language(detect_text_language(&cues)),
+        Err(_) => SidecarContent::Language(None),
+    }
+}
+
+fn detect_text_language(cues: &[TimedCue]) -> Option<String> {
     use std::{collections::HashMap, io::Write, process::{Command, Stdio}, sync::{LazyLock, Mutex}, time::{Duration, Instant}};
     use sha2::Digest;
     static CACHE: LazyLock<Mutex<HashMap<Vec<u8>, Option<String>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-    let raw = std::fs::read_to_string(path).ok()?;
-    let cues = parse_srt(&raw).ok()?;
     let sample: String = cues.iter().take(400).map(|c| c.text.as_str()).collect::<Vec<_>>().join(" ").chars().take(6000).collect();
     let key = sha2::Sha256::digest(sample.as_bytes()).to_vec();
     if let Some(result) = CACHE.lock().ok()?.get(&key) { return result.clone(); }
@@ -433,7 +492,12 @@ pub fn discover(media: &Path) -> Result<Vec<Sidecar>> {
         if !recognized || entry.metadata()?.len() > 8_388_608 {
             continue;
         }
-        if language.is_none() { language = detected_sidecar_language(&path); }
+        if language.is_none() {
+            match detected_sidecar_language(&path) {
+                SidecarContent::Language(detected) => language = detected,
+                SidecarContent::Advertising => continue,
+            }
+        }
         let id: String = sha2::Sha256::digest(name.as_bytes())
             .iter()
             .map(|b| format!("{b:02x}"))
@@ -457,7 +521,6 @@ pub fn sidecar_path(media: &Path, id: &str) -> Result<std::path::PathBuf> {
 }
 
 pub fn read_sidecar(media: &Path, id: &str) -> Result<String> {
-    use std::io::Read;
     ensure!(
         id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit()),
         "Invalid subtitle ID"
@@ -467,19 +530,64 @@ pub fn read_sidecar(media: &Path, id: &str) -> Result<String> {
         .find(|track| track.id == id)
         .context("Subtitle track not found")?;
     let path = crate::api::checked_path(media.parent().context("Missing directory")?, &track.name)?;
-    let file = std::fs::File::open(path)?;
-    ensure!(file.metadata()?.is_file(), "Subtitle is not a regular file");
-    let mut bytes = Vec::new();
-    file.take(8_388_609).read_to_end(&mut bytes)?;
-    ensure!(bytes.len() <= 8_388_608, "Subtitle file too large");
-    Ok(webvtt(&parse_srt(
-        std::str::from_utf8(&bytes).context("Subtitles must be UTF-8")?,
-    )?))
+    Ok(webvtt(&read_srt_file(&path, track.language.as_deref())?))
 }
 
 #[cfg(test)]
 mod sidecar_tests {
     use super::*;
+    fn scratch() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("torrbaby-sidecar-encoding-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn legacy_encoded_sidecars_are_read_and_release_adverts_dropped() {
+        // Shape of the Pulp Fiction (1994) YIFY sidecar: CRLF, Windows-1252, adverts.
+        let dir = scratch();
+        let media = dir.join("Pulp Fiction (1994).mp4");
+        std::fs::write(&media, b"").unwrap();
+        let srt = dir.join("Pulp Fiction (1994).srt");
+        std::fs::write(&srt, b"1\r\n00:00:01,000 --> 00:00:03,000\r\nDownloaded from yify-torrents.com\r\n\r\n2\r\n00:01:00,000 --> 00:01:02,000\r\nGar\xe7on, coffee!\r\n\r\n3\r\n00:01:03,000 --> 00:01:05,000\r\n- \xbfDonde esta el zapato?\r\n\r\n4\r\n00:01:06,000 --> 00:01:07,000\r\nsynced by sundox\r\n").unwrap();
+        let cues = read_srt_file(&srt, None).unwrap();
+        assert_eq!(cues.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["Garçon, coffee!", "- ¿Donde esta el zapato?"]);
+        assert_eq!((cues[0].start_ms, cues[0].end_ms), (60_000, 62_000));
+        // Playback serving uses the same decoder; previously "Subtitles must be UTF-8".
+        let english = dir.join("Pulp Fiction (1994).en.srt");
+        std::fs::rename(&srt, &english).unwrap();
+        let id = discover(&media).unwrap()[0].id.clone();
+        assert!(read_sidecar(&media, &id).unwrap().contains("Garçon, coffee!"));
+        // A Chinese label steers GBK decoding.
+        let chinese = dir.join("Pulp Fiction (1994).chs.srt");
+        let gbk = encoding_rs::GB18030.encode("1\n00:00:01,000 --> 00:00:02,000\n我们现在就去吧，这个问题很重要。\n").0.into_owned();
+        std::fs::write(&chinese, gbk).unwrap();
+        assert_eq!(read_srt_file(&chinese, None).unwrap()[0].text, "我们现在就去吧，这个问题很重要。");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn advert_only_sidecar_is_not_a_subtitle_track() {
+        // Exact content of the Parasite (2019) YTS sidecar: no dialogue at all.
+        let dir = scratch();
+        let media = dir.join("Parasite (2019).mp4");
+        std::fs::write(&media, b"").unwrap();
+        std::fs::write(dir.join("Parasite (2019).srt"), "1\n00:00:30,000 --> 00:00:36,000\nProvided by YTS.LT\n\n2\n00:00:36,500 --> 00:00:42,000\nFind the official YIFY movies site at\nhttps://YTS.LT\n\n3\n00:30:30,000 --> 00:30:36,000\nDownloaded from YTS.LT\n\n4\n01:00:30,000 --> 01:00:36,000\nDownload more movies for free\nfrom YTS.LT\n").unwrap();
+        assert!(discover(&media).unwrap().is_empty());
+        assert!(read_srt_file(&dir.join("Parasite (2019).srt"), None).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn dialogue_is_not_mistaken_for_release_adverts() {
+        for line in ["Created and Encoded by --  Bokutox -- of  www.YIFY-TORRENTS.com.", "Provided by YTS.LT", "Subtitles by explosiveskull", "Sync & corrections by Rafael UPD"] {
+            assert!(is_release_promo(line), "{line}");
+        }
+        for line in ["I synced the files by noon.", "Are you subscribed?", "The yeti is out there.", "Encoded? By whom?", "Visit www.thefacebook.com"] {
+            assert!(!is_release_promo(line), "{line}");
+        }
+    }
+
     #[test]
     fn duplicated_damaged_tail_does_not_discard_valid_subtitles() {
         let cues = parse_srt("1\n02:09:07,965 --> 02:09:11,423\nGrowls\n\n2\n02:09:47,442 --> 02:09:48,932\nBeeping\n\n9:07,965 --> 02:09:11,423\nGrowls\n\n3\n02:09:47,442 --> 02:09:48,932\nBeeping\n").unwrap();

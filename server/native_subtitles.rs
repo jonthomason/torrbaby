@@ -29,13 +29,8 @@ pub async fn extract(path: &Path, track: u64) -> Result<Vec<TimedCue>> {
     if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("srt")) {
         ensure!(track == 1, "Invalid sidecar track");
         let input = path.to_owned();
-        return tokio::task::spawn_blocking(move || {
-            use std::io::Read;
-            let file = std::fs::File::open(input)?;
-            let mut raw = String::new();
-            file.take(8_388_609).read_to_string(&mut raw)?;
-            crate::subtitles::parse_srt(&raw)
-        }).await?;
+        // Sidecars are often Windows-1252, UTF-16 or GBK/Big5 rather than UTF-8.
+        return tokio::task::spawn_blocking(move || crate::subtitles::read_srt_file(&input, None)).await?;
     }
     if matroska(path) {
         return crate::matroska::extract_worker(path, track).await;
