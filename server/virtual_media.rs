@@ -72,6 +72,9 @@ impl Manager {
         .collect();
         Ok(self.root.join(format!("base-{key}")))
     }
+    pub fn preparing(&self) -> bool {
+        self.pending.lock().map_or(true, |pending| !pending.is_empty())
+    }
     pub fn idle(&self) -> bool {
         self.pending.lock().is_ok_and(|p| p.is_empty())
             && self

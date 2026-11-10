@@ -30,6 +30,9 @@ struct TorrbabyApp: App {
         #else
         LocalizedInterface { ProfileGate { RootView() } }
             .environmentObject(store).tint(Theme.mint).preferredColorScheme(.dark)
+            #if os(iOS)
+            .buttonBorderShape(.roundedRectangle(radius: 8))
+            #endif
             #if os(macOS)
             .frame(minWidth: 900, minHeight: 640).background(MacLibraryWindow())
             #endif
@@ -73,7 +76,13 @@ struct TorrbabyApp: App {
 }
 
 enum Theme {
+    #if os(iOS)
+    static let mint = Color.blue
+    static let onAccent = Color.white
+    #else
     static let mint = Color(red: 0.44, green: 0.91, blue: 0.76)
+    static let onAccent = canvas
+    #endif
     static let canvas = Color(red: 0.055, green: 0.075, blue: 0.10)
     static let panel = Color(red: 0.09, green: 0.115, blue: 0.15)
     static let muted = Color(red: 0.56, green: 0.63, blue: 0.69)

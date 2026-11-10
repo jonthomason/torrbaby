@@ -668,7 +668,7 @@ struct ProfilePicker: View {
                                 Text(verbatim: person.name).font(.title2.weight(.semibold))
                                 Spacer()
                                 if person.id == store.activeProfile?.id { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.mint) }
-                            }.padding(16).contentShape(RoundedRectangle(cornerRadius: 18))
+                            }.padding(16).contentShape(RoundedRectangle(cornerRadius: 8))
                         }.buttonStyle(.bordered)
                         Button { editing = person } label: { Image(systemName: "pencil").frame(width: 44, height: 44) }
                             .accessibilityLabel("Edit profile")

@@ -290,7 +290,7 @@ struct ConnectionView: View {
                     Label("Scan connection code", systemImage: "qrcode.viewfinder")
                         .font(.headline).padding(.horizontal, 12).padding(.vertical, 10)
                 }
-                .buttonStyle(.borderedProminent).foregroundStyle(Theme.canvas)
+                .buttonStyle(.borderedProminent).foregroundStyle(Theme.onAccent)
                 .sheet(isPresented: $showScanner) { LocalizedInterface { PairingScannerView { dismiss() } } }
                 Spacer()
                 Spacer().frame(height: 40)
@@ -322,7 +322,7 @@ struct ConnectionView: View {
                     Task { await store.connect(); if store.connected { dismiss() } }
                 } label: {
                     HStack { Spacer(); if store.isConnecting { ProgressView().controlSize(.small) }; Text(LocalizedStringKey(store.isConnecting ? "Connecting…" : "Connect to server")).fontWeight(.semibold); Spacer() }.padding(.vertical, 7)
-                }.buttonStyle(.borderedProminent).foregroundStyle(Theme.canvas).disabled(address.isEmpty || token.isEmpty || store.isConnecting)
+                }.buttonStyle(.borderedProminent).foregroundStyle(Theme.onAccent).disabled(address.isEmpty || token.isEmpty || store.isConnecting)
                 Spacer(minLength: 0)
             }.padding(30).background(Theme.canvas)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }

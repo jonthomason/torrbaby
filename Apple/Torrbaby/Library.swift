@@ -655,7 +655,7 @@ private struct LibraryActionButtonStyle: ButtonStyle {
             .font(.headline)
             .padding(.horizontal, 20)
             .frame(minHeight: 48)
-            .foregroundStyle(prominent ? Theme.canvas : Color.primary)
+            .foregroundStyle(prominent ? Theme.onAccent : Color.primary)
             .background(prominent ? Theme.mint : Theme.panel, in: RoundedRectangle(cornerRadius: 10))
             .brightness(configuration.isPressed ? 0.08 : 0)
             .opacity(enabled ? 1 : 0.45)

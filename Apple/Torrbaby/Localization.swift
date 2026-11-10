@@ -39,7 +39,7 @@ struct InterfaceLanguagePicker: View {
             option("中文", code: "zh-Hans")
         }.font(.system(size: selectorFontSize, weight: .semibold))
             .padding(4)
-            .background(.quaternary, in: Capsule())
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: interfaceCornerRadius))
             .fixedSize()
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Interface language")
@@ -54,8 +54,8 @@ struct InterfaceLanguagePicker: View {
     private func option(_ label: String, code: String) -> some View {
         Button { language.choose(code) } label: {
             Text(verbatim: label).frame(minWidth: 30).padding(.horizontal, 9).padding(.vertical, 5)
-                .foregroundStyle(language.code == code ? Theme.canvas : Theme.mint)
-                .background(language.code == code ? Theme.mint : .clear, in: Capsule())
+                .foregroundStyle(language.code == code ? Theme.onAccent : Theme.mint)
+                .background(language.code == code ? Theme.mint : .clear, in: RoundedRectangle(cornerRadius: interfaceCornerRadius))
         }.buttonStyle(.plain)
             .accessibilityLabel(code == "en" ? "English" : "中文")
             .accessibilityAddTraits(language.code == code ? .isSelected : [])
@@ -101,7 +101,7 @@ struct MacToolbarSearch: View {
                     .onExitCommand { text = ""; focus.wrappedValue = false }
             }.padding(.horizontal, 10).padding(.vertical, 7)
                 .frame(minWidth: 180, idealWidth: 280, maxWidth: 360)
-                .background(.quaternary, in: Capsule())
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: interfaceCornerRadius))
                 .accessibilityLabel(LocalizedStringKey(prompt))
             InterfaceLanguagePicker()
         }
@@ -147,7 +147,7 @@ struct TabletSearchToolbar: ToolbarContent {
                 TextField(LocalizedStringKey(prompt), text: $text).textFieldStyle(.plain)
                     .autocorrectionDisabled()
             }.padding(.horizontal, 10).padding(.vertical, 7)
-                .frame(width: 220).background(.quaternary, in: Capsule())
+                .frame(width: 220).background(.quaternary, in: RoundedRectangle(cornerRadius: interfaceCornerRadius))
             InterfaceLanguagePicker()
         }
     }
@@ -165,3 +165,11 @@ struct MobileLibrarySearch: ViewModifier {
     }
 }
 #endif
+
+private var interfaceCornerRadius: CGFloat {
+    #if os(iOS)
+    8
+    #else
+    100
+    #endif
+}

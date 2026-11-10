@@ -104,7 +104,7 @@ struct TorrentDetail: View {
         } else {
         Button { store.action(t, t.status == 0 ? "start" : "stop") } label: {
             Label(LocalizedStringKey(t.status == 0 ? "Resume" : "Pause"), systemImage: t.status == 0 ? "play.fill" : "pause.fill")
-        }.buttonStyle(.borderedProminent).foregroundStyle(Theme.canvas)
+        }.buttonStyle(.borderedProminent).foregroundStyle(Theme.onAccent)
         Menu {
             Button("Verify downloaded data") { store.action(t, "verify") }
             Button("Reannounce to trackers") { store.action(t, "reannounce") }

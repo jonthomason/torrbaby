@@ -36,6 +36,9 @@ codesign --force --options runtime --sign "$MAC_SIGNING_IDENTITY" \
 swiftc -parse-as-library -O -target "$(uname -m)-apple-macos26.0" \
     "$ROOT/helpers/SubtitleOCR.swift" -o "$APP/Contents/MacOS/torrbaby-subtitle-ocr"
 codesign --force --options runtime --sign "$MAC_SIGNING_IDENTITY" "$APP/Contents/MacOS/torrbaby-subtitle-ocr"
+swiftc -parse-as-library -O -target "$(uname -m)-apple-macos26.0" \
+    "$ROOT/helpers/CreditsScanner.swift" -o "$APP/Contents/MacOS/torrbaby-credits-scanner"
+codesign --force --options runtime --sign "$MAC_SIGNING_IDENTITY" "$APP/Contents/MacOS/torrbaby-credits-scanner"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
