@@ -79,7 +79,7 @@ fn subtitle_plan(tracks: &[Value]) -> Vec<(&Value, &'static str, &'static str)> 
     let has = |lang| text(lang).is_some() || image(lang).is_some();
     if has("en") && has("zh-Hans") {
         return ["en", "zh-Hans"].into_iter().filter_map(|lang|
-            if text(lang).is_none() { image(lang).map(|t| (t, lang, lang)) } else { None }).collect();
+            text(lang).or_else(||image(lang)).map(|t| (t, lang, lang))).collect();
     }
     let (source, target) = if has("zh-Hans") { ("zh-Hans", "en") } else { ("en", "zh-Hans") };
     if let Some(t) = text(source) {
@@ -94,11 +94,12 @@ fn subtitle_plan(tracks: &[Value]) -> Vec<(&Value, &'static str, &'static str)> 
     tracks.iter().filter(full).filter(unknown).find(bitmap)
         .map(|t| vec![(t, "auto", "auto")]).unwrap_or_default()
 }
+#[cfg(test)]
 fn subtitle_source(tracks: &[Value]) -> Option<(&Value, &'static str, &'static str)> {
     subtitle_plan(tracks).into_iter().next()
 }
 
-fn priorities(db: &Database) -> Result<std::collections::HashMap<String, i64>> {
+pub(crate) fn priorities(db: &Database) -> Result<std::collections::HashMap<String, i64>> {
     let mut statement = db.connection.prepare("SELECT asset_id,priority FROM subtitle_priorities")?;
     Ok(statement.query_map([], |row| Ok((row.get(0)?,row.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?)
@@ -109,13 +110,14 @@ pub fn prioritize(db: &Database, id: &str) -> Result<Value> {
     anyhow::ensure!(asset["available"] == true && asset["complete"] == true,
         "Wait for this download to finish before preparing subtitles");
     db.connection.execute("INSERT INTO subtitle_priorities(asset_id,priority) VALUES(?,(SELECT COALESCE(MAX(priority),0)+1 FROM subtitle_priorities)) ON CONFLICT(asset_id) DO UPDATE SET priority=excluded.priority", [id])?;
+    db.connection.execute("UPDATE media_processing SET state='queued',retry_after=0,error=NULL WHERE asset_id=? AND state='failed'",[id])?;
     Ok(json!({"accepted":true}))
 }
 
 fn group_key(asset: &Value) -> String {
     asset["entity_id"].as_str().or(asset["series_name"].as_str()).or(asset["id"].as_str()).unwrap_or("").to_owned()
 }
-fn queue_assets(db: &Database) -> Result<Vec<Value>> {
+pub(crate) fn queue_assets(db: &Database) -> Result<Vec<Value>> {
     let entities: std::collections::HashMap<String,Value> = db.documents("entities")?.into_iter()
         .filter_map(|e| e["id"].as_str().map(str::to_owned).map(|id|(id,e))).collect();
     let mut assets=db.visible_assets()?;
@@ -125,7 +127,7 @@ fn queue_assets(db: &Database) -> Result<Vec<Value>> {
     }
     Ok(assets)
 }
-fn order_assets(assets: &mut [Value], priorities: &std::collections::HashMap<String,i64>) {
+pub(crate) fn order_assets(assets: &mut [Value], priorities: &std::collections::HashMap<String,i64>) {
     let mut groups=std::collections::HashMap::<String,i64>::new();
     for a in assets.iter() {
         let priority=*priorities.get(a["id"].as_str().unwrap_or("")).unwrap_or(&0);
@@ -142,144 +144,73 @@ fn order_assets(assets: &mut [Value], priorities: &std::collections::HashMap<Str
         .then_with(||a["id"].as_str().cmp(&b["id"].as_str())));
 }
 
-pub async fn tick(s: &Service) -> Result<()> {
-    if !s.effective_config()?.background_subtitles { return Ok(()); }
-    let (mut assets, priorities) = {
-        let db = s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
-        (queue_assets(&db)?, priorities(&db)?)
-    };
-    assets.retain(|a| a["available"]==true && a["complete"]==true);
-    order_assets(&mut assets, &priorities);
-    let mut inspected = false;
-    for asset in assets {
-        let Some(id) = asset["id"].as_str() else { continue; };
-        let Some(path) = asset["path"].as_str() else { continue; };
-        if !Path::new(path).extension().and_then(|s|s.to_str()).is_some_and(|e|["mkv","webm","mp4","m4v","mov"].contains(&e.to_ascii_lowercase().as_str())) { continue; }
-        let Ok(revision) = crate::subtitle_jobs::revision(Path::new(path)) else { continue; };
-        let mut info = {
-            let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
-            cached(&db,id)?
-        };
-        if info["retry_after"].as_f64().is_some_and(|t| t>now()) { continue; }
-        if info["state"] == "pending" || info["state"] == "failed" || (info["language_inventory_version"] != 3 && info["subtitle_tracks"].as_array().is_some_and(|tracks| tracks.iter().any(|t|t["sidecar"]==true))) {
-            if inspected { continue; }
-            inspected=true;
-            let input = match crate::api::media_file(s,id,0).await { Ok(p)=>p, Err(_)=>continue };
-            match crate::native_subtitles::tracks(&input).await {
-                Ok(inventory)=> {
-                    let sidecar_input=input.clone();
-                    let sidecars=tokio::task::spawn_blocking(move || crate::subtitles::discover(&sidecar_input)).await??;
-                    let mut subtitle_tracks=inventory["tracks"].as_array().cloned().unwrap_or_default();
-                    subtitle_tracks.extend(sidecars.into_iter().map(|t|json!({"id":t.id,"track":1,"language":t.language,"name":t.name,"sidecar":true,"text_extractable":true,"extraction_supported":true,"forced":t.forced})));
-                    info=json!({"state":"ready","language_inventory_version":3,"audio_tracks":inventory["audio_tracks"].as_array().cloned().unwrap_or_default(),
-                        "subtitle_tracks":subtitle_tracks,"prepared":info["prepared"],"jobs":info["jobs"],"scanned_at":now()});
-                }
-                Err(error)=> { info=json!({"state":"failed","error":error.to_string(),"retry_after":now()+3600.0,"audio_tracks":[],"subtitle_tracks":[],"prepared":[]}); }
-            }
-            let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
-            save(&db,id,&revision,&info)?;
-        }
-        if info["state"] != "ready" { continue; }
-        let jobs=info["jobs"].as_array().cloned().unwrap_or_default();
-        let mut prepared=Vec::new();
-        let mut active=false;
-        let mut failed=false;
-        let mut interrupted=false;
-        for job_id in &jobs {
-            let status=s.subtitle_jobs.status(job_id.as_str().unwrap_or(""));
-            if let Ok(mut job)=status {
-                if job["state"]=="ready" {
-                    job["language"]=job["target"].as_str().or(job["source"].as_str()).map(|s|json!(s)).unwrap_or(json!("und"));
-                    job["generated"]=json!(!job["target"].is_null() || job["extraction_method"]=="ocr");
-                    prepared.push(job);
-                } else if job["state"]=="queued" || job["state"]=="running" { active=true; }
-                else if ["interrupted","expired","stale"].iter().any(|state|job["state"]==*state) { interrupted=true; }
-                else { failed=true; }
-            } else { failed=true; }
-        }
-        let old=info.clone();
-        info["prepared"]=json!(prepared);
-        info["preparation_state"]=json!(if active {"preparing"} else if failed {"failed"} else if !jobs.is_empty() {"ready"} else {"pending"});
-        if interrupted { info["jobs"]=json!([]); }
-        if failed { info["retry_after"]=json!(now()+3600.0); info["jobs"]=json!([]); }
-        if info!=old {
-            let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
-            save(&db,id,&revision,&info)?;
-        }
-        if !jobs.is_empty() || s.subtitle_jobs.busy() { continue; }
-        let tracks=info["subtitle_tracks"].as_array().context("Invalid track inventory")?;
-        let plan=subtitle_plan(tracks);
-        if plan.is_empty() { continue; }
-        let mut job_ids=Vec::new();
-        for (source,source_language,target_language) in plan {
-            let Some(track)=source["track"].as_u64() else { continue; };
-            let input=crate::api::media_file(s,id,0).await?;
-            let input=if source["sidecar"]==true {
-                let sidecar=source["id"].as_str().context("Missing sidecar ID")?.to_owned();
-                tokio::task::spawn_blocking(move || crate::subtitles::sidecar_path(&input,&sidecar)).await??
-            } else {input};
-            let original=s.subtitle_jobs.prepare(id,input.clone(),track,Some(source_language.into()),None)?;
-            job_ids.push(original["id"].clone());
-            if source_language != target_language || target_language == "auto" {
-                let translated=s.subtitle_jobs.prepare(id,input,track,Some(source_language.into()),Some(target_language.into()))?;
-                job_ids.push(translated["id"].clone());
-            }
-        }
-        if job_ids.is_empty() { continue; }
-        info["jobs"]=json!(job_ids);
-        info["preparation_state"]=json!("preparing");
-        let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
-        save(&db,id,&revision,&info)?;
-        if s.subtitle_jobs.busy() { break; }
+/// Advance the subtitle stages of one file. The SQLite processing coordinator owns
+/// scheduling; artifact jobs are implementation details, never queue membership.
+pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
+    let id=asset["id"].as_str().context("Missing asset ID")?;
+    let input=crate::api::media_file(s,id,0).await?;
+    let revision=crate::subtitle_jobs::revision(&input)?;
+    let mut info={let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;cached(&db,id)?};
+    if info["state"]!="ready" {
+        let inventory=crate::native_subtitles::tracks(&input).await?;
+        let sidecar_input=input.clone();
+        let sidecars=tokio::task::spawn_blocking(move ||crate::subtitles::discover(&sidecar_input)).await??;
+        let mut tracks=inventory["tracks"].as_array().cloned().unwrap_or_default();
+        tracks.extend(sidecars.into_iter().map(|t|json!({"id":t.id,"track":1,"language":t.language,"name":t.name,"sidecar":true,"text_extractable":true,"extraction_supported":true,"forced":t.forced})));
+        info=json!({"state":"ready","language_inventory_version":3,"audio_tracks":inventory["audio_tracks"],"subtitle_tracks":tracks,"scanned_at":now()});
     }
-    Ok(())
+    let tracks=info["subtitle_tracks"].as_array().context("Invalid track inventory")?;
+    let plan=subtitle_plan(tracks);
+    let mut planned=Vec::new();
+    for (source,language,target) in plan {
+        let track=source["track"].as_u64().context("Missing subtitle track")?;
+        let source_input=if source["sidecar"]==true {
+            let input=input.clone();let id=source["id"].as_str().context("Missing sidecar ID")?.to_owned();
+            tokio::task::spawn_blocking(move ||crate::subtitles::sidecar_path(&input,&id)).await??
+        }else{input.clone()};
+        planned.push((source_input.clone(),track,language,None));
+        if language!=target || target=="auto" {planned.push((source_input,track,language,Some(target)));}
+    }
+    let mut jobs=Vec::new();let mut prepared=Vec::new();let mut complete=true;
+    let mut progress=json!({"state":"ready","stage":"subtitles","completed_cues":0,"total_cues":0});
+    // Sequential stages: extraction must finish before its translation starts.
+    for (path,track,language,target) in &planned {
+        let source=Some((*language).to_owned());let target=target.map(str::to_owned);
+        let existing=s.subtitle_jobs.lookup(id,path,*track,&source,&target);
+        let job=match existing {
+            Some(job) if job["state"]=="ready" => job,
+            Some(job) if job["state"]=="running" || job["state"]=="queued" => job,
+            Some(job) if job["state"]=="failed" => {
+                // Coordinator supplies the retry boundary; preserve the error until then.
+                if asset["retrying"]==true && complete && !s.subtitle_jobs.busy() {
+                    s.subtitle_jobs.prepare(id,path.clone(),*track,source,target)?
+                } else {job}
+            },
+            _ if complete && !s.subtitle_jobs.busy() => s.subtitle_jobs.prepare(id,path.clone(),*track,source,target)?,
+            _ => json!({"state":"queued","stage":if target.is_some(){"translation"}else{"extraction"},"target":target}),
+        };
+        if !job["id"].is_null(){jobs.push(job["id"].clone());}
+        if job["state"]=="ready" {
+            let mut ready=job.clone();ready["language"]=ready["target"].as_str().or(ready["source"].as_str()).map(|v|json!(v)).unwrap_or(json!("und"));
+            ready["generated"]=json!(!ready["target"].is_null() || ready["extraction_method"]=="ocr");prepared.push(ready);
+        } else if complete {
+            progress=job;complete=false;
+        }
+    }
+    if planned.is_empty() {
+        // No supported source is explicit, never silently signed off as translated.
+        progress["state"]=json!("not_applicable");
+        progress["reason"]=json!("No supported English or Chinese subtitle source");
+    }
+    info["prepared"]=json!(prepared);info["jobs"]=json!(jobs);
+    info["preparation_state"]=json!(if complete {"ready"}else if progress["state"]=="failed" {"failed"}else{"preparing"});
+    {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;save(&db,id,&revision,&info)?;}
+    Ok(progress)
 }
 
-pub fn summary(db: &Database, jobs: &crate::subtitle_jobs::Manager) -> Result<Value> {
-    let mut scanned=0usize;
-    let mut translated=0usize;
-    let mut failed=0usize;
-    let mut current=Value::Null;
-    let mut queue=Vec::new();
-    let statuses=jobs.all_statuses()?;
-    let priorities = priorities(db)?;
-    let mut assets = queue_assets(db)?;
-    order_assets(&mut assets, &priorities);
-    for asset in assets {
-        if asset["available"]!=true || asset["complete"]!=true { continue; }
-        let Some(id)=asset["id"].as_str() else {continue};
-        let info=cached(db,id)?;
-        let title=asset["path"].as_str().and_then(|p|Path::new(p).file_stem()).and_then(|s|s.to_str()).unwrap_or(id);
-        let tracks=info["subtitle_tracks"].as_array().cloned().unwrap_or_default();
-        let eligible=subtitle_source(&tracks).map(|(_,source,target)|(source,target));
-        let mut listed=false;
-        for status in statuses.iter().filter(|job|job["asset_id"]==id) {
-            let mut job=status.clone();
-            job["title"]=json!(title);
-            queue.push(job);
-            listed=true;
-        }
-        if !listed && (eligible.is_some() || info["state"]!="ready") {
-            queue.push(json!({"id":id,"asset_id":id,"title":title,
-                "state":if info["state"]=="failed" || info["preparation_state"]=="failed" {"failed"} else if info["state"]=="pending" {"scanning"} else {"queued"},
-                "target":eligible.and_then(|(source,target)|(target!="auto" && source!=target).then_some(target)),"error":info["error"],"completed_cues":0,"total_cues":0}));
-        }
-        if info["state"]=="ready" { scanned+=1; }
-        let mut ready=false;
-        for job in statuses.iter().filter(|job|job["asset_id"]==id) {
-            if job["state"]=="running" && job["stage"]=="ocr" {current=json!({"asset_id":id,"language":job["source"],"stage":"ocr","completed_cues":job["completed_cues"],"total_cues":job["total_cues"]});}
-            if job["target"].is_null() {continue;}
-            if job["state"]=="ready" {ready=true;}
-            if job["state"]=="failed" {failed+=1;}
-            if job["state"]=="running" {
-                current=json!({"asset_id":id,"language":job["target"],"completed_cues":job["completed_cues"],"total_cues":job["total_cues"]});
-            }
-        }
-        if ready {translated+=1;}
-        if !listed && info["preparation_state"]=="failed" {failed+=1;}
-    }
-
-    Ok(json!({"scanned":scanned,"translated":translated,"failed":failed,"waiting_for_idle":false,"current":current,"queue":queue}))
+/// Compatibility endpoint: one row per file, backed by the same durable queue.
+pub fn summary(db: &Database, _jobs: &crate::subtitle_jobs::Manager) -> Result<Value> {
+    crate::processing::summary(db)
 }
 
 #[cfg(test)]
@@ -338,7 +269,8 @@ mod ocr_fallback_tests {
         let (_, source, target)=subtitle_source(&tracks).unwrap();
         assert_eq!((source,target),("zh-Hans","en"));
         let english=json!({"track":3,"text_extractable":true,"extraction_supported":true,"language":"eng"});
-        assert!(subtitle_source(&[chinese,english]).is_none());
+        let tracks=[chinese,english];let plan=subtitle_plan(&tracks);
+        assert_eq!(plan.len(),2);assert!(plan.iter().all(|(_,source,target)|source==target));
     }
     #[test]
     fn existing_bitmap_captions_are_extracted_and_forced_tracks_do_not_count_as_full() {
@@ -346,7 +278,7 @@ mod ocr_fallback_tests {
         let english=json!({"track":3,"codec":"S_HDMV/PGS","language":"eng"});
         let tracks=vec![chinese.clone(),english.clone()];
         let plan=subtitle_plan(&tracks);
-        assert_eq!(plan.len(),1);
+        assert_eq!(plan.len(),2);
         assert_eq!((plan[0].0["track"].as_u64(),plan[0].1,plan[0].2),(Some(3),"en","en"));
         let tracks=vec![english,json!({"track":4,"codec":"S_VOBSUB","language":"zh"})];
         let plan=subtitle_plan(&tracks);
@@ -368,7 +300,7 @@ mod ocr_fallback_tests {
         let pgs=json!({"codec":"S_HDMV/PGS","track":5,"language":"en"});
         assert_eq!(subtitle_source(&[pgs.clone()]).unwrap().1,"en");
         assert_eq!(subtitle_source(&[pgs,text.clone()]).unwrap().0["track"],4);
-        let tracks=vec![text,json!({"text_extractable":true,"extraction_supported":true,"language":"zh-Hans"})];assert!(subtitle_source(&tracks).is_none());
+        let tracks=vec![text,json!({"track":5,"text_extractable":true,"extraction_supported":true,"language":"zh-Hans"})];let plan=subtitle_plan(&tracks);assert_eq!(plan.len(),2);assert!(plan.iter().all(|(_,source,target)|source==target));
     }
 }
 

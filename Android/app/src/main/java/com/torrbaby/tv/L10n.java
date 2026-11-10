@@ -34,6 +34,7 @@ final class L10n {
     IDS.put("All", R.string.ui_6a72085653e4);
     IDS.put("All clear", R.string.ui_360e1182021a);
     IDS.put("All genres", R.string.ui_09ac5f615d7d);
+    IDS.put("All processing complete", R.string.ui_d0038a506519);
     IDS.put("All resolutions", R.string.ui_f1f67dc07e63);
     IDS.put("Alphabetical", R.string.ui_9d12608fc0bd);
     IDS.put("Already in your torrents", R.string.ui_f2de57952082);
@@ -41,6 +42,7 @@ final class L10n {
     IDS.put("Ask trackers for peers", R.string.ui_ad4f3c956b19);
     IDS.put("Audio", R.string.ui_acdac205f5e2);
     IDS.put("Automatic", R.string.ui_ac9041e76816);
+    IDS.put("Automatic processing paused", R.string.ui_dd3f305b9367);
     IDS.put("Automatic subtitles paused", R.string.ui_6f3eae86037f);
     IDS.put("Automation", R.string.ui_a15fde5173db);
     IDS.put("Automation paused", R.string.ui_1cf7876da26c);
@@ -77,6 +79,7 @@ final class L10n {
     IDS.put("Choose the right title", R.string.ui_0772fa16aa51);
     IDS.put("Choose your server", R.string.ui_82be318f7bae);
     IDS.put("Clear filters", R.string.ui_412226715c56);
+    IDS.put("Click to prioritize this title in the processing queue", R.string.ui_ba29ddeac7e6);
     IDS.put("Click to prioritize this title in the subtitle queue", R.string.ui_a5a18ce21516);
     IDS.put("Close", R.string.ui_bbfa773e5a63);
     IDS.put("Closed captions", R.string.ui_ba5e1c3ff6e7);
@@ -110,6 +113,7 @@ final class L10n {
     IDS.put("Couldn’t retrieve this torrent. Try again.", R.string.ui_bf0f3a2d2c62);
     IDS.put("Create", R.string.ui_6e157c5da441);
     IDS.put("Create user", R.string.ui_bdbcfa0af077);
+    IDS.put("Credits analysis incomplete", R.string.ui_3394786da6fb);
     IDS.put("Currently unlimited", R.string.ui_f06a7a6fb077);
     IDS.put("DOWNLOAD", R.string.ui_564af6829fbc);
     IDS.put("DOWNLOADING", R.string.ui_45bfe6a546ee);
@@ -129,6 +133,7 @@ final class L10n {
     IDS.put("Delete torrent and its files?", R.string.ui_2e4bc4ccc662);
     IDS.put("Deleting files…", R.string.ui_cc7192d76413);
     IDS.put("Description", R.string.ui_55f8ebc805e6);
+    IDS.put("Detecting credits", R.string.ui_d9319c338d5b);
     IDS.put("Device linked", R.string.ui_d56e2646caaa);
     IDS.put("Devices", R.string.ui_df485c871329);
     IDS.put("Disconnect", R.string.ui_ed28e0686e12);
@@ -220,6 +225,7 @@ final class L10n {
     IDS.put("Link this TV to your server again.", R.string.ui_aaee331bfc80);
     IDS.put("Loading details…", R.string.ui_d6b61171cda1);
     IDS.put("Loading library…", R.string.ui_78df555a3a52);
+    IDS.put("Loading processing queue…", R.string.ui_7c915baf855d);
     IDS.put("Loading server activity…", R.string.ui_4f96be70a1f2);
     IDS.put("Loading subtitles…", R.string.ui_23f94ec39630);
     IDS.put("Location", R.string.ui_d219c68101f5);
@@ -239,6 +245,7 @@ final class L10n {
     IDS.put("Mark as watched", R.string.ui_d1cc3212f6bd);
     IDS.put("Mark unwatched", R.string.ui_df7ea09cbb64);
     IDS.put("Mark watched", R.string.ui_46b250bb0a3a);
+    IDS.put("Media changed during processing", R.string.ui_13cc75488bfe);
     IDS.put("Menu bar", R.string.ui_2f28e570a801);
     IDS.put("Metadata is being gathered on Diamond", R.string.ui_9188f98eea10);
     IDS.put("Monospace", R.string.ui_216fcddff2f9);
@@ -270,10 +277,12 @@ final class L10n {
     IDS.put("No matching titles", R.string.ui_839030590e08);
     IDS.put("No movies or shows yet.", R.string.ui_7678770667a6);
     IDS.put("No peers and no activity for over 5 minutes", R.string.ui_28d608ea4298);
+    IDS.put("No processing jobs", R.string.ui_f4f2ec4dc27b);
     IDS.put("No recent activity", R.string.ui_6a52f1d4b635);
     IDS.put("No releases found", R.string.ui_6fd4ab12ee28);
     IDS.put("No server found", R.string.ui_74cd1304973c);
     IDS.put("No subtitle jobs", R.string.ui_3e36b40ea99d);
+    IDS.put("No supported subtitle source", R.string.ui_55b63277f6b3);
     IDS.put("No titles match your search.", R.string.ui_34649c3ae595);
     IDS.put("No torrents", R.string.ui_879b4a9bb1c8);
     IDS.put("None", R.string.ui_6eef6648406c);
@@ -323,7 +332,10 @@ final class L10n {
     IDS.put("Preparing playback…", R.string.ui_de58cdcf6ca3);
     IDS.put("Preparing subtitles…", R.string.ui_0f255a84a82a);
     IDS.put("Preparing…", R.string.ui_0b1d6c0b1a56);
+    IDS.put("Prioritize processing", R.string.ui_109a00c0bd39);
     IDS.put("Prioritize subtitles", R.string.ui_5af3161d2251);
+    IDS.put("Process library automatically", R.string.ui_fffc6e1a0c19);
+    IDS.put("Processing", R.string.ui_e63451d3cf90);
     IDS.put("Profile colors must use #RRGGBB", R.string.ui_cee5b42e2dc8);
     IDS.put("Profile name must contain 1–80 printable characters", R.string.ui_79e0a2b26494);
     IDS.put("Profile not found", R.string.ui_c009b451b816);
@@ -337,6 +349,7 @@ final class L10n {
     IDS.put("RATIO", R.string.ui_034f14206811);
     IDS.put("REMAINING", R.string.ui_03e91053622d);
     IDS.put("Ratio", R.string.ui_794f65e9d206);
+    IDS.put("Reading image subtitles", R.string.ui_41f4b068f102);
     IDS.put("Ready", R.string.ui_20c7c5522fc2);
     IDS.put("Ready to watch", R.string.ui_b10fbdb5d835);
     IDS.put("Reannounce to trackers", R.string.ui_1bded3d08e57);
@@ -373,6 +386,7 @@ final class L10n {
     IDS.put("Retry organization", R.string.ui_c03d34373e3c);
     IDS.put("Review a new name", R.string.ui_5f1f46e2112f);
     IDS.put("Revoke access", R.string.ui_094386f681e2);
+    IDS.put("Rolling credits", R.string.ui_1ad552dc5275);
     IDS.put("Running", R.string.ui_73989d9c5926);
     IDS.put("SEEDING", R.string.ui_c24ea1cb444a);
     IDS.put("SERVER ADDRESS", R.string.ui_0b25507fa566);
@@ -493,6 +507,7 @@ final class L10n {
     IDS.put("Torrent removed", R.string.ui_c0fdf7497ff3);
     IDS.put("Torrents", R.string.ui_3e8f36b12ffb);
     IDS.put("Transfer", R.string.ui_cbb4cc49824b);
+    IDS.put("Translating subtitles", R.string.ui_7317cb083a2d);
     IDS.put("Translations", R.string.ui_8ad8302d110b);
     IDS.put("Transmission reports this torrent as stalled", R.string.ui_9a14b54f2d98);
     IDS.put("Try a different title.", R.string.ui_c17f217d8b8e);
@@ -505,6 +520,7 @@ final class L10n {
     IDS.put("Unable to play", R.string.ui_e7010042ce25);
     IDS.put("Undo", R.string.ui_39fc72124884);
     IDS.put("Unlimited", R.string.ui_b8bef37b7153);
+    IDS.put("Unsupported media container for processing", R.string.ui_e50bad848e4a);
     IDS.put("Upload", R.string.ui_8bdf057f91e7);
     IDS.put("Use Torrbaby for magnet links", R.string.ui_2fb6cfd6c7df);
     IDS.put("Use available space", R.string.ui_952de75621d0);

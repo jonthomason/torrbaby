@@ -125,6 +125,18 @@ struct Job: Codable, Identifiable {
     var id: String { hash }
 }
 struct SubtitleQueueItem: Codable, Identifiable {
+    let stage: String?
+    let subtitlesState: String?
+    var stageLabel: String {
+        switch stage {
+        case "inventory": return "Checking languages…"
+        case "credits": return "Detecting credits"
+        case "complete": return "All processing complete"
+        case "translation": return "Translating subtitles"
+        case "ocr": return "Reading image subtitles"
+        default: return "Extracting subtitles"
+        }
+    }
     let id: String
     let assetId: String?
     let title: String
@@ -143,7 +155,15 @@ struct SubtitlePreparation: Codable {
     let waitingForIdle: Bool
     let current: Current?
 }
+struct CreditsAnalysis: Codable {
+    struct Current: Codable { let assetId: String; let title: String }
+    let scanned: Int
+    let detected: Int
+    let failed: Int
+    let current: Current?
+}
 struct DaemonStatus: Codable {
+    let creditsAnalysis: CreditsAnalysis?
     let subtitlePreparation: SubtitlePreparation?
     let version: String
     let uptimeSeconds: Int

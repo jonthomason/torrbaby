@@ -3,7 +3,7 @@ import SwiftUI
 import Charts
 
 enum Section: String, CaseIterable, Identifiable {
-    case findTorrents = "Find", downloads = "Downloads", library = "Home", movies = "Movies", shows = "TV Shows", active = "Downloading", seeding = "Seeding", complete = "Complete", subtitles = "Subtitles", attention = "Not progressing", automation = "Automation", settings = "Settings"
+    case findTorrents = "Find", downloads = "Downloads", library = "Home", movies = "Movies", shows = "TV Shows", active = "Downloading", seeding = "Seeding", complete = "Complete", subtitles = "Processing", attention = "Not progressing", automation = "Automation", settings = "Settings"
     var id: String { rawValue }
     var icon: String {
         switch self {
@@ -35,7 +35,7 @@ struct SubtitleQueueView: View {
                 Label(error, systemImage: "wifi.exclamationmark").foregroundStyle(.secondary)
             }
             if store.status?.settings.backgroundSubtitles == false {
-                Label("Automatic subtitles paused", systemImage: "pause.circle")
+                Label("Automatic processing paused", systemImage: "pause.circle")
             } else if store.status?.subtitlePreparation?.waitingForIdle == true {
                 Label("Waiting for playback to finish", systemImage: "play.circle")
             }
@@ -43,34 +43,35 @@ struct SubtitleQueueView: View {
                 ForEach(groups, id: \.0) { group in
                     let items = (preparation.queue ?? []).filter { group.1.contains($0.state) }
                     if !items.isEmpty {
-                        SwiftUI.Section("\(group.0) · \(items.count)") {
+                        SwiftUI.Section("\(L10n.text(group.0)) · \(items.count)") {
                             ForEach(items) { item in
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text(item.title).font(.headline).lineLimit(2)
                                     HStack {
-                                        Label(LocalizedStringKey(item.target == nil ? "Extracting" : (item.target == "en" ? "English" : "Chinese (Simplified)")), systemImage: "captions.bubble")
+                                        Label(LocalizedStringKey(item.stageLabel), systemImage: "captions.bubble")
                                         Spacer()
-                                        Text(LocalizedStringKey(item.state == "scanning" ? "Checking languages" : item.state.capitalized))
+                                        Text(LocalizedStringKey(item.state == "scanning" ? "Checking languages…" : item.state.capitalized))
                                     }.font(.caption).foregroundStyle(.secondary)
                                     if item.totalCues > 0 && item.state != "ready" {
                                         ProgressView(value: Double(item.completedCues), total: Double(item.totalCues))
                                         Text("\(item.completedCues) / \(item.totalCues)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                                     }
+                                    if item.subtitlesState == "not_applicable" { Text("No supported subtitle source").font(.caption).foregroundStyle(.secondary) }
                                     if let error = item.error { Text(L10n.text(error)).font(.caption).foregroundStyle(.orange) }
                                 }.padding(.vertical, 6)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
                                 .onTapGesture { prioritize(item) }
-                                .accessibilityAction(named: "Prioritize subtitles") { prioritize(item) }
+                                .accessibilityAction(named: "Prioritize processing") { prioritize(item) }
                                 #if os(macOS)
-                                .help(item.state == "ready" || item.state == "running" ? "" : "Click to prioritize this title in the subtitle queue")
+                                .help(item.state == "ready" || item.state == "running" ? "" : "Click to prioritize this title in the processing queue")
                                 #endif
                             }
                         }
                     }
                 }
-                if preparation.queue?.isEmpty != false { Text("No subtitle jobs").foregroundStyle(.secondary) }
-            } else { ProgressView("Loading subtitles…") }
+                if preparation.queue?.isEmpty != false { Text("No processing jobs").foregroundStyle(.secondary) }
+            } else { ProgressView("Loading processing queue…") }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             if let item = store.status?.subtitlePreparation?.queue?.first(where: { $0.state == "running" }) {
@@ -78,7 +79,7 @@ struct SubtitleQueueView: View {
                     Label("Now processing", systemImage: "captions.bubble").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     Text(item.title).font(.headline).lineLimit(2)
                     HStack {
-                        Text(LocalizedStringKey(item.target == nil ? "Extracting subtitles" : item.target == "en" ? "English" : "Chinese (Simplified)"))
+                        Text(LocalizedStringKey(item.stageLabel))
                         Spacer()
                         if item.totalCues > 0 { Text("\(item.completedCues) / \(item.totalCues)").monospacedDigit() }
                     }.font(.caption).foregroundStyle(.secondary)
@@ -90,7 +91,7 @@ struct SubtitleQueueView: View {
                 .background(.regularMaterial)
             }
         }
-        .navigationTitle("Subtitles")
+        .navigationTitle(L10n.text("Processing"))
         .refreshable { await store.refreshStatus() }
         .task {
             while !Task.isCancelled {

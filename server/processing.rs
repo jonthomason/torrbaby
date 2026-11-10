@@ -1,0 +1,164 @@
+//! SQLite is the authority for queue membership, progress and final sign-off.
+//! Subtitle/VTT and credits caches are reusable stage outputs, not separate queues.
+use crate::{api::Service, storage::{Database, now}};
+use anyhow::{Context, Result};
+use serde_json::{Value, json};
+use std::path::Path;
+const VERSION:i64=1;
+
+fn enroll(db:&Database,id:&str,revision:&str)->Result<()> {
+    db.connection.execute("INSERT INTO media_processing(asset_id,revision,version,state,stage,inventory_state,subtitles_state,credits_state,updated) VALUES(?,?,?,'queued','inventory','pending','pending','pending',?) ON CONFLICT(asset_id) DO UPDATE SET revision=excluded.revision,version=excluded.version,state='queued',stage='inventory',inventory_state='pending',subtitles_state='pending',credits_state='pending',detail='{}',error=NULL,retry_after=0,attempts=0,completed_at=NULL,updated=excluded.updated WHERE media_processing.revision!=excluded.revision OR media_processing.version!=excluded.version",rusqlite::params![id,revision,VERSION,now()])?;
+    Ok(())
+}
+fn finished(value:&str)->bool {matches!(value,"ready"|"not_applicable")}
+fn sign_off(db:&Database,id:&str,revision:&str)->Result<bool> {
+    // The SQL predicate is deliberately the final authority: a worker becoming
+    // idle, an English artifact, or an empty job list can never sign off a file.
+    Ok(db.connection.execute("UPDATE media_processing SET state='ready',stage='complete',completed_at=?,updated=?,error=NULL WHERE asset_id=? AND revision=? AND inventory_state='ready' AND subtitles_state IN ('ready','not_applicable') AND credits_state IN ('ready','not_applicable')",rusqlite::params![now(),now(),id,revision])?==1)
+}
+fn fail(db:&Database,id:&str,revision:&str,error:&str)->Result<()> {
+    db.connection.execute("UPDATE media_processing SET state='failed',error=?,retry_after=?,updated=?,attempts=attempts+1 WHERE asset_id=? AND revision=?",rusqlite::params![error,now()+3600.0,now(),id,revision])?;Ok(())
+}
+fn assets(db:&Database)->Result<Vec<Value>> {
+    let mut assets=crate::media_inventory::queue_assets(db)?;
+    assets.retain(|a|a["available"]==true && a["complete"]==true);
+    crate::media_inventory::order_assets(&mut assets,&crate::media_inventory::priorities(db)?);
+    Ok(assets)
+}
+pub async fn tick(s:&Service)->Result<()> {
+    let enabled=s.effective_config()?.background_subtitles;
+    let selected={
+        let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+        let assets=assets(&db)?;
+        let migrating:bool=db.connection.query_row("SELECT NOT EXISTS(SELECT 1 FROM media_processing)",[],|r|r.get(0))?;
+        for a in &assets {
+            let Some(id)=a["id"].as_str() else{continue};
+            let Some(path)=a["path"].as_str() else{continue};
+            // Missing/unreadable files remain visible as failures, not vanished work.
+            let revision=crate::subtitle_jobs::revision(Path::new(path));
+            enroll(&db,id,revision.as_deref().unwrap_or("unavailable"))?;
+            if let Err(error)=revision {fail(&db,id,"unavailable",&error.to_string())?;}
+        }
+        if migrating {
+            let mut unfinished=s.subtitle_jobs.all_statuses()?;
+            unfinished.retain(|j|matches!(j["state"].as_str(),Some("running"|"queued"|"interrupted")));
+            unfinished.sort_by(|a,b|b["updated"].as_f64().unwrap_or(0.0).total_cmp(&a["updated"].as_f64().unwrap_or(0.0)));
+            if let Some(job)=unfinished.iter().find(|j|assets.iter().any(|a|a["id"]==j["asset_id"])) {
+                db.connection.execute("UPDATE media_processing SET state='running' WHERE asset_id=?",[job["asset_id"].as_str().unwrap_or("")])?;
+            }
+        }
+        if !enabled{return Ok(());}
+        let rows=db.rows("SELECT * FROM media_processing",[])?;
+        // Keep the claimed file until all stages finish. Priority applies to the next file.
+        let active=assets.iter().find(|a|rows.iter().any(|r|r["asset_id"]==a["id"] && r["state"]=="running"));
+        let selected=active.or_else(||assets.iter().find(|a|rows.iter().any(|r|r["asset_id"]==a["id"] && r["state"]!="ready" && r["retry_after"].as_f64().unwrap_or(0.0)<=now()))).cloned();
+        selected
+    };
+    let Some(mut asset)=selected else{return Ok(());};
+    let id=asset["id"].as_str().context("Missing asset ID")?.to_owned();
+    let path=asset["path"].as_str().context("Missing asset path")?.to_owned();
+    let revision=crate::subtitle_jobs::revision(Path::new(&path))?;
+    let previous={let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+        let row=db.rows("SELECT * FROM media_processing WHERE asset_id=?",[&id])?.pop().context("Missing processing record")?;
+        db.connection.execute("UPDATE media_processing SET state='running',error=NULL,updated=? WHERE asset_id=?",rusqlite::params![now(),id])?;row};
+    asset["retrying"]=json!(previous["attempts"].as_i64().unwrap_or(0)>0);
+    let result=advance(s,&asset,&revision,&previous).await;
+    if let Err(error)=result {
+        let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+        fail(&db,&id,&revision,&error.to_string())?;
+        tracing::warn!(asset=id,%error,"Media processing needs attention");
+    }
+    Ok(())
+}
+async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()> {
+    let id=asset["id"].as_str().context("Missing asset ID")?;
+    let path=Path::new(asset["path"].as_str().context("Missing asset path")?);
+    let supported=path.extension().and_then(|e|e.to_str()).is_some_and(|e|["mkv","webm","mp4","m4v","mov"].contains(&e.to_lowercase().as_str()));
+    anyhow::ensure!(supported,"Unsupported media container for processing");
+    if !finished(prior["subtitles_state"].as_str().unwrap_or("")) {
+        let progress=crate::media_inventory::process(s,asset).await?;
+        let state=progress["state"].as_str().unwrap_or("queued");
+        let done=finished(state);
+        {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+            db.connection.execute("UPDATE media_processing SET inventory_state='ready',subtitles_state=?,stage=?,detail=?,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![if done{state}else{"pending"},if done{"credits"}else{progress["stage"].as_str().unwrap_or("subtitles")},progress.to_string(),now(),id,revision])?;
+        }
+        anyhow::ensure!(state!="failed","{}",progress["error"].as_str().unwrap_or("Subtitle preparation failed"));
+        if !done {return Ok(());}
+    }
+    if !finished(prior["credits_state"].as_str().unwrap_or("")) {
+        let not_applicable=asset["role"]=="extra" || path.extension().is_some_and(|e|e.eq_ignore_ascii_case("webm"));
+        {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+            db.connection.execute("UPDATE media_processing SET stage='credits',detail='{}' WHERE asset_id=? AND revision=?",rusqlite::params![id,revision])?;}
+        if !not_applicable {crate::credits::process(s,asset).await?;}
+        let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+        let credits=if not_applicable {json!({"state":"not_applicable","reason":"Credits analysis does not apply to extras or WebM"})}else{crate::credits::cached(&db,id)?};
+        let state=credits["state"].as_str().unwrap_or("pending");
+        db.connection.execute("UPDATE media_processing SET stage='credits',credits_state=?,detail=?,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![state,credits.to_string(),now(),id,revision])?;
+        anyhow::ensure!(!matches!(state,"failed"|"incomplete"),"{}",credits["error"].as_str().unwrap_or("Credits analysis incomplete"));
+        if state=="deferred" {
+            db.connection.execute("UPDATE media_processing SET state='queued',retry_after=?,error=?,updated=? WHERE asset_id=?",rusqlite::params![now()+60.0,credits["error"].as_str(),now(),id])?;
+        }
+        if !finished(state){return Ok(());}
+    }
+    // File replacement during an async stage invalidates the whole sign-off.
+    anyhow::ensure!(crate::subtitle_jobs::revision(path)?==revision,"Media changed during processing");
+    let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+    sign_off(&db,id,revision)?;
+    Ok(())
+}
+pub fn summary(db:&Database)->Result<Value> {
+    let rows=db.rows("SELECT * FROM media_processing",[])?;
+    let mut queue=Vec::new();let mut current=Value::Null;let mut scanned=0;let mut completed=0;let mut failed=0;
+    for asset in assets(db)? {
+        let id=asset["id"].as_str().unwrap_or("");
+        let row=rows.iter().find(|r|r["asset_id"]==id);
+        let detail:Value=row.and_then(|r|r["detail"].as_str()).and_then(|v|serde_json::from_str(v).ok()).unwrap_or(json!({}));
+        let state=row.and_then(|r|r["state"].as_str()).unwrap_or("queued");
+        let stage=row.and_then(|r|r["stage"].as_str()).unwrap_or("inventory");
+        let title=asset["path"].as_str().and_then(|p|Path::new(p).file_stem()).and_then(|p|p.to_str()).unwrap_or(id);
+        let cues=detail["completed_cues"].as_u64().unwrap_or(0);let total=detail["total_cues"].as_u64().unwrap_or(0);
+        if row.is_some_and(|r|r["inventory_state"]=="ready"){scanned+=1;}
+        if state=="ready"{completed+=1;}
+        if state=="failed"{failed+=1;}
+        let item=json!({"id":id,"asset_id":id,"title":title,"state":state,"stage":stage,"target":detail["target"],"error":row.map(|r|r["error"].clone()).unwrap_or(Value::Null),"completed_cues":cues,"total_cues":total,
+            "inventory_state":row.map(|r|r["inventory_state"].clone()),"subtitles_state":row.map(|r|r["subtitles_state"].clone()),"credits_state":row.map(|r|r["credits_state"].clone()),"completed_at":row.map(|r|r["completed_at"].clone())});
+        if state=="running"{current=json!({"asset_id":id,"language":detail["target"].as_str().unwrap_or(""),"stage":stage,"completed_cues":cues,"total_cues":total});}
+        queue.push(item);
+    }
+    Ok(json!({"scanned":scanned,"translated":completed,"completed":completed,"failed":failed,"waiting_for_idle":false,"current":current,"queue":queue}))
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn database()->Result<Database>{let db=Database{connection:rusqlite::Connection::open_in_memory()?};db.connection.execute_batch(include_str!("schema.sql"))?;Ok(db)}
+    #[test]
+    fn all_stages_and_current_revision_are_required_for_sign_off()->Result<()> {
+        let db=database()?;enroll(&db,"movie","r1")?;
+        db.connection.execute("UPDATE media_processing SET inventory_state='ready',subtitles_state='ready'",[])?;
+        assert!(!sign_off(&db,"movie","r1")?); // English/translation alone is insufficient.
+        db.connection.execute("UPDATE media_processing SET credits_state='ready'",[])?;
+        assert!(!sign_off(&db,"movie","r2")?);
+        assert!(sign_off(&db,"movie","r1")?);
+        enroll(&db,"movie","r1")?;assert_eq!(db.rows("SELECT state FROM media_processing",[])?[0]["state"],"ready");
+        enroll(&db,"movie","r2")?;let row=db.rows("SELECT * FROM media_processing",[])?;
+        assert_eq!(row[0]["state"],"queued");assert!(row[0]["completed_at"].is_null());
+        Ok(())
+    }
+    #[test]
+    fn extracted_text_roundtrips_for_translation_without_reextracting_video()->Result<()> {
+        let cues=vec![crate::subtitles::TimedCue{start_ms:1234,end_ms:4567,text:"Hello & <world>\n你好".into()}];
+        let vtt=crate::subtitles::webvtt(&cues);
+        let recovered=crate::subtitles::parse_srt(vtt.strip_prefix("WEBVTT\n\n").unwrap())?;
+        assert_eq!(recovered[0].start_ms,1234);assert_eq!(recovered[0].end_ms,4567);
+        assert_eq!(recovered[0].text,cues[0].text);Ok(())
+    }
+    #[test]
+    fn restart_keeps_stage_progress_and_failures_are_not_finished()->Result<()> {
+        let db=database()?;enroll(&db,"episode","r1")?;
+        db.connection.execute("UPDATE media_processing SET state='running',inventory_state='ready',subtitles_state='ready',stage='credits'",[])?;
+        enroll(&db,"episode","r1")?;let row=db.rows("SELECT * FROM media_processing",[])?;
+        assert_eq!(row[0]["stage"],"credits");assert_eq!(row[0]["subtitles_state"],"ready");
+        fail(&db,"episode","r1","test failure")?;assert!(!sign_off(&db,"episode","r1")?);
+        assert_eq!(db.rows("SELECT state FROM media_processing",[])?[0]["state"],"failed");Ok(())
+    }
+}

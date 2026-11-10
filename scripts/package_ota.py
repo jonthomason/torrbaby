@@ -73,6 +73,15 @@ def main():
             raise ValueError("Invalid Android artifact")
         android_link = '<a class="button" href="' + escape(base + "/" + artifact, quote=True) + '">Download for Android TV</a><p>Android build ' + escape(str(android["build"])) + ' · ' + escape(android["version"]) + '</p>'
         html = html.replace("<small>", android_link + "<small>", 1)
+    for platform, label in [("macos", "Download for Mac"), ("tvos-simulator", "Download tvOS simulator build")]:
+        release_file = destination / (platform + ".json")
+        if release_file.exists():
+            release = json.loads(release_file.read_text())
+            artifact = release["artifact"]
+            if not artifact.startswith(platform + "/") or ".." in artifact or not (destination / artifact).is_file():
+                raise ValueError("Invalid " + platform + " artifact")
+            link = '<a class="button" href="' + escape(base + "/" + artifact, quote=True) + '">' + label + '</a><p>Build ' + escape(str(release["build"])) + '</p>'
+            html = html.replace("<small>", link + "<small>", 1)
     atomic(destination / "current.json", json.dumps(metadata, indent=2).encode())
     atomic(destination / "manifest.plist", plistlib.dumps(manifest))
     atomic(destination / "index.html", html.encode())

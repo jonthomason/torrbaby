@@ -135,7 +135,7 @@ impl Manager {
         let ocr_progress=if job.state=="running" {fs::read(self.root.join(format!("{id}.ocr-progress"))).ok().and_then(|b|serde_json::from_slice::<Value>(&b).ok())} else {None};
         if let Some(p)=&ocr_progress {job.completed_cues=p["completed_cues"].as_u64().unwrap_or(0) as usize;job.total_cues=p["total_cues"].as_u64().unwrap_or(0) as usize;}
         Ok(
-            json!({"extraction_method":job.extraction_method,"unreadable_cues":job.unreadable_cues,"stage":if ocr_progress.is_some(){"ocr"}else if job.target.is_some(){"translation"}else{"extraction"},"id":job.id,"asset_id":job.asset_id,"state":job.state,"error":job.error,
+            json!({"updated":job.updated,"extraction_method":job.extraction_method,"unreadable_cues":job.unreadable_cues,"stage":if ocr_progress.is_some(){"ocr"}else if job.target.is_some(){"translation"}else{"extraction"},"id":job.id,"asset_id":job.asset_id,"state":job.state,"error":job.error,
             "sidecar":if job.input.extension().is_some_and(|e|e.eq_ignore_ascii_case("srt")) { job.input.file_name().and_then(|n|n.to_str()).map(|name|sha2::Sha256::digest(name.as_bytes()).iter().map(|b|format!("{b:02x}")).collect::<String>()) } else {None},
             "track":job.track,"source":job.source.as_deref().filter(|s|*s!="auto"),"target":job.target.as_deref().filter(|s|*s!="auto"),"completed_cues":job.completed_cues,"total_cues":job.total_cues,
             "path":if job.state=="ready" {Some(format!("/v1/subtitle-jobs/{id}.vtt"))} else {None}}),
@@ -189,6 +189,27 @@ impl Manager {
         let data = fs::read(self.root.join(format!("{id}.vtt")))?;
         ensure!(data.len() <= 16_777_216, "Subtitle output too large");
         String::from_utf8(data).context("Invalid prepared subtitles")
+    }
+    pub fn lookup(&self, asset: &str, input: &Path, track: u64, source: &Option<String>, target: &Option<String>) -> Option<Value> {
+        let revision=revision(input).ok()?;
+        let key=serde_json::to_vec(&(1,asset,input,&revision,track,source,target)).ok()?;
+        let id:String=sha2::Sha256::digest(key).iter().map(|b|format!("{b:02x}")).collect();
+        let exact=self.status(&id).ok();
+        if exact.as_ref().is_some_and(|j|j["state"]=="ready"){return exact;}
+        // Older OCR jobs were keyed as auto, then saved with the detected language.
+        // Reuse those validated outputs rather than extracting/translating them again.
+        for entry in fs::read_dir(&self.root).ok()?.flatten() {
+            let path=entry.path();
+            let Some(candidate)=path.file_stem().and_then(|s|s.to_str()).filter(|s|valid(s)) else{continue};
+            if path.extension().is_none_or(|s|s!="json"){continue;}
+            let Ok(job)=self.read(candidate) else{continue};
+            let source_matches=source.as_deref()==Some("auto") || job.source==*source;
+            let target_matches=if target.as_deref()==Some("auto") {job.target.is_some() && job.target!=job.source}else{job.target==*target};
+            if job.asset_id==asset && job.input==input && job.revision==revision && job.track==track && source_matches && target_matches {
+                if let Ok(status)=self.status(candidate) {if status["state"]=="ready" {return Some(status);}}
+            }
+        }
+        exact
     }
     pub fn prepare(
         self: &Arc<Self>,
@@ -310,16 +331,26 @@ impl Manager {
             let _permit = self.gate.acquire().await?;
             job.state = "running".into();
             self.save(&job)?;
-            let bitmap=if job.input.extension().is_some_and(|e|e.eq_ignore_ascii_case("mkv") || e.eq_ignore_ascii_case("webm")) {
+            let original=if job.target.is_some() {
+                self.lookup(&job.asset_id,&job.input,job.track,&job.source,&None)
+                    .filter(|j|j["state"]=="ready")
+                    .and_then(|j|self.artifact(j["id"].as_str()?).ok().map(|text|(j,text)))
+            }else{None};
+            let bitmap=if original.is_none() && job.input.extension().is_some_and(|e|e.eq_ignore_ascii_case("mkv") || e.eq_ignore_ascii_case("webm")) {
                 let tracks=crate::native_subtitles::tracks(&job.input).await?;
                 let selected=tracks["tracks"].as_array().and_then(|t|t.iter().find(|t|t["track"]==job.track)).context("Subtitle track missing")?;
-                if (selected["codec"]=="S_VOBSUB" || selected["codec"]=="S_HDMV/PGS") {
+                if selected["codec"]=="S_VOBSUB" || selected["codec"]=="S_HDMV/PGS" {
                     let sidecar_input=job.input.clone();
                     let sidecars=tokio::task::spawn_blocking(move ||crate::subtitles::discover(&sidecar_input)).await??;
                     ensure!(sidecars.is_empty() && !tracks["tracks"].as_array().unwrap().iter().any(|t|t["text_extractable"]==true),"Text subtitles are available; OCR is only a fallback");true
                 } else {false}
             } else {false};
-            let mut cues=if bitmap {
+            let mut cues=if let Some((prior,text))=original {
+                job.extraction_method=prior["extraction_method"].as_str().map(str::to_owned);
+                job.unreadable_cues=prior["unreadable_cues"].as_u64().unwrap_or(0) as usize;
+                // Our WebVTT serializer uses SRT-compatible timestamps and cue blocks.
+                crate::subtitles::parse_srt(text.strip_prefix("WEBVTT\n\n").unwrap_or(&text))?
+            }else if bitmap {
                 job.extraction_method=Some("ocr".into());self.save(&job)?;
                 let output=crate::ocr_subtitles::extract(&job.input,job.track,job.source.as_deref().unwrap_or("auto"),&self.root,&self.root.join(format!("{}.ocr-progress",job.id))).await?;
                 job.source=Some(output.language);job.unreadable_cues=output.unreadable_cues;output.cues
@@ -411,6 +442,19 @@ impl Manager {
 #[cfg(test)]
 mod sidecar_job_tests {
     use super::*;
+    #[test]
+    fn detected_language_reuses_legacy_auto_keyed_artifact() -> Result<()> {
+        let root=std::env::temp_dir().join(format!("torrbaby-legacy-caption-{}",uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root)?;let input=root.join("movie.mkv");fs::write(&input,b"fixture")?;
+        let manager=Manager::new(&root)?;let id="a".repeat(64);
+        let job=Job{id:id.clone(),asset_id:"movie".into(),input:input.clone(),revision:revision(&input)?,track:3,source:Some("en".into()),target:Some("zh-Hans".into()),state:"ready".into(),updated:0.0,error:None,completed_cues:1,total_cues:1,extraction_method:Some("ocr".into()),unreadable_cues:0};
+        manager.save(&job)?;fs::write(manager.root.join(format!("{id}.vtt")),"WEBVTT\n\n1\n00:00:01.000 --> 00:00:02.000\n你好\n")?;
+        assert_eq!(manager.lookup("movie",&input,3,&Some("en".into()),&Some("zh-Hans".into())).unwrap()["id"],id);
+        assert!(manager.lookup("other",&input,3,&Some("en".into()),&Some("zh-Hans".into())).is_none());
+        fs::write(&input,b"changed file")?;
+        assert!(manager.lookup("movie",&input,3,&Some("en".into()),&Some("zh-Hans".into())).is_none());
+        fs::remove_dir_all(root)?;Ok(())
+    }
     #[tokio::test]
     async fn sidecar_jobs_preserve_timing_and_track_file_revisions() -> Result<()> {
         let root = std::env::temp_dir().join(format!("torrbaby-sidecar-{}", uuid::Uuid::new_v4()));

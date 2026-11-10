@@ -23,6 +23,7 @@
     <string name="ui_6a72085653e4" formatted="false">全部</string>
     <string name="ui_360e1182021a" formatted="false">一切正常</string>
     <string name="ui_09ac5f615d7d" formatted="false">所有类型</string>
+    <string name="ui_d0038a506519" formatted="false">全部处理完成</string>
     <string name="ui_f1f67dc07e63" formatted="false">所有分辨率</string>
     <string name="ui_9d12608fc0bd" formatted="false">按名称排序</string>
     <string name="ui_f2de57952082" formatted="false">已在种子列表中</string>
@@ -30,6 +31,7 @@
     <string name="ui_ad4f3c956b19" formatted="false">向 Tracker 请求节点</string>
     <string name="ui_acdac205f5e2" formatted="false">音频</string>
     <string name="ui_ac9041e76816" formatted="false">自动</string>
+    <string name="ui_dd3f305b9367" formatted="false">自动处理已暂停</string>
     <string name="ui_6f3eae86037f" formatted="false">自动字幕已暂停</string>
     <string name="ui_a15fde5173db" formatted="false">自动整理</string>
     <string name="ui_1cf7876da26c" formatted="false">自动整理已暂停</string>
@@ -66,6 +68,7 @@
     <string name="ui_0772fa16aa51" formatted="false">选择正确的影片</string>
     <string name="ui_82be318f7bae" formatted="false">选择服务器</string>
     <string name="ui_412226715c56" formatted="false">清除筛选</string>
+    <string name="ui_ba29ddeac7e6" formatted="false">点击优先处理此影片或剧集</string>
     <string name="ui_a5a18ce21516" formatted="false">点击将此影片移至字幕队列前列</string>
     <string name="ui_bbfa773e5a63" formatted="false">关闭</string>
     <string name="ui_ba5e1c3ff6e7" formatted="false">隐藏式字幕</string>
@@ -99,6 +102,7 @@
     <string name="ui_bf0f3a2d2c62" formatted="false">无法获取此种子，请重试。</string>
     <string name="ui_6e157c5da441" formatted="false">创建</string>
     <string name="ui_bdbcfa0af077" formatted="false">创建用户</string>
+    <string name="ui_3394786da6fb" formatted="false">片尾检测未完成</string>
     <string name="ui_f06a7a6fb077" formatted="false">当前不限量</string>
     <string name="ui_564af6829fbc" formatted="false">下载</string>
     <string name="ui_45bfe6a546ee" formatted="false">下载中</string>
@@ -118,6 +122,7 @@
     <string name="ui_2e4bc4ccc662" formatted="false">删除种子及其文件？</string>
     <string name="ui_cc7192d76413" formatted="false">正在删除文件…</string>
     <string name="ui_55f8ebc805e6" formatted="false">简介</string>
+    <string name="ui_d9319c338d5b" formatted="false">检测片尾字幕</string>
     <string name="ui_d56e2646caaa" formatted="false">设备已关联</string>
     <string name="ui_df485c871329" formatted="false">设备</string>
     <string name="ui_ed28e0686e12" formatted="false">断开连接</string>
@@ -209,6 +214,7 @@
     <string name="ui_aaee331bfc80" formatted="false">请将此电视重新关联到服务器。</string>
     <string name="ui_d6b61171cda1" formatted="false">正在加载详情…</string>
     <string name="ui_78df555a3a52" formatted="false">正在加载媒体库…</string>
+    <string name="ui_7c915baf855d" formatted="false">正在加载处理队列…</string>
     <string name="ui_4f96be70a1f2" formatted="false">正在加载服务器活动…</string>
     <string name="ui_23f94ec39630" formatted="false">正在加载字幕…</string>
     <string name="ui_d219c68101f5" formatted="false">位置</string>
@@ -228,6 +234,7 @@
     <string name="ui_d1cc3212f6bd" formatted="false">标记为已看</string>
     <string name="ui_df7ea09cbb64" formatted="false">标记为未看</string>
     <string name="ui_46b250bb0a3a" formatted="false">标记为已看</string>
+    <string name="ui_13cc75488bfe" formatted="false">媒体文件在处理期间发生变化</string>
     <string name="ui_2f28e570a801" formatted="false">菜单栏</string>
     <string name="ui_9188f98eea10" formatted="false">正在 Diamond 上获取影片信息</string>
     <string name="ui_216fcddff2f9" formatted="false">等宽字体</string>
@@ -259,10 +266,12 @@
     <string name="ui_839030590e08" formatted="false">没有匹配的影片</string>
     <string name="ui_7678770667a6" formatted="false">暂无电影或剧集。</string>
     <string name="ui_28d608ea4298" formatted="false">超过 5 分钟没有节点或活动</string>
+    <string name="ui_f4f2ec4dc27b" formatted="false">没有待处理任务</string>
     <string name="ui_6a52f1d4b635" formatted="false">暂无近期活动</string>
     <string name="ui_6fd4ab12ee28" formatted="false">未找到资源</string>
     <string name="ui_74cd1304973c" formatted="false">未找到服务器</string>
     <string name="ui_3e36b40ea99d" formatted="false">暂无字幕任务</string>
+    <string name="ui_55b63277f6b3" formatted="false">没有支持的字幕来源</string>
     <string name="ui_34649c3ae595" formatted="false">未找到匹配的影片。</string>
     <string name="ui_879b4a9bb1c8" formatted="false">暂无种子</string>
     <string name="ui_6eef6648406c" formatted="false">无</string>
@@ -312,7 +321,10 @@
     <string name="ui_de58cdcf6ca3" formatted="false">正在准备播放…</string>
     <string name="ui_0f255a84a82a" formatted="false">正在准备字幕…</string>
     <string name="ui_0b1d6c0b1a56" formatted="false">正在准备…</string>
+    <string name="ui_109a00c0bd39" formatted="false">优先处理</string>
     <string name="ui_5af3161d2251" formatted="false">优先处理字幕</string>
+    <string name="ui_fffc6e1a0c19" formatted="false">自动处理媒体库</string>
+    <string name="ui_e63451d3cf90" formatted="false">媒体处理</string>
     <string name="ui_cee5b42e2dc8" formatted="false">用户颜色必须使用 #RRGGBB 格式</string>
     <string name="ui_79e0a2b26494" formatted="false">用户名字必须包含 1–80 个可显示的字符</string>
     <string name="ui_c009b451b816" formatted="false">找不到用户</string>
@@ -326,6 +338,7 @@
     <string name="ui_034f14206811" formatted="false">分享率</string>
     <string name="ui_03e91053622d" formatted="false">剩余</string>
     <string name="ui_794f65e9d206" formatted="false">分享率</string>
+    <string name="ui_41f4b068f102" formatted="false">识别图像字幕</string>
     <string name="ui_20c7c5522fc2" formatted="false">已就绪</string>
     <string name="ui_b10fbdb5d835" formatted="false">可以观看</string>
     <string name="ui_1bded3d08e57" formatted="false">重新向 Tracker 通告</string>
@@ -362,6 +375,7 @@
     <string name="ui_c03d34373e3c" formatted="false">重新整理</string>
     <string name="ui_5f1f46e2112f" formatted="false">确认新名称</string>
     <string name="ui_094386f681e2" formatted="false">撤销访问权限</string>
+    <string name="ui_1ad552dc5275" formatted="false">滚动片尾字幕</string>
     <string name="ui_73989d9c5926" formatted="false">运行中</string>
     <string name="ui_c24ea1cb444a" formatted="false">做种中</string>
     <string name="ui_0b25507fa566" formatted="false">服务器地址</string>
@@ -482,6 +496,7 @@
     <string name="ui_c0fdf7497ff3" formatted="false">种子已移除</string>
     <string name="ui_3e8f36b12ffb" formatted="false">种子</string>
     <string name="ui_cbb4cc49824b" formatted="false">传输</string>
+    <string name="ui_7317cb083a2d" formatted="false">翻译字幕</string>
     <string name="ui_8ad8302d110b" formatted="false">翻译</string>
     <string name="ui_9a14b54f2d98" formatted="false">Transmission 报告此种子停滞</string>
     <string name="ui_c17f217d8b8e" formatted="false">请尝试其他片名。</string>
@@ -494,6 +509,7 @@
     <string name="ui_e7010042ce25" formatted="false">无法播放</string>
     <string name="ui_39fc72124884" formatted="false">撤销</string>
     <string name="ui_b8bef37b7153" formatted="false">不限量</string>
+    <string name="ui_e50bad848e4a" formatted="false">不支持处理此媒体容器</string>
     <string name="ui_8bdf057f91e7" formatted="false">上传</string>
     <string name="ui_2fb6cfd6c7df" formatted="false">使用 Torrbaby 打开磁力链接</string>
     <string name="ui_952de75621d0" formatted="false">使用可用空间</string>

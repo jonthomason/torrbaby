@@ -52,3 +52,15 @@ CREATE TABLE IF NOT EXISTS profile_hidden_titles (
  profile_id TEXT NOT NULL REFERENCES profiles(id), title_id TEXT NOT NULL,
  hidden_at REAL NOT NULL, PRIMARY KEY(profile_id,title_id)
 );
+
+CREATE TABLE IF NOT EXISTS credits_analysis (asset_id TEXT PRIMARY KEY, revision TEXT NOT NULL, version INTEGER NOT NULL, document TEXT NOT NULL, updated REAL NOT NULL);
+
+-- One revision-bound sign-off record per media file. Artifacts remain caches.
+CREATE TABLE IF NOT EXISTS media_processing (
+ asset_id TEXT PRIMARY KEY, revision TEXT NOT NULL, version INTEGER NOT NULL,
+ state TEXT NOT NULL, stage TEXT NOT NULL, inventory_state TEXT NOT NULL,
+ subtitles_state TEXT NOT NULL, credits_state TEXT NOT NULL,
+ detail TEXT NOT NULL DEFAULT '{}', error TEXT, retry_after REAL NOT NULL DEFAULT 0,
+ attempts INTEGER NOT NULL DEFAULT 0, completed_at REAL, updated REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS media_processing_work ON media_processing(state,retry_after);

@@ -455,12 +455,12 @@ struct BackgroundSubtitlesView: View {
     @EnvironmentObject var store: Store
     var body: some View {
         if let status = store.status {
-            Toggle("Prepare translations automatically", isOn: Binding(
+            Toggle("Process library automatically", isOn: Binding(
                 get: { status.settings.backgroundSubtitles ?? true },
                 set: { enabled in store.perform { try await store.send("PATCH", "/v1/settings", body: ["background_subtitles": enabled]) } }
             )).disabled(store.busy)
             if let preparation = status.subtitlePreparation {
-                Text("\(preparation.translated) translated · \(preparation.scanned) scanned").font(.callout).foregroundStyle(.secondary)
+                Text("\(preparation.translated) processed · \(preparation.scanned) scanned").font(.callout).foregroundStyle(.secondary)
                 if let job = preparation.current {
                     let asset = store.library?.titles.flatMap(\.assets).first { $0.id == job.assetId }
                     Text(LocalizedStringKey(asset?.name ?? "Translating subtitles…")).lineLimit(2)

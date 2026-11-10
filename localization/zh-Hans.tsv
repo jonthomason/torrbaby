@@ -565,3 +565,22 @@ Check access to your Application Support folder and try again.	请检查应用�
 ⓘ	ⓘ
 Resolution	分辨率
 All resolutions	所有分辨率
+
+Rolling credits	滚动片尾字幕
+%lld scanned · %lld detected	已扫描 %lld 部 · 已检测到 %lld 部
+Processing	媒体处理
+Detecting credits	检测片尾字幕
+All processing complete	全部处理完成
+Translating subtitles	翻译字幕
+Reading image subtitles	识别图像字幕
+Automatic processing paused	自动处理已暂停
+No processing jobs	没有待处理任务
+Loading processing queue…	正在加载处理队列…
+Prioritize processing	优先处理
+Click to prioritize this title in the processing queue	点击优先处理此影片或剧集
+Process library automatically	自动处理媒体库
+%lld processed · %lld scanned	已处理 %lld 项 · 已扫描 %lld 项
+No supported subtitle source	没有支持的字幕来源
+Credits analysis incomplete	片尾检测未完成
+Unsupported media container for processing	不支持处理此媒体容器
+Media changed during processing	媒体文件在处理期间发生变化

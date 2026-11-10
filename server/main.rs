@@ -2,11 +2,13 @@
 mod api;
 mod catalog;
 mod config;
+mod credits;
 mod dolby;
 mod hls;
 mod lan;
 mod matroska;
 mod media_inventory;
+mod processing;
 mod media_packaging;
 mod metadata;
 mod native_subtitles;

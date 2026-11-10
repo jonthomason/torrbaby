@@ -144,29 +144,6 @@ pub async fn serve(
             database.parent().context("Missing data directory")?,
         )?,
     });
-    // Pre-index one completed MKV at a time while no virtual stream is active.
-    // Ready indices are shared by every subtitle version and survive restarts.
-    let virtual_worker = if !preview {
-        let service=service.clone();
-        Some(tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-                if !service.virtual_media.idle() || !service.virtual_media.can_preindex() {continue;}
-                let assets=service.db.lock().ok().and_then(|db|db.documents("assets").ok()).unwrap_or_default();
-                for asset in assets {
-                    if !service.virtual_media.idle() {break;}
-                    let Some(id)=asset["id"].as_str() else {continue;};
-                    let Some(path)=asset["path"].as_str() else {continue;};
-                    if asset["complete"]!=true || !std::path::Path::new(path).extension().is_some_and(|e|e.eq_ignore_ascii_case("mkv")) {continue;}
-                    if let Ok(input)=media_file(&service,id,0).await {
-                        if let Ok(job)=service.virtual_media.prepare(id,input,Vec::new()) {
-                            if job["state"]=="queued" || job["state"]=="running" {break;}
-                        }
-                    }
-                }
-            }
-        }))
-    } else {None};
     let sampling_service = service.clone();
     let cached_entities = service
         .db
@@ -209,7 +186,6 @@ pub async fn serve(
         }
     });
     let mut workers = Vec::new();
-    if let Some(worker)=virtual_worker {workers.push(worker);}
     if !preview {
         let organizer = service.clone();
         workers.push(tokio::spawn(async move {
@@ -269,10 +245,10 @@ pub async fn serve(
         let background = service.clone();
         workers.push(tokio::spawn(async move {
             loop {
-                if let Err(error) = crate::media_inventory::tick(&background).await {
-                    eprintln!("Background subtitles: {error}");
+                if let Err(error) = crate::processing::tick(&background).await {
+                    tracing::warn!(%error,"Media processing failed");
                 }
-                tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
         }));
     }
@@ -1205,6 +1181,9 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         s.db.lock()
             .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
     if method == Method::GET {
+        if let Some(id)=path.strip_prefix("/v1/library/assets/").and_then(|p|p.strip_suffix("/credits")) {
+            return crate::credits::cached(&db,id);
+        }
         if let Some(hash) = path
             .strip_prefix("/v1/torrents/")
             .and_then(|s| s.strip_suffix("/rates"))
@@ -1237,6 +1216,8 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         ("GET","/v1/subtitle-preferences") => db.subtitle_preferences(None),
         ("PUT","/v1/subtitle-preferences") => db.save_subtitle_preferences(None, body),
         ("GET","/v1/library/revision") => Ok(json!({"revision":db.catalog_revision()?})),
+        ("GET","/v1/processing") => crate::processing::summary(&db),
+        ("GET","/v1/credits") => crate::credits::summary(&db),
         ("GET","/v1/library") => {
             let mut catalog = db.catalog(profile)?;
             catalog["revision"] = json!(db.catalog_revision()?);
@@ -1248,7 +1229,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             let config = effective.as_ref().context("Missing settings")?;
             Ok(json!({"version":env!("CARGO_PKG_VERSION"),"uptime_seconds":s.started.elapsed().as_secs(),
                 "settings":{"background_subtitles":config.background_subtitles,"source":config.source,"movies":config.movies,"tv":config.tv,"poll_seconds":config.poll_seconds,"paused":s.preview || config.paused},
-                "subtitle_preparation":crate::media_inventory::summary(&db,&s.subtitle_jobs)?,"last_poll":state["last_poll"],"last_error":if s.preview { json!("Migration preview: organizer not enabled") } else {state["last_error"].clone()},"pending_scans":if state["library_scan"]["scanning"] == true {1} else {0},"scan_error":state["library_scan"]["error"],"jobs":state["jobs"]}))
+                "credits_analysis":crate::credits::summary(&db)?,"subtitle_preparation":crate::media_inventory::summary(&db,&s.subtitle_jobs)?,"last_poll":state["last_poll"],"last_error":if s.preview { json!("Migration preview: organizer not enabled") } else {state["last_error"].clone()},"pending_scans":if state["library_scan"]["scanning"] == true {1} else {0},"scan_error":state["library_scan"]["error"],"jobs":state["jobs"]}))
         }
         ("GET","/v1/events") => Ok(db.state()?["events"].take()),
         ("GET","/v1/clients") => Ok(json!(db.rows("SELECT clients.*, EXISTS(SELECT 1 FROM device_credentials WHERE client_id=clients.id) AS paired_credential FROM clients ORDER BY last_seen DESC",[])?)),
@@ -1687,7 +1668,7 @@ async fn file_response(
     Ok(response.body(body)?)
 }
 
-async fn virtual_response(
+pub(crate) async fn virtual_response(
     reader: Arc<crate::virtual_captions::Reader>,
     id: &str,
     method: &Method,
