@@ -567,7 +567,7 @@ final class L10n {
         activity.getSharedPreferences("interface",0).edit().putString("language",code).apply();
         activity.recreate();
       });
-      if(locale().getLanguage().equals(code))Ui.primary(button);
+      if(locale().getLanguage().equals(code)) { button.setBackground(Ui.shape(0xff007aff, 0xff007aff, activity)); button.setTextColor(0xffffffff); }
       Ui.add(row,button,64,40);Ui.gap(row,4);
     }
     return row;

@@ -13,3 +13,5 @@
 - Search efficiency must come from cache reuse, duplicate-request coalescing and avoiding unnecessary source requests, not arbitrary user quotas, cooldowns or local Search is busy rejection. Keep search changes consistent across Apple and Android clients. Do not probe Chinese torrent servers for testing.
 
 - Publish iPhone/iPad builds to OTA only. Do not install or force-update the user's physical iPad or iPhone; the user installs from the OTA page. Simulator installs remain allowed for validation.
+
+- Never ask for the user's keychain password or trigger interactive keychain access for release signing. Use unsigned simulator validation until a noninteractive signing identity is available.

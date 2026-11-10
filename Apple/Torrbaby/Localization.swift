@@ -39,7 +39,7 @@ struct InterfaceLanguagePicker: View {
             option("中文", code: "zh-Hans")
         }.font(.system(size: selectorFontSize, weight: .semibold))
             .padding(4)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: interfaceCornerRadius))
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
             .fixedSize()
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Interface language")
@@ -54,8 +54,8 @@ struct InterfaceLanguagePicker: View {
     private func option(_ label: String, code: String) -> some View {
         Button { language.choose(code) } label: {
             Text(verbatim: label).frame(minWidth: 30).padding(.horizontal, 9).padding(.vertical, 5)
-                .foregroundStyle(language.code == code ? Theme.onAccent : Theme.mint)
-                .background(language.code == code ? Theme.mint : .clear, in: RoundedRectangle(cornerRadius: interfaceCornerRadius))
+                .foregroundStyle(language.code == code ? Color.white : Theme.mint)
+                .background(language.code == code ? Color.blue : .clear, in: RoundedRectangle(cornerRadius: 7))
         }.buttonStyle(.plain)
             .accessibilityLabel(code == "en" ? "English" : "中文")
             .accessibilityAddTraits(language.code == code ? .isSelected : [])

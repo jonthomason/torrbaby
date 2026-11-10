@@ -207,6 +207,22 @@ struct RootView: View {
         }
         .frame(maxWidth: .infinity, alignment: .center)
     }
+    private func mobileMenuSection(_ title: LocalizedStringKey, sections: [Section], rowHeight: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(Theme.muted).padding(.horizontal, 12)
+            ForEach(sections) { section in
+                Button { navigate(Location(section: section)) } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: section.icon).frame(width: 24).foregroundStyle(Color.blue)
+                        Text(LocalizedStringKey(section.rawValue)).foregroundStyle(.primary)
+                        Spacer(minLength: 0)
+                    }.font(.body).padding(.horizontal, 12).frame(height: rowHeight)
+                        .background(location.section == section ? Color.blue.opacity(0.22) : .clear, in: RoundedRectangle(cornerRadius: 7))
+                        .contentShape(Rectangle())
+                }.buttonStyle(.plain)
+            }
+        }
+    }
     #endif
     @State private var showConnect = false
     @State private var torrentDraft: TorrentDraft?
@@ -222,6 +238,18 @@ struct RootView: View {
                     }
                 }.padding(.horizontal, 18).padding(.top, 6)
                 #endif
+                #if os(iOS)
+                sidebarBrand.padding(.horizontal, 20).padding(.vertical, 12)
+                GeometryReader { geometry in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 14) {
+                            mobileMenuSection("Library", sections: [.library, .findTorrents, .movies, .shows], rowHeight: min(52, max(40, (geometry.size.height - 120) / 11)))
+                            mobileMenuSection("Torrents", sections: [.active, .seeding, .complete, .subtitles, .attention], rowHeight: min(52, max(40, (geometry.size.height - 120) / 11)))
+                            mobileMenuSection("Server", sections: [.automation, .settings], rowHeight: min(52, max(40, (geometry.size.height - 120) / 11)))
+                        }.padding(.horizontal, 12).padding(.vertical, 6)
+                    }
+                }
+                #else
                 List(selection: Binding(get: { location.section }, set: { navigate(Location(section: $0)) })) {
                     SwiftUI.Section("Library") {
                         ForEach([Section.library, .findTorrents, .movies, .shows]) { section in
@@ -258,6 +286,7 @@ struct RootView: View {
                 .listSectionSpacing(8)
                 .contentMargins(.top, 0, for: .scrollContent)
                 #endif
+                #endif
                 HStack(spacing: 7) {
                     Circle().fill(store.connected ? Theme.mint : .orange).frame(width: 6, height: 6)
                     Text(LocalizedStringKey(store.connected ? "Connected" : (store.offline ? "Offline mode" : "Connecting…")))
@@ -265,7 +294,10 @@ struct RootView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.horizontal, 18).padding(.vertical, 6)
-            }.navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
+            }
+            #if os(macOS)
+            .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
+            #endif
             #if os(iOS)
             .background(Color(red: 0.10, green: 0.14, blue: 0.20).ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
@@ -273,12 +305,7 @@ struct RootView: View {
                 if sizeClass == .compact {
                     ToolbarItem(placement: .topBarTrailing) { InterfaceLanguagePicker() }
                 }
-                if #available(iOS 26, *) {
-                    ToolbarItem(placement: .principal) { sidebarBrand }
-                        .sharedBackgroundVisibility(.hidden)
-                } else {
-                    ToolbarItem(placement: .principal) { sidebarBrand }
-                }
+
             }
             #endif
         } detail: {
