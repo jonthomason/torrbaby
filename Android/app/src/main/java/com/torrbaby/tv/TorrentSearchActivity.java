@@ -100,6 +100,13 @@ public final class TorrentSearchActivity extends Activity {
     JSONArray sources=item.optJSONArray("sources");if(sources!=null)for(int i=0;i<sources.length();i++)parts.add(label(sources.optJSONObject(i).optString("provider")));
     return String.join(" · ",parts);
   }
+  private static String title(JSONObject item) {
+    String name=item.optString("name");
+    if(name.startsWith("[BT下载][")) { int end=name.indexOf(']',7); if(end>7)return name.substring(7,end); }
+    int bracket=name.indexOf('[');
+    if(bracket>0 && name.substring(0,bracket).matches(".*[\\p{IsHan}].*"))return name.substring(0,bracket).trim();
+    return name;
+  }
   private static String tags(JSONObject item) {
     JSONObject hints=item.optJSONObject("hints");if(hints==null)return ""; List<String> values=new ArrayList<>();
     for(String key:new String[]{"resolution","video_codec","release_source"})if(!hints.isNull(key))values.add(hints.optString(key));
@@ -114,7 +121,7 @@ public final class TorrentSearchActivity extends Activity {
         row=Ui.column(TorrentSearchActivity.this); Ui.pad(row,18,14);row.setBackground(Ui.shape(Ui.PANEL,0,TorrentSearchActivity.this));
         TextView title=Ui.title(TorrentSearchActivity.this,"",17);title.setMaxLines(2);Ui.add(row,title,-1,-2);Ui.add(row,Ui.text(TorrentSearchActivity.this,"",13,Ui.ACCENT),-1,26);Ui.add(row,Ui.text(TorrentSearchActivity.this,"",13,Ui.MUTED),-1,-2);
       }
-      JSONObject item=results.optJSONObject(position);((TextView)row.getChildAt(0)).setText(item.optString("name"));((TextView)row.getChildAt(1)).setText(summary(item));((TextView)row.getChildAt(2)).setText(tags(item));return row;
+      JSONObject item=results.optJSONObject(position);((TextView)row.getChildAt(0)).setText(title(item));((TextView)row.getChildAt(1)).setText(summary(item));((TextView)row.getChildAt(2)).setText(tags(item));return row;
     }
   }
   private void details(JSONObject item) {

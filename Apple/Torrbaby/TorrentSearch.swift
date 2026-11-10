@@ -34,6 +34,9 @@ struct TorrentSearchItem: Decodable, Identifiable {
     let matchNotes: [String]
     var id: String { infoHash.isEmpty ? sources.map { "\($0.provider):\($0.id)" }.joined(separator: ",") : infoHash }
     var title: String {
+        if name.hasPrefix("[BT下载]["), let end = name.dropFirst(7).firstIndex(of: "]") {
+            return String(name[name.index(name.startIndex, offsetBy: 7)..<end])
+        }
         let chinese = name.replacingOccurrences(of: #"^\[BT下载\]"#, with: "", options: .regularExpression)
         if chinese.range(of: #"[\p{Han}]"#, options: .regularExpression) != nil,
            let bracket = chinese.firstIndex(of: "["), bracket != chinese.startIndex {
