@@ -69,21 +69,33 @@ fn language(track: &Value) -> Option<&'static str> {
     else { None }
 }
 
-/// Text always wins. Bitmap OCR is admitted only when no text track exists.
-fn subtitle_source(tracks:&[Value])->Option<(&Value,&'static str,&'static str)> {
-    let has=|lang|tracks.iter().any(|t|language(t)==Some(lang) && t["text_extractable"]==true);
-    if has("en") && has("zh-Hans") {return None;}
-    let wanted=if has("zh-Hans") {("zh-Hans","en")} else {("en","zh-Hans")};
-    if let Some(t)=tracks.iter().find(|t|language(t)==Some(wanted.0) && t["extraction_supported"]==true && t["forced"]!=true) {return Some((t,wanted.0,wanted.1));}
-    if let Some(t)=tracks.iter().find(|t|t["extraction_supported"]==true && language(t).is_none() && t["forced"]!=true && t["language"].as_str().is_none_or(|s|s.is_empty() || s=="und")) {return Some((t,"auto","auto"));}
-    if tracks.iter().any(|t|t["text_extractable"]==true || t["sidecar"]==true) {return None;}
-    for lang in ["en","zh-Hans","auto"] {
-        if let Some(t)=tracks.iter().find(|t|(t["codec"]=="S_VOBSUB" || t["codec"]=="S_HDMV/PGS") && t["forced"]!=true &&
-            (language(t)==Some(lang) || (lang=="auto" && t["language"].as_str().is_none_or(|s|s.is_empty() || s=="und")))) {
-            return Some((t,lang,if lang=="en" {"zh-Hans"} else if lang=="zh-Hans" {"en"} else {"auto"}));
-        }
+/// Prefer existing full captions over translation, and text over OCR in each language.
+/// Equal source/target means extraction only; it never reaches the translator.
+fn subtitle_plan(tracks: &[Value]) -> Vec<(&Value, &'static str, &'static str)> {
+    let full = |t: &&Value| t["forced"] != true;
+    let bitmap = |t: &&Value| t["codec"] == "S_VOBSUB" || t["codec"] == "S_HDMV/PGS";
+    let text = |lang| tracks.iter().filter(full).find(|t| language(t) == Some(lang) && t["text_extractable"] == true);
+    let image = |lang| tracks.iter().filter(full).filter(bitmap).find(|t| language(t) == Some(lang));
+    let has = |lang| text(lang).is_some() || image(lang).is_some();
+    if has("en") && has("zh-Hans") {
+        return ["en", "zh-Hans"].into_iter().filter_map(|lang|
+            if text(lang).is_none() { image(lang).map(|t| (t, lang, lang)) } else { None }).collect();
     }
-    None
+    let (source, target) = if has("zh-Hans") { ("zh-Hans", "en") } else { ("en", "zh-Hans") };
+    if let Some(t) = text(source) {
+        return if t["extraction_supported"] == true { vec![(t, source, target)] } else { vec![] };
+    }
+    if let Some(t) = image(source) { return vec![(t, source, target)]; }
+    let unknown = |t: &&Value| t["language"].as_str().is_none_or(|s| s.is_empty() || s == "und");
+    if let Some(t) = tracks.iter().filter(full).filter(unknown).find(|t| t["extraction_supported"] == true) {
+        return vec![(t, "auto", "auto")];
+    }
+    if tracks.iter().filter(full).any(|t| t["text_extractable"] == true || t["sidecar"] == true) { return vec![]; }
+    tracks.iter().filter(full).filter(unknown).find(bitmap)
+        .map(|t| vec![(t, "auto", "auto")]).unwrap_or_default()
+}
+fn subtitle_source(tracks: &[Value]) -> Option<(&Value, &'static str, &'static str)> {
+    subtitle_plan(tracks).into_iter().next()
 }
 
 fn priorities(db: &Database) -> Result<std::collections::HashMap<String, i64>> {
@@ -194,16 +206,25 @@ pub async fn tick(s: &Service) -> Result<()> {
         }
         if !jobs.is_empty() || s.subtitle_jobs.busy() { continue; }
         let tracks=info["subtitle_tracks"].as_array().context("Invalid track inventory")?;
-        let Some((source,source_language,target_language))=subtitle_source(tracks) else {continue;};
-        let Some(track)=source["track"].as_u64() else { continue; };
-        let input=crate::api::media_file(s,id,0).await?;
-        let input=if source["sidecar"]==true {
-            let sidecar=source["id"].as_str().context("Missing sidecar ID")?.to_owned();
-            tokio::task::spawn_blocking(move || crate::subtitles::sidecar_path(&input,&sidecar)).await??
-        } else {input};
-        let original=s.subtitle_jobs.prepare(id,input.clone(),track,Some(source_language.into()),None)?;
-        let translated=s.subtitle_jobs.prepare(id,input,track,Some(source_language.into()),Some(target_language.into()))?;
-        info["jobs"]=json!([original["id"],translated["id"]]);
+        let plan=subtitle_plan(tracks);
+        if plan.is_empty() { continue; }
+        let mut job_ids=Vec::new();
+        for (source,source_language,target_language) in plan {
+            let Some(track)=source["track"].as_u64() else { continue; };
+            let input=crate::api::media_file(s,id,0).await?;
+            let input=if source["sidecar"]==true {
+                let sidecar=source["id"].as_str().context("Missing sidecar ID")?.to_owned();
+                tokio::task::spawn_blocking(move || crate::subtitles::sidecar_path(&input,&sidecar)).await??
+            } else {input};
+            let original=s.subtitle_jobs.prepare(id,input.clone(),track,Some(source_language.into()),None)?;
+            job_ids.push(original["id"].clone());
+            if source_language != target_language || target_language == "auto" {
+                let translated=s.subtitle_jobs.prepare(id,input,track,Some(source_language.into()),Some(target_language.into()))?;
+                job_ids.push(translated["id"].clone());
+            }
+        }
+        if job_ids.is_empty() { continue; }
+        info["jobs"]=json!(job_ids);
         info["preparation_state"]=json!("preparing");
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
         save(&db,id,&revision,&info)?;
@@ -239,7 +260,7 @@ pub fn summary(db: &Database, jobs: &crate::subtitle_jobs::Manager) -> Result<Va
         if !listed && (eligible.is_some() || info["state"]!="ready") {
             queue.push(json!({"id":id,"asset_id":id,"title":title,
                 "state":if info["state"]=="failed" || info["preparation_state"]=="failed" {"failed"} else if info["state"]=="pending" {"scanning"} else {"queued"},
-                "target":eligible.and_then(|(_,target)|(target!="auto").then_some(target)),"error":info["error"],"completed_cues":0,"total_cues":0}));
+                "target":eligible.and_then(|(source,target)|(target!="auto" && source!=target).then_some(target)),"error":info["error"],"completed_cues":0,"total_cues":0}));
         }
         if info["state"]=="ready" { scanned+=1; }
         let mut ready=false;
@@ -313,6 +334,23 @@ mod ocr_fallback_tests {
         assert_eq!((source,target),("zh-Hans","en"));
         let english=json!({"track":3,"text_extractable":true,"extraction_supported":true,"language":"eng"});
         assert!(subtitle_source(&[chinese,english]).is_none());
+    }
+    #[test]
+    fn existing_bitmap_captions_are_extracted_and_forced_tracks_do_not_count_as_full() {
+        let chinese=json!({"track":2,"text_extractable":true,"extraction_supported":true,"language":"zh-Hans"});
+        let english=json!({"track":3,"codec":"S_HDMV/PGS","language":"eng"});
+        let tracks=vec![chinese.clone(),english.clone()];
+        let plan=subtitle_plan(&tracks);
+        assert_eq!(plan.len(),1);
+        assert_eq!((plan[0].0["track"].as_u64(),plan[0].1,plan[0].2),(Some(3),"en","en"));
+        let tracks=vec![english,json!({"track":4,"codec":"S_VOBSUB","language":"zh"})];
+        let plan=subtitle_plan(&tracks);
+        assert_eq!(plan.len(),2);
+        assert!(plan.iter().all(|(_,source,target)|source==target));
+        let forced=json!({"track":3,"text_extractable":true,"extraction_supported":true,"language":"en","forced":true});
+        let tracks=vec![chinese,forced];
+        let (_,source,target)=subtitle_source(&tracks).unwrap();
+        assert_eq!((source,target),("zh-Hans","en"));
     }
     #[test]
     fn text_and_sidecars_always_precede_bitmap_ocr() {

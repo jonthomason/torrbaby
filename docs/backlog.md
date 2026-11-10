@@ -19,15 +19,13 @@ Queued by the user after the search proxy work on 2026-11-10.
 
 ## English subtitles for Chinese content
 
-Audit completed 2026-11-10; see `subtitle-language-audit.md`. Chinese-to-English
-text translation selection exists independently of search market. A focused
-regression check passed. No Chinese-only text-subtitle asset currently exists in
-the scanned catalog, so a real reverse-translation job remains to be verified.
-
-Remaining follow-up: recognize existing full English bitmap subtitles before
-generating a new English translation; prefer extracting those with OCR where
-needed for playback. Forced-only subtitles also need separate handling in the
-language-availability check. Do not discard existing captions.
+Completed 2026-11-10. Chinese-to-English queue selection is independent of
+search market. Existing full English text or bitmap captions prevent redundant
+translation; supported image captions are extracted with OCR instead. Forced-only
+tracks do not count as full subtitles. Three focused queue checks passed, and
+Diamond translated a three-cue Chinese SRT sample into English with timestamps
+preserved. Signed server deployed; backup `china-search-20261110-101532`.
+Pending subtitle work was resumed. See `subtitle-language-audit.md` for scope.
 
 Queued after Seinfeld cleanup by the user on 2026-11-10.
 

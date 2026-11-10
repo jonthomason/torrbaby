@@ -21,15 +21,28 @@ English text subtitles. No English-target jobs existed. Therefore code-path
 eligibility is verified, but a real Chinese-only catalog job has not yet been
 observed end to end. No content was downloaded solely for this audit.
 
-## Remaining edge cases
+## Completed follow-up
 
-- Availability currently counts text-extractable tracks only. Chinese text plus
-  existing English PGS/VobSub can trigger an unnecessary English translation.
-  Prefer OCR of the existing English track where a text rendition is needed.
-- The availability predicate counts forced-only text tracks, although source
-  selection excludes forced tracks. Full and forced subtitles must be separated
-  before deciding that a complete target-language subtitle already exists.
-- Language normalization folds Chinese variants to `zh-Hans`; traditional-only
-  subtitles need a deliberate simplification policy rather than silent relabeling.
+Deployed 2026-11-10, backup `china-search-20261110-101532`:
 
-These cases are recorded for follow-up, not claimed fixed by this audit.
+- Full English PGS/VobSub captions now count as an existing English subtitle.
+  With Chinese text present, the queue extracts the English bitmap track instead
+  of translating Chinese into English. Both languages in bitmap form produce two
+  extraction-only jobs. Text is preferred within each language.
+- Forced-only captions do not satisfy full-language availability and are not used
+  as the translation source.
+- Three focused queue regression checks passed, including the existing text/OCR
+  precedence checks. Signed release build and bundle verification passed.
+- Diamond's production Rust `prepare-subtitles` command translated an authored
+  three-cue Chinese SRT sample through Apple Translation into fluent English,
+  preserving all cue IDs and start/end timestamps. This used scratch files under
+  `/tmp`, without adding a fake title to the family library.
+- Pending production subtitle work was resumed after deployment. Seinfeld still
+  grouped as one title with all 171 assets, and nine profile history rows remained.
+
+No Chinese-only catalog title has yet exercised the entire automatic workflow;
+queue selection and the real Diamond translation path were verified separately.
+The source must contain extractable text or supported bitmap captions; this does
+not implement audio transcription. Chinese variants currently use the helper's
+`zh-Hans` language identifier; native subtitle tracks are not rewritten by this
+queue change. Traditional-to-Simplified conversion is not a new feature here.
