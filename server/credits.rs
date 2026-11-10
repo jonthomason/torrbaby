@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use rusqlite::OptionalExtension;
 use std::{path::Path, process::Stdio, sync::Arc, time::Duration};
 
-const VERSION:i64=1;
+pub(crate) const VERSION:i64=1;
 pub fn cached(db:&Database,id:&str)->Result<Value> {
     let asset=db.asset(id)?;
     let row:Option<(String,String)>=db.connection.query_row("SELECT revision,document FROM credits_analysis WHERE asset_id=? AND version=?",rusqlite::params![id,VERSION],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;

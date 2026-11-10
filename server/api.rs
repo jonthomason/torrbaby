@@ -1257,6 +1257,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             "failures":db.rows("SELECT * FROM processing_failures ORDER BY resolved_at IS NULL DESC,last_seen DESC",[])?,
             "patterns":db.rows("SELECT stage,error,COUNT(*) AS affected_files,SUM(occurrences) AS occurrences FROM processing_failures WHERE resolved_at IS NULL GROUP BY stage,error ORDER BY affected_files DESC",[])?
         })),
+        ("POST","/v1/processing/rescan") => crate::processing::rescan(&db,&body),
         ("GET","/v1/credits") => crate::credits::summary(&db),
         ("GET","/v1/library") => {
             let mut catalog = db.catalog(profile)?;

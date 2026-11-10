@@ -22,6 +22,38 @@ fn fail(db:&Database,id:&str,revision:&str,error:&str)->Result<()> {
     db.connection.execute("INSERT INTO processing_failures(asset_id,revision,stage,error,first_seen,last_seen) SELECT asset_id,revision,stage,?,?,? FROM media_processing WHERE asset_id=? AND revision=? ON CONFLICT(asset_id,revision,stage,error) DO UPDATE SET occurrences=occurrences+1,last_seen=excluded.last_seen,resolved_at=NULL",rusqlite::params![error,now(),now(),id,revision])?;
     db.connection.execute("UPDATE media_processing SET state='failed',error=?,retry_after=?,updated=?,attempts=attempts+1 WHERE asset_id=? AND revision=?",rusqlite::params![error,now()+3600.0,now(),id,revision])?;Ok(())
 }
+/// Reopen the credits stage of files analysed by an older credits method, even if
+/// they were signed off: a method upgrade should reach the whole library.
+fn reopen_outdated(db:&Database)->Result<usize> {
+    Ok(db.connection.execute("UPDATE media_processing SET credits_state='pending',state=CASE WHEN state IN ('ready','failed') THEN 'queued' ELSE state END,retry_after=0,attempts=0,completed_at=NULL,error=NULL,updated=? WHERE credits_state IN ('ready','failed','incomplete') AND state!='running' AND asset_id IN (SELECT asset_id FROM credits_analysis WHERE version<?)",rusqlite::params![now(),crate::credits::VERSION])?)
+}
+/// Operator rescans. `scope`: "failed" re-queues every failed file now (any
+/// stage); with `stage` "credits", "no_credits" reopens credits wherever none were
+/// found and "all" reopens credits everywhere. `asset_ids` limits any scope.
+pub fn rescan(db:&Database,body:&Value)->Result<Value> {
+    let scope=body["scope"].as_str().context("scope must be failed, no_credits or all")?;
+    let ids:Option<Vec<String>>=body.get("asset_ids").map(|v|v.as_array().context("asset_ids must be an array").and_then(|a|a.iter().map(|i|i.as_str().map(str::to_owned).context("Invalid asset ID")).collect())).transpose()?;
+    let rows=db.rows("SELECT m.asset_id,m.state,c.document AS credits FROM media_processing m LEFT JOIN credits_analysis c ON c.asset_id=m.asset_id",[])?;
+    let mut changed=0;
+    for row in rows {
+        let Some(id)=row["asset_id"].as_str() else{continue};
+        if ids.as_ref().is_some_and(|ids|!ids.iter().any(|i|i==id)) || row["state"]=="running" {continue;}
+        let credits:Value=row["credits"].as_str().and_then(|t|serde_json::from_str(t).ok()).unwrap_or(json!({}));
+        let none_found=credits["state"]=="ready" && credits["segments"].as_array().is_none_or(|s|s.is_empty());
+        let sql=match (scope,body["stage"].as_str()) {
+            ("failed",_) if row["state"]=="failed" => "UPDATE media_processing SET state='queued',retry_after=0,updated=? WHERE asset_id=?",
+            ("no_credits",Some("credits")) if none_found => "UPDATE media_processing SET credits_state='pending',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=?",
+            ("all",Some("credits")) => "UPDATE media_processing SET credits_state='pending',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=?",
+            ("failed",_)|("no_credits",Some("credits"))|("all",Some("credits")) => continue,
+            _ => anyhow::bail!("Use scope failed, or stage credits with scope no_credits or all"),
+        };
+        changed+=db.connection.execute(sql,rusqlite::params![now(),id])?;
+        // Mark the cached result outdated so credits actually rerun (as with a
+        // method upgrade, players see it as pending until the new result lands).
+        if scope!="failed" {db.connection.execute("UPDATE credits_analysis SET version=0 WHERE asset_id=?",[id])?;}
+    }
+    Ok(json!({"queued":changed}))
+}
 fn assets(db:&Database)->Result<Vec<Value>> {
     let mut assets=crate::media_inventory::queue_assets(db)?;
     assets.retain(|a|a["available"]==true && a["complete"]==true);
@@ -79,6 +111,7 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
                 enroll(&db,id,revision.as_deref().unwrap_or("unavailable"))?;
                 if let Err(error)=revision {fail(&db,id,"unavailable",&error.to_string())?;}
             }
+            reopen_outdated(&db)?;
             if let Ok(mut e)=ENROLLED.lock() {*e=Some((revision,now()));}
         }
         if migrating {
@@ -229,6 +262,30 @@ mod tests {
         db.connection.execute("UPDATE media_processing SET inventory_state='ready',subtitles_state='ready',credits_state='ready' WHERE asset_id='episode'",[])?;
         assert!(sign_off(&db,"episode","r1")?);
         assert!(!db.rows("SELECT resolved_at FROM processing_failures",[])?[0]["resolved_at"].is_null());
+        Ok(())
+    }
+    #[test]
+    fn method_upgrades_and_rescans_reopen_only_the_credits_stage()->Result<()> {
+        let db=database()?;
+        for id in ["old","current","failed","busy"] {enroll(&db,id,"r1")?;}
+        db.connection.execute("UPDATE media_processing SET state='ready',inventory_state='ready',subtitles_state='ready',credits_state='ready',stage='complete',completed_at=1",[])?;
+        db.connection.execute("UPDATE media_processing SET state='failed',credits_state='incomplete' WHERE asset_id='failed'",[])?;
+        db.connection.execute("UPDATE media_processing SET state='running' WHERE asset_id='busy'",[])?;
+        for (id,version,doc) in [("old",0,r#"{"state":"ready","segments":[]}"#),("current",crate::credits::VERSION,r#"{"state":"ready","segments":[{"start":1}]}"#),("failed",0,r#"{"state":"incomplete"}"#),("busy",0,r#"{"state":"ready","segments":[]}"#)] {
+            db.connection.execute("INSERT INTO credits_analysis VALUES(?,?,?,?,0)",rusqlite::params![id,"r1",version,doc])?;
+        }
+        assert_eq!(reopen_outdated(&db)?,2);
+        let state=|id:&str|->Result<(String,String,String)>{Ok(db.connection.query_row("SELECT state,credits_state,subtitles_state FROM media_processing WHERE asset_id=?",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?)};
+        assert_eq!(state("old")?,("queued".into(),"pending".into(),"ready".into()));
+        assert_eq!(state("failed")?.0,"queued");
+        assert_eq!(state("current")?.0,"ready");
+        assert_eq!(state("busy")?.0,"running","running files are left to finish");
+        assert_eq!(rescan(&db,&json!({"scope":"no_credits","stage":"credits"}))?["queued"],1,"only `old` (none found); busy is running, current has credits");
+        assert_eq!(rescan(&db,&json!({"scope":"all","stage":"credits","asset_ids":["current"]}))?["queued"],1);
+        assert_eq!(state("current")?,("queued".into(),"pending".into(),"ready".into()));
+        let version:i64=db.connection.query_row("SELECT version FROM credits_analysis WHERE asset_id='current'",[],|r|r.get(0))?;
+        assert_eq!(version,0,"cached result must not short-circuit the rescan");
+        assert!(rescan(&db,&json!({"scope":"bogus"})).is_err());
         Ok(())
     }
     #[test]
