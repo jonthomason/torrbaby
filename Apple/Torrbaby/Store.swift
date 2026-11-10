@@ -219,7 +219,40 @@ final class Store: ObservableObject {
             } catch { break }
         }
     }
-    @Published var server: String = UserDefaults.standard.string(forKey: "server") ?? ""
+    @Published var server: String = UserDefaults.standard.string(forKey: "server") ?? "" {
+        didSet {
+            if oldValue != server {
+                activeServer = nil
+                status = nil
+                fallbackServer = savedFallback()
+            }
+        }
+    }
+    @Published var fallbackServer = "" {
+        didSet { UserDefaults.standard.set(fallbackServer, forKey: "fallback-server:" + server) }
+    }
+    @Published private(set) var activeServer: String?
+    private var connectionProbe: Task<DaemonStatus, Error>?
+    private func savedFallback() -> String {
+        if let saved = UserDefaults.standard.string(forKey: "fallback-server:" + server) { return saved }
+        #if os(iOS)
+        return ServerRoutes.defaultFallback(for: server)
+        #else
+        return ""
+        #endif
+    }
+    var usingFallback: Bool {
+        activeServer != nil && ServerRoutes.normalized(activeServer!) != ServerRoutes.normalized(server)
+    }
+    var canStream: Bool { connected && !usingFallback }
+    var connectionLabel: String { connected ? (usingFallback ? "Fallback" : "Connected") : "Offline" }
+    func saveFallback(_ address: String) throws {
+        let value = ServerRoutes.normalized(address)
+        if !value.isEmpty { _ = try ServerRoutes.endpoint(value, path: "/v1/status") }
+        fallbackServer = value
+        activeServer = nil
+        status = nil
+    }
     @Published var token: String = Credentials.read()
     @Published var torrents: [Torrent] = []
     @Published var status: DaemonStatus? { didSet { updateDownloadConnection() } }
@@ -254,7 +287,12 @@ final class Store: ObservableObject {
                 // A restored Wi-Fi/cellular path still needs a successful server probe.
                 if !available { self.connectionError = URLError(.notConnectedToInternet).localizedDescription }
                 self.networkAvailable = available
-                if restored { await self.refresh() }
+                if restored || (available && self.usingFallback) {
+                    // A new network may make the primary route reachable again.
+                    self.connectionError = URLError(.networkConnectionLost).localizedDescription
+                    self.activeServer = nil
+                    await self.refresh()
+                }
             }
         }
         networkMonitor.start(queue: DispatchQueue(label: "org.torrbaby.connectivity"))
@@ -284,6 +322,7 @@ final class Store: ObservableObject {
             try? FileManager.default.removeItem(atPath: path)
         }
         #endif
+        fallbackServer = savedFallback()
         #if os(macOS)
         // App-owned polling continues after the last library window is closed.
         Task { [weak self] in
@@ -303,7 +342,7 @@ final class Store: ObservableObject {
         #if os(tvOS)
         return false
         #else
-        return configured && (status == nil || offline)
+        return configured && !canStream
         #endif
     }
     func isDownloaded(_ asset: LibraryAsset) -> Bool {
@@ -314,7 +353,7 @@ final class Store: ObservableObject {
         #endif
     }
     func isDownloaded(_ title: LibraryTitle) -> Bool { title.assets.contains(where: isDownloaded) }
-    func canPlay(_ asset: LibraryAsset) -> Bool { asset.complete && (connected || isDownloaded(asset)) }
+    func canPlay(_ asset: LibraryAsset) -> Bool { asset.complete && (canStream || isDownloaded(asset)) }
     func preferredLibraryAsset(_ title: LibraryTitle) -> LibraryAsset? {
         if offlineLibrary {
             if let resume = title.resume, isDownloaded(resume) { return resume }
@@ -334,15 +373,26 @@ final class Store: ObservableObject {
         return URLSession(configuration: config)
     }()
     func endpoint(_ path: String) throws -> URL {
-        guard let base = URL(string: server.trimmingCharacters(in: .whitespacesAndNewlines)),
-              ["http", "https"].contains(base.scheme?.lowercased() ?? ""), base.host != nil,
-              base.user == nil, base.password == nil, base.query == nil, base.fragment == nil,
-              let url = URL(string: server.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + path)
-        else { throw APIError(message: "Enter a server URL such as http://your-server:8765.") }
-        return url
+        try ServerRoutes.endpoint(activeServer ?? server, path: path)
     }
-    func request<T: Decodable>(_ method: String, _ path: String, body: [String: Any]? = nil, timeout: TimeInterval? = nil) async throws -> T {
-        var request = URLRequest(url: try endpoint(path))
+    private func probeConnection() async throws -> DaemonStatus {
+        if let connectionProbe { return try await connectionProbe.value }
+        let primary = server, fallback = fallbackServer
+        let addresses = ServerRoutes.candidates(primary: primary, fallback: fallback, current: activeServer)
+        let task = Task { @MainActor in
+            let (route, value): (String, DaemonStatus) = try await ServerRoutes.probe(addresses: addresses) { address in
+                try await self.request("GET", "/v1/status", timeout: 4, address: address)
+            }
+            guard self.server == primary, self.fallbackServer == fallback else { throw CancellationError() }
+            self.activeServer = route
+            return value
+        }
+        connectionProbe = task
+        defer { connectionProbe = nil }
+        return try await task.value
+    }
+    func request<T: Decodable>(_ method: String, _ path: String, body: [String: Any]? = nil, timeout: TimeInterval? = nil, address: String? = nil) async throws -> T {
+        var request = URLRequest(url: try address.map { try ServerRoutes.endpoint($0, path: path) } ?? endpoint(path))
         if let timeout { request.timeoutInterval = timeout }
         request.httpMethod = method
         let identity = profileIdentity
@@ -376,7 +426,8 @@ final class Store: ObservableObject {
         do {
             server = server.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             token = token.trimmingCharacters(in: .whitespacesAndNewlines)
-            let _: DaemonStatus = try await request("GET", "/v1/status", timeout: 4)
+            status = try await probeConnection()
+            connectionError = nil
             try Credentials.save(token)
             UserDefaults.standard.set(server, forKey: "server")
             await refresh()
@@ -389,10 +440,12 @@ final class Store: ObservableObject {
         refreshingStatus = true
         defer { refreshingStatus = false }
         do {
-            let value: DaemonStatus = try await request("GET", "/v1/status", timeout: 8)
+            let value = try await probeConnection()
             status = value
+            connectionError = nil
             subtitleQueueError = nil
         } catch {
+            connectionError = error.localizedDescription
             subtitleQueueError = "Couldn’t refresh the queue. Reconnecting…"
         }
     }
@@ -411,7 +464,7 @@ final class Store: ObservableObject {
             // Restore browsing before contacting the server. A satisfied network path
             // does not mean the home server is reachable (for example while travelling).
             guard networkAvailable else { throw URLError(.notConnectedToInternet) }
-            let serverStatus: DaemonStatus = try await request("GET", "/v1/status", timeout: 4)
+            let serverStatus = try await probeConnection()
             guard identity == profileIdentity else { return }
             status = serverStatus
             connectionError = nil
@@ -533,13 +586,16 @@ final class Store: ObservableObject {
 
 extension Store {
     func requireStreamingConnection() throws {
-        guard connected else {
-            throw APIError(message: "This title isn’t downloaded. Reconnect to your library to play it.")
+        guard canStream else {
+            throw APIError(message: usingFallback && connected
+                ? "Streaming is unavailable on fallback. Download this title to watch it."
+                : "This title isn’t downloaded. Reconnect to your library to play it.")
         }
     }
     /// Request native virtual MP4 tracks without copying the audiovisual stream.
     func mediaPlaybackLink(asset: LibraryAsset, titleID: String, startSession: Bool = true, progress: @escaping (String) -> Void = { _ in }) async throws -> PlaybackLink {
-        try requireStreamingConnection()
+        if startSession { try requireStreamingConnection() }
+        else if !connected { throw URLError(.notConnectedToInternet) }
         let serverAtStart = server
         let profileAtStart = profileIdentity
         let base = "/v1/library/assets/\(asset.id)"
@@ -556,7 +612,7 @@ extension Store {
             let deadline = Date().addingTimeInterval(1200)
             while result.state == "queued" || result.state == "running" || result.state == "preparing" {
                 try Task.checkCancellation()
-                try self.requireStreamingConnection()
+                if startSession { try self.requireStreamingConnection() }
                 guard self.server == serverAtStart && self.profileIdentity == profileAtStart else { throw CancellationError() }
                 guard Date() < deadline else { throw APIError(message: "Playback is still preparing. Try again shortly.") }
                 try await Task.sleep(for: .milliseconds(500))
@@ -586,14 +642,14 @@ extension Store {
             guard server == serverAtStart && profileIdentity == profileAtStart else { throw CancellationError() }
             notify("Subtitles unavailable", detail: error.localizedDescription)
         }
-        try requireStreamingConnection()
+        if startSession { try requireStreamingConnection() }
         let prepared: Job = try await request("POST", base + "/virtual-mp4", body: ["subtitle_jobs": ids])
         if prepared.state != "direct" {
             body["virtual_job"] = try await wait(prepared, route: "/v1/virtual-jobs/").id
         }
         try Task.checkCancellation()
         guard server == serverAtStart && profileIdentity == profileAtStart else { throw CancellationError() }
-        try requireStreamingConnection()
+        if startSession { try requireStreamingConnection() }
         return try await request("POST", base + "/play", body: body)
     }
 }

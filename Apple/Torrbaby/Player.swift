@@ -96,7 +96,7 @@ final class PlaybackModel: ObservableObject {
         let title = playback.name
         // Also cover restored Mac playback windows and connection loss between
         // choosing a title and constructing the native player.
-        guard url.isFileURL ? FileManager.default.fileExists(atPath: url.path) : store.connected else {
+        guard url.isFileURL ? FileManager.default.fileExists(atPath: url.path) : store.canStream else {
             player.replaceCurrentItem(with: nil)
             error = "This title isn’t downloaded. Reconnect to your library to play it."
             return

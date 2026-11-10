@@ -21,6 +21,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     private weak var store: Store?
     private var tasks: [UUID: URLSessionDownloadTask] = [:]
     private var restored = false
+    private var rerouting: Set<UUID> = []
     private var session: URLSession!
     nonisolated private let staging: URL
     var backgroundCompletion: (() -> Void)? { didSet { completeBackgroundEvents() } }
@@ -62,6 +63,12 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         for (id, task) in tasks {
             guard items.first(where: { $0.id == id })?.state == .transferring else { continue }
             if store?.connected == true {
+                if let base = try? store?.endpoint("/").absoluteString,
+                   let url = (task.currentRequest ?? task.originalRequest)?.url?.absoluteString,
+                   !url.hasPrefix(base) {
+                    pause(id, requeue: true)
+                    continue
+                }
                 if task.state == .suspended { task.resume() }
             } else if task.state == .running {
                 task.suspend()
@@ -146,7 +153,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             request.allowsCellularAccess = !policy.wifiOnly
             request.allowsExpensiveNetworkAccess = !policy.wifiOnly
             request.timeoutInterval = 120
-            let context = Data(SHA256.hash(data: Data("\(store.server)|\(store.token)|\(policy.wifiOnly)".utf8)))
+            let context = Data(SHA256.hash(data: Data("\(store.activeServer ?? store.server)|\(store.token)|\(policy.wifiOnly)".utf8)))
             let task: URLSessionDownloadTask
             if (try? Data(contentsOf: storage.resumeContextURL(item.id))) == context,
                let data = try? Data(contentsOf: storage.resumeURL(item.id)) {
@@ -166,12 +173,16 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             reload()
         }
     }
-    func pause(_ id: UUID) {
+    func pause(_ id: UUID, requeue: Bool = false) {
+        if requeue { rerouting.insert(id) } else { rerouting.remove(id) }
         guard let storage, let item = items.first(where: { $0.id == id }) else { return }
         do { try storage.pause(id, received: received[id] ?? item.received) }
         catch { self.error = error.localizedDescription; return }
         reload()
-        guard let task = tasks[id] else { return }
+        guard let task = tasks[id] else {
+            if rerouting.remove(id) != nil { try? storage.queue(id); reload(); pump() }
+            return
+        }
         task.cancel { [weak self] data in
             DispatchQueue.main.async {
                 guard let self, let storage = self.storage else { return }
@@ -180,6 +191,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
                     catch { self.error = error.localizedDescription }
                 }
                 if self.tasks[id] === task { self.tasks.removeValue(forKey: id) }
+                if self.rerouting.remove(id) != nil { try? storage.queue(id) }
                 self.reload(); self.pump()
             }
         }
@@ -190,6 +202,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         catch { self.error = error.localizedDescription }
     }
     func remove(_ id: UUID) {
+        rerouting.remove(id)
         guard let storage else { return }
         // Persist removal before cancelling so late delegate callbacks cannot restore it.
         do { try storage.remove(id) }
@@ -244,7 +257,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         let number = EpisodeNumber(season: season, episode: episode)
         if let gap = number.missingMessage(in: known) { return gap }
         if let next = number.next(in: known) {
-            if store?.server != server || store?.connected != true { return "Download \(next.label) to continue" }
+            if store?.server != server || store?.canStream != true { return "Download \(next.label) to continue" }
             return title?.autoplayStopMessage(after: playback.libraryAssetID ?? "") ?? "Couldn’t start \(next.label)"
         }
         return "No more episodes available"
@@ -269,7 +282,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         if let next = localSeries.first(where: { $0.season == number.season && $0.episode == number.episode && playback($0.id) != nil }) {
             return .local(next.id)
         }
-        guard let store, store.connected, store.server == server, let title,
+        guard let store, store.canStream, store.server == server, let title,
               let asset = title.assets.first(where: { $0.role != "extra" && $0.season == number.season && $0.episode == number.episode && $0.complete }) else { return nil }
         return .stream(title, asset)
     }
@@ -278,7 +291,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         switch selection {
         case .local(let id): return await preparePlayback(id)
         case .stream(let title, let asset):
-        guard let store, store.connected else { throw APIError(message: "Reconnect to your library to play the next episode.") }
+        guard let store, store.canStream else { throw APIError(message: "Reconnect to your library to play the next episode.") }
         let identity = store.profileIdentity
         await store.flushProgress()
         try Task.checkCancellation()

@@ -291,8 +291,8 @@ struct RootView: View {
                 #endif
                 #endif
                 HStack(spacing: 7) {
-                    Circle().fill(store.connected ? Theme.mint : .orange).frame(width: 6, height: 6)
-                    Text(LocalizedStringKey(store.connected ? "Connected" : (store.offline ? "Offline mode" : "Connecting…")))
+                    Circle().fill(store.canStream ? Theme.mint : .orange).frame(width: 6, height: 6)
+                    Text(LocalizedStringKey(store.connectionLabel))
                         .font(.caption.weight(.semibold))
                 }
                 .frame(maxWidth: .infinity, alignment: .center)

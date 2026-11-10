@@ -171,6 +171,8 @@ final class L10n {
     IDS.put("Extracting subtitles", R.string.ui_f5febee5e9e1);
     IDS.put("FILES", R.string.ui_9fb4f1d17ef8);
     IDS.put("Failed", R.string.ui_09fef5d8d9a3);
+    IDS.put("Fallback", R.string.ui_b4a100ebc4c1);
+    IDS.put("Fallback address", R.string.ui_97d4488a6fcd);
     IDS.put("File list unavailable", R.string.ui_11b2dac9eb17);
     IDS.put("Files and details", R.string.ui_df12077fa702);
     IDS.put("Files removed", R.string.ui_b677e2df8e0a);
@@ -286,6 +288,7 @@ final class L10n {
     IDS.put("No titles match your search.", R.string.ui_34649c3ae595);
     IDS.put("No torrents", R.string.ui_879b4a9bb1c8);
     IDS.put("None", R.string.ui_6eef6648406c);
+    IDS.put("Not configured", R.string.ui_811931bba8d1);
     IDS.put("Not downloaded", R.string.ui_5fe04f57e34d);
     IDS.put("Not progressing", R.string.ui_0008c8375b5d);
     IDS.put("Not yet available", R.string.ui_5a28f15df569);
@@ -447,6 +450,7 @@ final class L10n {
     IDS.put("Stay", R.string.ui_ae768f766f75);
     IDS.put("Stop", R.string.ui_9e253470c876);
     IDS.put("Stop tracking the torrent in Transmission. Keep all downloaded files on Diamond.", R.string.ui_8cf498a528c2);
+    IDS.put("Streaming is unavailable on fallback. Download this title to watch it.", R.string.ui_3c3bc1c865fc);
     IDS.put("Style", R.string.ui_99a0efc6cfd8);
     IDS.put("Submitting…", R.string.ui_25bdf9860e96);
     IDS.put("Subtitle", R.string.ui_e159d05a124c);
@@ -526,6 +530,7 @@ final class L10n {
     IDS.put("Use Torrbaby for magnet links", R.string.ui_2fb6cfd6c7df);
     IDS.put("Use available space", R.string.ui_952de75621d0);
     IDS.put("Use this name", R.string.ui_7669011536cd);
+    IDS.put("Used when the primary address is unreachable. Torrents and downloads are available; streaming is disabled.", R.string.ui_ebb884ce8b5b);
     IDS.put("User", R.string.ui_9f8a2389a20c);
     IDS.put("User switched", R.string.ui_7a3d72b59826);
     IDS.put("Verify downloaded data", R.string.ui_5093d4d42052);

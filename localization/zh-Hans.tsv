@@ -586,3 +586,8 @@ Unsupported media container for processing	不支持处理此媒体容器
 Media changed during processing	媒体文件在处理期间发生变化
 Waiting for connection	等待连接
 This title isn’t downloaded. Reconnect to your library to play it.	此影片尚未下载。请重新连接媒体库后播放。
+Fallback	备用连接
+Fallback address	备用地址
+Used when the primary address is unreachable. Torrents and downloads are available; streaming is disabled.	主地址无法访问时使用。可管理种子和下载文件，但无法在线播放。
+Streaming is unavailable on fallback. Download this title to watch it.	备用连接不支持在线播放。请下载此影片后观看。
+Not configured	未配置

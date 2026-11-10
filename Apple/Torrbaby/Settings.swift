@@ -100,6 +100,7 @@ struct SettingsView: View {
     @State private var magnetStatus: String?
     @State private var showPairing = false
     @State private var showSubtitles = false
+    @State private var showFallback = false
     private var linkDeviceButton: some View {
         Button { showPairing = true } label: { Label("Link a device", systemImage: "qrcode") }
             .disabled(!store.connected)
@@ -151,6 +152,10 @@ struct SettingsView: View {
             SwiftUI.Section("Connection") {
                 LabeledContent("Server", value: store.server.isEmpty ? "Not configured" : store.server)
                 if let status = store.status { LabeledContent("Daemon", value: "Torrbaby \(status.version)") }
+                Button { showFallback = true } label: {
+                    LabeledContent("Fallback address", value: store.fallbackServer.isEmpty ? L10n.text("Not configured") : store.fallbackServer)
+                }
+                .sheet(isPresented: $showFallback) { LocalizedInterface { FallbackAddressView() } }
                 Button("Edit connection") { showConnect = true }
             }
             #if os(macOS)
@@ -476,3 +481,44 @@ struct BackgroundSubtitlesView: View {
         }
     }
 }
+
+
+#if !os(tvOS)
+private struct FallbackAddressView: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.dismiss) private var dismiss
+    @State private var address = ""
+    @State private var error: String?
+    var body: some View {
+        NavigationStack {
+            Form {
+                SwiftUI.Section("Fallback address") {
+                    TextField("http://100.80.147.115:8765", text: $address)
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                        #endif
+                    Text("Used when the primary address is unreachable. Torrents and downloads are available; streaming is disabled.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                if let error { Text(error).foregroundStyle(.orange) }
+            }
+            .navigationTitle(L10n.text("Fallback address"))
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        do {
+                            try store.saveFallback(address)
+                            Task { await store.refresh() }
+                            dismiss()
+                        } catch { self.error = error.localizedDescription }
+                    }
+                }
+            }
+        }.onAppear { address = store.fallbackServer }
+        #if os(macOS)
+        .frame(width: 520, height: 300)
+        #endif
+    }
+}
+#endif

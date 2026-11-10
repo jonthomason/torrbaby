@@ -9985,6 +9985,91 @@
           }
         }
       }
+    },
+    "Fallback": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fallback"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "备用连接"
+          }
+        }
+      }
+    },
+    "Fallback address": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fallback address"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "备用地址"
+          }
+        }
+      }
+    },
+    "Used when the primary address is unreachable. Torrents and downloads are available; streaming is disabled.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Used when the primary address is unreachable. Torrents and downloads are available; streaming is disabled."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "主地址无法访问时使用。可管理种子和下载文件，但无法在线播放。"
+          }
+        }
+      }
+    },
+    "Streaming is unavailable on fallback. Download this title to watch it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Streaming is unavailable on fallback. Download this title to watch it."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "备用连接不支持在线播放。请下载此影片后观看。"
+          }
+        }
+      }
+    },
+    "Not configured": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not configured"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未配置"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

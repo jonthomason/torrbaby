@@ -11,6 +11,7 @@ private struct PairingPayload: Codable {
     let version: Int
     let server: String
     let code: String
+    var fallbackServer: String? = nil
 }
 
 struct PairingCodeView: View {
@@ -24,7 +25,7 @@ struct PairingCodeView: View {
     private struct Grant: Decodable { let id: String; let code: String; let expires: Double }
     private struct Status: Decodable { let paired: Bool }
     private var qr: CGImage? {
-        guard let grant, let data = try? JSONEncoder().encode(PairingPayload(app: "torrbaby", version: 1, server: store.server, code: grant.code)) else { return nil }
+        guard let grant, let data = try? JSONEncoder().encode(PairingPayload(app: "torrbaby", version: 1, server: store.server, code: grant.code, fallbackServer: store.fallbackServer.isEmpty ? nil : store.fallbackServer)) else { return nil }
         let filter = CIFilter.qrCodeGenerator()
         filter.message = data
         filter.correctionLevel = "M"
@@ -163,6 +164,7 @@ struct PairingScannerView: View {
             try Credentials.save(result.client_id, account: "client-id")
             store.clientId = result.client_id
             store.server = base; store.token = result.token
+            if let fallback = payload.fallbackServer { try store.saveFallback(fallback) }
             UserDefaults.standard.set(base, forKey: "server")
             await store.connect()
             guard store.connected else { throw APIError(message: store.connectionError ?? "Could not connect") }

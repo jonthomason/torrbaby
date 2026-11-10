@@ -380,7 +380,6 @@ struct LibraryBrowser: View {
                 if browsing, let featured = titles.homeHero {
                     NavigationLink(value: LibraryDestination(id: featured.id)) {
                         LibraryArtwork(id: featured.id, variant: "backdrop")
-                            .opacity(store.offlineLibrary && !store.isDownloaded(featured) ? 0.6 : 1)
                             .frame(height: 360)
                             .overlay(LinearGradient(colors: [.clear, .black.opacity(0.92)], startPoint: .top, endPoint: .bottom))
                             .overlay(alignment: .bottomLeading) {
@@ -469,7 +468,6 @@ struct LibraryBrowser: View {
         NavigationLink(value: LibraryDestination(id: title.id)) {
             VStack(alignment: .leading, spacing: compactLibrary ? 4 : 8) {
                 LibraryArtwork(id: title.id).aspectRatio(2/3, contentMode: .fit).clipShape(RoundedRectangle(cornerRadius: 12))
-                    .opacity(store.offlineLibrary && !store.isDownloaded(title) ? 0.6 : 1)
                     .overlay(alignment: .topTrailing) { if title.watched { WatchedBadge() } }
                 Text(title.title).font(compactLibrary ? .caption.weight(.semibold) : .headline).lineLimit(2).multilineTextAlignment(.leading)
                 Text(LocalizedStringKey(title.continuationLabel ?? ((title.year ?? "") + (title.kind == "tv" ? " · TV Show" : "")))).font(.caption).foregroundStyle(Theme.muted)
@@ -502,7 +500,7 @@ struct LibraryDetail: View {
         Button { play(asset, title: title.title) } label: {
             Label(LocalizedStringKey(store.canPlay(asset) ? asset.playbackActionTitle(television: title.kind == "tv") : "Not downloaded"), systemImage: store.canPlay(asset) ? "play.fill" : "wifi.slash")
                 .font(.headline).frame(minWidth: title.kind == "tv" ? 160 : nil, alignment: .leading).frame(minHeight: 44)
-        }.libraryActionStyle(prominent: true).disabled(loading || !store.canPlay(asset))
+        }.libraryActionStyle(prominent: true).disabled(loading)
         #if !os(tvOS)
         if title.kind == "tv" {
             if let number=selectedSeason { DownloadSeasonControl(title: title, season: number) }
@@ -592,7 +590,7 @@ struct LibraryDetail: View {
                     }
                     Spacer(minLength: 0)
                 }.contentShape(Rectangle())
-            }.buttonStyle(.plain).disabled(!store.canPlay(asset) || loading)
+            }.buttonStyle(.plain).disabled(loading)
             LibraryEpisodeActions(asset: asset, title: title)
         }.padding(14).background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
     }
@@ -659,7 +657,6 @@ private struct LibraryActionButtonStyle: ButtonStyle {
             .foregroundStyle(prominent ? Theme.onAccent : Color.primary)
             .background(prominent ? Theme.mint : Theme.panel, in: RoundedRectangle(cornerRadius: 10))
             .brightness(configuration.isPressed ? 0.08 : 0)
-            .opacity(enabled ? 1 : 0.45)
             .contentShape(RoundedRectangle(cornerRadius: 10))
     }
 }

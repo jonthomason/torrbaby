@@ -160,6 +160,8 @@
     <string name="ui_f5febee5e9e1" formatted="false">Extracting subtitles</string>
     <string name="ui_9fb4f1d17ef8" formatted="false">FILES</string>
     <string name="ui_09fef5d8d9a3" formatted="false">Failed</string>
+    <string name="ui_b4a100ebc4c1" formatted="false">Fallback</string>
+    <string name="ui_97d4488a6fcd" formatted="false">Fallback address</string>
     <string name="ui_11b2dac9eb17" formatted="false">File list unavailable</string>
     <string name="ui_df12077fa702" formatted="false">Files and details</string>
     <string name="ui_b677e2df8e0a" formatted="false">Files removed</string>
@@ -275,6 +277,7 @@
     <string name="ui_34649c3ae595" formatted="false">No titles match your search.</string>
     <string name="ui_879b4a9bb1c8" formatted="false">No torrents</string>
     <string name="ui_6eef6648406c" formatted="false">None</string>
+    <string name="ui_811931bba8d1" formatted="false">Not configured</string>
     <string name="ui_5fe04f57e34d" formatted="false">Not downloaded</string>
     <string name="ui_0008c8375b5d" formatted="false">Not progressing</string>
     <string name="ui_5a28f15df569" formatted="false">Not yet available</string>
@@ -436,6 +439,7 @@
     <string name="ui_ae768f766f75" formatted="false">Stay</string>
     <string name="ui_9e253470c876" formatted="false">Stop</string>
     <string name="ui_8cf498a528c2" formatted="false">Stop tracking the torrent in Transmission. Keep all downloaded files on Diamond.</string>
+    <string name="ui_3c3bc1c865fc" formatted="false">Streaming is unavailable on fallback. Download this title to watch it.</string>
     <string name="ui_99a0efc6cfd8" formatted="false">Style</string>
     <string name="ui_25bdf9860e96" formatted="false">Submitting…</string>
     <string name="ui_e159d05a124c" formatted="false">Subtitle</string>
@@ -515,6 +519,7 @@
     <string name="ui_2fb6cfd6c7df" formatted="false">Use Torrbaby for magnet links</string>
     <string name="ui_952de75621d0" formatted="false">Use available space</string>
     <string name="ui_7669011536cd" formatted="false">Use this name</string>
+    <string name="ui_ebb884ce8b5b" formatted="false">Used when the primary address is unreachable. Torrents and downloads are available; streaming is disabled.</string>
     <string name="ui_9f8a2389a20c" formatted="false">User</string>
     <string name="ui_7a3d72b59826" formatted="false">User switched</string>
     <string name="ui_5093d4d42052" formatted="false">Verify downloaded data</string>
