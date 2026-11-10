@@ -24,7 +24,7 @@ final class Ui {
   static GradientDrawable shape(int color, int stroke, Context c) {
     GradientDrawable g = new GradientDrawable();
     g.setColor(color);
-    g.setCornerRadius(dp(c, 12));
+    g.setCornerRadius(dp(c, 10));
     if (stroke != 0) g.setStroke(dp(c, 2), stroke);
     return g;
   }
@@ -44,9 +44,9 @@ final class Ui {
     Context c = b.getContext();
     StateListDrawable background = new StateListDrawable();
     GradientDrawable focused = shape(TEXT, ACCENT, c);
-    focused.setCornerRadius(dp(c, 24));
+    focused.setCornerRadius(dp(c, 10));
     GradientDrawable normal = shape(ACCENT, 0, c);
-    normal.setCornerRadius(dp(c, 24));
+    normal.setCornerRadius(dp(c, 10));
     background.addState(new int[] {android.R.attr.state_focused}, focused);
     background.addState(new int[] {}, normal);
     b.setBackground(background);

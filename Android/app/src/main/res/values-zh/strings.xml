@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="ui_b909e7d6e8c9" formatted="false">剩余 %d 分钟</string>
     <string name="ui_e9c9f7bc39bb" formatted="false">1 小时</string>
     <string name="ui_027795961131" formatted="false">24 小时</string>
     <string name="ui_8d61fd6a4ee0" formatted="false">6 小时</string>

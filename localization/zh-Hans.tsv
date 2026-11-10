@@ -591,3 +591,4 @@ Fallback address	备用地址
 Used when the primary address is unreachable. Torrents and downloads are available; streaming is disabled.	主地址无法访问时使用。可管理种子和下载文件，但无法在线播放。
 Streaming is unavailable on fallback. Download this title to watch it.	备用连接不支持在线播放。请下载此影片后观看。
 Not configured	未配置
+%d min remaining	剩余 %d 分钟

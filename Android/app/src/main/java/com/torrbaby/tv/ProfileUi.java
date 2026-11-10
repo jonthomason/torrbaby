@@ -57,8 +57,8 @@ final class ProfileUi {
   }
   static LinearLayout header(Activity a,Api api,Runnable action) {
     LinearLayout row=Ui.row(a);row.setGravity(Gravity.CENTER_VERTICAL);Ui.pad(row,16,4);
-    row.addView(L10n.picker(a));row.addView(new View(a),new LinearLayout.LayoutParams(0,1,1));
-    if(api!=null&&!api.profile.isEmpty())row.addView(badge(a,api,action));return row;
+    if(api!=null&&!api.profile.isEmpty())row.addView(badge(a,api,action));
+    row.addView(new View(a),new LinearLayout.LayoutParams(0,1,1));row.addView(L10n.picker(a));return row;
   }
   static LinearLayout header(Activity a,Api api) {
     return header(a,api,()->{

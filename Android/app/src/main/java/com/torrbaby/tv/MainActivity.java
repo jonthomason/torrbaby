@@ -183,16 +183,21 @@ public class MainActivity extends Activity {
   private void shell() {
     base();
     root.setPadding(0, 0, 0, 0);
-    if (!detailId.isEmpty() || !collectionName.isEmpty()) {
-      content = root;
-      return;
-    }
+    root.removeAllViews(); // The library uses one shared navigation row.
     nav = Ui.row(this);
-    Ui.pad(nav, 35, 0);
-    TextView brand = Ui.title(this, "torrbaby", 20);
-    brand.setTextColor(Ui.TEXT);
-    brand.setGravity(Gravity.CENTER_VERTICAL);
-    Ui.add(nav, brand, 145, 44);
+    nav.setGravity(Gravity.CENTER_VERTICAL);
+    Ui.pad(nav, 24, 4);
+    LinearLayout profile = ProfileUi.badge(this, api, () -> chooseProfile(true));
+    profile.getChildAt(1).setVisibility(View.GONE);
+    profile.getChildAt(2).setVisibility(View.GONE);
+    Ui.add(nav, profile, 56, 44);
+    Ui.gap(nav, 8);
+    ImageView brand = new ImageView(this);
+    brand.setImageResource(R.drawable.torrbaby_icon);
+    brand.setContentDescription("Torrbaby");
+    brand.setFocusable(false);
+    Ui.add(nav, brand, 36, 36);
+    Ui.gap(nav, 12);
     for (String label : new String[] {"Home", "Movies", "TV Shows", "Torrents", "Search"}) {
       Button b =
           Ui.button(
@@ -209,16 +214,21 @@ public class MainActivity extends Activity {
                 restoreId = "";
                 render();
               });
+      b.setTag("nav:" + label);
+      b.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 8));
       Ui.tab(b, section.equals(label));
       Ui.add(nav, b, -2, 40);
-      Ui.gap(nav, 8);
+      Ui.gap(nav, 4);
     }
     View spacer = new View(this);
     nav.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
     Button settings = Ui.button(this, L10n.t("Settings"), this::settings);
     Ui.tab(settings, false);
+    settings.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 8));
     Ui.add(nav, settings, -2, 40);
-    Ui.add(root, nav, -1, 44);
+    Ui.gap(nav, 8);
+    nav.addView(L10n.picker(this));
+    Ui.add(root, nav, -1, 52);
     Ui.gap(root, 6);
     content = Ui.column(this);
     root.addView(content, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -343,6 +353,7 @@ public class MainActivity extends Activity {
     Library.Title detail = library.find(detailId);
     if (detail != null) {
       if (showingCast) castPage(detail); else details(detail);
+      wireNavigation();
       return;
     }
     detailId = "";
@@ -365,25 +376,29 @@ public class MainActivity extends Activity {
     return null;
   }
 
+  private void collectNavigationFocus(View view, List<View> result) {
+    if (view.isFocusable() && view.getVisibility() == View.VISIBLE) { result.add(view); return; }
+    if (view instanceof android.view.ViewGroup) {
+      android.view.ViewGroup group = (android.view.ViewGroup)view;
+      for (int i = 0; i < group.getChildCount(); i++) collectNavigationFocus(group.getChildAt(i), result);
+    }
+  }
+
   private void wireNavigation() {
-    if (nav == null || !detailId.isEmpty() || !collectionName.isEmpty()) return;
-    List<Button> buttons = new ArrayList<>();
-    for (int i = 0; i < nav.getChildCount(); i++)
-      if (nav.getChildAt(i) instanceof Button) {
-        Button b = (Button) nav.getChildAt(i);
-        b.setId(View.generateViewId());
-        buttons.add(b);
-      }
+    if (nav == null) return;
+    List<View> buttons = new ArrayList<>();
+    collectNavigationFocus(nav, buttons);
+    for (View button : buttons) button.setId(View.generateViewId());
     View entry = content.findViewWithTag("hero");
     if (entry == null) entry = firstFocusable(content);
     if (entry != null && entry.getId() == View.NO_ID) entry.setId(View.generateViewId());
     for (int i = 0; i < buttons.size(); i++) {
-      Button b = buttons.get(i);
+      View b = buttons.get(i);
       b.setNextFocusLeftId(buttons.get(Math.max(0, i - 1)).getId());
       b.setNextFocusRightId(buttons.get(Math.min(buttons.size() - 1, i + 1)).getId());
       b.setNextFocusUpId(b.getId());
       if (entry != null) b.setNextFocusDownId(entry.getId());
-      if (b.getText().toString().equals(section) && entry != null)
+      if (("nav:" + section).equals(b.getTag()) && entry != null)
         entry.setNextFocusUpId(b.getId());
     }
   }
@@ -503,7 +518,7 @@ public class MainActivity extends Activity {
     info.setPadding(Ui.dp(this, 45), 0, Ui.dp(this, 30), Ui.dp(this, 25));
     FrameLayout.LayoutParams ip =
         new FrameLayout.LayoutParams(
-            Ui.dp(this, detail ? 675 : 625), -2, Gravity.BOTTOM | Gravity.LEFT);
+            detail ? -1 : Ui.dp(this, 625), -2, Gravity.BOTTOM | Gravity.LEFT);
     frame.addView(info, ip);
     TextView name = Ui.title(this, t.title, detail ? 32 : 30);
     name.setMaxLines(2);
@@ -527,30 +542,32 @@ public class MainActivity extends Activity {
       Ui.add(buttons, play, t.kind.equals("tv") ? 390 : -2, 48);
       Ui.gap(buttons, 12);
 
-      Ui.add(info, buttons, -1, 48);
       if (asset != null) {
-        Ui.gap(info, 12);
-        if(t.isContinuing()) {
-          Ui.add(info,Ui.button(this,L10n.t("Remove from Continue Watching"),()->setContinueWatchingHidden(t,true)),-2,40);
-        }
-        LinearLayout actions = Ui.row(this);
-        Ui.add(actions, Ui.button(this, asset.watched ? L10n.t("Mark as Unwatched") : L10n.t("Mark as Watched"), () -> mark(asset)), -2, 40);
+        Ui.add(buttons, Ui.button(this, asset.watched ? L10n.t("Mark as Unwatched") : L10n.t("Mark as Watched"), () -> mark(asset)), -2, 48);
         if (asset.complete) {
-          Ui.gap(actions, 12);
-          Ui.add(actions, Ui.button(this, L10n.t("Manage files"), () -> new LibraryFileActions(this, api, io, asset.id, this::load).show()), -2, 40);
+          Ui.gap(buttons, 12);
+          Ui.add(buttons, Ui.button(this, L10n.t("Manage files"), () -> new LibraryFileActions(this, api, io, asset.id, this::load).show()), -2, 48);
           if (t.cast != null && t.cast.length() > 0) {
-            Ui.gap(actions, 12);
+            Ui.gap(buttons, 12);
             Button cast = Ui.button(this, L10n.t("Cast"), () -> { showingCast = true; render(); });
             cast.setTag("cast");
-            Ui.add(actions, cast, -2, 40);
+            Ui.add(buttons, cast, -2, 48);
           }
           if (asset.position > 0) {
-            Ui.gap(actions, 12);
-            Ui.add(actions, Ui.button(this, L10n.t("Start from beginning"), () -> play(t, asset, true)), -2, 40);
+            Ui.gap(buttons, 12);
+            Ui.add(buttons, Ui.button(this, L10n.t("Start from beginning"), () -> play(t, asset, true)), -2, 48);
           }
         }
-        Ui.add(info, actions, -1, 40);
+        if (t.isContinuing()) {
+          Ui.gap(buttons, 12);
+          Ui.add(buttons, Ui.button(this, L10n.t("Remove from Continue Watching"), () -> setContinueWatchingHidden(t, true)), -2, 48);
+        }
       }
+      HorizontalScrollView actionScroll = new HorizontalScrollView(this);
+      actionScroll.setHorizontalScrollBarEnabled(false);
+      actionScroll.setClipToPadding(false);
+      actionScroll.addView(buttons);
+      Ui.add(info, actionScroll, -1, 52);
       play.requestFocus();
     } else {
       Ui.add(info, Ui.title(this, L10n.t("▶  Explore"), 17), -1, 23);
@@ -1370,11 +1387,11 @@ public class MainActivity extends Activity {
   private String playbackLabel(Library.Title title, Library.Asset asset) {
     if (asset == null) return "▶  Start";
     boolean resume = asset.position > 0 && !asset.watched;
-    if (!title.kind.equals("tv") || asset.episode <= 0) return resume ? "▶  Resume" : "▶  Play";
+    if (!title.kind.equals("tv") || asset.episode <= 0) return L10n.t(resume ? "▶  Resume" : "▶  Play");
     String episode = "S" + asset.season + "E" + asset.episode;
     String remaining = resume && asset.duration > asset.position
-        ? " (" + (int)Math.ceil((asset.duration - asset.position) / 60) + " min remaining)" : "";
-    return "▶  " + (resume ? "Resume " : "Start ") + episode + remaining;
+        ? " (" + L10n.t("%d min remaining").replace("%d", String.valueOf((int)Math.ceil((asset.duration - asset.position) / 60))) + ")" : "";
+    return L10n.t(resume ? "▶  Resume" : "▶  Start") + " " + episode + remaining;
   }
 
   private void castPage(Library.Title title) {

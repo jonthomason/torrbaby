@@ -18,7 +18,7 @@ public final class DiscoveryTestRunner extends Instrumentation {
     public void onServiceUnregistered(NsdServiceInfo info) {}
     public void onUnregistrationFailed(NsdServiceInfo info, int error) {}
   };
-  private boolean catalogCheck, cacheCheck, performanceCheck, castCheck, languageCheck;
+  private boolean catalogCheck, cacheCheck, performanceCheck, castCheck, languageCheck, headerCheck;
   public void onCreate(Bundle args) {
     super.onCreate(args); catalogCheck = args != null && args.getBoolean("catalog", false);
     if (args != null && "true".equals(args.getString("catalog"))) catalogCheck = true;
@@ -26,9 +26,11 @@ public final class DiscoveryTestRunner extends Instrumentation {
     performanceCheck = args != null && "true".equals(args.getString("performance"));
     castCheck = args != null && "true".equals(args.getString("cast"));
     languageCheck = args != null && "true".equals(args.getString("language"));
+    headerCheck = args != null && "true".equals(args.getString("header"));
     start();
   }
   public void onStart() {
+    if(headerCheck) { headerLayout(); return; }
     if (languageCheck) {
       android.content.Context base = getTargetContext();
       android.content.SharedPreferences preferences = base.getSharedPreferences("interface",0);
@@ -135,6 +137,50 @@ public final class DiscoveryTestRunner extends Instrumentation {
     runOnMainSync(() -> activity.dispatchKeyEvent(new android.view.KeyEvent(now,SystemClock.uptimeMillis(),android.view.KeyEvent.ACTION_UP,code,0)));
     waitForIdleSync(); SystemClock.sleep(100);
   }
+  private void navigationKey(int code) { sendKeyDownUpSync(code);waitForIdleSync();SystemClock.sleep(100); }
+  private void headerLayout() {
+    Bundle result = new Bundle();
+    try {
+      android.app.Activity activity = startActivitySync(new android.content.Intent(getTargetContext(), MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+      org.json.JSONObject asset = new org.json.JSONObject().put("id","episode").put("name","Episode").put("complete",true).put("position",120).put("duration",3000);
+      org.json.JSONObject title = new org.json.JSONObject().put("id","header-fixture").put("title","Send Help").put("kind","movie")
+          .put("cast",new org.json.JSONArray().put(new org.json.JSONObject().put("name","Actor")))
+          .put("assets",new org.json.JSONArray().put(asset));
+      Library model = Library.parse(new org.json.JSONObject().put("titles",new org.json.JSONArray().put(title)));
+      java.lang.reflect.Method render = MainActivity.class.getDeclaredMethod("render");render.setAccessible(true);
+      java.lang.reflect.Field navField=MainActivity.class.getDeclaredField("nav");navField.setAccessible(true);
+      for(String language:new String[]{"en","zh"}) {
+        final Exception[] failure={null};
+        runOnMainSync(()->{try{
+          activity.getSharedPreferences("interface",0).edit().putString("language",language).commit();L10n.wrap(activity);
+          for(String name:new String[]{"library","api","detailId"}) {
+            java.lang.reflect.Field field=MainActivity.class.getDeclaredField(name);field.setAccessible(true);
+            field.set(activity,name.equals("library")?model:name.equals("detailId")?"header-fixture":new Api("http://127.0.0.1:9","fixture","fixture","fixture","Jon"));
+          }
+          render.invoke(activity);
+        }catch(Exception e){failure[0]=e;}});
+        waitForIdleSync();if(failure[0]!=null)throw failure[0];
+        android.view.View nav=(android.view.View)navField.get(activity);
+        java.util.ArrayList<android.view.View> focus=new java.util.ArrayList<>();
+        java.lang.reflect.Method collect=MainActivity.class.getDeclaredMethod("collectNavigationFocus",android.view.View.class,java.util.List.class);collect.setAccessible(true);collect.invoke(activity,nav,focus);
+        if(focus.size()!=9)throw new Exception("Expected profile, six menu buttons and two language buttons: "+focus.size());
+        runOnMainSync(()->focus.get(0).requestFocus());waitForIdleSync();
+        for(int i=0;i<focus.size();i++){
+          if(activity.getCurrentFocus()!=focus.get(i))throw new Exception("Right focus mismatch at "+i+" expected="+focus.get(i)+" actual="+activity.getCurrentFocus());
+          android.graphics.Rect bounds=new android.graphics.Rect();focus.get(i).getGlobalVisibleRect(bounds);
+          if(bounds.width()<focus.get(i).getWidth()-2 || bounds.height()<focus.get(i).getHeight()-2)throw new Exception("Header control clipped: "+i);
+          if(i+1<focus.size())navigationKey(22);
+        }
+        for(int i=focus.size()-1;i>0;i--){navigationKey(21);if(activity.getCurrentFocus()!=focus.get(i-1))throw new Exception("Left focus mismatch");}
+        navigationKey(20);if(activity.getCurrentFocus()==focus.get(0))throw new Exception("Cannot enter detail");
+        navigationKey(19);if(!focus.contains(activity.getCurrentFocus()))throw new Exception("Cannot return to navigation");
+        android.graphics.Bitmap shot=getUiAutomation().takeScreenshot();
+        try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getExternalFilesDir(null),"header-"+language+".png"))){shot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
+      }
+      result.putString("stream","PASS: EN/ZH header fits, all 9 controls reachable left/right, detail down/up navigation works. Screenshots saved.\n");finish(-1,result);
+    }catch(Exception e){result.putString("stream","FAIL: "+e+"\n");finish(0,result);}
+  }
+
   private void castStress() {
     Bundle result = new Bundle();
     try {
