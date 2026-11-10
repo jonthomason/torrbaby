@@ -10,6 +10,8 @@ fn enroll(db:&Database,id:&str,revision:&str)->Result<()> {
     db.connection.execute("INSERT INTO media_processing(asset_id,revision,version,state,stage,inventory_state,subtitles_state,credits_state,updated) VALUES(?,?,?,'queued','inventory','pending','pending','pending',?) ON CONFLICT(asset_id) DO UPDATE SET revision=excluded.revision,version=excluded.version,state='queued',stage='inventory',inventory_state='pending',subtitles_state='pending',credits_state='pending',detail='{}',error=NULL,retry_after=0,attempts=0,completed_at=NULL,updated=excluded.updated WHERE media_processing.revision!=excluded.revision OR media_processing.version!=excluded.version",rusqlite::params![id,revision,VERSION,now()])?;
     Ok(())
 }
+/// Helper errors that a fresh attempt resolves on its own.
+fn transient(error:&str)->bool { error.contains("Text recognition models changed") }
 fn finished(value:&str)->bool {matches!(value,"ready"|"not_applicable")}
 fn sign_off(db:&Database,id:&str,revision:&str)->Result<bool> {
     // The SQL predicate is deliberately the final authority: a worker becoming
@@ -176,8 +178,16 @@ async fn process_file(s:&Service,mut asset:Value)->Result<()> {
     let result=advance(s,&asset,&revision,&previous).await;
     if let Err(error)=result {
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
-        fail(&db,&id,&revision,&error.to_string())?;
-        tracing::warn!(asset=id,%error,"Media processing needs attention");
+        let message=error.to_string();
+        if transient(&message) {
+            // Another helper replaced the shared Vision models mid-job. The next
+            // attempt re-warms them under the helpers' lock; it is not a failure.
+            db.connection.execute("UPDATE media_processing SET state='queued',retry_after=?,attempts=attempts+1,error=?,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![now()+60.0,message,now(),id,revision])?;
+            tracing::info!(asset=id,"Processing retrying after a shared model change");
+        } else {
+            fail(&db,&id,&revision,&message)?;
+            tracing::warn!(asset=id,%error,"Media processing needs attention");
+        }
     }
     Ok(())
 }
