@@ -11,6 +11,8 @@ struct TorrentReleaseHints: Decodable {
     let year: Int?
     let season: Int?
     let episode: Int?
+    let episodeEnd: Int?
+    let episodeCount: Int?
     let resolution: String?
     let videoCodec: String?
     let releaseSource: String?
@@ -32,6 +34,11 @@ struct TorrentSearchItem: Decodable, Identifiable {
     let matchNotes: [String]
     var id: String { infoHash.isEmpty ? sources.map { "\($0.provider):\($0.id)" }.joined(separator: ",") : infoHash }
     var title: String {
+        let chinese = name.replacingOccurrences(of: #"^\[BT下载\]"#, with: "", options: .regularExpression)
+        if chinese.range(of: #"[\p{Han}]"#, options: .regularExpression) != nil,
+           let bracket = chinese.firstIndex(of: "["), bracket != chinese.startIndex {
+            return String(chinese[..<bracket]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         let cleaned = name.replacingOccurrences(of: #"^(?:www\.)?[^ ]+\.(?:org|com|net)\s*[-–]*\s+"#, with: "", options: .regularExpression)
         let marker = cleaned.range(of: #"(?i)\b(?:(?:19|20)\d{2}|S\d{1,2}(?:E\d+)?|Seasons?\s+\d|2160p|1080[pi]|720p|480p|WEB[ ._-]?DL|BluRay|BRRip|x26[45]|HEVC)\b"#, options: .regularExpression, range: cleaned.isEmpty ? nil : cleaned.index(after: cleaned.startIndex)..<cleaned.endIndex)
         let prefix = marker.map { String(cleaned[..<$0.lowerBound]) } ?? cleaned
@@ -40,9 +47,14 @@ struct TorrentSearchItem: Decodable, Identifiable {
         return readable.isEmpty ? name : readable
     }
     var edition: String {
-        [hints.year.map(String.init), hints.season.map { season in
-            hints.episode.map { String(format: "S%02d E%02d", season, $0) } ?? "Season \(season)"
-        }].compactMap { $0 }.joined(separator: " · ")
+        var values = [hints.year.map(String.init)]
+        if let count = hints.episodeCount { values.append("Complete · \(count) episodes") }
+        else if let episode = hints.episode {
+            let range = hints.episodeEnd.map { "\(episode)–\($0)" } ?? "\(episode)"
+            values.append("Episodes \(range)")
+        }
+        if let season = hints.season { values.append("Season \(season)") }
+        return values.compactMap { $0 }.joined(separator: " · ")
     }
     var quality: String { [hints.resolution, hints.releaseSource, hints.videoCodec].compactMap { $0 }.joined(separator: " · ") }
     var languages: String {
@@ -124,7 +136,11 @@ struct TorrentSearchView: View {
                 searchHeader
                 if let response {
                     if response.items.isEmpty && !searching {
-                        ContentUnavailableView("No releases found", systemImage: "magnifyingglass", description: Text("Try a shorter title or another source."))
+                        if !response.providers.isEmpty && response.providers.allSatisfy({ $0.error != nil }) {
+                            ContentUnavailableView("Sources unavailable", systemImage: "network.slash", description: Text("Try again shortly or choose another source."))
+                        } else {
+                            ContentUnavailableView("No releases found", systemImage: "magnifyingglass", description: Text("Try a shorter title or another source."))
+                        }
                     } else if usesColumns(geometry.size.width) {
                         HStack(spacing: 0) {
                             results(response.items, inline: true)
@@ -170,7 +186,7 @@ struct TorrentSearchView: View {
             Picker("Search region", selection: $market) {
                 Text("World").tag("world")
                 Text("China").tag("china")
-            }.pickerStyle(.segmented).frame(maxWidth: 320)
+            }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 320)
                 .onChange(of: market) {
                     work?.cancel(); searching = false; response = nil; selectedID = nil; error = nil; source = "all"
                     if query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 { search() }

@@ -46,6 +46,7 @@ pub struct Hints {
     pub season_end: Option<u16>,
     pub episode: Option<u16>,
     pub episode_end: Option<u16>,
+    pub episode_count: Option<u16>,
     pub resolution: Option<String>,
     pub video_codec: Option<String>,
     pub release_source: Option<String>,
@@ -732,6 +733,16 @@ fn hints(name: &str) -> Hints {
     });
     static LANG: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)\b(ENG|CHS|CHT|JPN|MULTI|DUAL[ ._-]AUDIO)\b").unwrap());
+    static COMPLETE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"全(\d{1,3})集").unwrap());
+    static CHINESE_EPISODES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"第(\d{1,3})(?:[-—至](\d{1,3}))?集").unwrap());
+    let episode_count = COMPLETE.captures(name).and_then(|c| c[1].parse::<u16>().ok()).filter(|n| *n > 0);
+    let chinese_episodes = CHINESE_EPISODES.captures(name);
+    let mut languages: Vec<String> = LANG.find_iter(name).map(|m|m.as_str().to_ascii_uppercase()).collect();
+    if name.contains("国语") { languages.push("Mandarin audio".into()); }
+    if name.contains("粤语") { languages.push("Cantonese audio".into()); }
+    if name.contains("简繁英字幕") { languages.push("Chinese (Simplified/Traditional) + English subtitles".into()); }
+    else if name.contains("简繁字幕") { languages.push("Chinese (Simplified/Traditional) subtitles".into()); }
+    else if name.contains("中文字幕") { languages.push("Chinese subtitles".into()); }
     let ep = EPISODE.captures(name);
     let season_range = SEASON_RANGE
         .captures(name)
@@ -744,7 +755,8 @@ fn hints(name: &str) -> Hints {
     let episode = episode_range
         .as_ref()
         .and_then(|c| c[1].parse().ok())
-        .or_else(|| ep.as_ref().and_then(|c| c.get(2)?.as_str().parse().ok()));
+        .or_else(|| ep.as_ref().and_then(|c| c.get(2)?.as_str().parse().ok()))
+        .or_else(|| chinese_episodes.as_ref().and_then(|c| c[1].parse().ok()));
     Hints {
         year: YEAR.captures(name).and_then(|c| c[1].parse().ok()),
         season,
@@ -753,9 +765,11 @@ fn hints(name: &str) -> Hints {
             .and_then(|c| c.get(2)?.as_str().parse().ok())
             .filter(|end| season.is_some_and(|start| *end >= start)),
         episode,
+        episode_count,
         episode_end: episode_range
             .as_ref()
             .and_then(|c| c[2].parse().ok())
+            .or_else(|| chinese_episodes.as_ref().and_then(|c| c.get(2)?.as_str().parse().ok()))
             .filter(|end| episode.is_some_and(|start| *end >= start)),
         resolution: RES.find(name).map(|m| m.as_str().to_ascii_lowercase()),
         video_codec: CODEC.find(name).map(|m| m.as_str().to_ascii_uppercase()),
@@ -764,10 +778,7 @@ fn hints(name: &str) -> Hints {
             .find_iter(name)
             .map(|m| m.as_str().to_ascii_uppercase())
             .collect(),
-        languages: LANG
-            .find_iter(name)
-            .map(|m| m.as_str().to_ascii_uppercase())
-            .collect(),
+        languages,
         evidence: "release_name".into(),
     }
 }
@@ -782,6 +793,7 @@ fn score(item: &mut Item, query: &Query) {
     let found = words(&item.name);
     let overlap = wanted.intersection(&found).count();
     let mut score = (70 * overlap / wanted.len().max(1)) as i32;
+    if item.hints.episode_count.is_some() && query.episode.is_none() { score += 5; }
     if overlap == wanted.len() {
         item.match_notes.push("Title words match".into());
     }
@@ -836,6 +848,17 @@ fn score(item: &mut Item, query: &Query) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn chinese_release_hints_distinguish_complete_and_partial_packs() {
+        let complete = hints("逐玉[全40集][国语音轨/简繁英字幕].Pursuit.of.Jade.S01.2026.1080p.IQ.WEB-DL.H264.AAC-BlackTV");
+        assert_eq!(complete.episode_count, Some(40));
+        assert_eq!(complete.season, Some(1));
+        assert!(complete.languages.contains(&"Mandarin audio".into()));
+        let partial = hints("逐玉[第39-40集][中文字幕].Pursuit.of.Jade.S01.1080p");
+        assert_eq!(partial.episode_count, None);
+        assert_eq!(partial.episode, Some(39));
+        assert_eq!(partial.episode_end, Some(40));
+    }
     #[test]
     fn chinese_feeds_and_market_partition() {
         let old: Query = serde_json::from_str(r#"{"query":"example"}"#).unwrap();

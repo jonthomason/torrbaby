@@ -82,9 +82,10 @@ public final class TorrentSearchActivity extends Activity {
         runOnUiThread(() -> {
           if(isDestroyed() || request!=generation)return;
           search.setEnabled(true); list.setEnabled(true); results=response.optJSONArray("items"); if(results==null)results=new JSONArray();
-          List<String> messages=new ArrayList<>(); messages.add(results.length()+" results");
+          List<String> messages=new ArrayList<>();
           JSONArray providers=response.optJSONArray("providers");
           if(providers!=null) for(int i=0;i<providers.length();i++) {JSONObject p=providers.optJSONObject(i); if(p!=null&&!p.isNull("error"))messages.add(label(p.optString("provider"))+": "+p.optString("error"));}
+          if(messages.isEmpty() || results.length()>0)messages.add(0,results.length()+" results");
           status.setText(String.join(" · ",messages)); ((BaseAdapter)list.getAdapter()).notifyDataSetChanged();
           if(results.length()>0)list.requestFocus();
         });
@@ -102,6 +103,7 @@ public final class TorrentSearchActivity extends Activity {
   private static String tags(JSONObject item) {
     JSONObject hints=item.optJSONObject("hints");if(hints==null)return ""; List<String> values=new ArrayList<>();
     for(String key:new String[]{"resolution","video_codec","release_source"})if(!hints.isNull(key))values.add(hints.optString(key));
+    if(hints.optInt("episode_count")>0)values.add("Complete · "+hints.optInt("episode_count")+" episodes");
     for(String key:new String[]{"audio","languages"}) {JSONArray a=hints.optJSONArray(key);if(a!=null)for(int i=0;i<a.length();i++)values.add(a.optString(i));}
     return String.join(" · ",values);
   }
