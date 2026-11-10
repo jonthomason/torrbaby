@@ -90,7 +90,7 @@
 				<key>ASSETCATALOG_COMPILER_APPICON_NAME</key>
 				<string>AppIcon</string>
 				<key>ASSETCATALOG_COMPILER_APPICON_NAME[sdk=appletv*]</key>
-				<string></string>
+				<string>TVAppIcon</string>
 				<key>CODE_SIGN_STYLE</key>
 				<string>Automatic</string>
 				<key>COMBINE_HIDPI_IMAGES</key>
@@ -312,7 +312,7 @@
 				<key>ASSETCATALOG_COMPILER_APPICON_NAME</key>
 				<string>AppIcon</string>
 				<key>ASSETCATALOG_COMPILER_APPICON_NAME[sdk=appletv*]</key>
-				<string></string>
+				<string>TVAppIcon</string>
 				<key>CODE_SIGN_STYLE</key>
 				<string>Automatic</string>
 				<key>COMBINE_HIDPI_IMAGES</key>
