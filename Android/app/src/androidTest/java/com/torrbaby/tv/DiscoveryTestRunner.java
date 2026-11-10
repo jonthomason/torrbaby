@@ -18,7 +18,7 @@ public final class DiscoveryTestRunner extends Instrumentation {
     public void onServiceUnregistered(NsdServiceInfo info) {}
     public void onUnregistrationFailed(NsdServiceInfo info, int error) {}
   };
-  private boolean catalogCheck, cacheCheck, performanceCheck, castCheck, languageCheck, headerCheck;
+  private boolean catalogCheck, cacheCheck, performanceCheck, castCheck, languageCheck, headerCheck, shelvesCheck;
   public void onCreate(Bundle args) {
     super.onCreate(args); catalogCheck = args != null && args.getBoolean("catalog", false);
     if (args != null && "true".equals(args.getString("catalog"))) catalogCheck = true;
@@ -27,9 +27,11 @@ public final class DiscoveryTestRunner extends Instrumentation {
     castCheck = args != null && "true".equals(args.getString("cast"));
     languageCheck = args != null && "true".equals(args.getString("language"));
     headerCheck = args != null && "true".equals(args.getString("header"));
+    shelvesCheck = args != null && "true".equals(args.getString("shelves"));
     start();
   }
   public void onStart() {
+    if(shelvesCheck) { shelvesLayout(); return; }
     if(headerCheck) { headerLayout(); return; }
     if (languageCheck) {
       android.content.Context base = getTargetContext();
@@ -138,6 +140,41 @@ public final class DiscoveryTestRunner extends Instrumentation {
     waitForIdleSync(); SystemClock.sleep(100);
   }
   private void navigationKey(int code) { sendKeyDownUpSync(code);waitForIdleSync();SystemClock.sleep(100); }
+  private void shelvesLayout() {
+    Bundle result=new Bundle();
+    try {
+      android.app.Activity activity=startActivitySync(new android.content.Intent(getTargetContext(),MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+      org.json.JSONArray titles=new org.json.JSONArray();
+      for(int i=0;i<40;i++)titles.put(new org.json.JSONObject().put("id","shelf-"+i).put("title",String.format("Film %02d",i)).put("kind","movie").put("added_at",1000-i)
+          .put("assets",new org.json.JSONArray().put(new org.json.JSONObject().put("id","asset-"+i).put("complete",true))));
+      Library model=Library.parse(new org.json.JSONObject().put("titles",titles));
+      java.lang.reflect.Method render=MainActivity.class.getDeclaredMethod("render");render.setAccessible(true);
+      for(String language:new String[]{"en","zh"}) {
+        final Exception[] failure={null};
+        runOnMainSync(()->{try{
+          activity.getSharedPreferences("interface",0).edit().putString("language",language).commit();L10n.wrap(activity);
+          for(String name:new String[]{"library","api","detailId","section"}) {
+            java.lang.reflect.Field f=MainActivity.class.getDeclaredField(name);f.setAccessible(true);
+            f.set(activity,name.equals("library")?model:name.equals("api")?new Api("http://127.0.0.1:9","fixture","fixture","fixture","Jon"):name.equals("section")?"Home":"");
+          }
+          render.invoke(activity);
+        }catch(Exception e){failure[0]=e;}});
+        waitForIdleSync();SystemClock.sleep(300);if(failure[0]!=null)throw failure[0];
+        android.widget.HorizontalScrollView shelf=activity.getWindow().getDecorView().findViewWithTag("shelf:Recently added");
+        android.widget.LinearLayout row=(android.widget.LinearLayout)shelf.getChildAt(0);
+        runOnMainSync(()->row.getChildAt(0).requestFocus());waitForIdleSync();
+        for(int i=0;i<39;i++)navigationKey(android.view.KeyEvent.KEYCODE_DPAD_RIGHT);
+        if(!"title:shelf-39".equals(activity.getCurrentFocus().getTag()))throw new Exception("Could not navigate past old shelf limit: "+activity.getCurrentFocus().getTag());
+        for(int i=0;i<39;i++)navigationKey(android.view.KeyEvent.KEYCODE_DPAD_LEFT);
+        if(!"title:shelf-0".equals(activity.getCurrentFocus().getTag()))throw new Exception("Could not return to first card");
+        if(find(activity.getWindow().getDecorView(),L10n.t("See All  ›"))!=null)throw new Exception("See All still present");
+        android.graphics.Bitmap shot=getUiAutomation().takeScreenshot();
+        try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getExternalFilesDir(null),"shelves-"+language+".png"))){shot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
+      }
+      result.putString("stream","PASS: EN/ZH shelves traverse all 40 titles and return, without See All.\n");finish(-1,result);
+    }catch(Exception e){result.putString("stream","FAIL: "+e+"\n");finish(0,result);}
+  }
+
   private void headerLayout() {
     Bundle result = new Bundle();
     try {

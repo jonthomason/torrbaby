@@ -96,6 +96,8 @@ private struct TVConnectionView: View {
     }
 }
 
+private struct TVShelfDestination: Hashable { let id: String; let play: Bool }
+
 struct TVRootView: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
@@ -104,6 +106,7 @@ struct TVRootView: View {
     @State private var showSubtitles = false
     @State private var section = "Home"
     @State private var path = NavigationPath()
+    @State private var pendingShelfURL: URL?
     private let sections = ["Home", "Movies", "TV Shows", "Torrents", "Search", "Settings"]
     var body: some View {
         NavigationStack(path: $path) {
@@ -134,6 +137,7 @@ struct TVRootView: View {
                 }
             }
             .navigationDestination(for: LibraryDestination.self) { route in TVMediaDetail(titleID: route.id) }
+            .navigationDestination(for: TVShelfDestination.self) { route in TVMediaDetail(titleID: route.id, autoPlay: route.play) }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             HStack(spacing: 18) {
@@ -160,12 +164,28 @@ struct TVRootView: View {
         .task(id: phase) {
             while !Task.isCancelled && phase == .active {
                 await store.refresh()
+                openShelfSelection()
+                await TVTopShelfPublisher.publish(store)
                 try? await Task.sleep(for: .seconds(10))
             }
         }
+        .onOpenURL { url in pendingShelfURL = url; openShelfSelection() }
+        .onChange(of: store.activeProfile?.id) { _, _ in TVTopShelfPublisher.clear() }
+        .task(id: interfaceLanguage.selection) { await TVTopShelfPublisher.publish(store) }
         .alert("Couldn’t complete the request", isPresented: Binding(get: { store.actionError != nil }, set: { if !$0 { store.actionError = nil } })) {
             Button("OK") { store.actionError = nil }
         } message: { Text(LocalizedStringKey(store.actionError ?? "")) }
+    }
+    private func openShelfSelection() {
+        guard let url = pendingShelfURL, url.scheme == "torrbaby", url.host == "library",
+              let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+              let id = query.first(where: { $0.name == "title" })?.value,
+              store.profileReady, store.library != nil else { return }
+        pendingShelfURL = nil
+        guard store.library?.titles.contains(where: { $0.id == id }) == true else { return }
+        let sameProfile = query.first(where: { $0.name == "profile" })?.value == store.activeProfile?.id
+        let play = sameProfile && query.first(where: { $0.name == "action" })?.value == "play"
+        settings = false; path = NavigationPath(); path.append(TVShelfDestination(id: id, play: play))
     }
 }
 
@@ -183,8 +203,8 @@ private struct TVLibraryView: View {
             LazyVStack(alignment: .leading, spacing: 48) {
                 if kind == nil, let featured {
                     NavigationLink(value: LibraryDestination(id: featured.id)) {
-                        LibraryArtwork(id: featured.id, variant: "backdrop")
-                            .frame(height: 600)
+                        LibraryArtwork(id: featured.id, variant: "backdrop", alignment: .top)
+                            .frame(height: 740)
                             .overlay(LinearGradient(colors: [.black.opacity(0.1), .black.opacity(0.9)], startPoint: .top, endPoint: .bottom))
                             .overlay(alignment: .bottomLeading) {
                                 VStack(alignment: .leading, spacing: 16) {
@@ -195,7 +215,7 @@ private struct TVLibraryView: View {
                                 }.foregroundStyle(.white).padding(.horizontal, 90).padding(.bottom, 55)
                                     .frame(maxWidth: 1250, alignment: .leading)
                             }
-                    }.buttonStyle(TVHeroButtonStyle()).padding(.horizontal, -70).padding(.top, -40)
+                    }.buttonStyle(TVHeroButtonStyle()).padding(.horizontal, -70)
                 }
                 if kind == nil {
                     let continuing = titles.filter { $0.isContinuing }.sorted { $0.continueWatchingAt > $1.continueWatchingAt }
@@ -208,7 +228,8 @@ private struct TVLibraryView: View {
                     TVShelf(name: "TV Shows", titles: titles.filter { $0.kind == "tv" })
                     let genres = Array(Set(titles.flatMap(\.genres))).sorted()
                     ForEach(genres, id: \.self) { genre in
-                        TVShelf(name: genre, titles: titles.filter { $0.genres.contains(genre) })
+                        let matches = titles.filter { $0.genres.contains(genre) }
+                        if matches.count >= 7 { TVShelf(name: genre, titles: matches) }
                     }
                 } else {
                     Text(LocalizedStringKey(kind == "movie" ? "Movies" : "TV Shows")).font(.largeTitle.bold())
@@ -245,6 +266,8 @@ private struct TVMediaDetail: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let titleID: String
+    var autoPlay = false
+    @State private var didAutoPlay = false
     @State private var season: Int?
     @State private var playback: Playback?
     @State private var loading = false
@@ -256,7 +279,7 @@ private struct TVMediaDetail: View {
             if let title {
                 VStack(alignment: .leading, spacing: 40) {
                     ZStack(alignment: .bottomLeading) {
-                        LibraryArtwork(id: title.id, variant: title.backdrop == nil ? "poster" : "backdrop")
+                        LibraryArtwork(id: title.id, variant: title.backdrop == nil ? "poster" : "backdrop", alignment: .top)
                         LinearGradient(colors: [.clear, .black.opacity(0.95)], startPoint: .top, endPoint: .bottom)
                         VStack(alignment: .leading, spacing: 22) {
                             Text(title.title).font(.system(size: 56, weight: .bold)).lineLimit(2)
@@ -279,7 +302,7 @@ private struct TVMediaDetail: View {
                                 }.scrollClipDisabled().focusSection()
                             }
                         }.padding(.horizontal, 90).padding(.bottom, 50).frame(maxWidth: 1350, alignment: .leading)
-                    }.frame(height: 650)
+                    }.frame(height: 740)
                     VStack(alignment: .leading, spacing: 38) {
                         if loading {
                             HStack {
@@ -323,7 +346,7 @@ private struct TVMediaDetail: View {
                     }.padding(.horizontal, 90).padding(.bottom, 70)
                 }
             }
-        }.ignoresSafeArea(.container, edges: [.top, .horizontal])
+        }.ignoresSafeArea(.container, edges: .horizontal)
             .background {
                 if let title {
                     LibraryArtwork(id: title.id, variant: title.backdrop == nil ? "poster" : "backdrop")
@@ -331,6 +354,11 @@ private struct TVMediaDetail: View {
                 }
             }
             .fullScreenCover(item: $playback) { PlayerScreen(playback: $0, store: store).onExitCommand { playback = nil } }
+            .task(id: title?.id) {
+                guard autoPlay, !didAutoPlay, let title,
+                      let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first else { return }
+                didAutoPlay = true; play(asset, title: title)
+            }
             .onDisappear { playbackTask?.cancel() }
     }
     private func assetButton(_ asset: LibraryAsset, title: LibraryTitle) -> some View {
@@ -418,16 +446,10 @@ private struct TVShelf: View {
     var body: some View {
         if !titles.isEmpty {
             VStack(alignment: .leading, spacing: 24) {
-                HStack {
-                    Text(L10n.text(name)).font(.title2.bold())
-                    Spacer()
-                    NavigationLink {
-                        TVCollectionView(name: name, titleIDs: titles.map(\.id))
-                    } label: { Label("See All", systemImage: "chevron.right").font(.headline) }
-                }
+                Text(L10n.text(name)).font(.title2.bold())
                 ScrollView(.horizontal) {
-                    LazyHStack(alignment: .top, spacing: 40) {
-                        ForEach(Array(titles.prefix(10))) { TVPoster(title: $0).frame(width: 240) }
+                    LazyHStack(alignment: .top, spacing: 24) {
+                        ForEach(titles) { TVPoster(title: $0).frame(width: 220) }
                     }.padding(20)
                 }.scrollClipDisabled().scrollIndicators(.hidden)
             }.focusSection()
@@ -435,25 +457,6 @@ private struct TVShelf: View {
     }
 }
 
-
-private struct TVCollectionView: View {
-    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
-    @EnvironmentObject var store: Store
-    let name: String
-    let titleIDs: [String]
-    private var titles: [LibraryTitle] {
-        let byID = Dictionary((store.library?.titles ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return titleIDs.compactMap { byID[$0] }
-    }
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 40) {
-                Text(L10n.text(name)).font(.largeTitle.bold())
-                TVPosterGrid(titles: titles)
-            }.padding(70)
-        }.background(Theme.canvas)
-    }
-}
 
 private struct TVPoster: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
@@ -475,7 +478,7 @@ private struct TVPosterGrid: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let titles: [LibraryTitle]
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 240, maximum: 300), spacing: 40)], alignment: .leading, spacing: 40) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 24)], alignment: .leading, spacing: 40) {
             ForEach(titles) { TVPoster(title: $0) }
         }.focusSection()
     }

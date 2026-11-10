@@ -265,6 +265,7 @@ struct LibraryArtwork: View {
     @EnvironmentObject var store: Store
     let id: String
     var variant = "poster"
+    var alignment: Alignment = .center
     @State private var data: Data?
     private static let cache = NSCache<NSString, NSData>()
     private var artworkKey: String {
@@ -275,7 +276,7 @@ struct LibraryArtwork: View {
     }
     var body: some View {
         GeometryReader { geometry in
-          ZStack {
+          ZStack(alignment: alignment) {
             Theme.panel
             if let data {
                 #if os(macOS)
@@ -286,7 +287,7 @@ struct LibraryArtwork: View {
             } else {
                 Image(systemName: "film").font(.largeTitle).foregroundStyle(Theme.muted)
             }
-          }.frame(width: geometry.size.width, height: geometry.size.height).clipped()
+          }.frame(width: geometry.size.width, height: geometry.size.height, alignment: alignment).clipped()
         }
         .task(id: artworkKey) {
             data = nil

@@ -463,7 +463,10 @@ public class MainActivity extends Activity {
     shelf(body, "Recently watched", library.recentlyWatched());
     shelf(body, "Movies", library.filter("movie", "", "", 0));
     shelf(body, "TV Shows", library.filter("tv", "", "", 0));
-    for (String name : library.genres("")) shelf(body, name, library.filter("", "", name, 0));
+    for (String name : library.genres("")) {
+      List<Library.Title> matches=library.filter("", "", name, 0);
+      if(matches.size()>=6)shelf(body,name,matches);
+    }
     if (!library.warning.isEmpty())
       Ui.add(body, Ui.text(this, library.warning, 13, Ui.MUTED), -1, -2);
     View hero = page.findViewWithTag("hero");
@@ -603,16 +606,11 @@ public class MainActivity extends Activity {
     View shelfGap=new View(this);
     Ui.add(body,shelfGap,1,20);
     LinearLayout heading = Ui.row(this);
-    Ui.add(heading, Ui.title(this, name, 18), -2, 38);
-    View spacer = new View(this);
-    heading.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
-    Button all = Ui.button(this, L10n.t("See All  ›"), () -> openCollection(name, list));
-    all.setTag("shelf:" + name);
-    all.setId(View.generateViewId());
-    Ui.add(heading, all, -2, 38);
+    Ui.add(heading, Ui.title(this, L10n.t(name), 18), -2, 38);
     Ui.add(body, heading, -1, 40);
     HorizontalScrollView sc = new HorizontalScrollView(this);
     sc.setHorizontalScrollBarEnabled(false);
+    sc.setTag("shelf:" + name);
     sc.setClipToPadding(false);
     Ui.pad(sc, 8, 7);
     sc.setClipChildren(false);
@@ -626,7 +624,7 @@ public class MainActivity extends Activity {
     Runnable sizeCards=() -> {
       int available=sc.getWidth()-sc.getPaddingLeft()-sc.getPaddingRight();
       if(available<=0)return;
-      int gap=Ui.dp(this,20),columns=Math.max(3,(available+gap)/Ui.dp(this,150));
+      int gap=Ui.dp(this,12),columns=Math.max(3,(available+gap)/Ui.dp(this,130));
       int width=(available-gap*(columns-1))/columns;
       int height=width*3/2+Ui.dp(this,66);
       for(int i=0;i<row.getChildCount();i+=2) {
@@ -639,22 +637,29 @@ public class MainActivity extends Activity {
         sc.getLayoutParams().height=height+Ui.dp(this,14);sc.requestLayout();
       }
     };
-    // Reserve the shelf's space, but construct posters only near the viewport.
-    // Headings remain focusable so D-pad navigation can enter an unloaded shelf.
-    Runnable populate = () -> {
-      if (row.getChildCount() != 0) return;
-      for (Library.Title t : list.subList(0, Math.min(list.size(), 10))) {
-        View posterCard = card(t);
+    // Append a screenful ahead of horizontal navigation, without a hard title cap.
+    // The next vertical row is prepared before it enters the viewport.
+    Runnable[] append = new Runnable[1];
+    append[0] = () -> {
+      int start=row.getChildCount()/2;
+      int end=Math.min(list.size(),start+12);
+      for(int index=start;index<end;index++) {
+        View posterCard=card(list.get(index));
         posterCard.setId(View.generateViewId());
-        posterCard.setNextFocusUpId(all.getId());
-        if (row.getChildCount() == 0) all.setNextFocusDownId(posterCard.getId());
-        Ui.add(row, posterCard, 120, 247);
-        Ui.gap(row, 20);
+        posterCard.setOnKeyListener((v,key,event) -> {
+          if(event.getAction()==KeyEvent.ACTION_DOWN && key==KeyEvent.KEYCODE_DPAD_RIGHT
+              && row.indexOfChild(v)>=row.getChildCount()-6) append[0].run();
+          return false;
+        });
+        Ui.add(row,posterCard,120,247);Ui.gap(row,12);
       }
       sizeCards.run();
     };
-    all.setOnFocusChangeListener((v, focused) -> { if (focused) populate.run(); });
-    if (body.getChildCount() <= 3) populate.run();
+    Runnable populate=() -> { if(row.getChildCount()==0)append[0].run(); };
+    if(body.getChildCount()<=3)populate.run();
+    sc.setOnScrollChangeListener((v,x,y,oldX,oldY)-> {
+      if(x>oldX && x+sc.getWidth()*2>=row.getWidth())append[0].run();
+    });
     Runnable nearViewport = () -> {
       if (row.getChildCount() != 0 || !sc.isShown()) return;
       int[] location = new int[2]; sc.getLocationOnScreen(location);
@@ -677,7 +682,7 @@ public class MainActivity extends Activity {
         View child=row.getChildAt(i);
         if(child instanceof PosterCard)existing.put((String)child.getTag(),child);
       }
-      List<Library.Title> shown=fresh.subList(0,Math.min(10,fresh.size()));
+      List<Library.Title> shown=fresh.subList(0,Math.min(Math.max(12,existing.size()),fresh.size()));
       boolean reordered=existing.size()!=shown.size();
       for(int i=0;!reordered && i<shown.size();i++)
         reordered=!Objects.equals(row.getChildAt(i*2).getTag(),"title:"+shown.get(i).id);
@@ -687,15 +692,18 @@ public class MainActivity extends Activity {
         View child=existing.get("title:"+title.id);
         if(child==null)child=card(title);
         if(child.getId()==View.NO_ID)child.setId(View.generateViewId());
-        child.setNextFocusUpId(all.getId());
-        if(row.getChildCount()==0)all.setNextFocusDownId(child.getId());
-        Ui.add(row,child,120,247); Ui.gap(row,20);
+        child.setOnKeyListener((v,key,event)-> {
+          if(event.getAction()==KeyEvent.ACTION_DOWN && key==KeyEvent.KEYCODE_DPAD_RIGHT
+              && row.indexOfChild(v)>=row.getChildCount()-6)append[0].run();
+          return false;
+        });
+        Ui.add(row,child,120,247); Ui.gap(row,12);
       }
       sizeCards.run();
       if(focus!=null) {
         if(focus.getParent()==row)focus.requestFocus();
         else if(row.getChildCount()>0)row.getChildAt(0).requestFocus();
-        else all.requestFocus();
+        else { View menu=firstFocusable(nav);if(menu!=null)menu.requestFocus(); }
       }
     });
   }
@@ -862,7 +870,7 @@ public class MainActivity extends Activity {
   private void posterGrid(List<Library.Title> items) {
     GridView grid = new PosterGrid(this);
     grid.setNumColumns(6);
-    grid.setHorizontalSpacing(Ui.dp(this, 20));
+    grid.setHorizontalSpacing(Ui.dp(this, 12));
     grid.setVerticalSpacing(Ui.dp(this, 20));
     grid.setClipToPadding(false);
     grid.setSelector(android.R.color.transparent);

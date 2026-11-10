@@ -23,14 +23,17 @@ for file in sorted((root / "Torrbaby").glob("*.swift")):
 assets = obj("assets", "PBXFileReference", lastKnownFileType="folder.assetcatalog", path="Assets.xcassets", sourceTree="<group>")
 asset_build = obj("assets-build", "PBXBuildFile", fileRef=assets)
 refs.append(assets)
+catalog = obj("localizable-catalog", "PBXFileReference", lastKnownFileType="text.json.xcstrings", path="Localizable.xcstrings", sourceTree="<group>")
+refs.append(catalog)
+catalog_build = obj("localizable-catalog-build", "PBXBuildFile", fileRef=catalog)
 appgroup = obj("appgroup", "PBXGroup", children=refs, path="Torrbaby", sourceTree="<group>")
 product = obj("product", "PBXFileReference", explicitFileType="wrapper.application", includeInIndex=0, path="Torrbaby.app", sourceTree="BUILT_PRODUCTS_DIR")
 products = obj("products", "PBXGroup", children=[product], name="Products", sourceTree="<group>")
 main = obj("main", "PBXGroup", children=[appgroup, products], sourceTree="<group>")
 srcphase = obj("sources", "PBXSourcesBuildPhase", buildActionMask=2147483647, files=sources, runOnlyForDeploymentPostprocessing=0)
-resphase = obj("resources", "PBXResourcesBuildPhase", buildActionMask=2147483647, files=[asset_build], runOnlyForDeploymentPostprocessing=0)
+resphase = obj("resources", "PBXResourcesBuildPhase", buildActionMask=2147483647, files=[asset_build, catalog_build], runOnlyForDeploymentPostprocessing=0)
 frameworks = obj("frameworks", "PBXFrameworksBuildPhase", buildActionMask=2147483647, files=[], runOnlyForDeploymentPostprocessing=0)
-shared = {"PRODUCT_NAME": "$(TARGET_NAME)", "PRODUCT_BUNDLE_IDENTIFIER": "com.jonthomason.torrbaby.ios", "PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]": "com.jonthomason.torrbaby.mac", "SWIFT_VERSION": "5.0", "SDKROOT": "auto", "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator macosx appletvos appletvsimulator", "TVOS_DEPLOYMENT_TARGET": "18.0", "PRODUCT_BUNDLE_IDENTIFIER[sdk=appletv*]": "org.torrbaby.tv", "TARGETED_DEVICE_FAMILY[sdk=appletv*]": "3", "ASSETCATALOG_COMPILER_APPICON_NAME[sdk=appletv*]": "TVAppIcon", "MACOSX_DEPLOYMENT_TARGET": "15.0", "IPHONEOS_DEPLOYMENT_TARGET": "18.0", "TARGETED_DEVICE_FAMILY": "1,2", "CODE_SIGN_STYLE": "Automatic", "GENERATE_INFOPLIST_FILE": "NO", "INFOPLIST_FILE": "Torrbaby/Info.plist", "CURRENT_PROJECT_VERSION": "1", "MARKETING_VERSION": "0.2.0", "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon", "ENABLE_HARDENED_RUNTIME": "YES", "SWIFT_EMIT_LOC_STRINGS": "YES", "COMBINE_HIDPI_IMAGES": "YES"}
+shared = {"PRODUCT_NAME": "$(TARGET_NAME)", "PRODUCT_BUNDLE_IDENTIFIER": "com.jonthomason.torrbaby.ios", "PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]": "com.jonthomason.torrbaby.mac", "SWIFT_VERSION": "5.0", "SDKROOT": "auto", "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator macosx appletvos appletvsimulator", "TVOS_DEPLOYMENT_TARGET": "18.0", "PRODUCT_BUNDLE_IDENTIFIER[sdk=appletv*]": "org.torrbaby.tv", "TARGETED_DEVICE_FAMILY[sdk=appletv*]": "3", "ASSETCATALOG_COMPILER_APPICON_NAME[sdk=appletv*]": "TVAppIcon", "CODE_SIGN_ENTITLEMENTS[sdk=appletv*]": "Torrbaby/TV.entitlements", "MACOSX_DEPLOYMENT_TARGET": "15.0", "IPHONEOS_DEPLOYMENT_TARGET": "18.0", "TARGETED_DEVICE_FAMILY": "1,2", "CODE_SIGN_STYLE": "Automatic", "GENERATE_INFOPLIST_FILE": "NO", "INFOPLIST_FILE": "Torrbaby/Info.plist", "CURRENT_PROJECT_VERSION": "1", "MARKETING_VERSION": "0.2.0", "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon", "ENABLE_HARDENED_RUNTIME": "YES", "SWIFT_EMIT_LOC_STRINGS": "YES", "COMBINE_HIDPI_IMAGES": "YES"}
 configs = []
 projectconfigs = []
 for mode in ("Debug", "Release"):
@@ -41,7 +44,26 @@ for mode in ("Debug", "Release"):
 targetconfig = obj("targetconfig", "XCConfigurationList", buildConfigurations=configs, defaultConfigurationIsVisible=0, defaultConfigurationName="Release")
 projectconfig = obj("projectconfig", "XCConfigurationList", buildConfigurations=projectconfigs, defaultConfigurationIsVisible=0, defaultConfigurationName="Release")
 target = obj("target", "PBXNativeTarget", buildConfigurationList=targetconfig, buildPhases=[srcphase, frameworks, resphase], buildRules=[], dependencies=[], name="Torrbaby", productName="Torrbaby", productReference=product, productType="com.apple.product-type.application")
-rootobj = obj("project", "PBXProject", attributes={"LastUpgradeCheck": "2700", "BuildIndependentTargetsInParallel": "YES"}, buildConfigurationList=projectconfig, compatibilityVersion="Xcode 14.0", developmentRegion="en", hasScannedForEncodings=0, knownRegions=["en", "Base"], mainGroup=main, productRefGroup=products, projectDirPath="", projectRoot="", targets=[target])
+# Top Shelf is embedded only in tvOS builds of the shared application target.
+shelfref = obj("shelf-provider", "PBXFileReference", lastKnownFileType="sourcecode.swift", path="ContentProvider.swift", sourceTree="<group>")
+shelfgroup = obj("shelf-group", "PBXGroup", children=[shelfref], path="TopShelf", sourceTree="<group>")
+objects[main]["children"].insert(1, shelfgroup)
+shelfproduct = obj("shelf-product", "PBXFileReference", explicitFileType="wrapper.app-extension", includeInIndex=0, path="TorrbabyTopShelf.appex", sourceTree="BUILT_PRODUCTS_DIR")
+objects[products]["children"].append(shelfproduct)
+shelfsource = obj("shelf-sources", "PBXSourcesBuildPhase", buildActionMask=2147483647, files=[obj("shelf-provider-build", "PBXBuildFile", fileRef=shelfref), obj("shelf-snapshot-build", "PBXBuildFile", fileRef=oid("TopShelfSnapshot.swift"))], runOnlyForDeploymentPostprocessing=0)
+shelfconfigs = []
+for mode in ("Debug", "Release"):
+    settings = {"PRODUCT_NAME": "TorrbabyTopShelf", "PRODUCT_BUNDLE_IDENTIFIER": "org.torrbaby.tv.topshelf", "SWIFT_VERSION": "5.0", "SDKROOT": "appletvos", "SUPPORTED_PLATFORMS": "appletvos appletvsimulator", "TVOS_DEPLOYMENT_TARGET": "18.0", "TARGETED_DEVICE_FAMILY": "3", "CODE_SIGN_STYLE": "Automatic", "CODE_SIGN_ENTITLEMENTS": "Torrbaby/TV.entitlements", "INFOPLIST_FILE": "TopShelf/Info.plist", "GENERATE_INFOPLIST_FILE": "NO", "CURRENT_PROJECT_VERSION": "1", "MARKETING_VERSION": "0.2.0", "SKIP_INSTALL": "YES", "APPLICATION_EXTENSION_API_ONLY": "YES", "LD_RUNPATH_SEARCH_PATHS": "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks", "SWIFT_OPTIMIZATION_LEVEL": "-O" if mode == "Release" else "-Onone"}
+    shelfconfigs.append(obj("shelf-" + mode, "XCBuildConfiguration", buildSettings=settings, name=mode))
+shelfconfig = obj("shelf-config", "XCConfigurationList", buildConfigurations=shelfconfigs, defaultConfigurationIsVisible=0, defaultConfigurationName="Release")
+shelftarget = obj("shelf-target", "PBXNativeTarget", buildConfigurationList=shelfconfig, buildPhases=[shelfsource], buildRules=[], dependencies=[], name="TorrbabyTopShelf", productName="TorrbabyTopShelf", productReference=shelfproduct, productType="com.apple.product-type.app-extension")
+proxy = obj("shelf-proxy", "PBXContainerItemProxy", containerPortal=oid("project"), proxyType=1, remoteGlobalIDString=shelftarget, remoteInfo="TorrbabyTopShelf")
+dependency = obj("shelf-dependency", "PBXTargetDependency", target=shelftarget, targetProxy=proxy, platformFilter="tvos")
+objects[target]["dependencies"].append(dependency)
+embedfile = obj("shelf-embed-file", "PBXBuildFile", fileRef=shelfproduct, settings={"ATTRIBUTES": ["RemoveHeadersOnCopy"]}, platformFilter="tvos")
+embedphase = obj("shelf-embed", "PBXCopyFilesBuildPhase", buildActionMask=2147483647, dstPath="", dstSubfolderSpec=13, files=[embedfile], name="Embed TV Top Shelf", runOnlyForDeploymentPostprocessing=0)
+objects[target]["buildPhases"].append(embedphase)
+rootobj = obj("project", "PBXProject", attributes={"LastUpgradeCheck": "2700", "BuildIndependentTargetsInParallel": "YES"}, buildConfigurationList=projectconfig, compatibilityVersion="Xcode 14.0", developmentRegion="en", hasScannedForEncodings=0, knownRegions=["en", "Base"], mainGroup=main, productRefGroup=products, projectDirPath="", projectRoot="", targets=[target, shelftarget])
 with (project / "project.pbxproj").open("wb") as f:
     plistlib.dump({"archiveVersion": "1", "classes": {}, "objectVersion": "56", "objects": objects, "rootObject": rootobj}, f)
 schemes = project / "xcshareddata/xcschemes"
@@ -56,6 +78,6 @@ ref = '<BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="%s
 <AnalyzeAction buildConfiguration="Debug"/><ArchiveAction buildConfiguration="Release" revealArchiveInOrganizer="YES"/>
 </Scheme>
 ''')
-info = {"LSMultipleInstancesProhibited": True, "NSBonjourServices": ["_torrbaby._tcp"], "CFBundleURLTypes": [{"CFBundleURLName": "org.torrbaby.magnet", "CFBundleURLSchemes": ["magnet"], "CFBundleTypeRole": "Viewer"}], "CFBundleDisplayName": "Torrbaby", "CFBundleName": "$(PRODUCT_NAME)", "CFBundleIdentifier": "$(PRODUCT_BUNDLE_IDENTIFIER)", "CFBundleExecutable": "$(EXECUTABLE_NAME)", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "$(MARKETING_VERSION)", "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)", "LSApplicationCategoryType": "public.app-category.utilities", "NSAppTransportSecurity": {"NSAllowsArbitraryLoads": True}, "NSCameraUsageDescription": "Scan a connection code from a linked Torrbaby device.", "NSLocalNetworkUsageDescription": "Connect to your Torrbaby server and stream your own media.", "UILaunchScreen": {}, "UIBackgroundModes": ["audio"], "UIApplicationSceneManifest": {"UIApplicationSupportsMultipleScenes": True}, "UISupportedInterfaceOrientations": ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"], "NSHumanReadableCopyright": "Copyright © 2026 Jon Thomason. MIT License."}
+info = {"TopShelfKeychainGroup": "$(AppIdentifierPrefix)org.torrbaby.tv", "LSMultipleInstancesProhibited": True, "NSBonjourServices": ["_torrbaby._tcp"], "CFBundleURLTypes": [{"CFBundleURLName": "org.torrbaby.magnet", "CFBundleURLSchemes": ["magnet", "torrbaby"], "CFBundleTypeRole": "Viewer"}], "CFBundleDisplayName": "Torrbaby", "CFBundleName": "$(PRODUCT_NAME)", "CFBundleIdentifier": "$(PRODUCT_BUNDLE_IDENTIFIER)", "CFBundleExecutable": "$(EXECUTABLE_NAME)", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "$(MARKETING_VERSION)", "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)", "LSApplicationCategoryType": "public.app-category.utilities", "NSAppTransportSecurity": {"NSAllowsArbitraryLoads": True}, "NSCameraUsageDescription": "Scan a connection code from a linked Torrbaby device.", "NSLocalNetworkUsageDescription": "Connect to your Torrbaby server and stream your own media.", "UILaunchScreen": {}, "UIBackgroundModes": ["audio"], "UIApplicationSceneManifest": {"UIApplicationSupportsMultipleScenes": True}, "UISupportedInterfaceOrientations": ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"], "NSHumanReadableCopyright": "Copyright © 2026 Jon Thomason. MIT License."}
 with (root / "Torrbaby/Info.plist").open("wb") as f:
     plistlib.dump(info, f)
