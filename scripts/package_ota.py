@@ -32,6 +32,8 @@ def main():
         parser.error("OTA requires HTTPS")
     app = args.app.resolve()
     info = plistlib.loads((app / "Info.plist").read_bytes())
+    if info.get("CFBundleIdentifier") != "com.jonthomason.torrbaby.ios":
+        parser.error("Only com.jonthomason.torrbaby.ios may be published to Torrbaby OTA")
     if set(info.get("UIDeviceFamily", [])) != {1, 2}:
         parser.error("Expected a universal iPhone/iPad app")
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
