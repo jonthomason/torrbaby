@@ -230,12 +230,18 @@ async fn run(program: &Path, args: &[&std::ffi::OsStr], seconds: u64) -> Result<
     let status = tokio::time::timeout(std::time::Duration::from_secs(seconds), child.wait())
         .await
         .context("OCR worker timed out")??;
+    // The OCR helper exits with 75 when Vision's shared models were replaced
+    // under it. The job is retried later; it says nothing about these subtitles.
+    ensure!(status.code() != Some(OCR_MODELS_CHANGED), TEXT_MODELS_CHANGED);
     ensure!(
         status.success(),
         "OCR could not read these subtitles; source preserved"
     );
     Ok(())
 }
+const OCR_MODELS_CHANGED: i32 = 75;
+/// Stable text the processing queue matches to requeue instead of failing.
+pub const TEXT_MODELS_CHANGED: &str = "Text recognition models changed; retry later";
 pub async fn extract(
     input: &Path,
     track: u64,

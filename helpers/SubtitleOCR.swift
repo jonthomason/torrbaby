@@ -2,6 +2,7 @@ import Foundation
 import Vision
 import NaturalLanguage
 import CoreGraphics
+import CoreText
 import ImageIO
 import UniformTypeIdentifiers
 
@@ -18,40 +19,72 @@ func image(_ cue:Cue,_ root:URL) throws -> CGImage {
 }
 // Vision's text recognizer always uses Neural Engine models. Requesting another
 // compute device (setComputeDevice(.cpu), usesCPUOnly) still compiles and loads
-// them through the system ANECompilerService. Compiled models are cached per
-// executable name, but concurrent processes do not share a compile that is
-// still running. Each one compiles the same models again, the system compiler
-// saturates, and requests fail after about two minutes (CRImageReaderError,
-// e5rt code 13) before anything is cached. So helpers compile under one
-// cross-process lock, recognizing a blank image to load every recognizer model.
-// The other helpers wait for the lock and then load the cached models in
-// milliseconds. Keep this block identical in CreditsScanner.swift.
-func prepareTextRecognition() throws {
- let caches=FileManager.default.urls(for:.cachesDirectory,in:.userDomainMask)[0].appendingPathComponent("org.torrbaby.server",isDirectory:true)
- try FileManager.default.createDirectory(at:caches,withIntermediateDirectories:true)
- let fd=open(caches.appendingPathComponent("text-recognition.lock").path,O_RDWR|O_CREAT|O_CLOEXEC,0o600)
- guard fd >= 0 else {throw NSError(domain:"Text recognition lock unavailable",code:1)}
- defer {close(fd)}
- guard flock(fd,LOCK_EX) == 0 else {throw NSError(domain:"Text recognition lock unavailable",code:1)}
- defer {flock(fd,LOCK_UN)}
- guard let c=CGContext(data:nil,width:64,height:64,bitsPerComponent:8,bytesPerRow:64,space:CGColorSpaceCreateDeviceGray(),bitmapInfo:0) else {throw NSError(domain:"Text recognition warm-up failed",code:1)}
- c.setFillColor(gray:1,alpha:1);c.fill(CGRect(x:0,y:0,width:64,height:64))
- let blank=c.makeImage()!
- var failure:Error?
- for attempt in 0..<3 {
-  // A compile that timed out on the client side usually still completes in the
-  // system service and is cached by the next attempt.
-  if attempt>0 {Thread.sleep(forTimeInterval:5)}
-  let request=VNRecognizeTextRequest();request.recognitionLevel = .accurate;request.recognitionLanguages=["en-US","zh-Hans"]
-  do {try VNImageRequestHandler(cgImage:blank,options:[:]).perform([request]);return} catch {failure=error}
- }
- throw failure!
+// them through the system ANECompilerService. Compiled models are cached for
+// the whole server bundle, but concurrent processes do not share a compile that
+// is still running: each one compiles the same models again and the system
+// compiler saturates. Vision also loads the compiled program again for every
+// image. When one process recompiles, the program file that other running
+// helpers use is replaced and their next image fails (CRImageReaderError, e5rt
+// code 13). Retrying in such a process recompiles again and breaks the others
+// in turn. So:
+// - Helpers compile only under one cross-process lock. The warm-up recognizes
+//   real Latin and Chinese text with every request setting the helpers use, so
+//   detection and all recognizers load (and recompile if needed) while the
+//   lock is held.
+// - After the warm-up a recognition failure ends the job without retrying. The
+//   server requeues jobs whose error contains textModelsChanged; a new process
+//   then warms up under the lock and finds the program the last compile left.
+// Keep this block identical in CreditsScanner.swift.
+let textModelsChanged = "Text recognition models changed; retry later"
+func textWarmUpImage() -> CGImage? {
+    let width = 960, height = 120
+    guard let c = CGContext(data:nil,width:width,height:height,bitsPerComponent:8,bytesPerRow:0,
+                            space:CGColorSpaceCreateDeviceGray(),bitmapInfo:CGImageAlphaInfo.none.rawValue) else { return nil }
+    c.setFillColor(gray:1,alpha:1); c.fill(CGRect(x:0,y:0,width:width,height:height))
+    let text = NSAttributedString(string:"Warm up 2026 字幕测试",attributes:[
+        NSAttributedString.Key(kCTFontAttributeName as String):CTFontCreateWithName("PingFang SC" as CFString,44,nil),
+        NSAttributedString.Key(kCTForegroundColorAttributeName as String):CGColor(gray:0,alpha:1)])
+    c.textPosition = CGPoint(x:24,y:40); CTLineDraw(CTLineCreateWithAttributedString(text),c)
+    return c.makeImage()
 }
-// A failure after warm-up means the cached models are unavailable. Rebuild them
-// once under the lock rather than compiling at the same time as other helpers.
-func recognize(_ request:VNRecognizeTextRequest,_ image:CGImage) throws {
- do {try VNImageRequestHandler(cgImage:image,options:[:]).perform([request])}
- catch {try prepareTextRecognition();try VNImageRequestHandler(cgImage:image,options:[:]).perform([request])}
+func prepareTextRecognition() throws {
+    let caches = FileManager.default.urls(for:.cachesDirectory,in:.userDomainMask)[0]
+        .appendingPathComponent("org.torrbaby.server",isDirectory:true)
+    try FileManager.default.createDirectory(at:caches,withIntermediateDirectories:true)
+    let fd = open(caches.appendingPathComponent("text-recognition.lock").path,O_RDWR|O_CREAT|O_CLOEXEC,0o600)
+    guard fd >= 0, flock(fd,LOCK_EX) == 0 else { if fd >= 0 { close(fd) }; throw NSError(domain:"Text recognition lock unavailable",code:1) }
+    defer { flock(fd,LOCK_UN); close(fd) }
+    guard let image = textWarmUpImage() else { throw NSError(domain:"Text recognition warm-up failed",code:1) }
+    var failure: Error = NSError(domain:"Text recognition warm-up read no text",code:1)
+    for attempt in 0..<3 {
+        // A failed load makes Vision recompile on the next attempt; a compile that
+        // timed out on the client side usually completes in the system service.
+        if attempt > 0 { Thread.sleep(forTimeInterval:5) }
+        do {
+            var read = true
+            // Every request the helpers make, including OCR's fast English fallback.
+            let settings: [(VNRequestTextRecognitionLevel,[String],Bool)] = [(.accurate,["en-US","zh-Hans"],false),
+                (.accurate,["en-US"],true),(.accurate,["zh-Hans"],true),(.fast,["en-US"],true)]
+            for (level,languages,correction) in settings {
+                let request = VNRecognizeTextRequest()
+                request.recognitionLevel = level; request.recognitionLanguages = languages
+                request.usesLanguageCorrection = correction
+                try VNImageRequestHandler(cgImage:image,options:[:]).perform([request])
+                read = read && !(request.results ?? []).isEmpty
+            }
+            if read { return }
+        } catch { failure = error }
+    }
+    throw failure
+}
+
+// Exit status the server maps to a requeue rather than a failure.
+let modelsChangedStatus: Int32 = 75
+func modelsChanged(_ detail:String) -> Never {
+ FileHandle.standardError.write(Data("\(textModelsChanged)\(detail)\n".utf8)); exit(modelsChangedStatus)
+}
+func recognize(_ request:VNRecognizeTextRequest,_ image:CGImage) {
+ do {try VNImageRequestHandler(cgImage:image,options:[:]).perform([request])} catch {modelsChanged(" (\(error))")}
 }
 struct Output: Codable { let language:String;let method:String;let unreadableCues:Int;let cues:[TextCue] }
 struct TextCue: Codable {let start_ms:Int;let end_ms:Int;let text:String}
@@ -64,7 +97,7 @@ struct TextCue: Codable {let start_ms:Int;let end_ms:Int;let text:String}
   guard data.count <= 4_194_304 else {throw NSError(domain:"Large OCR manifest",code:1)}
   let manifest=try JSONDecoder().decode(Manifest.self,from:data)
   guard !manifest.cues.isEmpty, manifest.cues.count <= 10000, ["auto","en","zh-Hans"].contains(hint) else {throw NSError(domain:"Invalid OCR request",code:1)}
-  try prepareTextRecognition()
+  do {try prepareTextRecognition()} catch {modelsChanged(" (warm-up: \(error))")}
   var cues=[TextCue](),unreadable=0
   for (index,cue) in manifest.cues.enumerated() {
    guard cue.file == String(format:"%05d.gray",index), cue.width>0,cue.height>0,cue.width<=4096,cue.height<=2160,
@@ -74,18 +107,18 @@ struct TextCue: Codable {let start_ms:Int;let end_ms:Int;let text:String}
     let request=VNRecognizeTextRequest();request.recognitionLevel = .accurate
     request.recognitionLanguages=hint == "en" ? ["en-US"] : hint == "zh-Hans" ? ["zh-Hans"] : ["en-US","zh-Hans"]
     request.usesLanguageCorrection=true
-    try recognize(request,bitmap)
+    recognize(request,bitmap)
     if (request.results ?? []).isEmpty {
      let w=max(800,bitmap.width+100),h=max(300,bitmap.height+100)
      let c=CGContext(data:nil,width:w,height:h,bitsPerComponent:8,bytesPerRow:w,space:CGColorSpaceCreateDeviceGray(),bitmapInfo:0)!
      c.setFillColor(gray:1,alpha:1);c.fill(CGRect(x:0,y:0,width:w,height:h));c.draw(bitmap,in:CGRect(x:(w-bitmap.width)/2,y:(h-bitmap.height)/2,width:bitmap.width,height:bitmap.height))
      let padded=c.makeImage()!
-     try recognize(request,padded)
+     recognize(request,padded)
      if (request.results ?? []).isEmpty {
       request.recognitionLevel = .fast
       // Vision's fast recognizer does not support every accurate-path language.
       request.recognitionLanguages=["en-US"]
-      if hint != "zh-Hans" {try recognize(request,padded)}
+      if hint != "zh-Hans" {recognize(request,padded)}
      }
     }
     let observations=(request.results ?? []).sorted {a,b in abs(a.boundingBox.midY-b.boundingBox.midY)>0.03 ? a.boundingBox.midY>b.boundingBox.midY:a.boundingBox.minX<b.boundingBox.minX}

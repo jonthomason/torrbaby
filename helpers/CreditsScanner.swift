@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import Vision
 import CoreGraphics
+import CoreText
 
 struct Line { let text: String; let box: CGRect }
 struct Sample { let time: Double; let lines: [Line] }
@@ -10,51 +11,74 @@ let retryOffsets = [0.0, -0.4, 0.4, -0.8]
 
 // Vision's text recognizer always uses Neural Engine models. Requesting another
 // compute device (setComputeDevice(.cpu), usesCPUOnly) still compiles and loads
-// them through the system ANECompilerService. Compiled models are cached per
-// executable name, but concurrent processes do not share a compile that is
-// still running. Each one compiles the same models again, the system compiler
-// saturates, and requests fail after about two minutes (CRImageReaderError,
-// e5rt code 13) before anything is cached. So helpers compile under one
-// cross-process lock, recognizing a blank image to load every recognizer model.
-// The other helpers wait for the lock and then load the cached models in
-// milliseconds. Keep this block identical in SubtitleOCR.swift.
+// them through the system ANECompilerService. Compiled models are cached for
+// the whole server bundle, but concurrent processes do not share a compile that
+// is still running: each one compiles the same models again and the system
+// compiler saturates. Vision also loads the compiled program again for every
+// image. When one process recompiles, the program file that other running
+// helpers use is replaced and their next image fails (CRImageReaderError, e5rt
+// code 13). Retrying in such a process recompiles again and breaks the others
+// in turn. So:
+// - Helpers compile only under one cross-process lock. The warm-up recognizes
+//   real Latin and Chinese text with every request setting the helpers use, so
+//   detection and all recognizers load (and recompile if needed) while the
+//   lock is held.
+// - After the warm-up a recognition failure ends the job without retrying. The
+//   server requeues jobs whose error contains textModelsChanged; a new process
+//   then warms up under the lock and finds the program the last compile left.
+// Keep this block identical in SubtitleOCR.swift.
+let textModelsChanged = "Text recognition models changed; retry later"
+func textWarmUpImage() -> CGImage? {
+    let width = 960, height = 120
+    guard let c = CGContext(data:nil,width:width,height:height,bitsPerComponent:8,bytesPerRow:0,
+                            space:CGColorSpaceCreateDeviceGray(),bitmapInfo:CGImageAlphaInfo.none.rawValue) else { return nil }
+    c.setFillColor(gray:1,alpha:1); c.fill(CGRect(x:0,y:0,width:width,height:height))
+    let text = NSAttributedString(string:"Warm up 2026 字幕测试",attributes:[
+        NSAttributedString.Key(kCTFontAttributeName as String):CTFontCreateWithName("PingFang SC" as CFString,44,nil),
+        NSAttributedString.Key(kCTForegroundColorAttributeName as String):CGColor(gray:0,alpha:1)])
+    c.textPosition = CGPoint(x:24,y:40); CTLineDraw(CTLineCreateWithAttributedString(text),c)
+    return c.makeImage()
+}
 func prepareTextRecognition() throws {
     let caches = FileManager.default.urls(for:.cachesDirectory,in:.userDomainMask)[0]
         .appendingPathComponent("org.torrbaby.server",isDirectory:true)
     try FileManager.default.createDirectory(at:caches,withIntermediateDirectories:true)
     let fd = open(caches.appendingPathComponent("text-recognition.lock").path,O_RDWR|O_CREAT|O_CLOEXEC,0o600)
-    guard fd >= 0 else { throw ScanError(message:"Text recognition lock unavailable") }
-    defer { close(fd) }
-    guard flock(fd,LOCK_EX) == 0 else { throw ScanError(message:"Text recognition lock unavailable") }
-    defer { flock(fd,LOCK_UN) }
-    guard let context = CGContext(data:nil,width:64,height:64,bitsPerComponent:8,bytesPerRow:64,
-                                  space:CGColorSpaceCreateDeviceGray(),bitmapInfo:0) else { throw ScanError(message:"Text recognition warm-up failed") }
-    context.setFillColor(gray:1,alpha:1); context.fill(CGRect(x:0,y:0,width:64,height:64))
-    let blank = context.makeImage()!
-    var failure: Error?
+    guard fd >= 0, flock(fd,LOCK_EX) == 0 else { if fd >= 0 { close(fd) }; throw NSError(domain:"Text recognition lock unavailable",code:1) }
+    defer { flock(fd,LOCK_UN); close(fd) }
+    guard let image = textWarmUpImage() else { throw NSError(domain:"Text recognition warm-up failed",code:1) }
+    var failure: Error = NSError(domain:"Text recognition warm-up read no text",code:1)
     for attempt in 0..<3 {
-        // A compile that timed out on the client side usually still completes in
-        // the system service and is cached by the next attempt.
+        // A failed load makes Vision recompile on the next attempt; a compile that
+        // timed out on the client side usually completes in the system service.
         if attempt > 0 { Thread.sleep(forTimeInterval:5) }
-        do { _ = try perform(blank); return } catch { failure = error }
+        do {
+            var read = true
+            // Every request the helpers make, including OCR's fast English fallback.
+            let settings: [(VNRequestTextRecognitionLevel,[String],Bool)] = [(.accurate,["en-US","zh-Hans"],false),
+                (.accurate,["en-US"],true),(.accurate,["zh-Hans"],true),(.fast,["en-US"],true)]
+            for (level,languages,correction) in settings {
+                let request = VNRecognizeTextRequest()
+                request.recognitionLevel = level; request.recognitionLanguages = languages
+                request.usesLanguageCorrection = correction
+                try VNImageRequestHandler(cgImage:image,options:[:]).perform([request])
+                read = read && !(request.results ?? []).isEmpty
+            }
+            if read { return }
+        } catch { failure = error }
     }
-    throw failure!
+    throw failure
 }
 
-func perform(_ image: CGImage) throws -> [VNRecognizedTextObservation] {
+func recognize(_ image: CGImage) throws -> [VNRecognizedTextObservation] {
     let request = VNRecognizeTextRequest()
     request.recognitionLevel = .accurate
     request.recognitionLanguages = ["en-US","zh-Hans"]
     request.usesLanguageCorrection = false
     request.minimumTextHeight = 0.012
-    try VNImageRequestHandler(cgImage:image,options:[:]).perform([request])
+    do { try VNImageRequestHandler(cgImage:image,options:[:]).perform([request]) }
+    catch { throw ScanError(message:textModelsChanged) }
     return request.results ?? []
-}
-
-// A failure after warm-up means the cached models are unavailable. Rebuild them
-// once under the lock rather than compiling at the same time as other helpers.
-func recognize(_ image: CGImage) throws -> [VNRecognizedTextObservation] {
-    do { return try perform(image) } catch { try prepareTextRecognition(); return try perform(image) }
 }
 
 func describe(_ error: Error) -> String {
@@ -112,7 +136,8 @@ func rolling(_ a: Sample, _ b: Sample) -> Bool {
         let asset = AVURLAsset(url:input)
         let duration = try await asset.load(.duration).seconds
         guard duration.isFinite, duration > 5 else { throw ScanError(message:"Invalid duration") }
-        try prepareTextRecognition()
+        do { try prepareTextRecognition() }
+        catch { throw ScanError(message:"\(textModelsChanged) (warm-up: \(describe(error)))") }
         let generator = AVAssetImageGenerator(asset:asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width:1280,height:720)
@@ -161,9 +186,17 @@ func rolling(_ a: Sample, _ b: Sample) -> Bool {
             guard rolling(a,b) else { return false }
             return rolling(b,try sample(time+2))
         }
+        // Boundary refinement treats unreadable frames as no credits, but a
+        // recognizer failure must end the scan (see textModelsChanged).
+        func refine(_ time:Double) throws -> Bool {
+            do { return try probe(time) }
+            catch let error as ScanError where error.message == textModelsChanged { throw error }
+            catch { return false }
+        }
         var time = max(lower,duration-4)
         while time >= lower {
             do { if try probe(time) { hits.append(time) } } catch {
+                if let scan = error as? ScanError, scan.message == textModelsChanged { throw error }
                 errors += 1; failure = describe(error); if errors > 4 { throw error }
             }
             let data = try JSONSerialization.data(withJSONObject:["scanned_seconds":duration-time,"window_seconds":min(budget,duration),"frames":frames])
@@ -183,11 +216,11 @@ func rolling(_ a: Sample, _ b: Sample) -> Bool {
             var start = group.first!, end = group.last!+2
             var t = max(lower,start-step)
             while t < start {
-                if (try? probe(t)) == true { start=t; break }; t += 2
+                if try refine(t) { start=t; break }; t += 2
             }
             t = end
             while t+2 < min(duration,group.last!+step) {
-                guard (try? probe(t)) == true else { break }; end=t+2; t += 2
+                guard try refine(t) else { break }; end=t+2; t += 2
             }
             // A rolling sequence already in progress at the scan limit has no
             // observed start. Do not present the cap as a detected boundary.
