@@ -959,7 +959,44 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             ]
             .contains(&action)
             {
-                return crate::organizer::action(s, hash, action, &body).await;
+                let affected = if action == "rename" {
+                    let torrent=crate::organizer::torrent(s,hash).await?;
+                    let root=std::path::Path::new(text(&torrent,"download_dir")?).join(text(&body,"path")?);
+                    s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?.documents("assets")?
+                        .into_iter().filter(|a|a["torrent_hash"]==hash && a["path"].as_str().is_some_and(|p|std::path::Path::new(p).starts_with(&root)))
+                        .filter_map(|a|a["id"].as_str().map(str::to_owned)).collect::<Vec<_>>()
+                } else { Vec::new() };
+                let result=crate::organizer::action(s, hash, action, &body).await?;
+                if action == "rename" {
+                    {
+                        let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+                        for id in affected {
+                            let mut asset=db.asset(&id)?;
+                            let name=text(&body,"name")?;
+                            asset["metadata_query"]=json!(if crate::scanner::video(std::path::Path::new(name)) {
+                                std::path::Path::new(name).file_stem().and_then(|s|s.to_str()).unwrap_or(name)
+                            } else {name});
+                            asset["entity_id"]=Value::Null;
+                            asset["confirmed"]=json!(false);
+                            asset["status"]=json!("pending");
+                            asset["matched_at"]=json!(0);
+                            asset["error"]=Value::Null;
+                            asset["candidates"]=json!([]);
+                            db.connection.execute("UPDATE library_assets SET document=? WHERE id=?",rusqlite::params![asset.to_string(),id])?;
+                        }
+                    }
+                    let service=s.clone();
+                    tokio::spawn(async move {
+                        let refresh=async {
+                            scan_library(&service).await?;
+                            collect_metadata(&service).await?;
+                            crate::organizer::tick(&service).await?;
+                            scan_library(&service).await
+                        }.await;
+                        if let Err(error)=refresh {eprintln!("Refresh after rename: {error}");}
+                    });
+                }
+                return Ok(result);
             }
         }
     }
@@ -974,6 +1011,9 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
         return Ok(json!({"configured":true}));
     }
     if method == Method::POST && path == "/v1/library/metadata-refresh" {
+        // An explicit retry should not be delayed by the automatic failure backoff.
+        s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?.connection.execute(
+            "UPDATE library_assets SET document=json_set(document,'$.matched_at',0) WHERE COALESCE(json_extract(document,'$.status'),'')!='matched' AND COALESCE(json_extract(document,'$.confirmed'),0)!=1",[])?;
         let service = s.clone();
         tokio::spawn(async move {
             if let Err(error) = collect_metadata(&service).await {
@@ -1792,6 +1832,7 @@ async fn scan_library(s: &Service) -> Result<()> {
                         "confirmed",
                         "matched_at",
                         "match_confidence",
+                        "metadata_query",
                         "error",
                     ] {
                         if let Some(value) = current.get(key) {
@@ -1909,7 +1950,7 @@ async fn collect_metadata(s: &Service) -> Result<()> {
         if asset["available"] != true || asset["role"] == "extra" || asset["confirmed"] == true {
             continue;
         }
-        if let Some(hash) = asset["torrent_hash"].as_str() {
+        if let Some(hash) = asset["torrent_hash"].as_str().filter(|_|!asset["metadata_query"].is_string()) {
             if let Some(record) = torrent_metadata(s, hash)?
                 .filter(|r| r["selected"].is_object() && (r["confirmed"] == true
                     || (r["status"] == "matched" && r["selected"]["kind"] == "tv"
@@ -1953,8 +1994,7 @@ async fn collect_metadata(s: &Service) -> Result<()> {
         }
         let id = text(&asset, "id")?;
         let path = std::path::Path::new(text(&asset, "path")?);
-        let mut name = asset["series_query"]
-            .as_str()
+        let mut name = asset["metadata_query"].as_str().or(asset["series_query"].as_str())
             .or(asset["series_name"].as_str())
             .map(str::to_owned)
             .unwrap_or_else(|| {

@@ -41,7 +41,8 @@ impl Database {
         let mut titles = BTreeMap::<String, Value>::new();
         let assets = self.documents("assets")?;
         for asset in &assets {
-            if asset["available"] != true || asset["complete"] != true || asset["role"] == "extra" {
+            if asset["available"] != true || asset["complete"] != true || asset["role"] == "extra"
+                || asset["library_ready"] == false || asset["status"] != "matched" || !asset["entity_id"].as_str().is_some_and(|id|entities.contains_key(id)) {
                 continue;
             }
             let id = asset["id"].as_str().context("Invalid asset ID")?;

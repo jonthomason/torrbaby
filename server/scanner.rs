@@ -213,6 +213,7 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
             .unwrap()
             .extend(info.as_object().unwrap().clone());
         asset["path"] = json!(name);
+        asset["library_ready"] = json!(path.starts_with(&config.movies) || path.starts_with(&config.tv));
         asset["inode"] = json!(inode);
         asset["available"] = json!(true);
         asset["seen_at"] = json!(now());

@@ -27,7 +27,14 @@ static PREFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^www\.[^ ]+\s
 pub fn parse_name(name: &str) -> (String, String, &'static str) {
     let name = PREFIX.replace(name, "");
     let season = SEASON.find(&name);
-    let year = YEAR.captures(&name);
+    // A title may itself start with a year or contain one (1917, 2001, Blade Runner 2049).
+    // The release year is the last year token before episode/encoding markers,
+    // and must have a nonempty title before it.
+    let boundary = season.as_ref().map(|m|m.start()).into_iter()
+        .chain(TECHNICAL.find(&name).map(|m|m.start())).min().unwrap_or(name.len());
+    let year = YEAR.captures_iter(&name).filter(|c| c.get(1).is_some_and(|m|
+        m.start() > 0 && m.start() < boundary
+        && name[..m.start()].chars().any(|c|c.is_alphanumeric()))).last();
     let cutoff = [
         season.as_ref().map(|m| m.start()),
         year.as_ref().and_then(|c| c.get(1)).map(|m| m.start()),
@@ -388,5 +395,21 @@ impl Metadata {
         entity["fetched_at"] = json!(crate::storage::now());
         self.cache.lock().await.insert(key, entity.clone());
         Ok(entity)
+    }
+}
+
+#[cfg(test)]
+mod numeric_title_tests {
+    use super::*;
+    #[test]
+    fn title_numbers_are_not_release_years() {
+        for (name,title,year) in [
+            ("2001.A.Space.Odyssey.1968.1080p.BluRay", "2001 A Space Odyssey", "1968"),
+            ("2001: A Space Odyssey (1968)", "2001: A Space Odyssey", "1968"),
+            ("1917 (2019) 1080p", "1917", "2019"),
+            ("Blade Runner 2049 (2017) 1080p", "Blade Runner 2049", "2017"),
+            ("2001 A Space Odyssey", "2001 A Space Odyssey", ""),
+        ] { let parsed=parse_name(name);assert_eq!((parsed.0.as_str(),parsed.1.as_str()),(title,year)); }
+        assert_eq!(normalized("2001: A Space Odyssey"),normalized("2001 A Space Odyssey"));
     }
 }

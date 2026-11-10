@@ -402,7 +402,20 @@ async fn advance(
 ) -> Result<()> {
     let hash = text(t, "hash_string")?;
     if job.is_null() || job["phase"] == "blocked" {
-        let Some(new) = plan(config, t)? else {
+        if t["download_dir"] == config.source && complete(t) {
+            let ready={
+            let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+            let assets=db.documents("assets")?;
+            files(t)?.iter().enumerate().filter(|(_,f)|f["name"].as_str().is_some_and(|n|video(Path::new(n))))
+                .all(|(index,_)|assets.iter().any(|a|a["torrent_hash"]==hash && a["file_index"]==index
+                    && (a["role"]=="extra" || (a["status"]=="matched" && a["entity_id"].is_string()))))
+            };
+            if !ready { bail!("Waiting for media identification before moving to the library"); }
+            auto_name(s,config,hash).await?;
+        }
+        // Renames use Transmission and can change paths; plan from its fresh file list.
+        let current=torrent(s,hash).await?;
+        let Some(new) = plan(config, &current)? else {
             return Ok(());
         };
         let own = owned(t)?;
@@ -507,7 +520,6 @@ fn clean_name(value: &str) -> String {
 async fn auto_name(s: &Service, config: &Config, hash: &str) -> Result<()> {
     let t = torrent(s, hash).await?;
     if !complete(&t)
-        || t["download_dir"] == config.source
         || !managed(config, Path::new(text(&t, "download_dir")?))
     {
         return Ok(());
