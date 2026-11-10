@@ -486,6 +486,7 @@
     <string name="ui_987f5ab80eb3" formatted="false">目标上传/下载分享率</string>
     <string name="ui_1c7a30e57131" formatted="false">文字颜色</string>
     <string name="ui_83e097038017" formatted="false">文字不透明度</string>
+    <string name="ui_17640422b43a" formatted="false">与 Transmission 的连接已中断，请重试。</string>
     <string name="ui_9a212ea4c5bb" formatted="false">整个下载包将对所有用户隐藏，继续做种，并在做种完成后永久删除。</string>
     <string name="ui_fa9822b1acbe" formatted="false">整个下载包将立即隐藏，继续做种，并在做种完成后永久删除。</string>
     <string name="ui_d3fdb91c3f77" formatted="false">无法打开已保存的连接。</string>
@@ -526,7 +527,9 @@
     <string name="ui_cbb4cc49824b" formatted="false">传输</string>
     <string name="ui_7317cb083a2d" formatted="false">翻译字幕</string>
     <string name="ui_8ad8302d110b" formatted="false">翻译</string>
+    <string name="ui_533c8cf527e8" formatted="false">Transmission 尚未确认添加结果。种子仍可能出现在“种子”列表中，请先查看列表，再决定是否重试。</string>
     <string name="ui_9a14b54f2d98" formatted="false">Transmission 报告此种子停滞</string>
+    <string name="ui_a31802b8dabb" formatted="false">Transmission 响应超时，请重试。</string>
     <string name="ui_855c2e4674d0" formatted="false">试下载已取消</string>
     <string name="ui_f5c1aa962501" formatted="false">试下载已完成</string>
     <string name="ui_afb32e2b2409" formatted="false">已完成测速</string>

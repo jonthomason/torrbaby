@@ -497,6 +497,7 @@ final class L10n {
     IDS.put("Target upload/download ratio", R.string.ui_987f5ab80eb3);
     IDS.put("Text color", R.string.ui_1c7a30e57131);
     IDS.put("Text opacity", R.string.ui_83e097038017);
+    IDS.put("The connection to Transmission was interrupted. Please try again.", R.string.ui_17640422b43a);
     IDS.put("The entire package will be hidden from everyone, continue seeding, and be permanently deleted when seeding finishes.", R.string.ui_9a212ea4c5bb);
     IDS.put("The entire package will be hidden now, continue seeding, and be permanently deleted when seeding finishes.", R.string.ui_fa9822b1acbe);
     IDS.put("The saved connection could not be opened.", R.string.ui_d3fdb91c3f77);
@@ -537,7 +538,9 @@ final class L10n {
     IDS.put("Transfer", R.string.ui_cbb4cc49824b);
     IDS.put("Translating subtitles", R.string.ui_7317cb083a2d);
     IDS.put("Translations", R.string.ui_8ad8302d110b);
+    IDS.put("Transmission has not confirmed the add yet. The torrent may still appear in Torrents; check there before trying again.", R.string.ui_533c8cf527e8);
     IDS.put("Transmission reports this torrent as stalled", R.string.ui_9a14b54f2d98);
+    IDS.put("Transmission took too long to respond. Please try again.", R.string.ui_a31802b8dabb);
     IDS.put("Trial cancelled", R.string.ui_855c2e4674d0);
     IDS.put("Trial complete", R.string.ui_f5c1aa962501);
     IDS.put("Trial measured", R.string.ui_afb32e2b2409);
