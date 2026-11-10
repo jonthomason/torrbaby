@@ -278,13 +278,16 @@ fn track(
     handler.extend(b"sbtl");
     handler.extend([0; 12]);
     handler.extend(if c.language.starts_with("zh") {
-        b"Chinese\0".as_slice()
+        b"Chinese (Simplified)\0".as_slice()
     } else if c.language.starts_with("en") {
         b"English\0".as_slice()
     } else {
         b"Subtitles\0".as_slice()
     });
     let mut mdia = atom(b"mdhd", &mdhd);
+    let mut extended_language=vec![0;4];
+    extended_language.extend(c.language.as_bytes());extended_language.push(0);
+    mdia.extend(atom(b"elng", &extended_language));
     mdia.extend(atom(b"hdlr", &handler));
     mdia.extend(atom(b"minf", &minf));
     let mut tk = vec![0, 0, 0, 2];

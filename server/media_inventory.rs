@@ -11,10 +11,33 @@ pub fn cached(db: &Database, id: &str) -> Result<Value> {
     if let Some((revision, text)) = row {
         let asset = db.asset(id)?;
         if asset["path"].as_str().and_then(|p| crate::subtitle_jobs::revision(Path::new(p)).ok()).as_deref() == Some(&revision) {
-            return Ok(serde_json::from_str(&text)?);
+            let mut info=serde_json::from_str(&text)?;
+            normalize_prepared(&mut info);
+            return Ok(info);
         }
     }
     Ok(json!({"state":"pending","audio_tracks":[],"subtitle_tracks":[],"prepared":[]}))
+}
+// The tb badge identifies Torrbaby-created captions: OCR or translation.
+fn normalize_prepared(info:&mut Value) {
+    let mut identified=Vec::new();
+    if let Some(prepared)=info["prepared"].as_array_mut() {
+        for job in prepared {
+            job["generated"]=json!(job["target"].as_str().is_some_and(|s|s!="auto") || job["extraction_method"]=="ocr");
+            if job["state"]=="ready" && job["sidecar"].is_null() {
+                if let (Some(track),Some(source))=(job["track"].as_u64(),job["source"].as_str()) {
+                    if source!="auto" {identified.push((track,source.to_owned()));}
+                }
+            }
+        }
+    }
+    if let Some(tracks)=info["subtitle_tracks"].as_array_mut() {
+        for track in tracks {
+            if track["sidecar"]!=true && track["language"].as_str().is_none_or(|s|s.is_empty() || s=="und") {
+                if let Some((_,source))=identified.iter().find(|(id,_)|track["track"]==*id) {track["language"]=json!(source);}
+            }
+        }
+    }
 }
 fn save(db: &Database, id: &str, revision: &str, info: &Value) -> Result<()> {
     db.connection.execute("INSERT INTO media_inventory VALUES(?,?,?,?) ON CONFLICT(asset_id) DO UPDATE SET revision=excluded.revision,document=excluded.document,updated=excluded.updated",
@@ -294,5 +317,20 @@ mod ocr_fallback_tests {
         assert_eq!(subtitle_source(&[pgs.clone()]).unwrap().1,"en");
         assert_eq!(subtitle_source(&[pgs,text.clone()]).unwrap().0["track"],4);
         let tracks=vec![text,json!({"text_extractable":true,"extraction_supported":true,"language":"zh-Hans"})];assert!(subtitle_source(&tracks).is_none());
+    }
+}
+
+#[cfg(test)]
+mod caption_provenance_tests {
+    use super::*;
+    #[test]
+    fn ocr_and_translation_keep_badges_and_identify_source_language() {
+        let mut info=json!({"subtitle_tracks":[{"track":3,"language":null,"codec":"S_VOBSUB"}],"prepared":[
+            {"track":3,"state":"ready","source":"en","target":null,"generated":true,"extraction_method":"ocr"},
+            {"track":3,"state":"ready","source":"en","target":"zh-Hans","generated":true,"extraction_method":"ocr"}]});
+        normalize_prepared(&mut info);
+        assert_eq!(info["prepared"][0]["generated"],true);
+        assert_eq!(info["prepared"][1]["generated"],true);
+        assert_eq!(info["subtitle_tracks"][0]["language"],"en");
     }
 }
