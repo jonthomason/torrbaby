@@ -509,12 +509,11 @@ public class MainActivity extends Activity {
 
   private void hero(LinearLayout parent, Library.Title t, boolean detail) {
     FrameLayout frame = new FrameLayout(this);
-    Ui.add(parent, frame, -1, 325);
+    Ui.add(parent, frame, -1, 365);
     LinearLayout.LayoutParams heroParams=(LinearLayout.LayoutParams)frame.getLayoutParams();
     heroParams.setMargins(Ui.dp(this,16),Ui.dp(this,4),Ui.dp(this,16),Ui.dp(this,8));
     Ui.round(frame,12);
-    ImageView image = new ImageView(this);
-    image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+    ImageView image = new HeroImageView(this);
     frame.addView(image, new FrameLayout.LayoutParams(-1, -1));
     art.load(image, t.id, t.backdrop.isEmpty() ? "poster" : "backdrop", t.backdrop.isEmpty() ? t.poster : t.backdrop);
     View shade = new View(this);
@@ -602,7 +601,7 @@ public class MainActivity extends Activity {
       if(available<=0)return;
       int gap=Ui.dp(this,12),columns=Math.max(3,(available+gap)/Ui.dp(this,130));
       int width=(available-gap*(columns-1))/columns;
-      int height=width*3/2+Ui.dp(this,name.equals("Continue watching")?72:30);
+      int height=width*3/2+Ui.dp(this,name.equals("Continue watching")?78:30);
       for(int i=0;i<row.getChildCount();i+=2) {
         View child=row.getChildAt(i);
         if(child.getLayoutParams().width!=width || child.getLayoutParams().height!=height) {
@@ -1457,8 +1456,6 @@ public class MainActivity extends Activity {
     LinearLayout body = Ui.column(this);
     Ui.pad(body, 45, 22);
     Ui.add(page, body, -1, -2);
-    if (t.kind.equals("tv") && t.preferred() != null)
-      Ui.add(body, Ui.text(this, t.preferred().label(), 12, Ui.MUTED), -1, -2);
     mediaLanguages(body, t.preferred(), false);
     Ui.gap(body, 18);
     if (!t.summary.isEmpty()) {
@@ -1467,18 +1464,8 @@ public class MainActivity extends Activity {
       Ui.add(body, summary, 650, -2);
       Ui.gap(body, 24);
     }
-    Library.Asset preferred=t.preferred();
-    if(preferred!=null) {
-      if(t.cast!=null && t.cast.length()>0) {
-        Button cast=Ui.button(this,L10n.t("Cast"),()->{showingCast=true;render();});cast.setTag("cast");
-        Ui.add(body,cast,-2,44);
-      }
-      if(preferred.position>0)Ui.add(body,Ui.button(this,L10n.t("Start from Beginning"),()->play(t,preferred,true)),-2,44);
-      Ui.add(body,Ui.iconButton(this,L10n.t(preferred.watched?"Mark as Unwatched":"Mark as Watched"),R.drawable.action_watched,()->mark(preferred)),-2,44);
-      if(preferred.complete)Ui.add(body,Ui.iconButton(this,L10n.t("Manage files"),R.drawable.action_files,()->new LibraryFileActions(this,api,io,preferred.id,this::load).show()),-2,44);
-      if(t.isContinuing())Ui.add(body,Ui.button(this,L10n.t("Remove from Continue Watching"),()->setContinueWatchingHidden(t,true)),-2,44);
-      Ui.gap(body,16);
-    }
+    if(!t.kind.equals("tv"))detailActions(body,t);
+    LinearLayout episodes=Ui.column(this);
     if (t.kind.equals("tv")) {
       TreeSet<Integer> seasons = new TreeSet<>();
       for (Library.Asset a : t.assets) if (!a.extra() && a.hasSeason) seasons.add(a.season);
@@ -1498,9 +1485,12 @@ public class MainActivity extends Activity {
                 number == 0 ? L10n.t("Specials") : "Season " + number,
                 () -> {
                   season = number;
-                  render();
-                  View selected = content.findViewWithTag("season:" + number);
-                  if (selected != null) selected.requestFocus();
+                  for(int i=0;i<row.getChildCount();i++) {
+                    View child=row.getChildAt(i);
+                    if(child instanceof Button)Ui.tab((Button)child,("season:"+number).equals(child.getTag()));
+                  }
+                  episodes.removeAllViews();
+                  detailEpisodes(episodes,t);
                 });
         Ui.tab(button,number == season);
         button.setTag("season:" + number);
@@ -1510,6 +1500,39 @@ public class MainActivity extends Activity {
       Ui.add(body, scroll, -1, 46);
       Ui.gap(body, 20);
     }
+    Ui.add(body,episodes,-1,-2);
+    detailEpisodes(episodes,t);
+    if(t.kind.equals("tv"))detailActions(body,t);
+    Ui.gap(body, 12);
+    Ui.add(
+        body,
+        Ui.button(
+            this,
+            L10n.t("Back to library"),
+            () -> {
+              detailId = "";
+              render();
+            }),
+        -2,
+        40);
+  }
+
+  private void detailActions(LinearLayout body, Library.Title t) {
+    Library.Asset preferred=t.preferred();
+    if(preferred!=null) {
+      if(t.cast!=null && t.cast.length()>0) {
+        Button cast=Ui.iconButton(this,L10n.t("Cast"),R.drawable.action_cast,()->{showingCast=true;render();});cast.setTag("cast");
+        Ui.add(body,cast,-2,44);
+      }
+      if(preferred.position>0)Ui.add(body,Ui.button(this,L10n.t("Start from Beginning"),()->play(t,preferred,true)),-2,44);
+      Ui.add(body,Ui.iconButton(this,L10n.t(preferred.watched?"Mark as Unwatched":"Mark as Watched"),R.drawable.action_watched,()->mark(preferred)),-2,44);
+      if(preferred.complete)Ui.add(body,Ui.iconButton(this,L10n.t("Manage files"),R.drawable.action_files,()->new LibraryFileActions(this,api,io,preferred.id,this::load).show()),-2,44);
+      if(t.isContinuing())Ui.add(body,Ui.button(this,L10n.t("Remove from Continue Watching"),()->setContinueWatchingHidden(t,true)),-2,44);
+      Ui.gap(body,16);
+    }
+  }
+
+  private void detailEpisodes(LinearLayout body, Library.Title t) {
     long mainCount = t.assets.stream().filter(a -> !a.extra()).count();
     if (t.kind.equals("tv") || mainCount > 1)
       for (Library.Asset a : t.assets)
@@ -1537,18 +1560,6 @@ public class MainActivity extends Activity {
         }
         episode(body, t, a);
       }
-    Ui.gap(body, 12);
-    Ui.add(
-        body,
-        Ui.button(
-            this,
-            L10n.t("Back to library"),
-            () -> {
-              detailId = "";
-              render();
-            }),
-        -2,
-        40);
   }
 
   private void episode(LinearLayout body, Library.Title t, Library.Asset a) {

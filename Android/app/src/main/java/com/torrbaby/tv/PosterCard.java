@@ -53,7 +53,7 @@ final class PosterCard extends LinearLayout {
     progress.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.ACCENT));
     progress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0xff383838));
     LinearLayout.LayoutParams progressLayout=new LinearLayout.LayoutParams(-1,Ui.dp(context,2));
-    progressLayout.topMargin=Ui.dp(context,8);
+    progressLayout.topMargin=Ui.dp(context,14);
     addView(progress,1,progressLayout);
     setOnClickListener(v->{if(item!=null)open.accept(item);});
     setOnFocusChangeListener((v,f)->{

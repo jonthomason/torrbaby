@@ -182,7 +182,7 @@ public final class DiscoveryTestRunner extends Instrumentation {
       org.json.JSONObject asset = new org.json.JSONObject().put("id","episode").put("name","Episode").put("complete",true).put("position",120).put("duration",5160).put("season",4).put("episode",1);
       org.json.JSONObject title = new org.json.JSONObject().put("id","header-fixture").put("title","Send Help").put("kind","tv").put("year","2026")
           .put("cast",new org.json.JSONArray().put(new org.json.JSONObject().put("name","Actor")))
-          .put("assets",new org.json.JSONArray().put(asset));
+          .put("assets",new org.json.JSONArray().put(asset).put(new org.json.JSONObject(asset.toString()).put("id","second-season").put("season",5).put("position",0)));
       Library model = Library.parse(new org.json.JSONObject().put("titles",new org.json.JSONArray().put(title)));
       java.lang.reflect.Method render = MainActivity.class.getDeclaredMethod("render");render.setAccessible(true);
       java.lang.reflect.Field navField=MainActivity.class.getDeclaredField("nav");navField.setAccessible(true);
@@ -213,6 +213,13 @@ public final class DiscoveryTestRunner extends Instrumentation {
         navigationKey(19);if(!focus.contains(activity.getCurrentFocus()))throw new Exception("Cannot return to navigation");
         android.graphics.Bitmap shot=getUiAutomation().takeScreenshot();
         try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getExternalFilesDir(null),"header-"+language+".png"))){shot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
+        android.view.View seasonButton=activity.getWindow().getDecorView().findViewWithTag("season:5");
+        runOnMainSync(()->seasonButton.requestFocus());waitForIdleSync();SystemClock.sleep(400);
+        int[] beforeSeason=new int[2];seasonButton.getLocationOnScreen(beforeSeason);
+        navigationKey(23);waitForIdleSync();SystemClock.sleep(400);
+        int[] afterSeason=new int[2];seasonButton.getLocationOnScreen(afterSeason);
+        if(activity.getCurrentFocus()!=seasonButton || Math.abs(beforeSeason[1]-afterSeason[1])>2)throw new Exception("Season selector moved after selection");
+        if(activity.getWindow().getDecorView().findViewWithTag("episode:second-season")==null)throw new Exception("Season episodes did not change");
         if(activity.getWindow().getDecorView().findViewWithTag("detail-more")!=null)throw new Exception("Unexpected More menu");
         for(String label:new String[]{"Mark as Watched","Manage files","Remove from Continue Watching"})
           if(find(activity.getWindow().getDecorView(),L10n.t(label))==null)throw new Exception("Missing direct action: "+label);

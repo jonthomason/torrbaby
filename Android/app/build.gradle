@@ -7,8 +7,8 @@ android {
         minSdk 26
         targetSdk 35
         testInstrumentationRunner "com.torrbaby.tv.DiscoveryTestRunner"
-        versionCode 51
-        versionName '0.3.25'
+        versionCode 52
+        versionName '0.3.26'
     }
     buildFeatures { buildConfig true }
     buildTypes {

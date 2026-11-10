@@ -11,6 +11,42 @@ import android.widget.ScrollView;
 
 /** D-pad navigation reveals a complete focused row, using the actual content viewport. */
 final class TvScrollView extends ScrollView {
+  private android.animation.ValueAnimator rowScroll;
+  private boolean focusing;
+
+  @Override public void requestChildFocus(View child, View focused) {
+    focusing=true;
+    try { super.requestChildFocus(child,focused); } finally { focusing=false; }
+  }
+
+  @Override public void scrollTo(int x,int y) {
+    if(focusing && isLaidOut())animateRow(y); else super.scrollTo(x,y);
+  }
+
+  @Override public boolean requestChildRectangleOnScreen(View child, Rect rectangle, boolean immediate) {
+    Rect target=new Rect(rectangle);
+    offsetDescendantRectToMyCoords(child,target);
+    int delta=computeScrollDeltaToGetChildRectOnScreen(target);
+    if(delta==0)return false;
+    animateRow(getScrollY()+delta);
+    return true;
+  }
+
+  private void animateRow(int target) {
+    if(rowScroll!=null)rowScroll.cancel();
+    if(target==getScrollY())return;
+    rowScroll=android.animation.ValueAnimator.ofInt(getScrollY(),target);
+    rowScroll.setDuration(280);
+    rowScroll.setInterpolator(new android.view.animation.DecelerateInterpolator());
+    rowScroll.addUpdateListener(value->super.scrollTo(0,(Integer)value.getAnimatedValue()));
+    rowScroll.start();
+  }
+
+  @Override protected void onDetachedFromWindow() {
+    if(rowScroll!=null)rowScroll.cancel();
+    super.onDetachedFromWindow();
+  }
+
   TvScrollView(Context context) {
     super(context);
     setSmoothScrollingEnabled(true);
