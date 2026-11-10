@@ -229,20 +229,36 @@ final class Store: ObservableObject {
         }
     }
     @Published var fallbackServer = "" {
-        didSet { UserDefaults.standard.set(fallbackServer, forKey: "fallback-server:" + server) }
+        didSet {
+            UserDefaults.standard.set(fallbackServer, forKey: "fallback-server:" + server)
+            UserDefaults.standard.set(true, forKey: "fallback-routing-v2:" + server)
+        }
     }
     @Published private(set) var activeServer: String?
     private var connectionProbe: Task<DaemonStatus, Error>?
     private func savedFallback() -> String {
-        if let saved = UserDefaults.standard.string(forKey: "fallback-server:" + server) { return saved }
+        let saved = UserDefaults.standard.string(forKey: "fallback-server:" + server)
         #if os(iOS)
+        // Build 121 persisted an empty fallback for devices already paired via TS.
+        if saved == "", !UserDefaults.standard.bool(forKey: "fallback-routing-v2:" + server),
+           ServerRoutes.primaryAddress(for: server) != server {
+            return ServerRoutes.defaultFallback(for: server)
+        }
+        if let saved { return saved }
         return ServerRoutes.defaultFallback(for: server)
         #else
-        return ""
+        return saved ?? ""
+        #endif
+    }
+    var primaryAddress: String {
+        #if os(iOS)
+        return ServerRoutes.primaryAddress(for: server)
+        #else
+        return server
         #endif
     }
     var usingFallback: Bool {
-        activeServer != nil && ServerRoutes.normalized(activeServer!) != ServerRoutes.normalized(server)
+        ServerRoutes.isFallback(primary: primaryAddress, active: activeServer)
     }
     var canStream: Bool { connected && !usingFallback }
     var connectionLabel: String { connected ? (usingFallback ? "Fallback" : "Connected") : "Offline" }
@@ -373,17 +389,17 @@ final class Store: ObservableObject {
         return URLSession(configuration: config)
     }()
     func endpoint(_ path: String) throws -> URL {
-        try ServerRoutes.endpoint(activeServer ?? server, path: path)
+        try ServerRoutes.endpoint(activeServer ?? primaryAddress, path: path)
     }
     private func probeConnection() async throws -> DaemonStatus {
         if let connectionProbe { return try await connectionProbe.value }
-        let primary = server, fallback = fallbackServer
+        let identityServer = server, primary = primaryAddress, fallback = fallbackServer
         let addresses = ServerRoutes.candidates(primary: primary, fallback: fallback, current: activeServer)
         let task = Task { @MainActor in
             let (route, value): (String, DaemonStatus) = try await ServerRoutes.probe(addresses: addresses) { address in
                 try await self.request("GET", "/v1/status", timeout: 4, address: address)
             }
-            guard self.server == primary, self.fallbackServer == fallback else { throw CancellationError() }
+            guard self.server == identityServer, self.fallbackServer == fallback else { throw CancellationError() }
             self.activeServer = route
             return value
         }

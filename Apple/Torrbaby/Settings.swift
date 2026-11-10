@@ -150,7 +150,7 @@ struct SettingsView: View {
                 BackgroundSubtitlesView()
             }
             SwiftUI.Section("Connection") {
-                LabeledContent("Server", value: store.server.isEmpty ? "Not configured" : store.server)
+                LabeledContent("Server", value: store.server.isEmpty ? "Not configured" : store.primaryAddress)
                 if let status = store.status { LabeledContent("Daemon", value: "Torrbaby \(status.version)") }
                 Button { showFallback = true } label: {
                     LabeledContent("Fallback address", value: store.fallbackServer.isEmpty ? L10n.text("Not configured") : store.fallbackServer)
