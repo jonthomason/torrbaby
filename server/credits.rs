@@ -111,13 +111,16 @@ async fn scan(s:&Service,path:&Path,reader:Option<Arc<crate::virtual_captions::R
         let out=tokio::spawn(async move {let mut v=Vec::new();stdout.take(65537).read_to_end(&mut v).await.map(|_|v)});
         let err=tokio::spawn(async move {let mut v=Vec::new();stderr.take(8192).read_to_end(&mut v).await.map(|_|v)});
         let started=std::time::Instant::now();
+        // Finish as soon as the scanner exits; check playback preparation once a second.
         let status=loop {
-            if let Some(status)=child.try_wait()?{break status;}
+            tokio::select! {
+                status=child.wait()=>break status?,
+                _=tokio::time::sleep(Duration::from_secs(1))=>{}
+            }
             if started.elapsed()>Duration::from_secs(300) || s.virtual_media.preparing() {
                 child.kill().await?;let _=child.wait().await;out.abort();err.abort();
                 anyhow::bail!("Credits scan deferred for playback preparation or time budget");
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
         };
         let output=out.await??;let error=err.await??;
         ensure!(status.success(),"Credits scanner: {}",String::from_utf8_lossy(&error));
