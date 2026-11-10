@@ -482,6 +482,7 @@
     <string name="ui_d9c227c96cdb" formatted="false">这将从所有用户的媒体库中移除此文件。</string>
     <string name="ui_ecd01d877069" formatted="false">此服务器尚未为此网络启用自动连接。</string>
     <string name="ui_8607ce0e91d1" formatted="false">服务器上没有此影片的完整媒体文件。</string>
+    <string name="ui_d1431bac909d" formatted="false">此影片尚未下载。请重新连接媒体库后播放。</string>
     <string name="ui_2e1fcceaec2e" formatted="false">此种子已不在 Transmission 中。</string>
     <string name="ui_f577c9312507" formatted="false">无法播放此视频。</string>
     <string name="ui_6c82e6dd8680" formatted="false">时间</string>

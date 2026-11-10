@@ -208,7 +208,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
                         libraryAssetID: item.assetID, libraryTitleID: item.titleID)
     }
     func readyDownload(assetID: String, server: String) -> UUID? {
-        items.first(where: { $0.assetID == assetID && $0.server == server && $0.state == .ready })?.id
+        items.first(where: { $0.assetID == assetID && $0.server == server && playback($0.id) != nil })?.id
     }
     func preparePlayback(_ id: UUID) async -> Playback? {
         if let store, let storage, store.connected,
@@ -266,10 +266,10 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             return EpisodeNumber(season: season, episode: episode)
         }
         guard let number = EpisodeNumber(season: season, episode: episode).next(in: known, allowSeasonChange: !(catalogOrder ?? []).isEmpty) else { return nil }
-        if let next = localSeries.first(where: { $0.season == number.season && $0.episode == number.episode && $0.state == .ready }) {
+        if let next = localSeries.first(where: { $0.season == number.season && $0.episode == number.episode && playback($0.id) != nil }) {
             return .local(next.id)
         }
-        guard let store, store.server == server, let title,
+        guard let store, store.connected, store.server == server, let title,
               let asset = title.assets.first(where: { $0.role != "extra" && $0.season == number.season && $0.episode == number.episode && $0.complete }) else { return nil }
         return .stream(title, asset)
     }

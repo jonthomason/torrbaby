@@ -493,6 +493,7 @@ final class L10n {
     IDS.put("This removes the file from everyone’s library.", R.string.ui_d9c227c96cdb);
     IDS.put("This server has not enabled automatic connection for this network.", R.string.ui_ecd01d877069);
     IDS.put("This title has no complete media files on the server.", R.string.ui_8607ce0e91d1);
+    IDS.put("This title isn’t downloaded. Reconnect to your library to play it.", R.string.ui_d1431bac909d);
     IDS.put("This torrent is no longer in Transmission.", R.string.ui_2e1fcceaec2e);
     IDS.put("This video could not be played.", R.string.ui_f577c9312507);
     IDS.put("Time", R.string.ui_6c82e6dd8680);

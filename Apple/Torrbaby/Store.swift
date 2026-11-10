@@ -314,7 +314,7 @@ final class Store: ObservableObject {
         #endif
     }
     func isDownloaded(_ title: LibraryTitle) -> Bool { title.assets.contains(where: isDownloaded) }
-    func canPlay(_ asset: LibraryAsset) -> Bool { asset.complete && (!offlineLibrary || isDownloaded(asset)) }
+    func canPlay(_ asset: LibraryAsset) -> Bool { asset.complete && (connected || isDownloaded(asset)) }
     func preferredLibraryAsset(_ title: LibraryTitle) -> LibraryAsset? {
         if offlineLibrary {
             if let resume = title.resume, isDownloaded(resume) { return resume }
@@ -532,8 +532,14 @@ final class Store: ObservableObject {
 }
 
 extension Store {
+    func requireStreamingConnection() throws {
+        guard connected else {
+            throw APIError(message: "This title isn’t downloaded. Reconnect to your library to play it.")
+        }
+    }
     /// Request native virtual MP4 tracks without copying the audiovisual stream.
     func mediaPlaybackLink(asset: LibraryAsset, titleID: String, startSession: Bool = true, progress: @escaping (String) -> Void = { _ in }) async throws -> PlaybackLink {
+        try requireStreamingConnection()
         let serverAtStart = server
         let profileAtStart = profileIdentity
         let base = "/v1/library/assets/\(asset.id)"
@@ -550,6 +556,7 @@ extension Store {
             let deadline = Date().addingTimeInterval(1200)
             while result.state == "queued" || result.state == "running" || result.state == "preparing" {
                 try Task.checkCancellation()
+                try self.requireStreamingConnection()
                 guard self.server == serverAtStart && self.profileIdentity == profileAtStart else { throw CancellationError() }
                 guard Date() < deadline else { throw APIError(message: "Playback is still preparing. Try again shortly.") }
                 try await Task.sleep(for: .milliseconds(500))
@@ -579,12 +586,14 @@ extension Store {
             guard server == serverAtStart && profileIdentity == profileAtStart else { throw CancellationError() }
             notify("Subtitles unavailable", detail: error.localizedDescription)
         }
+        try requireStreamingConnection()
         let prepared: Job = try await request("POST", base + "/virtual-mp4", body: ["subtitle_jobs": ids])
         if prepared.state != "direct" {
             body["virtual_job"] = try await wait(prepared, route: "/v1/virtual-jobs/").id
         }
         try Task.checkCancellation()
         guard server == serverAtStart && profileIdentity == profileAtStart else { throw CancellationError() }
+        try requireStreamingConnection()
         return try await request("POST", base + "/play", body: body)
     }
 }

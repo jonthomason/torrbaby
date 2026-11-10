@@ -614,6 +614,7 @@ struct LibraryDetail: View {
                     return
                 }
                 #endif
+                try store.requireStreamingConnection()
                 await store.flushProgress()
                 try await store.registerClient()
                 let link = try await store.mediaPlaybackLink(asset: asset, titleID: titleID) { preparation = $0 }

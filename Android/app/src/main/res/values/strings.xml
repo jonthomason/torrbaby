@@ -482,6 +482,7 @@
     <string name="ui_d9c227c96cdb" formatted="false">This removes the file from everyone’s library.</string>
     <string name="ui_ecd01d877069" formatted="false">This server has not enabled automatic connection for this network.</string>
     <string name="ui_8607ce0e91d1" formatted="false">This title has no complete media files on the server.</string>
+    <string name="ui_d1431bac909d" formatted="false">This title isn’t downloaded. Reconnect to your library to play it.</string>
     <string name="ui_2e1fcceaec2e" formatted="false">This torrent is no longer in Transmission.</string>
     <string name="ui_f577c9312507" formatted="false">This video could not be played.</string>
     <string name="ui_6c82e6dd8680" formatted="false">Time</string>

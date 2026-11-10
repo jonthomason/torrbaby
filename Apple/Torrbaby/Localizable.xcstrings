@@ -9968,6 +9968,23 @@
           }
         }
       }
+    },
+    "This title isn’t downloaded. Reconnect to your library to play it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This title isn’t downloaded. Reconnect to your library to play it."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此影片尚未下载。请重新连接媒体库后播放。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

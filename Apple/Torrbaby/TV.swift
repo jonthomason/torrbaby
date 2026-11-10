@@ -317,6 +317,7 @@ private struct TVMediaDetail: View {
         playbackTask = Task {
             defer { loading = false; playbackTask = nil }
             do {
+                try store.requireStreamingConnection()
                 await store.flushProgress()
                 try await store.registerClient()
                 let link = try await store.mediaPlaybackLink(asset: asset, titleID: title.id) { preparation = $0 }
