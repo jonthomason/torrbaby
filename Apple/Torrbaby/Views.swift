@@ -253,6 +253,8 @@ struct RootView: View {
                 }.listStyle(.sidebar)
                 .environment(\.defaultMinListRowHeight, compactSidebar ? 36 : 44)
                 #if os(iOS)
+                .tint(.blue)
+                .scrollContentBackground(.hidden)
                 .listSectionSpacing(8)
                 .contentMargins(.top, 0, for: .scrollContent)
                 #endif
@@ -265,6 +267,7 @@ struct RootView: View {
                 .padding(.horizontal, 18).padding(.vertical, 6)
             }.navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
             #if os(iOS)
+            .background(Color(red: 0.10, green: 0.14, blue: 0.20).ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if sizeClass == .compact {
