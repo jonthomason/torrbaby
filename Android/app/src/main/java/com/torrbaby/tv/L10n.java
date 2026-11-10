@@ -586,6 +586,7 @@ final class L10n {
     IDS.put("track", R.string.ui_42aef171c1c0);
     IDS.put("…", R.string.ui_df316e17de9c);
     IDS.put("ⓘ", R.string.ui_f77b6feff6f9);
+    IDS.put("▶", R.string.ui_867c2bf8761c);
     IDS.put("▶  Explore", R.string.ui_76ffb15387e1);
     IDS.put("▶  Play", R.string.ui_4159b402b262);
     IDS.put("▶  Resume", R.string.ui_dfb6d85fbc2f);

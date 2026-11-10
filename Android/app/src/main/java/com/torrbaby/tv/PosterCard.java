@@ -48,6 +48,7 @@ final class PosterCard extends LinearLayout {
     Ui.add(this,subtitle,-1,17);
     remaining=Ui.text(context,"",11,Ui.MUTED);remaining.setSingleLine(true);Ui.add(this,remaining,-1,17);remaining.setVisibility(GONE);
     year=Ui.text(context,"",11,Ui.MUTED);year.setSingleLine(true);Ui.add(this,year,-1,17);year.setVisibility(GONE);
+    subtitle.setGravity(Gravity.CENTER);remaining.setGravity(Gravity.CENTER);year.setGravity(Gravity.CENTER);
     progress=new ProgressBar(context,null,android.R.attr.progressBarStyleHorizontal);
     progress.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.ACCENT));
     Ui.add(this,progress,-1,3);

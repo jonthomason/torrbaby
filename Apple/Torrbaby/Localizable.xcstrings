@@ -10563,6 +10563,23 @@
           }
         }
       }
+    },
+    "▶": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "▶"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "▶"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

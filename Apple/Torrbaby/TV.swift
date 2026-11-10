@@ -159,7 +159,7 @@ struct TVRootView: View {
                         Spacer()
                     }
                 }
-                HStack { Spacer(); TVLanguagePicker() }
+                HStack { Spacer(); TVLanguagePicker(onDown: path.isEmpty ? nil : { NotificationCenter.default.post(name: Notification.Name("TVFocusDetailPlay"), object: nil) }) }
             }
             .frame(height: 56).padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 12)
             .focusSection()
@@ -254,8 +254,14 @@ private struct TVMonochromeButtonStyle: ButtonStyle {
 }
 
 private struct TVLanguagePicker: View {
+    var onDown: (() -> Void)? = nil
     @ObservedObject private var language = InterfaceLanguage.shared
     var body: some View {
+        if let onDown {
+            controls.onMoveCommand { direction in if direction == .down { onDown() } }
+        } else { controls }
+    }
+    private var controls: some View {
         HStack(spacing: 2) {
             Button { language.choose("en") } label: { Text(verbatim: "EN") }
                 .buttonStyle(TVMonochromeButtonStyle(selected: language.code == "en"))
@@ -351,7 +357,7 @@ private struct TVMediaDetail: View {
                                         Label("Start from Beginning", systemImage: "backward.end.fill")
                                     }.disabled(loading)
                                 }
-                                TVDetailMoreActions(asset: asset, title: title)
+                                TVDetailActions(asset: asset, title: title)
                             }.buttonStyle(TVMonochromeButtonStyle()).focusSection()
                         }
                         let seasons = Array(Set(title.assets.filter { $0.role != "extra" }.compactMap(\.season))).sorted()
@@ -387,6 +393,7 @@ private struct TVMediaDetail: View {
         }.background(Color.black)
             .toolbar(.hidden, for: .navigationBar)
             .fullScreenCover(item: $playback) { PlayerScreen(playback: $0, store: store).onExitCommand { playback = nil } }
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("TVFocusDetailPlay"))) { _ in heroFocused = true }
             .defaultFocus($heroFocused, true)
             .task(id: title?.id) {
                 if title != nil { heroFocused = true }
@@ -404,13 +411,13 @@ private struct TVMediaDetail: View {
                     LibraryArtwork(id: asset.id, variant: "episode")
                         .frame(width: 250, height: 140).clipShape(RoundedRectangle(cornerRadius: 10))
                 }
-                Image(systemName: asset.watched ? "checkmark.circle.fill" : "play.circle.fill").font(.largeTitle)
+                Image(systemName: "play.circle.fill").font(.largeTitle)
                 VStack(alignment: .leading, spacing: 10) {
                     if let episode = asset.episode { Text("Episode \(episode)").font(.caption) }
                     Text(asset.name ?? title.title).font(.headline).lineLimit(2)
                     if !asset.summary.isEmpty { Text(asset.summary).font(.caption).lineLimit(2) }
                     if !asset.complete { Text("Downloading").font(.caption).foregroundStyle(Theme.muted) }
-                    if asset.position > 0 && !asset.watched && asset.duration > 0 {
+                    if asset.position > 0 && asset.duration > 0 {
                         ProgressView(value: min(1, asset.position / asset.duration)).tint(Theme.mint)
                     }
                 }
@@ -418,7 +425,6 @@ private struct TVMediaDetail: View {
                 if asset.duration > 0 { Text("\(Int(asset.duration / 60)) min").font(.caption) }
             }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
         }.buttonStyle(.card).disabled(!asset.complete || loading)
-        LibraryEpisodeActions(asset: asset, title: title)
         }
     }
     private func play(_ asset: LibraryAsset, title: LibraryTitle, fromBeginning: Bool = false) {
@@ -438,20 +444,14 @@ private struct TVMediaDetail: View {
     }
 }
 
-private struct TVDetailMoreActions: View {
+private struct TVDetailActions: View {
     @EnvironmentObject var store: Store
     let asset: LibraryAsset
     let title: LibraryTitle
-    @State private var showMenu = false
     @State private var showFiles = false
     @State private var saving = false
     var body: some View {
-        Button { showMenu = true } label: {
-            Label("More", systemImage: "ellipsis")
-        }
-        .accessibilityLabel("More")
-        .disabled(saving)
-        .confirmationDialog("More", isPresented: $showMenu, titleVisibility: .visible) {
+        VStack(alignment: .leading, spacing: 8) {
             Button(LocalizedStringKey(asset.watched ? "Mark as Unwatched" : "Mark as Watched")) {
                 saving = true
                 Task {
@@ -468,8 +468,7 @@ private struct TVDetailMoreActions: View {
                     Task { await store.setContinueWatchingHidden(title.id, hidden: true) }
                 }
             }
-            Button("Cancel", role: .cancel) {}
-        }
+        }.buttonStyle(TVMonochromeButtonStyle()).disabled(saving)
         .navigationDestination(isPresented: $showFiles) { LibraryFileManagement(assetID: asset.id) }
     }
 }
@@ -509,15 +508,15 @@ private struct TVPoster: View {
     let title: LibraryTitle
     var continuing = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .center, spacing: 10) {
             NavigationLink(value: LibraryDestination(id: title.id)) {
-                LibraryArtwork(id: title.id).aspectRatio(2.0 / 3.0, contentMode: .fit)
+                LibraryArtwork(id: title.id).frame(width: 220, height: 330)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                     .overlay { if title.poster?.isEmpty != false { Text(title.title).font(.system(size: 25, weight: .semibold)).multilineTextAlignment(.center).padding() } }
                     .overlay(alignment: .topTrailing) { if title.watched { WatchedBadge() } }
             }.accessibilityLabel(title.title).buttonStyle(TVPosterButtonStyle()).contextMenu { ContinueWatchingAction(title: title) }
             if continuing, let asset = title.resume {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .center, spacing: 5) {
                     if let season = asset.season, let episode = asset.episode {
                         Text(L10n.format("Season %d Ep %d", season, episode))
                     }
@@ -530,7 +529,7 @@ private struct TVPoster: View {
             } else {
                 Text(([title.genres.first, title.year].compactMap { $0 }.filter { !$0.isEmpty }).joined(separator: " · ")).font(.system(size: 21)).foregroundStyle(Theme.muted).lineLimit(1)
             }
-        }
+        }.multilineTextAlignment(.center)
     }
 }
 

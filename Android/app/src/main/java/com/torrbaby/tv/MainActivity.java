@@ -402,7 +402,14 @@ public class MainActivity extends Activity {
       b.setNextFocusLeftId(buttons.get(Math.max(0, i - 1)).getId());
       b.setNextFocusRightId(buttons.get(Math.min(buttons.size() - 1, i + 1)).getId());
       b.setNextFocusUpId(b.getId());
-      if (entry != null) b.setNextFocusDownId(entry.getId());
+      if (entry != null) {
+        b.setNextFocusDownId(entry.getId());
+        View target=entry;
+        b.setOnKeyListener((v,key,event)->{
+          if(key==KeyEvent.KEYCODE_DPAD_DOWN) { if(event.getAction()==KeyEvent.ACTION_DOWN)target.requestFocus();return true; }
+          return false;
+        });
+      }
       if (("nav:" + section).equals(b.getTag()) && entry != null)
         entry.setNextFocusUpId(b.getId());
     }
@@ -1467,8 +1474,10 @@ public class MainActivity extends Activity {
         Ui.add(body,cast,-2,44);
       }
       if(preferred.position>0)Ui.add(body,Ui.button(this,L10n.t("Start from Beginning"),()->play(t,preferred,true)),-2,44);
-      Button more=Ui.button(this,L10n.t("More"),()->detailOptions(t,preferred));more.setTag("detail-more");
-      Ui.add(body,more,-2,44);Ui.gap(body,16);
+      Ui.add(body,Ui.button(this,L10n.t(preferred.watched?"Mark as Unwatched":"Mark as Watched"),()->mark(preferred)),-2,44);
+      if(preferred.complete)Ui.add(body,Ui.button(this,L10n.t("Manage Files"),()->new LibraryFileActions(this,api,io,preferred.id,this::load).show()),-2,44);
+      if(t.isContinuing())Ui.add(body,Ui.button(this,L10n.t("Remove from Continue Watching"),()->setContinueWatchingHidden(t,true)),-2,44);
+      Ui.gap(body,16);
     }
     if (t.kind.equals("tv")) {
       TreeSet<Integer> seasons = new TreeSet<>();
@@ -1556,7 +1565,7 @@ public class MainActivity extends Activity {
       art.load(image, a.id, "episode", a.thumbnail);
       Ui.gap(row, 14);
     }
-    TextView playIcon = Ui.title(this, a.watched ? "✓" : "▶", 18);
+    TextView playIcon = Ui.title(this, "▶", 18);
     playIcon.setGravity(Gravity.CENTER);
     playIcon.setTextColor(Ui.BG);
     playIcon.setBackground(Ui.shape(Ui.TEXT, 0, this));
@@ -1582,7 +1591,7 @@ public class MainActivity extends Activity {
       Ui.gap(text, 6);
       Ui.add(text, Ui.text(this, a.status(), 12, Ui.MUTED), -1, -2);
     }
-    if (a.position > 0 && !a.watched && a.duration > 0) {
+    if (a.position > 0 && a.duration > 0) {
       ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
       bar.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.ACCENT));
       bar.setProgress((int) (100 * a.position / a.duration));
@@ -1590,11 +1599,6 @@ public class MainActivity extends Activity {
     }
     row.addView(text, new LinearLayout.LayoutParams(0, -2, 1));
     Ui.gap(row, 12);
-    Button watched = Ui.button(this, a.watched ? "✓" : "○", () -> mark(a));
-    watched.setContentDescription(a.watched ? L10n.t("Mark as unwatched") : L10n.t("Mark as watched"));
-    watched.setTag("watched:" + a.id);
-    watched.setTextColor(Ui.ACCENT);
-    Ui.add(row, watched, 48, 48);
     row.setGravity(Gravity.CENTER_VERTICAL);
 
     row.setOnClickListener(
@@ -1617,24 +1621,6 @@ public class MainActivity extends Activity {
         });
     Ui.add(body, row, -1, -2);
     Ui.gap(body, 18);
-  }
-
-  private void detailOptions(Library.Title title, Library.Asset asset) {
-    List<String> labels = new ArrayList<>();
-    List<Runnable> actions = new ArrayList<>();
-    labels.add(L10n.t(asset.watched ? "Mark as Unwatched" : "Mark as Watched"));
-    actions.add(() -> mark(asset));
-    if (asset.complete) {
-      labels.add(L10n.t("Manage Files"));
-      actions.add(() -> new LibraryFileActions(this, api, io, asset.id, this::load).show());
-    }
-    if (title.isContinuing()) {
-      labels.add(L10n.t("Remove from Continue Watching"));
-      actions.add(() -> setContinueWatchingHidden(title, true));
-    }
-    new AlertDialog.Builder(this).setTitle(L10n.t("More"))
-        .setItems(labels.toArray(new String[0]), (dialog, which) -> actions.get(which).run())
-        .setNegativeButton(L10n.t("Cancel"), null).show();
   }
 
   private void assetOptions(Library.Title t, Library.Asset a) {

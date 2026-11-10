@@ -213,17 +213,10 @@ public final class DiscoveryTestRunner extends Instrumentation {
         navigationKey(19);if(!focus.contains(activity.getCurrentFocus()))throw new Exception("Cannot return to navigation");
         android.graphics.Bitmap shot=getUiAutomation().takeScreenshot();
         try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getExternalFilesDir(null),"header-"+language+".png"))){shot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
-        android.view.View more=activity.getWindow().getDecorView().findViewWithTag("detail-more");
-        if(more==null)throw new Exception("Missing More action");
-        if(find(activity.getWindow().getDecorView(),L10n.t("Manage Files"))!=null)throw new Exception("Manage Files still occupies detail row");
-        runOnMainSync(()->more.requestFocus());navigationKey(23);
-        android.view.accessibility.AccessibilityNodeInfo menu=getUiAutomation().getRootInActiveWindow();
+        if(activity.getWindow().getDecorView().findViewWithTag("detail-more")!=null)throw new Exception("Unexpected More menu");
         for(String label:new String[]{"Mark as Watched","Manage Files","Remove from Continue Watching"})
-          if(menu==null||menu.findAccessibilityNodeInfosByText(L10n.t(label)).isEmpty())throw new Exception("Missing menu action: "+label);
-        android.graphics.Bitmap menuShot=getUiAutomation().takeScreenshot();
-        try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getExternalFilesDir(null),"menu-"+language+".png"))){menuShot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
-        navigationKey(4);
-        if(activity.getCurrentFocus()!=more)throw new Exception("Menu dismissal lost focus");
+          if(find(activity.getWindow().getDecorView(),L10n.t(label))==null)throw new Exception("Missing direct action: "+label);
+        if(activity.getWindow().getDecorView().findViewWithTag("watched:episode")!=null)throw new Exception("Unexpected episode action");
         runOnMainSync(()->{try{
           java.lang.reflect.Field detail=MainActivity.class.getDeclaredField("detailId");detail.setAccessible(true);detail.set(activity,"");
           render.invoke(activity);
@@ -237,7 +230,7 @@ public final class DiscoveryTestRunner extends Instrumentation {
         try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getExternalFilesDir(null),"captions-"+language+".png"))){captionShot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
 
       }
-      result.putString("stream","PASS: EN/ZH header fits, detail language controls reachable left/right, detail down/up navigation and More menu contents/focus work. Screenshots saved.\n");finish(-1,result);
+      result.putString("stream","PASS: EN/ZH header fits, detail language controls reachable left/right, detail down/up navigation and direct actions work. Screenshots saved.\n");finish(-1,result);
     }catch(Exception e){result.putString("stream","FAIL: "+e+"\n");finish(0,result);}
   }
 
