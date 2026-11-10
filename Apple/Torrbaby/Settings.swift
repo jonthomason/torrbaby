@@ -100,8 +100,28 @@ struct SettingsView: View {
     @State private var magnetStatus: String?
     @State private var showPairing = false
     @State private var showSubtitles = false
+    private var deviceSection: some View {
+    SwiftUI.Section("Devices") {
+        Button { showPairing = true } label: { Label("Link a device", systemImage: "qrcode") }
+            .disabled(!store.connected)
+            .sheet(isPresented: $showPairing) { LocalizedInterface { PairingCodeView() } }
+        ForEach(store.clients) { client in
+            HStack {
+                DeviceNameRow(client: client, isCurrent: client.id == store.clientId)
+                if client.id != store.clientId && client.pairedCredential == 1 {
+                    Button("Revoke access", role: .destructive) {
+                        store.perform { try await store.send("DELETE", "/v1/device-credentials/" + client.id) }
+                    }.font(.caption)
+                }
+            }
+        }
+    }
+    }
     var body: some View {
         Form {
+            #if os(macOS)
+            deviceSection
+            #endif
             SwiftUI.Section("Torrbaby") {
                 Text(AppRelease.description).monospacedDigit()
             }
@@ -147,21 +167,9 @@ struct SettingsView: View {
                 if let notificationStatus { Text(notificationStatus).font(.caption) }
                 #endif
             }
-            SwiftUI.Section("Devices") {
-                Button { showPairing = true } label: { Label("Link a device", systemImage: "qrcode") }
-                    .disabled(!store.connected)
-                    .sheet(isPresented: $showPairing) { LocalizedInterface { PairingCodeView() } }
-                ForEach(store.clients) { client in
-                    HStack {
-                        DeviceNameRow(client: client, isCurrent: client.id == store.clientId)
-                        if client.id != store.clientId && client.pairedCredential == 1 {
-                            Button("Revoke access", role: .destructive) {
-                                store.perform { try await store.send("DELETE", "/v1/device-credentials/" + client.id) }
-                            }.font(.caption)
-                        }
-                    }
-                }
-            }
+            #if !os(macOS)
+            deviceSection
+            #endif
             SeedingSettings()
             SwiftUI.Section("Automation") {
                 if let status = store.status {
