@@ -8,3 +8,5 @@
 - macOS installs only to ~/Applications/Torrbaby.app. The nested historical path is a compatibility symlink. Keep one Mac client process and one main library window group; manually created tabs and separate playback windows are allowed. Never create tabs automatically. The Mac + button belongs immediately after Back/Forward, before the page title; Cmd-T also creates a tab. Verify attempted duplicate launches rather than relying only on an Info.plist flag.
 
 - Subtitle preferences belong only to the device, independent of profiles. Preserve device identity and subtitle choices across updates and restarts; never inherit a server-wide or profile subtitle default. Diamond may store the device-specific record.
+
+- BT之家 browsing must not fetch full details or torrent attachments automatically. Fetch only row-summary information and attachment choices; retrieve a selected torrent attachment only after an explicit Add action. Fetch full details only after the explicit info-button action; keep the server detail route inert for older clients without that flag. Add prepared attachment URLs directly from the result rows.

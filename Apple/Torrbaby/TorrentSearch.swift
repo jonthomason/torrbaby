@@ -146,7 +146,7 @@ struct TorrentSearchView: View {
                         } else {
                             ContentUnavailableView("No releases found", systemImage: "magnifyingglass", description: Text("Try a shorter title or another source."))
                         }
-                    } else if usesColumns(geometry.size.width) {
+                    } else if usesColumns(geometry.size.width) && !response.items.allSatisfy({ $0.sources.contains { $0.provider == "1lou" } }) {
                         HStack(spacing: 0) {
                             results(response.items, inline: true)
                                 .frame(width: min(440, max(280, geometry.size.width * 0.43)))
@@ -244,7 +244,9 @@ struct TorrentSearchView: View {
     }
     private func results(_ items: [TorrentSearchItem], inline: Bool) -> some View {
         List(items) { item in
-            if inline {
+            if item.sources.contains(where: { $0.provider == "1lou" }) {
+                TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true; focusNextSearch() })
+            } else if inline {
                 Button { selectedID = item.id } label: { TorrentSearchRow(item: item) }
                     .buttonStyle(.plain)
                     .listRowBackground(selectedID == item.id ? Theme.mint.opacity(0.13) : Color.clear)
@@ -355,7 +357,14 @@ private struct TorrentSearchRow: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let item: TorrentSearchItem
+    var onAdded: () -> Void = {}
     @State private var fetchedSize: String?
+    @State private var showBTDetails = false
+    @State private var btChoices: [SearchReleaseSizes.Choice] = []
+    @State private var adding = false
+    @State private var added = false
+    @State private var addError: String?
+    private var isBT: Bool { item.sources.contains { $0.provider == "1lou" } }
     private var displayedSize: String { item.size.isEmpty ? (fetchedSize ?? "") : item.size }
     private var metadata: String { [item.edition, item.quality].filter { !$0.isEmpty }.joined(separator: " · ") }
     private var tracks: String { (item.hints.audio + [item.languages]).filter { !$0.isEmpty }.joined(separator: " · ") }
@@ -378,15 +387,52 @@ private struct TorrentSearchRow: View {
                 }
                 if !metadata.isEmpty { Text(metadata).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
                 if !tracks.isEmpty { Text(tracks).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                if let addError { Text(addError).font(.caption).foregroundStyle(.orange) }
+            }
+            if isBT {
+                Spacer(minLength: 8)
+                if adding { ProgressView().controlSize(.small) }
+                else if added { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.mint).accessibilityLabel("Added") }
+                else if btChoices.count == 1, let choice = btChoices.first {
+                    Button("Add torrent") { Task { await addBT(choice) } }.buttonStyle(.borderedProminent)
+                } else if btChoices.count > 1 {
+                    Menu("Add torrent") { ForEach(btChoices) { choice in Button(choice.name) { Task { await addBT(choice) } } } }
+                        .buttonStyle(.borderedProminent)
+                }
+                Button { showBTDetails=true } label: { Image(systemName:"info.circle") }
+                    .buttonStyle(.borderless).accessibilityLabel("Torrent details")
             }
         }.padding(.vertical, 2).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+            .sheet(isPresented: $showBTDetails) {
+                NavigationStack { TorrentSearchDetail(item:item, loadBTDetails:true)
+                    .toolbar { ToolbarItem(placement:.cancellationAction) { Button("Close") { showBTDetails=false } } }
+                }
+                    .frame(minWidth:320,minHeight:400)
+            }
             .task(id: store.server + item.id) {
-                guard item.size.isEmpty else { return }
-                do { fetchedSize = try await SearchReleaseSizes.load(item, store: store) }
+                guard isBT else { return }
+                do {
+                    fetchedSize = try await SearchReleaseSizes.load(item, store: store)
+                    btChoices = SearchReleaseSizes.summaries[store.server + item.id]?.choices ?? []
+                }
                 catch is CancellationError { }
                 catch { fetchedSize = nil }
             }
     }
+    private func addBT(_ choice: SearchReleaseSizes.Choice) async {
+        guard !adding, !added, let url=choice.url else { return }
+        adding=true; addError=nil
+        defer { adding=false }
+        do {
+            struct Result: Decodable { let torrentDuplicate: TorrentIdentity? }
+            struct TorrentIdentity: Decodable { let name: String? }
+            let result: Result = try await store.request("POST", "/v1/torrents", body: ["torrent_url":url], timeout:45)
+            added=true
+            store.notify(result.torrentDuplicate == nil ? "Torrent added" : "Already in your torrents", detail:item.name)
+            onAdded()
+        } catch { addError=error.localizedDescription }
+    }
+
 }
 
 private struct TorrentSearchDetail: View {
@@ -395,6 +441,7 @@ private struct TorrentSearchDetail: View {
     @Environment(\.dismiss) private var dismiss
     let item: TorrentSearchItem
     var embedded = false
+    var loadBTDetails = false
     var onAdded: () -> Void = {}
     @State private var detail: TorrentSearchDetails?
     @State private var attachment = 0
@@ -403,6 +450,7 @@ private struct TorrentSearchDetail: View {
         return values[attachment]
     }
     private var resolved: TorrentSearchItem { release?.item ?? item }
+    private var isBTListing: Bool { item.sources.contains { $0.provider == "1lou" } }
     @State private var loading = false
     @State private var adding = false
     @State private var paused = false
@@ -442,10 +490,10 @@ private struct TorrentSearchDetail: View {
                 }.buttonStyle(.borderedProminent).disabled(adding || added)
                 if let message { Text(L10n.text(message)).foregroundStyle(.secondary) }
             }
-            if !item.hints.summary.isEmpty {
+            if !isBTListing && !item.hints.summary.isEmpty {
                 SwiftUI.Section("Release tags") { Text(item.hints.summary) }
             }
-            SwiftUI.Section("Sources") {
+            if !isBTListing { SwiftUI.Section("Sources") {
                 ForEach(item.sources, id: \.url) { source in
                     #if os(tvOS)
                     Text(source.label)
@@ -453,6 +501,7 @@ private struct TorrentSearchDetail: View {
                     Link(source.label, destination: URL(string: source.url)!)
                     #endif
                 }
+            }
             }
             if loading { ProgressView("Loading details…") }
             if let detailError { Text(detailError).foregroundStyle(.secondary) }
@@ -488,8 +537,9 @@ private struct TorrentSearchDetail: View {
                 if summary.choices.count == 1 { selectedAttachment = summary.choices.first?.id }
                 else if summary.choices.count > 1 { choices = summary.choices }
             }
+            guard !isBTListing || loadBTDetails else { return }
             loading = true; defer { loading = false }
-            do { detail = try await store.request("POST", "/v1/search/torrents/detail", body: ["provider": source.provider, "id": source.id], timeout: 45) }
+            do { detail = try await store.request("POST", "/v1/search/torrents/detail", body: ["provider": source.provider, "id": source.id, "explicit": loadBTDetails], timeout: 45) }
             catch { if !Task.isCancelled { detailError = "Couldn’t load source details. You can still add this torrent." } }
         }
     }

@@ -17,6 +17,7 @@ public final class TorrentSearchActivity extends Activity {
   private final ExecutorService io = Executors.newFixedThreadPool(2);
   private final ExecutorService sizeIo = Executors.newSingleThreadExecutor();
   private final Set<String> sizeRequests = new HashSet<>();
+  private final Map<String,JSONArray> attachmentChoices = new HashMap<>();
   private final Map<String,String> sizes = new HashMap<>();
   private Api api;
   private LinearLayout resultsRoot;
@@ -64,7 +65,7 @@ public final class TorrentSearchActivity extends Activity {
     Ui.add(controls, sourceButton, 180, 46); Ui.add(resultsRoot, controls, -1, 48);
     status = Ui.text(this, "", 14, Ui.MUTED); Ui.add(resultsRoot, status, -1, 36);
     list = new ListView(this); list.setDivider(null); list.setDividerHeight(Ui.dp(this, 10));
-    list.setAdapter(new Results()); list.setOnItemClickListener((parent, view, position, id) -> details(results.optJSONObject(position)));
+    list.setAdapter(new Results()); list.setOnItemClickListener((parent, view, position, id) -> { JSONObject item=results.optJSONObject(position); if(!isBT(item))details(item); });
     resultsRoot.addView(list, new LinearLayout.LayoutParams(-1,0,1));
     resultsRoot.addView(ProfileUi.header(this, api), 0);
     setContentView(resultsRoot); query.requestFocus();
@@ -144,29 +145,51 @@ public final class TorrentSearchActivity extends Activity {
     return String.join(" · ",values);
   }
   private void loadSize(JSONObject item) {
-    if(!item.isNull("size_bytes") || (!item.isNull("size_label") && !item.optString("size_label").isEmpty()))return;
     String key=item.optString("name"); if(!sizeRequests.add(key))return;
     JSONArray sources=item.optJSONArray("sources"); JSONObject source=sources==null?null:sources.optJSONObject(0);
     if(source==null || !source.optString("provider").equals("1lou"))return;
     sizeIo.execute(() -> {
-      String label="";
+      String label=""; JSONArray choices=null;
       try {
         JSONObject d=api.request("POST","/v1/search/torrents/summary",new JSONObject().put("provider","1lou").put("id",source.optString("id")));
         if(!d.isNull("size_label"))label=d.optString("size_label");
+        choices=d.optJSONArray("choices");
       } catch(Exception ignored) {}
-      final String value=label;
-      runOnUiThread(() -> {if(!isDestroyed()){sizes.put(key,value);((BaseAdapter)list.getAdapter()).notifyDataSetChanged();}});
+      final String value=label; final JSONArray options=choices;
+      runOnUiThread(() -> {if(!isDestroyed()){sizes.put(key,value);if(options!=null)attachmentChoices.put(key,options);((BaseAdapter)list.getAdapter()).notifyDataSetChanged();}});
     });
   }
   private class Results extends BaseAdapter {
     public int getCount(){return results.length();} public Object getItem(int p){return results.optJSONObject(p);} public long getItemId(int p){return p;}
     public View getView(int position, View old, ViewGroup parent) {
-      LinearLayout row; if(old instanceof LinearLayout)row=(LinearLayout)old; else {
-        row=Ui.column(TorrentSearchActivity.this); Ui.pad(row,16,6);row.setBackground(Ui.shape(Ui.PANEL,0,TorrentSearchActivity.this));
-        TextView title=Ui.title(TorrentSearchActivity.this,"",20);title.setMaxLines(2);Ui.add(row,title,-1,-2);Ui.add(row,Ui.text(TorrentSearchActivity.this,"",16,Ui.ACCENT),-1,-2);Ui.add(row,Ui.text(TorrentSearchActivity.this,"",13,Ui.MUTED),-1,-2);
+      JSONObject item=results.optJSONObject(position);loadSize(item);
+      LinearLayout row=Ui.row(TorrentSearchActivity.this);Ui.pad(row,16,6);row.setBackground(Ui.shape(Ui.PANEL,0,TorrentSearchActivity.this));
+      LinearLayout content=Ui.column(TorrentSearchActivity.this);
+      TextView title=Ui.title(TorrentSearchActivity.this,title(item),20);title.setMaxLines(2);Ui.add(content,title,-1,-2);
+      String info=summary(item);if(!info.isEmpty())Ui.add(content,Ui.text(TorrentSearchActivity.this,info,16,Ui.ACCENT),-1,-2);
+      Ui.add(content,Ui.text(TorrentSearchActivity.this,tags(item),13,Ui.MUTED),-1,-2);
+      row.addView(content,new LinearLayout.LayoutParams(0,-2,1));
+      if(isBT(item)) {
+        Button addButton=Ui.button(TorrentSearchActivity.this,L10n.t("Add torrent"),()->{});
+        JSONArray options=attachmentChoices.get(item.optString("name"));
+        addButton.setEnabled(options!=null && options.length()>0 && !added.contains(item.optString("name")));
+        if(added.contains(item.optString("name")))addButton.setText(L10n.t("Added"));
+        addButton.setOnClickListener(v->{
+          if(options==null)return;
+          if(options.length()==1)addAttachment(item,options.optJSONObject(0),addButton);
+          else {String[] names=new String[options.length()];for(int i=0;i<names.length;i++)names[i]=options.optJSONObject(i).optString("name");
+            new AlertDialog.Builder(TorrentSearchActivity.this).setTitle(L10n.t("Choose a release")).setItems(names,(d,i)->addAttachment(item,options.optJSONObject(i),addButton)).setNegativeButton(L10n.t("Cancel"),null).show();}
+        });Ui.add(row,addButton,150,44);
+        Button infoButton=Ui.button(TorrentSearchActivity.this,L10n.t("ⓘ"),()->details(item));infoButton.setContentDescription(L10n.t("Torrent details"));Ui.add(row,infoButton,52,44);
       }
-      JSONObject item=results.optJSONObject(position);loadSize(item);((TextView)row.getChildAt(0)).setText(title(item));TextView summaryView=(TextView)row.getChildAt(1);String summaryText=summary(item);summaryView.setText(summaryText);summaryView.setVisibility(summaryText.isEmpty()?View.GONE:View.VISIBLE);((TextView)row.getChildAt(2)).setText(tags(item));return row;
+      return row;
     }
+  }
+  private static boolean isBT(JSONObject item) {
+    JSONArray sources=item.optJSONArray("sources");if(sources!=null)for(int i=0;i<sources.length();i++)if("1lou".equals(sources.optJSONObject(i).optString("provider")))return true;return false;
+  }
+  private void addAttachment(JSONObject item,JSONObject choice,Button button) {
+    try {add(new JSONObject(item.toString()).put("torrent_url",choice.getString("url")),false,button);}catch(JSONException ignored){}
   }
   private void details(JSONObject item) {
     if(item==null)return;selectedItem=item;inDetail=true;int request=++generation;
@@ -188,7 +211,7 @@ public final class TorrentSearchActivity extends Activity {
     if(chosen==null){note.setText(L10n.t("Source details unavailable."));return;}
     JSONObject source=chosen;
     io.execute(() -> {try{
-      JSONObject response=api.request("POST","/v1/search/torrents/detail",new JSONObject().put("provider",source.optString("provider")).put("id",source.optString("id")));
+      JSONObject response=api.request("POST","/v1/search/torrents/detail",new JSONObject().put("provider",source.optString("provider")).put("id",source.optString("id")).put("explicit",true));
       JSONArray entries=response.optJSONArray("files");List<String> names=new ArrayList<>();if(entries!=null)for(int i=0;i<entries.length();i++){JSONObject f=entries.optJSONObject(i);names.add(f.optString("name")+(f.isNull("size_bytes")?"":"\n"+android.text.format.Formatter.formatFileSize(this,f.optLong("size_bytes"))));}
       runOnUiThread(()->{if(isDestroyed()||request!=generation)return;description.setText(sourceLanguages(response)+response.optString("description"));
         JSONArray releases=response.optJSONArray("releases");
@@ -229,7 +252,8 @@ public final class TorrentSearchActivity extends Activity {
     button.setTag(true);button.setEnabled(false);button.setText(L10n.t("Adding…"));
     io.execute(()->{try{
       JSONObject payload=new JSONObject().put("paused",paused);
-      if(!item.optString("magnet").isEmpty() && !item.has("selected_attachment"))payload.put("magnet",item.getString("magnet"));
+      if(!item.optString("torrent_url").isEmpty())payload.put("torrent_url",item.getString("torrent_url"));
+      else if(!item.optString("magnet").isEmpty() && !item.has("selected_attachment"))payload.put("magnet",item.getString("magnet"));
       else {
         JSONArray sources=item.optJSONArray("sources");JSONObject source=null;
         if(sources!=null)for(int i=0;i<sources.length();i++)if(sources.optJSONObject(i).optString("provider").equals("1lou")){source=sources.optJSONObject(i);break;}

@@ -533,6 +533,7 @@ final class L10n {
     IDS.put("Your selected profile is unavailable. Choose a user to continue.", R.string.ui_19d4fb4f3901);
     IDS.put("tb · Offline", R.string.ui_8f3182a89e24);
     IDS.put("track", R.string.ui_42aef171c1c0);
+    IDS.put("ⓘ", R.string.ui_f77b6feff6f9);
     IDS.put("▶  Explore", R.string.ui_76ffb15387e1);
     IDS.put("▶  Play", R.string.ui_4159b402b262);
     IDS.put("▶  Resume", R.string.ui_dfb6d85fbc2f);

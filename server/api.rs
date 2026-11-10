@@ -612,6 +612,9 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         return s.torrent_search.summary(text(&body,"provider")?,text(&body,"id")?).await;
     }
     if method == Method::POST && path == "/v1/search/torrents/detail" {
+        if body["provider"] == "1lou" && body["explicit"] != true {
+            return Ok(json!({"description":"", "files":null, "releases":[], "media_verified":false}));
+        }
         return s
             .torrent_search
             .detail(text(&body, "provider")?, text(&body, "id")?)

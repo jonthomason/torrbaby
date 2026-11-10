@@ -188,14 +188,15 @@ pub async fn add(s: &Service, body: &Value) -> Result<Value> {
         .as_object()
         .context("Expected object")?
         .keys()
-        .any(|k| !["magnet", "metainfo", "paused"].contains(&k.as_str()))
+        .any(|k| !["magnet", "metainfo", "torrent_url", "paused"].contains(&k.as_str()))
     {
-        bail!("Allowed fields: magnet, metainfo, paused");
+        bail!("Allowed fields: magnet, metainfo, torrent_url, paused");
     }
     let magnet = body["magnet"].as_str().filter(|v| !v.is_empty());
     let metainfo = body["metainfo"].as_str().filter(|v| !v.is_empty());
-    if magnet.is_some() == metainfo.is_some() {
-        bail!("Provide either magnet or metainfo");
+    let torrent_url = body["torrent_url"].as_str().filter(|v| !v.is_empty());
+    if [magnet.is_some(), metainfo.is_some(), torrent_url.is_some()].into_iter().filter(|v| *v).count() != 1 {
+        bail!("Provide one torrent source");
     }
     let config = s.effective_config()?;
     let paused = match body.get("paused") {
@@ -208,6 +209,13 @@ pub async fn add(s: &Service, body: &Value) -> Result<Value> {
             bail!("Expected a magnet link");
         }
         params["filename"] = json!(magnet);
+    } else if let Some(raw) = torrent_url {
+        let url=reqwest::Url::parse(raw)?;
+        let attachment=url.path().strip_prefix("/attach-download-").and_then(|s|s.strip_suffix(".htm"));
+        anyhow::ensure!(url.scheme()=="http" && url.host_str()==Some("www.1lou.me") && url.port().is_none()
+            && url.username().is_empty() && url.password().is_none() && url.query().is_none() && url.fragment().is_none()
+            && attachment.is_some_and(|id| !id.is_empty() && id.len()<=12 && id.bytes().all(|b|b.is_ascii_digit())), "Invalid torrent attachment URL");
+        params["filename"] = json!(raw);
     } else if let Some(metainfo) = metainfo {
         base64::engine::general_purpose::STANDARD.decode(metainfo)?;
         params["metainfo"] = json!(metainfo);
