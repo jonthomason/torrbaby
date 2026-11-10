@@ -249,8 +249,9 @@ struct RootView: View {
                     Circle().fill(store.connected ? Theme.mint : .orange).frame(width: 6, height: 6)
                     Text(LocalizedStringKey(store.connected ? "Connected" : (store.offline ? "Offline mode" : "Connecting…")))
                         .font(.caption.weight(.semibold))
-                    Spacer(minLength: 0)
-                }.padding(.horizontal, 18).padding(.vertical, 6)
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.horizontal, 18).padding(.vertical, 6)
             }.navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
