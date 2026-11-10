@@ -2,34 +2,59 @@ import Foundation
 import AVFoundation
 import Vision
 import CoreGraphics
-import CoreML
 
 struct Line { let text: String; let box: CGRect }
 struct Sample { let time: Double; let lines: [Line] }
 struct ScanError: Error { let message: String }
 let retryOffsets = [0.0, -0.4, 0.4, -0.8]
 
-// Text recognition normally runs on the Neural Engine. When that service is
-// unavailable or saturated, Vision fails the request (CRImageReaderError);
-// the same request on the CPU is slower but gives the same answer.
-func recognize(_ image: CGImage) throws -> [VNRecognizedTextObservation] {
-    func run(cpu: Bool) throws -> [VNRecognizedTextObservation] {
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.recognitionLanguages = ["en-US","zh-Hans"]
-        request.usesLanguageCorrection = false
-        request.minimumTextHeight = 0.012
-        if cpu {
-            let device = try request.supportedComputeStageDevices[.main]?.first {
-                if case .cpu = $0 { return true }; return false
-            }
-            guard let device else { throw ScanError(message:"Text recognition has no CPU fallback") }
-            request.setComputeDevice(device, for:.main)
-        }
-        try VNImageRequestHandler(cgImage:image,options:[:]).perform([request])
-        return request.results ?? []
+// Vision's text recognizer always uses Neural Engine models. Requesting another
+// compute device (setComputeDevice(.cpu), usesCPUOnly) still compiles and loads
+// them through the system ANECompilerService. Compiled models are cached per
+// executable name, but concurrent processes do not share a compile that is
+// still running. Each one compiles the same models again, the system compiler
+// saturates, and requests fail after about two minutes (CRImageReaderError,
+// e5rt code 13) before anything is cached. So helpers compile under one
+// cross-process lock, recognizing a blank image to load every recognizer model.
+// The other helpers wait for the lock and then load the cached models in
+// milliseconds. Keep this block identical in SubtitleOCR.swift.
+func prepareTextRecognition() throws {
+    let caches = FileManager.default.urls(for:.cachesDirectory,in:.userDomainMask)[0]
+        .appendingPathComponent("org.torrbaby.server",isDirectory:true)
+    try FileManager.default.createDirectory(at:caches,withIntermediateDirectories:true)
+    let fd = open(caches.appendingPathComponent("text-recognition.lock").path,O_RDWR|O_CREAT|O_CLOEXEC,0o600)
+    guard fd >= 0 else { throw ScanError(message:"Text recognition lock unavailable") }
+    defer { close(fd) }
+    guard flock(fd,LOCK_EX) == 0 else { throw ScanError(message:"Text recognition lock unavailable") }
+    defer { flock(fd,LOCK_UN) }
+    guard let context = CGContext(data:nil,width:64,height:64,bitsPerComponent:8,bytesPerRow:64,
+                                  space:CGColorSpaceCreateDeviceGray(),bitmapInfo:0) else { throw ScanError(message:"Text recognition warm-up failed") }
+    context.setFillColor(gray:1,alpha:1); context.fill(CGRect(x:0,y:0,width:64,height:64))
+    let blank = context.makeImage()!
+    var failure: Error?
+    for attempt in 0..<3 {
+        // A compile that timed out on the client side usually still completes in
+        // the system service and is cached by the next attempt.
+        if attempt > 0 { Thread.sleep(forTimeInterval:5) }
+        do { _ = try perform(blank); return } catch { failure = error }
     }
-    do { return try run(cpu:false) } catch { return try run(cpu:true) }
+    throw failure!
+}
+
+func perform(_ image: CGImage) throws -> [VNRecognizedTextObservation] {
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    request.recognitionLanguages = ["en-US","zh-Hans"]
+    request.usesLanguageCorrection = false
+    request.minimumTextHeight = 0.012
+    try VNImageRequestHandler(cgImage:image,options:[:]).perform([request])
+    return request.results ?? []
+}
+
+// A failure after warm-up means the cached models are unavailable. Rebuild them
+// once under the lock rather than compiling at the same time as other helpers.
+func recognize(_ image: CGImage) throws -> [VNRecognizedTextObservation] {
+    do { return try perform(image) } catch { try prepareTextRecognition(); return try perform(image) }
 }
 
 func describe(_ error: Error) -> String {
@@ -87,6 +112,7 @@ func rolling(_ a: Sample, _ b: Sample) -> Bool {
         let asset = AVURLAsset(url:input)
         let duration = try await asset.load(.duration).seconds
         guard duration.isFinite, duration > 5 else { throw ScanError(message:"Invalid duration") }
+        try prepareTextRecognition()
         let generator = AVAssetImageGenerator(asset:asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width:1280,height:720)
