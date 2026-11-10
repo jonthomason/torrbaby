@@ -118,7 +118,7 @@ impl Database {
                 })
                 .cloned()
                 .unwrap_or(json!({}));
-            title["assets"].as_array_mut().unwrap().push(json!({
+            title["assets"].as_array_mut().context("Invalid title assets")?.push(json!({
                 "id":id,"media_info":crate::media_inventory::cached(self,id)?,"role":"main","name":episode["title"].as_str().unwrap_or(if kind=="movie"{name}else{&fallback}),
                 "season":asset["season"],"episode":asset["episode"],"summary":episode["summary"].as_str().unwrap_or(""),
                 "airdate":episode["airdate"],"thumbnail":episode["thumbnail"],"duration_minutes":episode.get("duration_minutes").unwrap_or(&entity["duration_minutes"]),
@@ -150,7 +150,7 @@ impl Database {
                 asset["file_index"].as_u64().unwrap_or(0)
             );
             let progress = history.get(&media).cloned().unwrap_or(json!({}));
-            title["assets"].as_array_mut().unwrap().push(json!({
+            title["assets"].as_array_mut().context("Invalid title assets")?.push(json!({
                 "id":id,"role":"extra","name":name,"season":null,"episode":null,"summary":"","thumbnail":null,
                 "complete":asset["complete"],"size":asset["size"],"position":progress["position"].as_f64().unwrap_or(0.0),
                 "duration":progress["duration"].as_f64().unwrap_or(0.0),"watched":progress["watched"].as_bool().unwrap_or(false),

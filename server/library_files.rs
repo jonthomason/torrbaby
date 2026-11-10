@@ -45,7 +45,7 @@ fn shared_sidecars(paths: &BTreeSet<PathBuf>) -> Result<Vec<String>> {
             let stem = other.file_stem().and_then(|s|s.to_str()).context("Invalid neighboring media name")?;
             if name == stem || name.strip_prefix(stem).is_some_and(|tail|tail.starts_with('.')) {
                 reasons.push(format!("Subtitle {} may also belong to {}; resolve shared ownership before removal",
-                    sidecar.file_name().unwrap().to_string_lossy(),other.file_name().unwrap().to_string_lossy()));
+                    sidecar.file_name().unwrap_or_default().to_string_lossy(),other.file_name().unwrap_or_default().to_string_lossy()));
             }
         }
     }
@@ -310,7 +310,7 @@ async fn advance(s: &Service, operation: &Value) -> Result<()> {
             }
             ensure!(torrent["download_dir"] == original["download_dir"],"Torrent moved to an unexpected location");
             let remaining = validate_owned_files(&original,&roots)?;
-            ensure!(remaining.len() == original["files"].as_array().unwrap().len(),"Waiting for the in-progress move to finish");
+            ensure!(remaining.len() == original["files"].as_array().context("Operation has no file list")?.len(),"Waiting for the in-progress move to finish");
             ensure!(std::fs::read_dir(&destination)?.all(|e|e.is_ok_and(|e|e.file_name() == ".torrbaby-operation")),"Waiting for the in-progress move to finish");
             purge_caches(s,&original)?;
             s.rpc.call("torrent_set_location",json!({"ids":[hash],"location":destination,"move":true})).await?;
@@ -425,7 +425,7 @@ fn validate_owned_files(preview: &Value, roots: &[PathBuf]) -> Result<Vec<PathBu
 fn delete_owned_files(preview: &Value, roots: &[PathBuf]) -> Result<()> {
     let paths = validate_owned_files(preview, roots)?;
     for path in paths {
-        let expected = preview["files"].as_array().unwrap().iter().find(|v|v["path"].as_str() == path.to_str()).unwrap();
+        let expected = preview["files"].as_array().into_iter().flatten().find(|v|v["path"].as_str() == path.to_str()).context("File is not part of the removal plan")?;
         ensure!(file_record(&path,roots)? == *expected, "File changed during removal");
         std::fs::remove_file(path)?;
     }

@@ -10,7 +10,7 @@ use std::{
 };
 
 pub static EPISODE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:^|[^a-z0-9])s(\d{1,2})[ ._-]*e(\d{1,3})(?:[^0-9]|$)|(?:^|[^0-9])(\d{1,2})x(\d{2})(?:[^0-9]|$)").unwrap()
+    Regex::new(r"(?i)(?:^|[^a-z0-9])s(\d{1,2})[ ._-]*e(\d{1,3})(?:[^0-9]|$)|(?:^|[^0-9])(\d{1,2})x(\d{2})(?:[^0-9]|$)").expect("valid regex")
 });
 /// Nonstandard episode names require explicit series-pack context and an episode title.
 /// The release's numbers may be DVD order, so resolve by title against provider metadata.
@@ -18,8 +18,8 @@ pub fn named_episode(path: &Path) -> Option<(String, String, String)> {
     let stem = path.file_stem()?.to_str()?;
     if EPISODE.is_match(stem) { return None; }
     static MARKER: LazyLock<Regex> = LazyLock::new(||
-        Regex::new(r"(?i)\s+-\s+(?:episode[ ._-]+\d+|pilot[ ._-]+film)(?:\s|$)").unwrap());
-    static NUMBER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\d+[ ._-]+").unwrap());
+        Regex::new(r"(?i)\s+-\s+(?:episode[ ._-]+\d+|pilot[ ._-]+film)(?:\s|$)").expect("valid regex"));
+    static NUMBER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\d+[ ._-]+").expect("valid regex"));
     let marker = MARKER.find(stem)?;
     let prefix = NUMBER.replace(&stem[..marker.start()], "");
     for folder in path.ancestors().skip(1).take(3) {

@@ -22,7 +22,7 @@ pub async fn create(s:&Service,body:&Value)->Result<Value> {
  let _lock=LOCK.lock().await;
  let sources=body["candidates"].as_array().context("Choose 3 to 5 releases")?;
  ensure!((3..=5).contains(&sources.len()),"Choose 3 to 5 releases");
- ensure!(!list(s)?["trials"].as_array().unwrap().iter().any(|v|matches!(v["state"].as_str(),Some("starting"|"running"|"finishing"))),"A trial is already running");
+ ensure!(!list(s)?["trials"].as_array().into_iter().flatten().any(|v|matches!(v["state"].as_str(),Some("starting"|"running"|"finishing"))),"A trial is already running");
  for candidate in sources {
   ensure!(candidate["name"].as_str().is_some_and(|n|!n.is_empty() && n.len()<4096),"Invalid release name");
   let source=candidate["source"].as_object().context("Invalid torrent source")?;
@@ -36,11 +36,11 @@ pub async fn create(s:&Service,body:&Value)->Result<Value> {
 }
 pub async fn action(s:&Service,id:&str,body:&Value)->Result<Value> {
  let _lock=LOCK.lock().await;
- let mut v=list(s)?["trials"].as_array().unwrap().iter().find(|v|v["id"]==id).cloned().context("Trial not found")?;
+ let mut v=list(s)?["trials"].as_array().into_iter().flatten().find(|v|v["id"]==id).cloned().context("Trial not found")?;
  ensure!(matches!(v["state"].as_str(),Some("running"|"review")),"Trial cannot be changed now");
  if body["cancel"]==true {v["winner"]=Value::Null;} else {
  let hash=body["winner"].as_str().context("Choose a release")?;
- ensure!(v["candidates"].as_array().unwrap().iter().any(|c|c["hash"]==hash && c["state"]!="duplicate"),"Release is not owned by this trial");
+ ensure!(v["candidates"].as_array().into_iter().flatten().any(|c|c["hash"]==hash && c["state"]!="duplicate"),"Release is not owned by this trial");
  v["winner"]=json!(hash);
  }
  v["state"]=json!("finishing");v["error"]=Value::Null;save(s,&v)?;Ok(v)
@@ -53,11 +53,11 @@ fn best(candidates:&[Value])->Option<String> {
 pub async fn tick(s:&Service)->Result<()> {
  let _lock=LOCK.lock().await;
  let trials=list(s)?;
- for mut v in trials["trials"].as_array().unwrap().iter().cloned() {
+ for mut v in trials["trials"].as_array().into_iter().flatten().cloned() {
   if !matches!(v["state"].as_str(),Some("starting"|"running"|"finishing")){continue;}
   if let Err(error)=advance(s,&mut v).await {
    let all=crate::organizer::torrents(s).await?;
-   for c in v["candidates"].as_array().unwrap() {if let Some(t)=all.iter().find(|t|owned(c,t)){s.rpc.call("torrent_stop",json!({"ids":[t["hash_string"]]})).await?;}}
+   for c in v["candidates"].as_array().into_iter().flatten() {if let Some(t)=all.iter().find(|t|owned(c,t)){s.rpc.call("torrent_stop",json!({"ids":[t["hash_string"]]})).await?;}}
    v["error"]=json!(error.to_string());if v["state"]!="starting"{v["state"]=json!("review");}save(s,&v)?;
    s.event("trial_needs_attention",json!({"name":"Trial needs attention"}))?;
    tracing::warn!(trial=?v["id"],%error,"Torrent trial will retry");
@@ -67,7 +67,7 @@ pub async fn tick(s:&Service)->Result<()> {
 }
 async fn advance(s:&Service,v:&mut Value)->Result<()> {
  if v["state"]=="starting" {
-  let len=v["candidates"].as_array().unwrap().len();
+  let len=v["candidates"].as_array().context("Trial has no candidates")?.len();
   for i in 0..len {
    if v["candidates"][i]["state"]!="pending" {continue;}
    let dir=v["candidates"][i]["directory"].as_str().context("Missing trial directory")?.to_owned();
@@ -98,7 +98,7 @@ async fn advance(s:&Service,v:&mut Value)->Result<()> {
    }
    save(s,v)?;
   }
-  for c in v["candidates"].as_array().unwrap() {
+  for c in v["candidates"].as_array().context("Trial has no candidates")? {
    if c["state"]!="ready"{continue;}
    s.rpc.call("torrent_set",json!({"ids":[c["hash"]],"download_limited":true,"download_limit":8192})).await?;
    s.rpc.call("torrent_start",json!({"ids":[c["hash"]]})).await?;
@@ -108,7 +108,7 @@ async fn advance(s:&Service,v:&mut Value)->Result<()> {
  if v["state"]=="running" {
   let all=crate::organizer::torrents(s).await?;
   let elapsed=(now()-v["started"].as_f64().unwrap_or(now())).max(1.);
-  for c in v["candidates"].as_array_mut().unwrap() {
+  for c in v["candidates"].as_array_mut().context("Trial has no candidates")? {
    if c["state"]=="paused" {continue;}
    let Some(t)=all.iter().find(|t|owned(c,t)) else {continue;};
    let bytes=t["downloaded_ever"].as_u64().unwrap_or(0);
@@ -119,7 +119,7 @@ async fn advance(s:&Service,v:&mut Value)->Result<()> {
    }
   }
   save(s,v)?;
-  let candidates=v["candidates"].as_array().unwrap();
+  let candidates=v["candidates"].as_array().context("Trial has no candidates")?;
   if elapsed>=SECONDS || candidates.iter().all(|c|c["state"]!="ready") {
    if let Some(winner)=best(candidates){v["winner"]=json!(winner);v["state"]=json!("finishing");}
    else {v["state"]=json!("review");s.event("trial_needs_attention",json!({"name":"No trial made progress"}))?;}
@@ -131,7 +131,7 @@ async fn advance(s:&Service,v:&mut Value)->Result<()> {
   // First promote the winner. Do not delete alternatives until its move succeeds.
   let winner=v["winner"].as_str().map(str::to_owned);
   if let Some(hash)=&winner {
-   let c=v["candidates"].as_array().unwrap().iter().find(|c|c["hash"]==*hash).context("Winner missing")?;
+   let c=v["candidates"].as_array().into_iter().flatten().find(|c|c["hash"]==*hash).context("Winner missing")?;
    let t=crate::organizer::torrent(s,hash).await?;
    let destination=s.effective_config()?.source;
    if t["download_dir"]!=destination {
@@ -149,7 +149,7 @@ async fn advance(s:&Service,v:&mut Value)->Result<()> {
    s.rpc.call("torrent_start",json!({"ids":[hash]})).await?;
   }
   let all=crate::organizer::torrents(s).await?;
-  for c in v["candidates"].as_array_mut().unwrap() {
+  for c in v["candidates"].as_array_mut().context("Trial has no candidates")? {
    if c["hash"].as_str()==winner.as_deref() || c["hash"].is_null() || c["state"]=="removed" {continue;}
    if let Some(t)=all.iter().find(|t|t["hash_string"]==c["hash"]) {
     ensure!(owned(c,t),"Trial ownership changed; cleanup stopped");
@@ -158,7 +158,7 @@ async fn advance(s:&Service,v:&mut Value)->Result<()> {
    c["state"]=json!("removed");
   }
   v["state"]=json!(if winner.is_some(){"complete"}else{"cancelled"});save(s,v)?;
-  s.event("trial_complete",json!({"hash":winner,"name":v["candidates"].as_array().unwrap().iter().find(|c|c["hash"]==v["winner"]).map(|c|c["name"].clone())}))?;
+  s.event("trial_complete",json!({"hash":winner,"name":v["candidates"].as_array().into_iter().flatten().find(|c|c["hash"]==v["winner"]).map(|c|c["name"].clone())}))?;
   s.invalidate_torrents();
  }
  Ok(())

@@ -201,9 +201,9 @@ pub fn extract(path: &Path, track: u64) -> Result<Vec<TimedCue>> {
 fn ass_text(packet: &str) -> Result<String> {
     use std::sync::LazyLock;
     static OVERRIDE: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r"\{[^}]*\}").unwrap());
+        LazyLock::new(|| regex::Regex::new(r"\{[^}]*\}").expect("valid regex"));
     static DRAWING: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r"\\p(\d+)").unwrap());
+        LazyLock::new(|| regex::Regex::new(r"\\p(\d+)").expect("valid regex"));
     let text = packet
         .splitn(9, ',')
         .nth(8)

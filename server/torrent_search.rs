@@ -282,7 +282,7 @@ impl Search {
             let terms = &terms;
             async move {
                 let result = if provider == "tpb" {
-                    let mut url = reqwest::Url::parse("https://apibay.org/q.php").unwrap();
+                    let mut url = reqwest::Url::parse("https://apibay.org/q.php").expect("valid URL");
                     url.query_pairs_mut()
                         .append_pair("q", &terms)
                         .append_pair("cat", "0");
@@ -292,7 +292,7 @@ impl Search {
                     }
                 } else if provider == "csv" {
                     let mut url =
-                        reqwest::Url::parse("https://torrents-csv.com/service/search").unwrap();
+                        reqwest::Url::parse("https://torrents-csv.com/service/search").expect("valid URL");
                     url.query_pairs_mut()
                         .append_pair("q", terms)
                         .append_pair("size", "100");
@@ -306,14 +306,14 @@ impl Search {
                     let (base, key) = if provider == "dmhy" {
                         ("https://share.dmhy.org/topics/rss/rss.xml", "keyword")
                     } else { ("https://mikanani.me/RSS/Search", "searchstr") };
-                    let mut url = reqwest::Url::parse(base).unwrap();
+                    let mut url = reqwest::Url::parse(base).expect("valid URL");
                     url.query_pairs_mut().append_pair(key, terms);
                     match self.read(url).await {
                         Ok(raw) => parse_chinese_feed(&raw, provider),
                         Err(e) => Err(e),
                     }
                 } else {
-                    let mut url = reqwest::Url::parse("https://nyaa.si/").unwrap();
+                    let mut url = reqwest::Url::parse("https://nyaa.si/").expect("valid URL");
                     url.query_pairs_mut()
                         .append_pair("page", "rss")
                         .append_pair("q", &terms)
@@ -524,7 +524,7 @@ fn hash(value: &str) -> Option<String> {
     .then(|| value.to_ascii_lowercase())
 }
 fn item(name: String, info_hash: String, source: Source) -> Item {
-    let mut encoded_name = reqwest::Url::parse("magnet:?").unwrap();
+    let mut encoded_name = reqwest::Url::parse("magnet:?").expect("valid URL");
     encoded_name.query_pairs_mut().append_pair("dn", &name);
     // Transmission expects the canonical, unescaped xt URN. Encode only display text.
     let magnet = format!(
@@ -827,36 +827,36 @@ fn parse_size(raw: &str) -> Option<u64> {
         .then_some((amount * scale) as u64)
 }
 fn hints(name: &str) -> Hints {
-    static YEAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b((?:19|20)\d{2})\b").unwrap());
+    static YEAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b((?:19|20)\d{2})\b").expect("valid regex"));
     static EPISODE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)\bS(\d{1,2})(?:[ ._-]*E(\d{1,3}))?\b").unwrap());
+        LazyLock::new(|| Regex::new(r"(?i)\bS(\d{1,2})(?:[ ._-]*E(\d{1,3}))?\b").expect("valid regex"));
     static SEASON_WORD: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)\bSeasons?[ ._-]+(\d{1,2})(?:[ ._-]*(?:to|-)[ ._-]*(\d{1,2}))?\b").unwrap()
+        Regex::new(r"(?i)\bSeasons?[ ._-]+(\d{1,2})(?:[ ._-]*(?:to|-)[ ._-]*(\d{1,2}))?\b").expect("valid regex")
     });
     static SEASON_RANGE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)\bS(\d{1,2})[ ._-]*(?:-|to)[ ._-]*S?(\d{1,2})\b").unwrap()
+        Regex::new(r"(?i)\bS(\d{1,2})[ ._-]*(?:-|to)[ ._-]*S?(\d{1,2})\b").expect("valid regex")
     });
     static EPISODE_RANGE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)\bS\d{1,2}[ ._-]*E(\d{1,3})(?:[ ._-]*-[ ._-]*E?|E)(\d{1,3})\b").unwrap()
+        Regex::new(r"(?i)\bS\d{1,2}[ ._-]*E(\d{1,3})(?:[ ._-]*-[ ._-]*E?|E)(\d{1,3})\b").expect("valid regex")
     });
     static RES: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)\b(2160p|1080p|1080i|720p|480p|4k)\b").unwrap());
+        LazyLock::new(|| Regex::new(r"(?i)\b(2160p|1080p|1080i|720p|480p|4k)\b").expect("valid regex"));
     static CODEC: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)\b(x265|h[ .]?265|hevc|x264|h[ .]?264|av1|xvid)\b").unwrap()
+        Regex::new(r"(?i)\b(x265|h[ .]?265|hevc|x264|h[ .]?264|av1|xvid)\b").expect("valid regex")
     });
     static SOURCE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)\b(WEB[ ._-]?DL|WEBRip|BluRay|BDRip|Remux|HDTV|DVD(?:Rip)?)\b").unwrap()
+        Regex::new(r"(?i)\b(WEB[ ._-]?DL|WEBRip|BluRay|BDRip|Remux|HDTV|DVD(?:Rip)?)\b").expect("valid regex")
     });
     static AUDIO: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
             r"(?i)\b(AAC(?:[ .]?[257]\.[01])?|E[ ._-]?AC[ ._-]?3|AC[ ._-]?3|DTS(?:[ ._-]HD)?(?:[ ._-]MA)?|TrueHD|Atmos|FLAC|DDP?(?:[ .]?[257]\.1)?)\b",
         )
-        .unwrap()
+        .expect("valid regex")
     });
     static LANG: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)\b(ENG|CHS|CHT|JPN|MULTI|DUAL[ ._-]AUDIO)\b").unwrap());
-    static COMPLETE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"全(\d{1,3})集").unwrap());
-    static CHINESE_EPISODES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"第(\d{1,3})(?:[-—至](\d{1,3}))?集").unwrap());
+        LazyLock::new(|| Regex::new(r"(?i)\b(ENG|CHS|CHT|JPN|MULTI|DUAL[ ._-]AUDIO)\b").expect("valid regex"));
+    static COMPLETE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"全(\d{1,3})集").expect("valid regex"));
+    static CHINESE_EPISODES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"第(\d{1,3})(?:[-—至](\d{1,3}))?集").expect("valid regex"));
     let episode_count = COMPLETE.captures(name).and_then(|c| c[1].parse::<u16>().ok()).filter(|n| *n > 0);
     let chinese_episodes = CHINESE_EPISODES.captures(name);
     let mut languages: Vec<String> = LANG.find_iter(name).map(|m|m.as_str().to_ascii_uppercase()).collect();
@@ -923,7 +923,7 @@ fn score(item: &mut Item, query: &Query) {
     // indexer mislabels its year (e.g. "The Matrix Reloaded (1999)").
     static TITLE_END: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)\b(?:(?:19|20)\d{2}|S\d{1,2}(?:E\d+)?|Seasons?\s+\d|2160p|1080p|720p)\b")
-            .unwrap()
+            .expect("valid regex")
     });
     if let Some(marker) = TITLE_END.find(&item.name) {
         let title_words = words(&item.name[..marker.start()]);

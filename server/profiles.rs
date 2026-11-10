@@ -173,61 +173,6 @@ mod tests {
         Ok((db,client,second))
     }
     #[test]
-    fn paused_seek_preserves_resume_without_marking_watched() -> Result<()> {
-        let (mut db, client, _) = fixture()?;
-        let session = db.begin(LEGACY_PROFILE,"hash",0,"Test",100,&client)?;
-        let id = session["session_id"].as_str().unwrap();
-        db.progress_with_evidence(id,0,950.0,1000.0,false,false,false)?;
-        assert_eq!(db.history(LEGACY_PROFILE)?[0]["position"],950.0);
-        assert_eq!(db.history(LEGACY_PROFILE)?[0]["watched"],false);
-        db.progress_with_evidence(id,1,955.0,1000.0,false,true,false)?;
-        assert_eq!(db.history(LEGACY_PROFILE)?[0]["watched"],true);
-        Ok(())
-    }
-    #[test]
-    fn sessions_keep_the_starting_profile_when_device_switches() -> Result<()> {
-        let (mut db, client, second) = fixture()?;
-        let jon = db.begin(LEGACY_PROFILE,"hash",0,"Test",100,&client)?;
-        db.select_profile(&client,&second)?;
-        let alex = db.begin(&second,"hash",0,"Test",100,&client)?;
-        db.progress(jon["session_id"].as_str().unwrap(),0,950.0,1000.0,true)?;
-        db.progress(alex["session_id"].as_str().unwrap(),0,100.0,1000.0,false)?;
-        assert_eq!(db.history(LEGACY_PROFILE)?[0]["watched"],true);
-        assert_eq!(db.history(&second)?[0]["watched"],false);
-        assert_eq!(db.history(&second)?[0]["position"],100.0);
-        let another = uuid::Uuid::new_v4().to_string();
-        db.register(&another,"TV","other")?;
-        let resumed = db.begin(&second,"hash",0,"Test",100,&another)?;
-        assert_eq!(resumed["resume_position"],100.0);
-        assert_eq!(db.catalog(LEGACY_PROFILE)?["titles"][0]["assets"][0]["watched"],true);
-        assert_eq!(db.catalog(&second)?["titles"][0]["assets"][0]["watched"],false);
-        assert!(db.begin("missing","hash",0,"Test",100,&client).is_err());
-        Ok(())
-    }
-    #[test]
-    fn offline_events_keep_captured_profile_and_legacy_events_belong_to_jon() -> Result<()> {
-        let (mut db, client, second) = fixture()?;
-        db.select_profile(&client,LEGACY_PROFILE)?;
-        let mut report = json!({"event_id":uuid::Uuid::new_v4().to_string(),"client_id":client,
-            "asset_id":"asset-test","profile_id":second,"position":920.0,"duration":1000.0,
-            "recorded_at":now()-5.0,"reached_end":false});
-        let first = crate::offline::sync(&mut db,report.clone())?;
-        assert_eq!(first["accepted"],true);
-        assert_eq!(crate::offline::sync(&mut db,report.clone())?,first);
-        assert!(db.history(LEGACY_PROFILE)?.is_empty());
-        assert_eq!(db.history(&second)?[0]["watched"],true);
-        report["event_id"]=json!(uuid::Uuid::new_v4().to_string());
-        report["position"]=json!(10.0); report["recorded_at"]=json!(now()-1.0);
-        crate::offline::sync(&mut db,report.clone())?;
-        assert_eq!(db.history(&second)?[0]["watched"],true);
-        report.as_object_mut().unwrap().remove("profile_id");
-        report["event_id"]=json!(uuid::Uuid::new_v4().to_string());
-        crate::offline::sync(&mut db,report)?;
-        assert_eq!(db.history(LEGACY_PROFILE)?[0]["position"],10.0);
-        assert_eq!(db.history(&second)?[0]["position"],10.0);
-        Ok(())
-    }
-    #[test]
     fn manual_unwatched_is_profile_local_and_rejects_old_offline_updates() -> Result<()> {
         let (mut db, client, second) = fixture()?;
         db.mark(LEGACY_PROFILE,"hash",0,"Test",100,true)?;

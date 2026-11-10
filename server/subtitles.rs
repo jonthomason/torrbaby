@@ -119,7 +119,7 @@ pub struct TimedCue {
 
 pub fn plain_text(raw: &str) -> String {
     static FORMATTING: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"(?i)</?(?:i|b|u|font)(?:\s[^>]*)?>").unwrap()
+        regex::Regex::new(r"(?i)</?(?:i|b|u|font)(?:\s[^>]*)?>").expect("valid regex")
     });
     FORMATTING
         .replace_all(raw, "")
@@ -144,8 +144,10 @@ pub fn parse_srt(input: &str) -> Result<Vec<TimedCue>> {
         .replace('\r', "\n");
     // Some SRT exporters insert a blank line between a timestamp and its text.
     // Join it only when the following line is text, not another cue number.
-    let gap = regex::Regex::new(r"(?m)(-->[^\n]+)\n(?:[ \t]*\n)+([ \t]*[^\d\s][^\n]*)").unwrap();
-    let normalized = gap.replace_all(&normalized, "$1\n$2");
+    static GAP: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?m)(-->[^\n]+)\n(?:[ \t]*\n)+([ \t]*[^\d\s][^\n]*)").expect("valid regex")
+    });
+    let normalized = GAP.replace_all(&normalized, "$1\n$2");
     let mut cues = Vec::new();
     let mut seen = HashSet::new();
     let mut block = Vec::new();

@@ -13,7 +13,7 @@ pub(super) fn listings(raw: &str) -> Result<Vec<Item>> {
         let name = hit["subject"].as_str()?.to_owned();
         if name.is_empty() || name.len()>4096 { return None; }
         let mut row = item(name, String::new(), Source {provider:"1lou".into(),url:format!("http://www.1lou.me/thread-{id}.htm"),id});
-        static SIZE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)([0-9]+(?:\.[0-9]+)?)\s*(GiB|GB|G|MiB|MB|M|TiB|TB|T)(?:[\] /]|$)").unwrap());
+        static SIZE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)([0-9]+(?:\.[0-9]+)?)\s*(GiB|GB|G|MiB|MB|M|TiB|TB|T)(?:[\] /]|$)").expect("valid regex"));
         if let Some(size)=SIZE.captures(&row.name) {
             row.size_label=Some(format!("{} {}",&size[1],size[2].to_ascii_uppercase()));
         }
@@ -27,10 +27,10 @@ pub(super) fn listings(raw: &str) -> Result<Vec<Item>> {
 pub(super) fn summary_size(raw: &str) -> Result<Option<String>> {
     let dom=tl::parse(raw,tl::ParserOptions::default())?;
     let p=dom.parser();
-    static SIZE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)([0-9]+(?:\.[0-9]+)?)\s*(GiB|GB|MiB|MB|TiB|TB)\b").unwrap());
+    static SIZE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)([0-9]+(?:\.[0-9]+)?)\s*(GiB|GB|MiB|MB|TiB|TB)\b").expect("valid regex"));
     // Posts use both blockquotes and plain <br>-separated full-title lines.
     // Stop at the next HTML tag/newline, before per-stream MediaInfo sizes.
-    static FULL_TITLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"完整标题\s*[:：]\s*([^<\r\n]+)").unwrap());
+    static FULL_TITLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"完整标题\s*[:：]\s*([^<\r\n]+)").expect("valid regex"));
     let mut titles=Vec::new();
     if let Some(node)=dom.query_selector(".message").and_then(|mut q|q.next()).and_then(|h|h.get(p)) {
         if let Some(tag)=node.as_tag() {

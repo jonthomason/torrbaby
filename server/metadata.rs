@@ -9,25 +9,25 @@ use std::{
 use tokio::sync::Mutex;
 
 static YEAR: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:^|\D)((?:19|20)\d{2})(?:\D|$)").unwrap());
+    LazyLock::new(|| Regex::new(r"(?:^|\D)((?:19|20)\d{2})(?:\D|$)").expect("valid regex"));
 static SEASON: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:^|[^a-z0-9])(?:s\d{1,2}(?:[ ._-]*e\d{1,3})?|season[ ._-]*\d{1,2}|\d{1,2}x\d{2})(?:[^a-z0-9]|$)").unwrap()
+    Regex::new(r"(?i)(?:^|[^a-z0-9])(?:s\d{1,2}(?:[ ._-]*e\d{1,3})?|season[ ._-]*\d{1,2}|\d{1,2}x\d{2})(?:[^a-z0-9]|$)").expect("valid regex")
 });
 pub static SERIES_PACK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\bcomplete[ ._-]+(?:tv[ ._-]+)?series\b").unwrap()
+    Regex::new(r"(?i)\bcomplete[ ._-]+(?:tv[ ._-]+)?series\b").expect("valid regex")
 });
 static TECHNICAL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?i)\b(?:complete|collection|trilogy|1080p|2160p|720p|bluray|webrip|web-dl|hdtv)\b",
     )
-    .unwrap()
+    .expect("valid regex")
 });
-static PREFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^www\.[^ ]+\s*[- ]*").unwrap());
+static PREFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^www\.[^ ]+\s*[- ]*").expect("valid regex"));
 
 pub fn parse_name(name: &str) -> (String, String, &'static str) {
     let name = PREFIX.replace(name, "");
     let name = name.trim_start_matches("[BT下载]");
-    static CHINESE_EPISODES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:全|第|更新至|共)[0-9一二三四五六七八九十百]+(?:[-–][0-9]+)?[集季]|[0-9]+集(?:全|完)").unwrap());
+    static CHINESE_EPISODES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:全|第|更新至|共)[0-9一二三四五六七八九十百]+(?:[-–][0-9]+)?[集季]|[0-9]+集(?:全|完)").expect("valid regex"));
     let chinese_episode = CHINESE_EPISODES.find(name);
     let chinese_title = if let Some(rest)=name.strip_prefix('[') {
         rest.split_once(']').map(|(title,_)|title)
@@ -37,7 +37,7 @@ pub fn parse_name(name: &str) -> (String, String, &'static str) {
     // A title may itself start with a year or contain one (1917, 2001, Blade Runner 2049).
     // The release year is the last year token before episode/encoding markers,
     // and must have a nonempty title before it.
-    static ENCODING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b(?:1080p|2160p|720p|bluray|webrip|web-dl|hdtv)\b").unwrap());
+    static ENCODING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b(?:1080p|2160p|720p|bluray|webrip|web-dl|hdtv)\b").expect("valid regex"));
     let boundary = season.as_ref().map(|m|m.start()).into_iter()
         .chain(ENCODING.find(&name).map(|m|m.start())).min().unwrap_or(name.len());
     let year = YEAR.captures_iter(&name).filter(|c| c.get(1).is_some_and(|m|
@@ -248,10 +248,11 @@ impl Metadata {
         use base64::Engine;
         if !self.configured() { return Ok(json!({"data":null})); }
         anyhow::ensure!(name.len() <= 4096, "Release name too long");
+        static PACK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b(collection|trilogy|anthology|\d+[ -]+\d+[ ._-]+pack)\b").expect("valid regex"));
         let (query, year, kind) = parse_name(name);
         // Movie titles without a release year and collections are too ambiguous.
         if query.is_empty() || (kind == "movie" && year.is_empty())
-            || Regex::new(r"(?i)\b(collection|trilogy|anthology|\d+[ -]+\d+[ ._-]+pack)\b").unwrap().is_match(name) {
+            || PACK.is_match(name) {
             return Ok(json!({"data":null}));
         }
         let key = format!("{kind}:{}:{year}", normalized(&query));

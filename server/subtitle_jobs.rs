@@ -360,7 +360,7 @@ impl Manager {
                 if selected["codec"]=="S_VOBSUB" || selected["codec"]=="S_HDMV/PGS" {
                     let sidecar_input=job.input.clone();
                     let sidecars=tokio::task::spawn_blocking(move ||crate::subtitles::discover(&sidecar_input)).await??;
-                    ensure!(sidecars.is_empty() && !tracks["tracks"].as_array().unwrap().iter().any(|t|t["text_extractable"]==true),"Text subtitles are available; OCR is only a fallback");true
+                    ensure!(sidecars.is_empty() && !tracks["tracks"].as_array().into_iter().flatten().any(|t|t["text_extractable"]==true),"Text subtitles are available; OCR is only a fallback");true
                 } else {false}
             } else {false};
             let mut cues=if let Some((prior,text))=original {
