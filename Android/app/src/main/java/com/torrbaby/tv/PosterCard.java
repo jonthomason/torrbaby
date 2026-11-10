@@ -50,7 +50,13 @@ final class PosterCard extends LinearLayout {
     progress.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.ACCENT));
     Ui.add(this,progress,-1,3);
     setOnClickListener(v->{if(item!=null)open.accept(item);});
-    setOnFocusChangeListener((v,f)->{focusAppearance(f);if(f&&item!=null)focused.accept(item);});
+    setOnFocusChangeListener((v,f)->{
+      focusAppearance(f);
+      if(f&&item!=null) {
+        focused.accept(item);
+        post(()->requestRectangleOnScreen(new android.graphics.Rect(0,0,getWidth(),getHeight()),false));
+      }
+    });
   }
 
   void bind(Library.Title value) {
