@@ -16,6 +16,8 @@ embed entry. The previous singular field allowed a TV extension into Mac/iOS
 builds. Both signed build135 products pass validation and contain no TV extension.
 Existing reviewed EN/ZH strings are reused; localization and diff checks pass.
 
-Visual verification/publication pending: CUA cannot see any app windows, including
+Visual verification remains pending: CUA cannot see any app windows, including
 Finder (cgWindowNotFound). User asked to unlock. Artifacts under
 local-state/library-135-fixed. No physical mobile device installation.
+
+User explicitly requested immediate OTA publication on 2026-11-11. Published iOS135 to Miyu Install; HTTPS page/current metadata and downloaded IPA SHA256 verified. Six registered devices covered. No physical device installation.
