@@ -33,29 +33,46 @@ pub fn playback_active(s:&Service)->Result<bool> {
     let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
     Ok(db.connection.query_row("SELECT EXISTS(SELECT 1 FROM profile_playback p JOIN playback_sessions s ON p.active_session=s.id WHERE s.ended=0 AND p.last_played>?)",[now()-90.0],|r|r.get(0))?)
 }
-fn capacity(enabled:bool, preparing:bool, playing:bool)->usize {
-    if !enabled || preparing {0} else if playing {1} else {2}
+fn capacity(enabled:bool, preparing:bool, playing:bool, idle:usize)->usize {
+    if !enabled || preparing {0} else if playing {1} else {idle.clamp(1,8)}
 }
 pub fn refresh_capacity(s:&Service)->Result<usize> {
     let preparing=s.virtual_media.preparing();
     s.subtitle_jobs.set_urgent(preparing);
-    let limit=capacity(s.effective_config()?.background_subtitles,preparing,playback_active(s)?);
+    let config=s.effective_config()?;
+    let limit=capacity(config.background_subtitles,preparing,playback_active(s)?,config.processing_concurrency);
     s.subtitle_jobs.set_concurrency(limit);
+    s.subtitle_jobs.set_external(config.external_translation);
     Ok(limit)
 }
-pub async fn tick(s:&Service)->Result<()> {
+/// Files with a stage task in flight. Aborting a task drops its future, and every
+/// helper process is spawned with kill_on_drop, so backing down is immediate.
+static IN_FLIGHT:std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String,tokio::task::AbortHandle>>>=std::sync::LazyLock::new(Default::default);
+/// Catalog revision and time of the last enrollment pass.
+static ENROLLED:std::sync::Mutex<Option<(String,f64)>>=std::sync::Mutex::new(None);
+
+pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
     let limit=refresh_capacity(s)?;
-    let selected={
+    let imported=s.subtitle_jobs.import_external()?;
+    let (selected,excess)={
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+        for id in &imported {db.connection.execute("UPDATE media_processing SET retry_after=0 WHERE asset_id=? AND state='queued'",[id])?;}
         let assets=assets(&db)?;
         let migrating:bool=db.connection.query_row("SELECT NOT EXISTS(SELECT 1 FROM media_processing)",[],|r|r.get(0))?;
-        for a in &assets {
-            let Some(id)=a["id"].as_str() else{continue};
-            let Some(path)=a["path"].as_str() else{continue};
-            // Missing/unreadable files remain visible as failures, not vanished work.
-            let revision=crate::subtitle_jobs::revision(Path::new(path));
-            enroll(&db,id,revision.as_deref().unwrap_or("unavailable"))?;
-            if let Err(error)=revision {fail(&db,id,"unavailable",&error.to_string())?;}
+        // Enrollment stats every media file; repeat it only when the catalog changes
+        // or once a minute (to notice files replaced in place), not every tick.
+        let revision=db.catalog_revision()?;
+        let due=ENROLLED.lock().map(|e|e.as_ref().is_none_or(|(r,t)|*r!=revision || now()-t>=60.0)).unwrap_or(true);
+        if due || migrating {
+            for a in &assets {
+                let Some(id)=a["id"].as_str() else{continue};
+                let Some(path)=a["path"].as_str() else{continue};
+                // Missing/unreadable files remain visible as failures, not vanished work.
+                let revision=crate::subtitle_jobs::revision(Path::new(path));
+                enroll(&db,id,revision.as_deref().unwrap_or("unavailable"))?;
+                if let Err(error)=revision {fail(&db,id,"unavailable",&error.to_string())?;}
+            }
+            if let Ok(mut e)=ENROLLED.lock() {*e=Some((revision,now()));}
         }
         if migrating {
             let mut unfinished=s.subtitle_jobs.all_statuses()?;
@@ -65,19 +82,40 @@ pub async fn tick(s:&Service)->Result<()> {
                 db.connection.execute("UPDATE media_processing SET state='running' WHERE asset_id=?",[job["asset_id"].as_str().unwrap_or("")])?;
             }
         }
-        if limit==0{return Ok(());}
-        let rows=db.rows("SELECT * FROM media_processing",[])?;
+        let rows=db.rows("SELECT asset_id,state,retry_after FROM media_processing",[])?;
+        let running=|a:&Value|rows.iter().any(|r|r["asset_id"]==a["id"] && r["state"]=="running");
         // Retain claimed files first; fill idle slots in title/episode priority order.
-        let mut selected:Vec<Value>=assets.iter().filter(|a|rows.iter().any(|r|r["asset_id"]==a["id"] && r["state"]=="running")).take(limit).cloned().collect();
+        let mut selected:Vec<Value>=assets.iter().filter(|a|running(a)).take(limit).cloned().collect();
         for asset in &assets {
             if selected.len()>=limit {break;}
             if selected.iter().any(|a|a["id"]==asset["id"]) {continue;}
             if rows.iter().any(|r|r["asset_id"]==asset["id"] && r["state"]!="ready" && r["retry_after"].as_f64().unwrap_or(0.0)<=now()) {selected.push(asset.clone());}
         }
-        selected
+        // Claimed files beyond the current limit give their slot back now. Their
+        // partial work may be discarded; they restart from their last finished stage.
+        let excess:Vec<String>=rows.iter().filter(|r|r["state"]=="running")
+            .filter_map(|r|r["asset_id"].as_str()).filter(|id|!selected.iter().any(|a|a["id"]==*id)).map(str::to_owned).collect();
+        for id in &excess {db.connection.execute("UPDATE media_processing SET state='queued',updated=? WHERE asset_id=? AND state='running'",rusqlite::params![now(),id])?;}
+        (selected,excess)
     };
-    let outcomes=futures_util::future::join_all(selected.into_iter().map(|asset|process_file(s,asset))).await;
-    for outcome in outcomes {outcome?;}
+    let selected_ids:Vec<String>=selected.iter().filter_map(|a|a["id"].as_str().map(str::to_owned)).collect();
+    s.subtitle_jobs.yield_assets(&excess,&selected_ids);
+    let mut flight=IN_FLIGHT.lock().map_err(|_|anyhow::anyhow!("Processing pool unavailable"))?;
+    flight.retain(|id,handle|{
+        if handle.is_finished() {return false;}
+        if excess.contains(id) {handle.abort();tracing::info!(asset=id,"Processing yielded its slot");return false;}
+        true
+    });
+    // Refill each free slot as soon as it frees up instead of waiting for a batch.
+    for asset in selected {
+        let Some(id)=asset["id"].as_str().map(str::to_owned) else{continue};
+        if flight.contains_key(&id) {continue;}
+        let service=s.clone();let task_id=id.clone();
+        let handle=tokio::spawn(async move {
+            if let Err(error)=process_file(&service,asset).await {tracing::warn!(asset=task_id,%error,"Media processing failed");}
+        });
+        flight.insert(id,handle.abort_handle());
+    }
     Ok(())
 }
 async fn process_file(s:&Service,mut asset:Value)->Result<()> {
@@ -109,6 +147,11 @@ async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()>
             db.connection.execute("UPDATE media_processing SET inventory_state='ready',subtitles_state=?,stage=?,detail=?,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![if done{state}else{"pending"},if done{"credits"}else{progress["stage"].as_str().unwrap_or("subtitles")},progress.to_string(),now(),id,revision])?;
         }
         anyhow::ensure!(state!="failed","{}",progress["error"].as_str().unwrap_or("Subtitle preparation failed"));
+        if state=="external" {
+            // Waiting on the external translation lane: give the slot to other files.
+            let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+            db.connection.execute("UPDATE media_processing SET state='queued',retry_after=?,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![now()+120.0,now(),id,revision])?;
+        }
         if !done {return Ok(());}
     }
     if !finished(prior["credits_state"].as_str().unwrap_or("")) {
@@ -134,7 +177,7 @@ async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()>
 }
 pub fn summary(db:&Database)->Result<Value> {
     let rows=db.rows("SELECT * FROM media_processing",[])?;
-    let mut queue=Vec::new();let mut current=Value::Null;let mut scanned=0;let mut completed=0;let mut failed=0;
+    let mut queue=Vec::new();let mut running=Vec::new();let mut scanned=0;let mut completed=0;let mut failed=0;
     for asset in assets(db)? {
         let id=asset["id"].as_str().unwrap_or("");
         let row=rows.iter().find(|r|r["asset_id"]==id);
@@ -148,10 +191,10 @@ pub fn summary(db:&Database)->Result<Value> {
         if state=="failed"{failed+=1;}
         let item=json!({"id":id,"asset_id":id,"title":title,"state":state,"stage":stage,"target":detail["target"],"error":row.map(|r|r["error"].clone()).unwrap_or(Value::Null),"completed_cues":cues,"total_cues":total,
             "inventory_state":row.map(|r|r["inventory_state"].clone()),"subtitles_state":row.map(|r|r["subtitles_state"].clone()),"credits_state":row.map(|r|r["credits_state"].clone()),"completed_at":row.map(|r|r["completed_at"].clone())});
-        if state=="running"{current=json!({"asset_id":id,"language":detail["target"].as_str().unwrap_or(""),"stage":stage,"completed_cues":cues,"total_cues":total});}
+        if state=="running"{running.push(json!({"asset_id":id,"title":title,"language":detail["target"].as_str().unwrap_or(""),"stage":stage,"completed_cues":cues,"total_cues":total}));}
         queue.push(item);
     }
-    Ok(json!({"scanned":scanned,"translated":completed,"completed":completed,"failed":failed,"waiting_for_idle":false,"current":current,"queue":queue}))
+    Ok(json!({"scanned":scanned,"translated":completed,"completed":completed,"failed":failed,"waiting_for_idle":false,"current":running.first().cloned().unwrap_or(Value::Null),"running":running,"queue":queue}))
 }
 #[cfg(test)]
 mod tests {
@@ -171,10 +214,11 @@ mod tests {
     }
     #[test]
     fn playback_capacity_reserves_resources() {
-        assert_eq!(capacity(true,false,false),2);
-        assert_eq!(capacity(true,false,true),1);
-        assert_eq!(capacity(true,true,false),0);
-        assert_eq!(capacity(false,false,false),0);
+        assert_eq!(capacity(true,false,false,6),6);
+        assert_eq!(capacity(true,false,false,20),8);
+        assert_eq!(capacity(true,false,true,6),1);
+        assert_eq!(capacity(true,true,false,6),0);
+        assert_eq!(capacity(false,false,false,6),0);
     }
     #[test]
     fn all_stages_and_current_revision_are_required_for_sign_off()->Result<()> {

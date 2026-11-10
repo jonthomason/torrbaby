@@ -236,8 +236,9 @@ fn ass_text(packet: &str) -> Result<String> {
 pub async fn extract_worker(path: &Path, track: u64) -> Result<Vec<TimedCue>> {
     use std::{os::unix::fs::MetadataExt, process::Stdio, sync::LazyLock};
     use tokio::io::AsyncReadExt;
+    // Matches the processing queue's maximum; one serialized extractor stalled it.
     static WORKERS: LazyLock<tokio::sync::Semaphore> =
-        LazyLock::new(|| tokio::sync::Semaphore::new(1));
+        LazyLock::new(|| tokio::sync::Semaphore::new(8));
     let _permit = WORKERS.acquire().await?;
     fn revision(path: &Path) -> Result<(u64, u64, u64, i64, i64, i64, i64)> {
         let m = path.metadata()?;
@@ -325,7 +326,7 @@ pub async fn tracks_worker(path: &Path) -> Result<Value> {
     use std::{process::Stdio, sync::LazyLock};
     use tokio::io::AsyncReadExt;
     static WORKERS: LazyLock<tokio::sync::Semaphore> =
-        LazyLock::new(|| tokio::sync::Semaphore::new(2));
+        LazyLock::new(|| tokio::sync::Semaphore::new(8));
     let _permit = WORKERS
         .try_acquire()
         .context("Subtitle inspection is busy; try again shortly")?;

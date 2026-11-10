@@ -45,7 +45,14 @@ pub struct Manager {
     gate: tokio::sync::Semaphore,
     concurrency: std::sync::atomic::AtomicUsize,
     urgent: std::sync::atomic::AtomicBool,
+    /// Assets the processing queue took a slot back from; their jobs stop now.
+    yielded: Mutex<HashSet<String>>,
+    /// Temporary external translation lane (outbox/inbox beside the subtitle cache).
+    external: std::sync::atomic::AtomicBool,
+    /// Job IDs per asset, so lookups do not read every job record on each call.
+    index: Mutex<std::collections::HashMap<String, Vec<String>>>,
 }
+const MAX_CONCURRENCY: usize = 8;
 pub(crate) fn revision(path: &Path) -> Result<String> {
     let m = path.metadata()?;
     ensure!(m.is_file(), "Media is not a file");
@@ -96,12 +103,24 @@ impl Manager {
                 }
             }
         }
+        let mut index: std::collections::HashMap<String, Vec<String>> = Default::default();
+        for entry in fs::read_dir(&root)?.flatten() {
+            let path = entry.path();
+            let Some(id) = path.file_stem().and_then(|s| s.to_str()).filter(|s| valid(s)) else { continue };
+            if path.extension().is_none_or(|e| e != "json") { continue; }
+            let Ok(bytes) = fs::read(&path) else { continue };
+            if let Ok(job) = serde_json::from_slice::<Job>(&bytes) { index.entry(job.asset_id).or_default().push(id.to_owned()); }
+        }
+        for dir in ["outbox", "inbox"] { fs::create_dir_all(Self::fleet_dir(&root).join(dir))?; }
         Ok(Arc::new(Self {
             root,
             pending: Mutex::new(HashSet::new()),
-            gate: tokio::sync::Semaphore::new(2),
+            gate: tokio::sync::Semaphore::new(MAX_CONCURRENCY),
             concurrency: std::sync::atomic::AtomicUsize::new(1),
             urgent: std::sync::atomic::AtomicBool::new(false),
+            yielded: Mutex::new(HashSet::new()),
+            external: std::sync::atomic::AtomicBool::new(false),
+            index: Mutex::new(index),
         }))
     }
     pub fn set_urgent(&self, urgent:bool) {
@@ -111,7 +130,86 @@ impl Manager {
         self.pending.lock().map(|p|p.len()<self.concurrency.load(std::sync::atomic::Ordering::Relaxed)).unwrap_or(false)
     }
     pub fn set_concurrency(&self, limit:usize) {
-        self.concurrency.store(limit.min(2),std::sync::atomic::Ordering::Relaxed);
+        self.concurrency.store(limit.min(MAX_CONCURRENCY),std::sync::atomic::Ordering::Relaxed);
+    }
+    pub fn set_external(&self, enabled:bool) {
+        self.external.store(enabled,std::sync::atomic::Ordering::Relaxed);
+    }
+    pub fn external(&self)->bool { self.external.load(std::sync::atomic::Ordering::Relaxed) }
+    /// Background jobs for `stop` assets are interrupted (and retried later);
+    /// assets the queue selected again may run.
+    pub fn yield_assets(&self, stop:&[String], resume:&[String]) {
+        if let Ok(mut yielded)=self.yielded.lock() {
+            for id in resume { yielded.remove(id); }
+            for id in stop { yielded.insert(id.clone()); }
+        }
+    }
+    fn fleet_dir(root:&Path)->PathBuf { root.parent().unwrap_or(root).join("translation-fleet") }
+    /// Write an external translation request: text only, keyed by cue index.
+    /// Timings stay in the server's private copy and are never round-tripped.
+    fn export_external(&self, job:&Job, cues:&[crate::subtitles::TimedCue]) -> Result<()> {
+        let private=serde_json::to_vec(&ProgressRef{completed:0,cues})?;
+        fs::write(self.root.join(format!("{}.external.json",job.id)),private)?;
+        let title=job.input.file_stem().and_then(|s|s.to_str()).unwrap_or("");
+        let request=json!({"id":job.id,"asset_id":job.asset_id,"title":title,"source":job.source,"target":job.target,
+            "cues":cues.iter().enumerate().map(|(i,c)|json!({"i":i,"text":c.text})).collect::<Vec<_>>()});
+        let outbox=Self::fleet_dir(&self.root).join("outbox");
+        let temporary=outbox.join(format!("{}.json.tmp",job.id));
+        fs::write(&temporary,serde_json::to_vec(&request)?)?;
+        fs::rename(temporary,outbox.join(format!("{}.json",job.id)))?;
+        Ok(())
+    }
+    /// Accept translated cue text from the inbox as a completed translation
+    /// checkpoint; the job then finishes through the normal validation path.
+    /// Returns the asset IDs whose translations were accepted.
+    pub fn import_external(&self) -> Result<Vec<String>> {
+        let fleet=Self::fleet_dir(&self.root);
+        let mut accepted=Vec::new();
+        for entry in fs::read_dir(fleet.join("inbox"))?.flatten() {
+            let path=entry.path();
+            let Some(id)=path.file_name().and_then(|n|n.to_str()).and_then(|n|n.strip_suffix(".json")).filter(|id|valid(id)).map(str::to_owned) else {continue};
+            match self.accept_external(&id,&path) {
+                Ok(asset)=>{
+                    let _=fs::remove_file(&path);
+                    let _=fs::remove_file(fleet.join("outbox").join(format!("{id}.json")));
+                    let _=fs::remove_file(self.root.join(format!("{id}.external.json")));
+                    tracing::info!(job=id,asset,"External translation accepted");
+                    accepted.push(asset);
+                }
+                Err(error)=>{
+                    tracing::warn!(job=id,%error,"External translation rejected");
+                    let _=fs::write(fleet.join("inbox").join(format!("{id}.rejected.txt")),error.to_string());
+                    let _=fs::rename(&path,fleet.join("inbox").join(format!("{id}.rejected")));
+                }
+            }
+        }
+        Ok(accepted)
+    }
+    fn accept_external(&self, id:&str, path:&Path) -> Result<String> {
+        let mut job=self.read(id)?;
+        ensure!(job.state=="external","Job is not awaiting external translation");
+        ensure!(revision(&job.input)?==job.revision,"Media changed since export");
+        let bytes=fs::read(self.root.join(format!("{id}.external.json")))?;
+        let original:Progress=serde_json::from_slice(&bytes)?;
+        let incoming:Value=serde_json::from_slice(&fs::read(path)?)?;
+        let translated=incoming["cues"].as_array().context("Missing cues")?;
+        ensure!(translated.len()==original.cues.len(),"Expected {} cues, received {}",original.cues.len(),translated.len());
+        let mut cues=original.cues;
+        for (i,(cue,value)) in cues.iter_mut().zip(translated).enumerate() {
+            ensure!(value["i"].as_u64()==Some(i as u64),"Cue {i} is out of order");
+            let text=value["text"].as_str().context("Missing cue text")?.trim();
+            ensure!(!text.is_empty() && text.len()<=16_384 && !text.contains('\0'),"Cue {i} text is invalid");
+            cue.text=text.to_owned();
+        }
+        let checkpoint=serde_json::to_vec(&ProgressRef{completed:cues.len(),cues:&cues})?;
+        ensure!(checkpoint.len()<=16_777_216,"Subtitle checkpoint too large");
+        let temporary=self.root.join(format!("{id}.progress.tmp"));
+        fs::write(&temporary,checkpoint)?;
+        fs::rename(temporary,self.root.join(format!("{id}.progress")))?;
+        // Re-admission resumes from the complete checkpoint and validates timing.
+        job.state="interrupted".into();job.updated=crate::storage::now();
+        self.save(&job)?;
+        Ok(job.asset_id)
     }
     pub fn busy(&self) -> bool {
         self.pending.lock().map(|p| !p.is_empty()).unwrap_or(true)
@@ -128,6 +226,10 @@ impl Manager {
         let temporary = self.root.join(format!("{}.json.tmp", job.id));
         fs::write(&temporary, serde_json::to_vec(job)?)?;
         fs::rename(temporary, self.root.join(format!("{}.json", job.id)))?;
+        if let Ok(mut index) = self.index.lock() {
+            let ids = index.entry(job.asset_id.clone()).or_default();
+            if !ids.contains(&job.id) { ids.push(job.id.clone()); }
+        }
         Ok(())
     }
     pub fn status(&self, id: &str) -> Result<Value> {
@@ -211,10 +313,8 @@ impl Manager {
         if exact.as_ref().is_some_and(|j|j["state"]=="ready"){return exact;}
         // Older OCR jobs were keyed as auto, then saved with the detected language.
         // Reuse those validated outputs rather than extracting/translating them again.
-        for entry in fs::read_dir(&self.root).ok()?.flatten() {
-            let path=entry.path();
-            let Some(candidate)=path.file_stem().and_then(|s|s.to_str()).filter(|s|valid(s)) else{continue};
-            if path.extension().is_none_or(|s|s!="json"){continue;}
+        let candidates=self.index.lock().ok()?.get(asset).cloned().unwrap_or_default();
+        for candidate in candidates.iter().map(String::as_str) {
             let Ok(job)=self.read(candidate) else{continue};
             let source_matches=source.as_deref()==Some("auto") || job.source==*source;
             let target_matches=if target.as_deref()==Some("auto") {job.target.is_some() && job.target!=job.source}else{job.target==*target};
@@ -273,7 +373,7 @@ impl Manager {
                 return self.status(&id);
             }
             ensure!(
-                pending.len() < 4,
+                pending.len() < 2 * MAX_CONCURRENCY,
                 "Subtitle preparation queue is full. Try again shortly."
             );
             self.prune(&pending)?;
@@ -340,10 +440,11 @@ impl Manager {
         Ok(())
     }
     async fn run(self: Arc<Self>, mut job: Job) {
+        let asset=job.asset_id.clone();
         let result = async {
             let _permit = loop {
                 let permit=self.gate.acquire().await?;
-                if 2-self.gate.available_permits()<=self.concurrency.load(std::sync::atomic::Ordering::Relaxed) {break permit;}
+                if MAX_CONCURRENCY-self.gate.available_permits()<=self.concurrency.load(std::sync::atomic::Ordering::Relaxed) {break permit;}
                 drop(permit);
                 tokio::time::sleep(Duration::from_millis(500)).await;
             };
@@ -393,6 +494,10 @@ impl Manager {
                     }
                 }
                 self.save(&job)?;
+                if self.external() && job.completed_cues < cues.len() {
+                    self.export_external(&job,&cues)?;
+                    return Ok(false);
+                }
                 let helper = std::env::current_exe()?.with_file_name("torrbaby-subtitle-translator");
                 while job.completed_cues < cues.len() {
                     let end=job.completed_cues+crate::subtitles::translation_batch_len(&cues[job.completed_cues..]);
@@ -430,13 +535,14 @@ impl Manager {
             fs::write(&temporary, output)?;
             fs::rename(temporary, self.root.join(format!("{}.vtt", job.id)))?;
             if checkpoint.exists() { fs::remove_file(checkpoint)?; }
-            Ok::<(), anyhow::Error>(())
+            Ok::<bool, anyhow::Error>(true)
         };
         let result = tokio::select! {
             result=tokio::time::timeout(Duration::from_secs(1200), result)=>Some(result),
             _=async {
                 loop {
                     if self.urgent.load(std::sync::atomic::Ordering::Relaxed) {break;}
+                    if self.yielded.lock().map_or(true,|y|y.contains(&asset)) {break;}
                     tokio::time::sleep(Duration::from_millis(250)).await;
                 }
             }=>None,
@@ -448,8 +554,12 @@ impl Manager {
                 job.error=None;
                 tracing::info!(job=%job.id,"Subtitle work interrupted for playback preparation; queued for retry");
             }
-            Some(Ok(Ok(()))) => {
+            Some(Ok(Ok(true))) => {
                 job.state = "ready".into();
+                job.error = None;
+            }
+            Some(Ok(Ok(false))) => {
+                job.state = "external".into();
                 job.error = None;
             }
             Some(Ok(Err(error))) => {
@@ -502,6 +612,53 @@ mod sidecar_job_tests {
         for _ in 0..100 {if !manager.busy(){break;}tokio::time::sleep(Duration::from_millis(10)).await;}
         assert_eq!(manager.status(id)?["state"],"ready");
         assert!(manager.artifact(id)?.contains("Hello world."));
+        fs::remove_dir_all(root)?;Ok(())
+    }
+    #[tokio::test]
+    async fn yielded_asset_job_is_interrupted_and_resumes()->Result<()> {
+        let root=std::env::temp_dir().join(format!("torrbaby-yield-{}",uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root)?;let input=root.join("example.en.srt");
+        fs::write(&input,"1\n00:00:01,000 --> 00:00:03,000\nHello world.\n")?;
+        let manager=Manager::new(&root)?;manager.set_concurrency(0);
+        manager.yield_assets(&["test".into()],&[]);
+        let job=manager.prepare("test",input.clone(),1,Some("en".into()),None)?;
+        let id=job["id"].as_str().unwrap().to_owned();
+        for _ in 0..100 {if !manager.busy(){break;}tokio::time::sleep(Duration::from_millis(10)).await;}
+        assert_eq!(manager.status(&id)?["state"],"interrupted");
+        manager.yield_assets(&[],&["test".into()]);manager.set_concurrency(MAX_CONCURRENCY);
+        manager.prepare("test",input,1,Some("en".into()),None)?;
+        for _ in 0..100 {if !manager.busy(){break;}tokio::time::sleep(Duration::from_millis(10)).await;}
+        assert_eq!(manager.status(&id)?["state"],"ready");
+        fs::remove_dir_all(root)?;Ok(())
+    }
+    #[tokio::test]
+    async fn external_translation_round_trip_keeps_server_timing()->Result<()> {
+        let root=std::env::temp_dir().join(format!("torrbaby-external-{}",uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root)?;let input=root.join("example.en.srt");
+        fs::write(&input,"1\n00:00:01,000 --> 00:00:03,000\nHello.\n\n2\n00:00:04,000 --> 00:00:06,500\nGoodbye.\n")?;
+        let manager=Manager::new(&root)?;manager.set_concurrency(2);manager.set_external(true);
+        let wait=|m:&Arc<Manager>|{let m=m.clone();async move {for _ in 0..200 {if !m.busy(){break;}tokio::time::sleep(Duration::from_millis(10)).await;}}};
+        let job=manager.prepare("test",input.clone(),1,Some("en".into()),Some("zh-Hans".into()))?;
+        let id=job["id"].as_str().unwrap().to_owned();
+        wait(&manager).await;
+        assert_eq!(manager.status(&id)?["state"],"external");
+        let fleet=root.join("translation-fleet");
+        let request:Value=serde_json::from_slice(&fs::read(fleet.join("outbox").join(format!("{id}.json")))?)?;
+        assert_eq!(request["cues"],json!([{"i":0,"text":"Hello."},{"i":1,"text":"Goodbye."}]));
+        assert!(request.to_string().find("00:00").is_none(),"timings never leave the server");
+        // A wrong cue count is rejected and the job keeps waiting.
+        fs::write(fleet.join("inbox").join(format!("{id}.json")),json!({"cues":[{"i":0,"text":"你好。"}]}).to_string())?;
+        assert!(manager.import_external()?.is_empty());
+        assert_eq!(manager.status(&id)?["state"],"external");
+        assert!(fleet.join("inbox").join(format!("{id}.rejected")).exists());
+        fs::write(fleet.join("inbox").join(format!("{id}.json")),json!({"cues":[{"i":0,"text":"你好。"},{"i":1,"text":"再见。"}]}).to_string())?;
+        assert_eq!(manager.import_external()?,vec!["test".to_owned()]);
+        assert!(!fleet.join("outbox").join(format!("{id}.json")).exists());
+        manager.prepare("test",input,1,Some("en".into()),Some("zh-Hans".into()))?;
+        wait(&manager).await;
+        assert_eq!(manager.status(&id)?["state"],"ready");
+        let vtt=manager.artifact(&id)?;
+        assert!(vtt.contains("00:00:04.000 --> 00:00:06.500") && vtt.contains("再见。") && !vtt.contains("Goodbye"));
         fs::remove_dir_all(root)?;Ok(())
     }
     #[tokio::test]

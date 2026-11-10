@@ -180,6 +180,8 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
         let job=match existing {
             Some(job) if job["state"]=="ready" => job,
             Some(job) if job["state"]=="running" || job["state"]=="queued" => job,
+            // Awaiting the temporary external lane; with it off, translate on device.
+            Some(job) if job["state"]=="external" && s.subtitle_jobs.external() => job,
             Some(job) if job["state"]=="failed" => {
                 // Coordinator supplies the retry boundary; preserve the error until then.
                 if asset["retrying"]==true && complete && s.subtitle_jobs.can_admit() {

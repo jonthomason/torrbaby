@@ -60,7 +60,7 @@ pub async fn extract(path: &Path, track: u64) -> Result<Vec<TimedCue>> {
 }
 async fn run(path: &Path, track: Option<u64>) -> Result<Vec<u8>> {
     static GATE: LazyLock<tokio::sync::Semaphore> =
-        LazyLock::new(|| tokio::sync::Semaphore::new(2));
+        LazyLock::new(|| tokio::sync::Semaphore::new(8));
     let _permit = GATE
         .try_acquire()
         .context("Subtitle reader busy; try again shortly")?;

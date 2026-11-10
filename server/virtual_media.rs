@@ -25,7 +25,10 @@ struct Job {
 pub struct Manager {
     root: PathBuf,
     pending: Mutex<HashSet<String>>,
+    /// Pending builds requested by background processing rather than playback.
+    background: Mutex<HashSet<String>>,
     gate: tokio::sync::Semaphore,
+    background_gate: tokio::sync::Semaphore,
     readers: Mutex<HashMap<String, Arc<crate::virtual_captions::Reader>>>,
 }
 fn valid(id: &str) -> bool {
@@ -55,7 +58,9 @@ impl Manager {
         Ok(Arc::new(Self {
             root,
             pending: Mutex::new(HashSet::new()),
+            background: Mutex::new(HashSet::new()),
             gate: tokio::sync::Semaphore::new(1),
+            background_gate: tokio::sync::Semaphore::new(2),
             readers: Mutex::new(HashMap::new()),
         }))
     }
@@ -72,8 +77,12 @@ impl Manager {
         .collect();
         Ok(self.root.join(format!("base-{key}")))
     }
+    /// Playback preparation only. Background indexing (credits analysis) must not
+    /// pause the processing queue, or every MKV would stall all other work.
     pub fn preparing(&self) -> bool {
-        self.pending.lock().map_or(true, |pending| !pending.is_empty())
+        let Ok(pending)=self.pending.lock() else {return true};
+        let Ok(background)=self.background.lock() else {return true};
+        pending.iter().any(|id|!background.contains(id))
     }
     pub fn idle(&self) -> bool {
         self.pending.lock().is_ok_and(|p| p.is_empty())
@@ -216,6 +225,20 @@ impl Manager {
         input: PathBuf,
         captions: Vec<crate::virtual_captions::Caption>,
     ) -> Result<Value> {
+        self.prepare_with(asset, input, captions, false)
+    }
+    /// Build an index for background processing on its own gate, so playback
+    /// preparation never queues behind it and the queue is not paused by it.
+    pub fn prepare_background(self: &Arc<Self>, asset: &str, input: PathBuf) -> Result<Value> {
+        self.prepare_with(asset, input, Vec::new(), true)
+    }
+    fn prepare_with(
+        self: &Arc<Self>,
+        asset: &str,
+        input: PathBuf,
+        captions: Vec<crate::virtual_captions::Caption>,
+        background: bool,
+    ) -> Result<Value> {
         use sha2::{Digest, Sha256};
         ensure!(
             input
@@ -240,6 +263,11 @@ impl Manager {
             let retry_storage=j.error.as_deref()==Some("Virtual media index storage limit reached")
                 || j.error.as_deref()==Some("Playback cache is busy. Please try again shortly.");
             if (j.state == "ready" && self.index_path(&j)?.exists()) || (j.state == "failed" && j.preparation_version >= 3 && !retry_storage) || pending.contains(&id) {
+                // A playback request for a background build now counts as playback.
+                if !background && pending.contains(&id) {
+                    if let Ok(mut set)=self.background.lock() {set.remove(&id);}
+                }
+                drop(pending);
                 return self.status(&id);
             }
         }
@@ -255,12 +283,17 @@ impl Manager {
             captions,
         };
         self.save(&job)?;
+        if background {
+            self.background.lock().map_err(|_| anyhow::anyhow!("Playback queue unavailable"))?.insert(id.clone());
+        }
         pending.insert(id.clone());
+        drop(pending);
         let manager = self.clone();
         let run_id = id.clone();
         tokio::spawn(async move {
             let result = async {
-                let _permit = manager.gate.acquire().await?;
+                let gate = if background { &manager.background_gate } else { &manager.gate };
+                let _permit = gate.acquire().await?;
                 let worker = manager.clone();
                 let key = run_id.clone();
                 tokio::task::spawn_blocking(move || worker.build(&key)).await??;
@@ -276,6 +309,7 @@ impl Manager {
             }
             if let Ok(mut pending) = manager.pending.lock() {
                 pending.remove(&run_id);
+                if let Ok(mut set) = manager.background.lock() { set.remove(&run_id); }
             }
         });
         self.status(&id)

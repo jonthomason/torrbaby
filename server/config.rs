@@ -17,6 +17,13 @@ pub struct Config {
     pub advertise_lan: bool,
     #[serde(default = "background_subtitles_default")]
     pub background_subtitles: bool,
+    /// Files processed at once while nothing is playing (1-8).
+    #[serde(default = "processing_concurrency_default")]
+    pub processing_concurrency: usize,
+    /// Temporary: hand translation to an external outbox/inbox instead of the
+    /// on-device translator. Off restores on-device translation for leftovers.
+    #[serde(default)]
+    pub external_translation: bool,
     pub token_file: String,
     pub state_file: String,
     pub transmission_url: String,
@@ -60,6 +67,9 @@ impl Config {
         if config.advertise_lan && config.lan_listen_host.is_none() {
             bail!("LAN advertisement needs a LAN listener");
         }
+        if !(1..=8).contains(&config.processing_concurrency) {
+            bail!("processing_concurrency must be between 1 and 8");
+        }
         if !config.poll_seconds.is_finite() || !(5.0..=3600.0).contains(&config.poll_seconds) {
             bail!("poll_seconds must be between 5 and 3600");
         }
@@ -93,3 +103,4 @@ impl Config {
 }
 
 fn background_subtitles_default() -> bool { true }
+fn processing_concurrency_default() -> usize { 6 }

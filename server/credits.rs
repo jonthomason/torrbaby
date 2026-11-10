@@ -51,7 +51,7 @@ pub async fn process(s:&Service, asset:&Value)->Result<()> {
         let input=crate::api::media_file(s,id,0).await?;
         let mut reader=None;
         if path.extension().is_some_and(|e|e.eq_ignore_ascii_case("mkv")) {
-            let job=s.virtual_media.prepare(id,input.clone(),Vec::new())?;
+            let job=s.virtual_media.prepare_background(id,input.clone())?;
             if job["state"]!="ready" {
                 if job["state"]=="failed" {
                     let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
@@ -99,7 +99,7 @@ async fn scan(s:&Service,path:&Path,reader:Option<Arc<crate::virtual_captions::R
         let started=std::time::Instant::now();
         let status=loop {
             if let Some(status)=child.try_wait()?{break status;}
-            if started.elapsed()>Duration::from_secs(300) || s.virtual_media.preparing() || crate::processing::playback_active(s)? {
+            if started.elapsed()>Duration::from_secs(300) || s.virtual_media.preparing() {
                 child.kill().await?;let _=child.wait().await;out.abort();err.abort();
                 anyhow::bail!("Credits scan deferred for playback preparation or time budget");
             }
