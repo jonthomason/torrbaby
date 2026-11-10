@@ -85,9 +85,9 @@ extension LibraryAsset {
     func playbackActionTitle(television: Bool) -> String {
         let resume = position > 0 && !watched
         guard television, let season, let episode else { return L10n.text(resume ? "Resume" : "Play") }
-        guard resume else { return L10n.format("Start S%lldE%lld", season, episode) }
-        if duration > position { return L10n.format("Resume S%lldE%lld (%lld min remaining)", season, episode, Int(ceil((duration - position) / 60))) }
-        return L10n.format("Resume S%lldE%lld", season, episode)
+        guard resume else { return L10n.format("Start Season %d Ep %d", season, episode) }
+        if duration > position { return L10n.format("Resume Season %d Ep %d (%d min remaining)", season, episode, Int(ceil((duration - position) / 60))) }
+        return L10n.format("Resume Season %d Ep %d", season, episode)
     }
 }
 

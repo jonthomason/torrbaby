@@ -398,6 +398,8 @@ final class L10n {
     IDS.put("Rename torrent", R.string.ui_7d1e95ef4177);
     IDS.put("Resolution", R.string.ui_516aae52959d);
     IDS.put("Resume", R.string.ui_b3bd0b5a7049);
+    IDS.put("Resume Season %d Ep %d", R.string.ui_3fa8514e297a);
+    IDS.put("Resume Season %d Ep %d (%d min remaining)", R.string.ui_2ca8dc78921f);
     IDS.put("Resume download", R.string.ui_b5ed1ec09384);
     IDS.put("Resumes after playback", R.string.ui_a15dffd81328);
     IDS.put("Retry", R.string.ui_9f5cd8a2e880);
@@ -461,6 +463,7 @@ final class L10n {
     IDS.put("Specials", R.string.ui_adc3296dff7b);
     IDS.put("Speed", R.string.ui_2d2cb022bc3d);
     IDS.put("Start", R.string.ui_952f375412e8);
+    IDS.put("Start Season %d Ep %d", R.string.ui_9128bc0c7932);
     IDS.put("Start from Beginning", R.string.ui_f1eb7755ae4e);
     IDS.put("Start from beginning", R.string.ui_ee6fad6de0db);
     IDS.put("Start trial", R.string.ui_3876de26de77);
@@ -585,6 +588,7 @@ final class L10n {
     IDS.put("tb · Offline", R.string.ui_8f3182a89e24);
     IDS.put("track", R.string.ui_42aef171c1c0);
     IDS.put("…", R.string.ui_df316e17de9c);
+    IDS.put("⋯  More", R.string.ui_b78b49990274);
     IDS.put("ⓘ", R.string.ui_f77b6feff6f9);
     IDS.put("▶", R.string.ui_867c2bf8761c);
     IDS.put("▶  Explore", R.string.ui_76ffb15387e1);
@@ -619,7 +623,8 @@ final class L10n {
         activity.recreate();
       });
       Ui.tab(button, locale().getLanguage().equals(code));
-      Ui.add(row,button,64,40);Ui.gap(row,4);
+      button.setTextSize(11);button.setPadding(0,0,0,0);
+      Ui.add(row,button,50,32);Ui.gap(row,4);
     }
     return row;
   }

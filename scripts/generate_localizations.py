@@ -65,7 +65,8 @@ code+='''  }
         activity.recreate();
       });
       Ui.tab(button, locale().getLanguage().equals(code));
-      Ui.add(row,button,64,40);Ui.gap(row,4);
+      button.setTextSize(11);button.setPadding(0,0,0,0);
+      Ui.add(row,button,50,32);Ui.gap(row,4);
     }
     return row;
   }

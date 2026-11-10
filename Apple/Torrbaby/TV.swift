@@ -303,6 +303,9 @@ private struct TVMediaDetail: View {
     var autoPlay = false
     @State private var didAutoPlay = false
     @FocusState private var heroFocused: Bool
+    @FocusState private var moreFocused: Bool
+    @FocusState private var episodeFocus: String?
+    @FocusState private var seasonFocus: Int?
     @State private var season: Int?
     @State private var playback: Playback?
     @State private var loading = false
@@ -321,25 +324,37 @@ private struct TVMediaDetail: View {
                             Text(LocalizedStringKey(([title.year ?? "", title.contentRating ?? ""] + title.genres.prefix(3)).filter { !$0.isEmpty }.joined(separator: " · ")))
                                 .font(.headline).foregroundStyle(.white.opacity(0.8))
                             if let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
-                                Button { play(asset, title: title) } label: {
-                                    Label(asset.playbackActionTitle(television: title.kind == "tv"), systemImage: "play.fill")
-                                        .font(.headline)
-                                }.buttonStyle(TVMonochromeButtonStyle()).focused($heroFocused)
+                                // TV shows keep the episode guide directly below the hero, so their
+                                // secondary actions live in one compact menu beside Play.
+                                HStack(spacing: 14) {
+                                    Button { play(asset, title: title) } label: {
+                                        Label(asset.playbackActionTitle(television: title.kind == "tv"), systemImage: "play.fill")
+                                            .font(.headline)
+                                    }.buttonStyle(TVMonochromeButtonStyle()).focused($heroFocused)
+                                    if title.kind == "tv" {
+                                        TVMoreActions(asset: asset, title: title) { play(asset, title: title, fromBeginning: true) }
+                                            .focused($moreFocused)
+                                    }
+                                }.focusSection().defaultFocus($heroFocused, true, priority: .userInitiated)
                             }
                         }.padding(44).frame(maxWidth: 1400, alignment: .leading)
                     }.frame(height: 650)
                         .clipShape(RoundedRectangle(cornerRadius: 18))
-                        .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(heroFocused ? 0.65 : 0), lineWidth: 2))
-                        .scaleEffect(heroFocused ? 1.006 : 1)
+                        .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(heroFocused || moreFocused ? 0.65 : 0), lineWidth: 2))
+                        .scaleEffect(heroFocused || moreFocused ? 1.006 : 1)
                     VStack(alignment: .leading, spacing: 38) {
                         if let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
                             MediaLanguagesView(info: asset.mediaInfo)
                         }
                         if !title.summary.isEmpty {
-                            Text(title.summary).font(.system(size: 27)).lineSpacing(7).frame(maxWidth: 1300, alignment: .leading)
-                                .focusable().focusEffectDisabled()
+                            if title.kind == "tv" {
+                                Text(title.summary).font(.system(size: 27)).lineSpacing(7).lineLimit(3).frame(maxWidth: 1300, alignment: .leading)
+                            } else {
+                                Text(title.summary).font(.system(size: 27)).lineSpacing(7).frame(maxWidth: 1300, alignment: .leading)
+                                    .focusable().focusEffectDisabled()
+                            }
                         }
-                        if let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
+                        if title.kind != "tv", let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
                             VStack(alignment: .leading, spacing: 8) {
                                 if let members = title.cast, !members.isEmpty {
                                     NavigationLink { LibraryCast(title: title.title, members: members, television: title.kind == "tv") } label: {
@@ -356,20 +371,26 @@ private struct TVMediaDetail: View {
                         }
                         let seasons = Array(Set(title.assets.filter { $0.role != "extra" }.compactMap(\.season))).sorted()
                         let selectedSeason = season ?? title.resume?.season ?? title.playable.first(where: { !$0.watched && ($0.season ?? 0) > 0 })?.season ?? seasons.first(where: { $0 > 0 }) ?? seasons.first
-                        if title.kind == "tv" {
+                        if title.kind == "tv" && seasons.count > 1 {
                             ScrollView(.horizontal) {
                                 HStack(spacing: 25) {
                                     ForEach(seasons, id: \.self) { number in
                                         Button(LocalizedStringKey(number == 0 ? "Specials" : "Season \(number)")) { season = number }
                                             .buttonStyle(TVMonochromeButtonStyle(selected: selectedSeason == number))
+                                            .focused($seasonFocus, equals: number)
                                     }
                                 }.padding(15)
-                            }.scrollClipDisabled().focusSection()
+                            }.scrollClipDisabled().focusSection().defaultFocus($seasonFocus, selectedSeason, priority: .userInitiated)
                         }
                         let assets = title.assets.filter { $0.role != "extra" && (title.kind != "tv" || $0.season == selectedSeason) }
                             .sorted { ($0.episode ?? 0, $0.name ?? "") < ($1.episode ?? 0, $1.name ?? "") }
                         if title.kind == "tv" || assets.count > 1 {
-                            ForEach(assets) { asset in assetButton(asset, title: title) }
+                            // Arriving from the hero or season row lands on the next episode to watch.
+                            let upNext = title.resume ?? title.playable.first(where: { !$0.watched })
+                            let entry = assets.first(where: { $0.id == upNext?.id && $0.complete }) ?? assets.first(where: \.complete)
+                            VStack(alignment: .leading, spacing: 38) {
+                                ForEach(assets) { asset in assetButton(asset, title: title).focused($episodeFocus, equals: asset.id) }
+                            }.focusSection().defaultFocus($episodeFocus, entry?.id, priority: .userInitiated)
                         }
                         let unnumbered = title.assets.filter { $0.role != "extra" && $0.season == nil }
                         if title.kind == "tv" && selectedSeason != nil && !unnumbered.isEmpty {
@@ -444,6 +465,47 @@ private struct TVMediaDetail: View {
                     url: try store.endpoint(link.path), name: asset.episode == nil ? title.title : title.title + " · " + (asset.name ?? "Episode \(asset.episode!)"), libraryAssetID: asset.id, libraryTitleID: title.id)
             } catch { if !Task.isCancelled { store.actionError = error.localizedDescription } }
         }
+    }
+}
+
+private struct TVMoreActions: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    let asset: LibraryAsset
+    let title: LibraryTitle
+    let restart: () -> Void
+    @State private var showMenu = false
+    @State private var showCast = false
+    @State private var showFiles = false
+    var body: some View {
+        Button { showMenu = true } label: {
+            Label("More", systemImage: "ellipsis").font(.headline)
+        }.buttonStyle(TVMonochromeButtonStyle())
+        .confirmationDialog(title.title, isPresented: $showMenu, titleVisibility: .visible) {
+            if title.cast?.isEmpty == false { Button("Cast") { showCast = true } }
+            if asset.position > 0 { Button("Start from Beginning", action: restart) }
+            Button(LocalizedStringKey(asset.watched ? "Mark as Unwatched" : "Mark as Watched")) {
+                Task {
+                    do {
+                        try await store.send("POST", "/v1/library/assets/\(asset.id)/watched", body: ["watched": !asset.watched])
+                        await store.refresh()
+                    } catch { store.actionError = error.localizedDescription }
+                }
+            }
+            if asset.complete { Button("Manage files") { showFiles = true } }
+            if title.isContinuing {
+                Button("Remove from Continue Watching") {
+                    Task { await store.setContinueWatchingHidden(title.id, hidden: true) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        // The app-wide white tint would hide the focused row's label on its white platter.
+        .tint(nil)
+        .navigationDestination(isPresented: $showCast) {
+            LibraryCast(title: title.title, members: title.cast ?? [], television: true)
+        }
+        .navigationDestination(isPresented: $showFiles) { LibraryFileManagement(assetID: asset.id) }
     }
 }
 

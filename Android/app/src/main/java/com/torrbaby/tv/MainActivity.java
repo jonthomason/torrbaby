@@ -44,6 +44,10 @@ public class MainActivity extends Activity {
   private String librarySnapshot = "";
   // Keep one browse hierarchy, including its scroll and focus, while viewing a title.
   private View savedBrowseView, savedBrowseFocus;
+  // Top bar labels match tvOS (24pt at 1920) rather than the larger content buttons.
+  private static final float NAV_TEXT = 12f;
+  // Pending page arrival: 1 forward, -1 back, 2 sideways between sections.
+  private int transition;
   private LinearLayout savedBrowseRoot, savedBrowseContent, savedBrowseNav;
   private Api savedBrowseApi;
   private String savedBrowseSnapshot;
@@ -206,6 +210,7 @@ public class MainActivity extends Activity {
               this,
               L10n.t(label),
               () -> {
+                if (!section.equals(label)) transition = 2;
                 section = label;
                 collectionName = "";
                 restoreShelf = "";
@@ -217,16 +222,20 @@ public class MainActivity extends Activity {
                 render();
               });
       b.setTag("nav:" + label);
-      b.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 8));
+      b.setTextSize(NAV_TEXT);
+      b.setMinWidth(0); b.setMinimumWidth(0);
+      b.setPadding(Ui.dp(this, 14), 0, Ui.dp(this, 14), 0);
       Ui.tab(b, section.equals(label));
-      Ui.add(menus, b, -2, 36);
+      Ui.add(menus, b, -2, 32);
       Ui.gap(menus, 4);
     }
 
     Button settings = Ui.button(this, L10n.t("Settings"), this::settings);
     Ui.tab(settings, false);
-    settings.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 8));
-    Ui.add(menus, settings, -2, 36);
+    settings.setTextSize(NAV_TEXT);
+    settings.setMinWidth(0); settings.setMinimumWidth(0);
+    settings.setPadding(Ui.dp(this, 14), 0, Ui.dp(this, 14), 0);
+    Ui.add(menus, settings, -2, 32);
     Ui.gap(nav, 8);
     nav.addView(L10n.picker(this));
     if(!detailId.isEmpty()) {
@@ -341,6 +350,7 @@ public class MainActivity extends Activity {
     if (library == null) return;
     if (art != null) art.beginScreen();
     shell();
+    arrive(content);
     root.setTag(new ArrayList<Runnable>());
     root.getViewTreeObserver().addOnGlobalFocusChangeListener((oldFocus,newFocus) -> { if(art!=null)art.prioritize(); });
     root.getViewTreeObserver().addOnScrollChangedListener(() -> { if(art!=null)art.prioritize(); });
@@ -367,6 +377,17 @@ public class MainActivity extends Activity {
     else if (section.equals("Home")) home();
     else catalog();
     wireNavigation();
+  }
+
+  /** A short directional arrival, so moving between pages reads as travel rather than a cut. */
+  private void arrive(View page) {
+    int direction = transition; transition = 0;
+    if (direction == 0 || page == null) return;
+    page.animate().cancel();
+    page.setAlpha(0f);
+    page.setTranslationX(direction == 2 ? 0 : Ui.dp(this, 28) * direction);
+    page.animate().alpha(1f).translationX(0).setDuration(220)
+        .setInterpolator(new android.view.animation.DecelerateInterpolator()).withLayer().start();
   }
 
   private View firstFocusable(View v) {
@@ -547,12 +568,22 @@ public class MainActivity extends Activity {
               });
       Ui.primary(play);
       play.setTag("hero");
-      Ui.add(buttons, play, t.kind.equals("tv") ? 390 : -2, 48);
+      Ui.add(buttons, play, -2, 48);
       Ui.add(info, buttons, -1, 52);
-      play.setOnFocusChangeListener((v,f)-> {
+      View.OnFocusChangeListener heroFocus = (v,f)-> {
         frame.setForeground(f ? Ui.shape(0,0x99ffffff,this) : null);
         frame.animate().scaleX(f?1.006f:1).scaleY(f?1.006f:1).setDuration(140).start();
-      });
+      };
+      play.setOnFocusChangeListener(heroFocus);
+      // TV shows keep the episode guide directly below the hero, so their secondary
+      // actions live in one compact menu beside Play.
+      if (t.kind.equals("tv") && asset != null) {
+        Ui.gap(buttons, 10);
+        Button more = Ui.button(this, L10n.t("⋯  More"), () -> moreActions(t));
+        more.setTag("more");
+        more.setOnFocusChangeListener(heroFocus);
+        Ui.add(buttons, more, -2, 48);
+      }
       play.requestFocus();
     } else {
       Button explore=Ui.button(this,L10n.t("▶  Explore"),()->open(t));
@@ -583,7 +614,7 @@ public class MainActivity extends Activity {
     LinearLayout heading = Ui.row(this);
     Ui.add(heading, Ui.title(this, L10n.t(name), 18), -2, 38);
     Ui.add(body, heading, -1, 40);
-    HorizontalScrollView sc = new HorizontalScrollView(this);
+    HorizontalScrollView sc = new TvHorizontalScrollView(this);
     sc.setHorizontalScrollBarEnabled(false);
     sc.setTag("shelf:" + name);
     sc.setClipToPadding(false);
@@ -872,7 +903,7 @@ public class MainActivity extends Activity {
             Library.Title latest = library.find(items.get(i).id);
             v.bind(latest == null ? items.get(i) : latest);
             v.setFocusable(false);
-            v.focusAppearance(i == grid.getSelectedItemPosition());
+            v.focusAppearance(i == ((PosterGrid) grid).highlighted());
             v.setLayoutParams(new AbsListView.LayoutParams(-1, -2));
             return v;
           }
@@ -1346,6 +1377,7 @@ public class MainActivity extends Activity {
     restoreId = t.id;
     detailId = t.id;
     season = -1;
+    transition = 1;
     render();
   }
 
@@ -1371,10 +1403,9 @@ public class MainActivity extends Activity {
     if (asset == null) return "▶  Start";
     boolean resume = asset.position > 0 && !asset.watched;
     if (!title.kind.equals("tv") || asset.episode <= 0) return L10n.t(resume ? "▶  Resume" : "▶  Play");
-    String episode = "S" + asset.season + "E" + asset.episode;
-    String remaining = resume && asset.duration > asset.position
-        ? " (" + L10n.t("%d min remaining").replace("%d", String.valueOf((int)Math.ceil((asset.duration - asset.position) / 60))) + ")" : "";
-    return L10n.t(resume ? "▶  Resume" : "▶  Start") + " " + episode + remaining;
+    int minutes = resume && asset.duration > asset.position ? (int) Math.ceil((asset.duration - asset.position) / 60) : 0;
+    String key = !resume ? "Start Season %d Ep %d" : minutes > 0 ? "Resume Season %d Ep %d (%d min remaining)" : "Resume Season %d Ep %d";
+    return "▶  " + String.format(L10n.locale(), L10n.t(key), asset.season, asset.episode, minutes);
   }
 
   private void castPage(Library.Title title) {
@@ -1461,6 +1492,7 @@ public class MainActivity extends Activity {
     if (!t.summary.isEmpty()) {
       TextView summary = Ui.text(this, t.summary, 14, Ui.TEXT);
       summary.setLineSpacing(Ui.dp(this, 3), 1);
+      if (t.kind.equals("tv")) { summary.setMaxLines(3); summary.setEllipsize(android.text.TextUtils.TruncateAt.END); }
       Ui.add(body, summary, 650, -2);
       Ui.gap(body, 24);
     }
@@ -1474,10 +1506,13 @@ public class MainActivity extends Activity {
             t.preferred() == null || !t.preferred().hasSeason
                 ? (seasons.higher(0) == null ? seasons.first() : seasons.higher(0))
                 : t.preferred().season;
-      HorizontalScrollView scroll = new HorizontalScrollView(this);
+      HorizontalScrollView scroll = new TvHorizontalScrollView(this);
       scroll.setHorizontalScrollBarEnabled(false);
       LinearLayout row = Ui.row(this);
+      row.setTag("seasons");
       scroll.addView(row);
+      // A single season needs no selector; the guide starts directly below the synopsis.
+      if (seasons.size() < 2) scroll.setVisibility(View.GONE);
       for (int number : seasons) {
         Button button =
             Ui.button(
@@ -1491,18 +1526,19 @@ public class MainActivity extends Activity {
                   }
                   episodes.removeAllViews();
                   detailEpisodes(episodes,t);
+                  episodeEntry(page, episodes, t);
                 });
         Ui.tab(button,number == season);
         button.setTag("season:" + number);
         Ui.add(row, button, -2, 42);
         Ui.gap(row, 12);
       }
-      Ui.add(body, scroll, -1, 46);
-      Ui.gap(body, 20);
+      Ui.add(body, scroll, -1, seasons.size() < 2 ? 0 : 46);
+      if (seasons.size() > 1) Ui.gap(body, 20);
     }
     Ui.add(body,episodes,-1,-2);
     detailEpisodes(episodes,t);
-    if(t.kind.equals("tv"))detailActions(body,t);
+    if(t.kind.equals("tv"))episodeEntry(page, episodes, t);
     Ui.gap(body, 12);
     Ui.add(
         body,
@@ -1515,6 +1551,45 @@ public class MainActivity extends Activity {
             }),
         -2,
         40);
+  }
+
+  /** Moving down from the hero or season selector lands on the next episode to watch. */
+  private void episodeEntry(View page, LinearLayout episodes, Library.Title t) {
+    Library.Asset preferred = t.preferred();
+    View entry = preferred == null ? null : episodes.findViewWithTag("episode:" + preferred.id);
+    if (entry == null) entry = firstFocusable(episodes);
+    if (entry == null || entry == episodes) return;
+    if (entry.getId() == View.NO_ID) entry.setId(View.generateViewId());
+    View seasons = page.findViewWithTag("seasons");
+    boolean selector = seasons instanceof LinearLayout && ((View) seasons.getParent()).getVisibility() == View.VISIBLE;
+    if (selector) {
+      LinearLayout row = (LinearLayout) seasons;
+      for (int i = 0; i < row.getChildCount(); i++)
+        if (row.getChildAt(i) instanceof Button) row.getChildAt(i).setNextFocusDownId(entry.getId());
+      // From the hero, arrive on the season being shown rather than the nearest tab.
+      entry = row.findViewWithTag("season:" + season);
+      if (entry == null) return;
+      if (entry.getId() == View.NO_ID) entry.setId(View.generateViewId());
+    }
+    for (String tag : new String[] {"hero", "more"}) {
+      View button = page.findViewWithTag(tag);
+      if (button != null) button.setNextFocusDownId(entry.getId());
+    }
+  }
+
+  private void moreActions(Library.Title t) {
+    Library.Asset preferred = t.preferred();
+    if (preferred == null) return;
+    List<String> labels = new ArrayList<>();
+    List<Runnable> actions = new ArrayList<>();
+    if (t.cast != null && t.cast.length() > 0) { labels.add(L10n.t("Cast")); actions.add(() -> { showingCast = true; render(); }); }
+    if (preferred.position > 0) { labels.add(L10n.t("Start from Beginning")); actions.add(() -> play(t, preferred, true)); }
+    labels.add(L10n.t(preferred.watched ? "Mark as Unwatched" : "Mark as Watched")); actions.add(() -> mark(preferred));
+    if (preferred.complete) { labels.add(L10n.t("Manage files")); actions.add(() -> new LibraryFileActions(this, api, io, preferred.id, this::load).show()); }
+    if (t.isContinuing()) { labels.add(L10n.t("Remove from Continue Watching")); actions.add(() -> setContinueWatchingHidden(t, true)); }
+    new AlertDialog.Builder(this).setTitle(t.title)
+        .setItems(labels.toArray(new String[0]), (dialog, which) -> actions.get(which).run())
+        .setNegativeButton(L10n.t("Cancel"), null).show();
   }
 
   private void detailActions(LinearLayout body, Library.Title t) {
@@ -2092,6 +2167,7 @@ public class MainActivity extends Activity {
     if (showingCast) {
       showingCast = false; render();
       View cast = root.findViewWithTag("cast");
+      if (cast == null) cast = root.findViewWithTag("more");
       if (cast != null) cast.requestFocus();
       return;
     }
@@ -2110,13 +2186,14 @@ public class MainActivity extends Activity {
         root = savedBrowseRoot; content = savedBrowseContent; nav = savedBrowseNav;
         if(art!=null)art.beginScreen();
         setContentView(savedBrowseView);
+        transition = -1; arrive(content);
         updateBrowse(root);
         inLibrary = true;
         if (savedBrowseFocus != null) savedBrowseFocus.requestFocus();
         savedBrowseView = null; savedBrowseFocus = null;
         savedBrowseRoot = savedBrowseContent = savedBrowseNav = null;
         android.util.Log.i("TorrbabyStartup", "Browse layout restored in " + (SystemClock.elapsedRealtime() - started) + " ms");
-      } else render();
+      } else { transition = -1; render(); }
     } else if (!collectionName.isEmpty()) {
       restoreShelf = collectionName;
       collectionName = "";

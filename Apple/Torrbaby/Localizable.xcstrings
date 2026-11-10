@@ -10580,6 +10580,74 @@
           }
         }
       }
+    },
+    "Resume Season %d Ep %d": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resume Season %d Ep %d"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "继续播放第 %d 季 第 %d 集"
+          }
+        }
+      }
+    },
+    "Resume Season %d Ep %d (%d min remaining)": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resume Season %d Ep %d (%d min remaining)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "继续播放第 %d 季 第 %d 集（剩余 %d 分钟）"
+          }
+        }
+      }
+    },
+    "Start Season %d Ep %d": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start Season %d Ep %d"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "开始第 %d 季 第 %d 集"
+          }
+        }
+      }
+    },
+    "⋯  More": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⋯  More"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⋯  更多"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

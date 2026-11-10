@@ -387,6 +387,8 @@
     <string name="ui_7d1e95ef4177" formatted="false">重命名种子</string>
     <string name="ui_516aae52959d" formatted="false">分辨率</string>
     <string name="ui_b3bd0b5a7049" formatted="false">继续播放</string>
+    <string name="ui_3fa8514e297a" formatted="false">继续播放第 %d 季 第 %d 集</string>
+    <string name="ui_2ca8dc78921f" formatted="false">继续播放第 %d 季 第 %d 集（剩余 %d 分钟）</string>
     <string name="ui_b5ed1ec09384" formatted="false">继续下载</string>
     <string name="ui_a15dffd81328" formatted="false">播放结束后继续</string>
     <string name="ui_9f5cd8a2e880" formatted="false">重试</string>
@@ -450,6 +452,7 @@
     <string name="ui_adc3296dff7b" formatted="false">特别篇</string>
     <string name="ui_2d2cb022bc3d" formatted="false">速度</string>
     <string name="ui_952f375412e8" formatted="false">开始</string>
+    <string name="ui_9128bc0c7932" formatted="false">开始第 %d 季 第 %d 集</string>
     <string name="ui_f1eb7755ae4e" formatted="false">从头播放</string>
     <string name="ui_ee6fad6de0db" formatted="false">从头播放</string>
     <string name="ui_3876de26de77" formatted="false">开始试下载</string>
@@ -574,6 +577,7 @@
     <string name="ui_8f3182a89e24" formatted="false">tb · 离线</string>
     <string name="ui_42aef171c1c0" formatted="false">轨道</string>
     <string name="ui_df316e17de9c" formatted="false">…</string>
+    <string name="ui_b78b49990274" formatted="false">⋯  更多</string>
     <string name="ui_f77b6feff6f9" formatted="false">ⓘ</string>
     <string name="ui_867c2bf8761c" formatted="false">▶</string>
     <string name="ui_76ffb15387e1" formatted="false">▶  查看详情</string>

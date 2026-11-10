@@ -19,8 +19,19 @@ final class TvScrollView extends ScrollView {
     try { super.requestChildFocus(child,focused); } finally { focusing=false; }
   }
 
+  // Focus styling often requests a layout before the focus change reaches this view. The
+  // platform then defers the reveal to the next layout pass and performs it as a hard jump,
+  // so scrolls made during layout are animated as well.
+  @Override protected void onLayout(boolean changed,int left,int top,int right,int bottom) {
+    boolean animate=isLaidOut();
+    focusing=animate;
+    try { super.onLayout(changed,left,top,right,bottom); } finally { focusing=false; }
+  }
+
   @Override public void scrollTo(int x,int y) {
-    if(focusing && isLaidOut())animateRow(y); else super.scrollTo(x,y);
+    if(!focusing || !isLaidOut()) { super.scrollTo(x,y); return; }
+    if(y!=getScrollY())animateRow(y);
+    else if(rowScroll==null || !rowScroll.isRunning())super.scrollTo(x,y);
   }
 
   @Override public boolean requestChildRectangleOnScreen(View child, Rect rectangle, boolean immediate) {

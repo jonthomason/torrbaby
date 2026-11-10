@@ -505,6 +505,7 @@ Your selected profile is unavailable. Choose a user to continue.	所选用户不
 ▶  Play	▶  播放
 ▶  Resume	▶  继续播放
 ▶  Start	▶  开始
+⋯  More	⋯  更多
 First name	名字
 Avatar	头像
 Initial or emoji	首字母或表情符号
@@ -520,9 +521,9 @@ Estimating…	正在估算…
 ~%lldm remaining	约剩余 %lld 分钟
 ~%lldh %lldm remaining	约剩余 %lld 小时 %lld 分钟
 ~%lldd %lldh remaining	约剩余 %lld 天 %lld 小时
-Resume S%lldE%lld	继续播放第 %lld 季第 %lld 集
-Resume S%lldE%lld (%lld min remaining)	继续播放第 %lld 季第 %lld 集（剩余 %lld 分钟）
-Start S%lldE%lld	开始第 %lld 季第 %lld 集
+Resume Season %d Ep %d	继续播放第 %d 季 第 %d 集
+Resume Season %d Ep %d (%d min remaining)	继续播放第 %d 季 第 %d 集（剩余 %d 分钟）
+Start Season %d Ep %d	开始第 %d 季 第 %d 集
 Cast · %@	演员表 · %@
 Transmission reports this torrent as stalled	Transmission 报告此种子停滞
 No peers and no activity for over 5 minutes	超过 5 分钟没有节点或活动
