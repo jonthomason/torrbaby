@@ -77,7 +77,7 @@ impl Manager {
             pending: Mutex::new(HashSet::new()),
             background: Mutex::new(HashSet::new()),
             gate: tokio::sync::Semaphore::new(1),
-            background_gate: tokio::sync::Semaphore::new(2),
+            background_gate: tokio::sync::Semaphore::new(4),
             readers: Mutex::new(HashMap::new()),
         }))
     }
