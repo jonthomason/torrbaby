@@ -1,6 +1,7 @@
 #if os(tvOS)
 import SwiftUI
 import OSLog
+import Darwin
 
 @MainActor
 private final class TVDiscovery: NSObject, ObservableObject, @preconcurrency NetServiceBrowserDelegate, @preconcurrency NetServiceDelegate {
@@ -16,7 +17,19 @@ private final class TVDiscovery: NSObject, ObservableObject, @preconcurrency Net
         services.append(service); service.delegate = self; service.resolve(withTimeout: 10)
     }
     func netServiceDidResolveAddress(_ sender: NetService) {
-        guard let host = sender.hostName, sender.port > 0 else { return }
+        guard var host = sender.hostName, sender.port > 0 else { return }
+        // Bootstrap trusts IPv4 LAN ranges. Prefer the discovered LAN address over
+        // a hostname that may resolve to IPv6 or a Tailscale interface.
+        for data in sender.addresses ?? [] {
+            let numeric: String? = data.withUnsafeBytes { bytes in
+                guard let address = bytes.baseAddress?.assumingMemoryBound(to: sockaddr.self),
+                      address.pointee.sa_family == sa_family_t(AF_INET) else { return nil }
+                var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                guard getnameinfo(address, socklen_t(data.count), &buffer, socklen_t(buffer.count), nil, 0, NI_NUMERICHOST) == 0 else { return nil }
+                return String(cString: buffer)
+            }
+            if let numeric { host = numeric; break }
+        }
         var parts = URLComponents(); parts.scheme = "http"; parts.host = host; parts.port = sender.port
         if let value = parts.url?.absoluteString, !addresses.contains(value) { addresses.append(value) }
     }
@@ -89,35 +102,60 @@ struct TVRootView: View {
     @Environment(\.scenePhase) var phase
     @State private var settings = false
     @State private var showSubtitles = false
+    @State private var section = "Home"
+    @State private var path = NavigationPath()
+    private let sections = ["Home", "Movies", "TV Shows", "Torrents", "Search", "Settings"]
     var body: some View {
-        NavigationStack {
-            if !store.configured || settings {
-                TVConnectionView { settings = false }
-            } else {
-                TabView {
-                    TVLibraryView(kind: nil).tabItem { Label("Home", systemImage: "house") }
-                    TVLibraryView(kind: "movie").tabItem { Label("Movies", systemImage: "film") }
-                    TVLibraryView(kind: "tv").tabItem { Label("TV Shows", systemImage: "tv") }
-                    TorrentSearchView().tabItem { Label("Find torrents", systemImage: "magnifyingglass") }
-                    TVTorrentView().tabItem { Label("Torrents", systemImage: "arrow.down.circle") }
-                    TVSearchView().tabItem { Label("Search", systemImage: "magnifyingglass") }
-                    Button("Switch user") { store.choosingProfile = true }
-                        .tabItem { Label(store.activeProfile?.name ?? "User", systemImage: "person.crop.circle") }
-                    VStack(spacing: 30) {
-                        Text("Torrbaby").font(.largeTitle.bold())
-                        Text(AppRelease.description).font(.headline).monospacedDigit().foregroundStyle(.secondary)
-                        Image("TorrbabyLogo").resizable().frame(width: 120, height: 120)
-                        Label(LocalizedStringKey(store.connected ? "Connected" : "Offline"), systemImage: store.connected ? "checkmark.circle" : "wifi.slash")
-                        Button("Default subtitles") { showSubtitles = true }
-                            .sheet(isPresented: $showSubtitles) { LocalizedInterface { SubtitlePreferencesView() } }
-                        BackgroundSubtitlesView().frame(maxWidth: 850)
-                        Button("Connection settings") { settings = true }
-                    }.tabItem { Label("Settings", systemImage: "gearshape") }
+        NavigationStack(path: $path) {
+            Group {
+                if !store.configured || settings {
+                    TVConnectionView { settings = false }
+                } else {
+                    switch section {
+                    case "Movies": TVLibraryView(kind: "movie")
+                    case "TV Shows": TVLibraryView(kind: "tv")
+                    case "Torrents": TVTorrentView()
+                    case "Search": TVSearchView()
+                    case "Settings":
+                        ScrollView {
+                            VStack(spacing: 30) {
+                                Text("Torrbaby").font(.largeTitle.bold())
+                                Text(AppRelease.description).font(.headline).monospacedDigit().foregroundStyle(.secondary)
+                                Label(LocalizedStringKey(store.connected ? "Connected" : "Offline"), systemImage: store.connected ? "checkmark.circle" : "wifi.slash")
+                                NavigationLink { TorrentSearchView() } label: { Label("Find torrents", systemImage: "magnifyingglass") }
+                                Button("Default subtitles") { showSubtitles = true }
+                                    .sheet(isPresented: $showSubtitles) { LocalizedInterface { SubtitlePreferencesView() } }
+                                BackgroundSubtitlesView().frame(maxWidth: 850)
+                                Button("Connection settings") { settings = true }
+                            }.padding(40)
+                        }
+                    default: TVLibraryView(kind: nil)
+                    }
                 }
-                .navigationDestination(for: LibraryDestination.self) { route in TVMediaDetail(titleID: route.id) }
             }
+            .navigationDestination(for: LibraryDestination.self) { route in TVMediaDetail(titleID: route.id) }
         }
-        .overlay(alignment: .topTrailing) { InterfaceLanguagePicker().padding(24) }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack(spacing: 18) {
+                if store.configured {
+                    Button { store.choosingProfile = true } label: {
+                        if let profile = store.activeProfile { ProfileAvatar(profile: profile, size: 44) }
+                        else { Image(systemName: "person.crop.circle") }
+                    }.accessibilityLabel("Switch user")
+                    Image("TorrbabyLogo").resizable().scaledToFit().frame(width: 52, height: 44)
+                    ForEach(sections, id: \.self) { item in
+                        Button { path = NavigationPath(); settings = false; section = item } label: {
+                            Text(LocalizedStringKey(item)).font(.system(size: 23, weight: .semibold))
+                        }.tint(section == item ? Theme.mint : .gray)
+                    }
+                }
+                Spacer(minLength: 12)
+                InterfaceLanguagePicker()
+            }
+            .buttonBorderShape(.roundedRectangle(radius: 10))
+            .padding(.horizontal, 48).padding(.vertical, 18)
+            .background(.ultraThinMaterial).focusSection()
+        }
         .overlay(alignment: .bottom) { ContinueWatchingUndoBanner() }
         .task(id: phase) {
             while !Task.isCancelled && phase == .active {
