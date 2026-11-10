@@ -62,7 +62,7 @@ struct LibraryCast: View {
                     Button { dismiss() } label: { Label("Back", systemImage: "chevron.left") }
                     #if os(macOS)
                     Button {} label: { Image(systemName: "chevron.right") }.disabled(true).help("Forward")
-                    Button { MacLibraryTabs.create { openWindow(id: "main") } } label: { Image(systemName: "plus") }
+                    Button { MacLibraryTabs.create { openWindow(id: "library-tab") } } label: { Image(systemName: "plus") }
                         .help("New Tab (⌘T)").accessibilityLabel("New Tab")
                     #endif
                 }
@@ -316,6 +316,20 @@ struct LibraryArtwork: View {
 }
 
 struct LibraryBrowser: View {
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
+    private var compactLibrary: Bool {
+        #if os(iOS)
+        sizeClass == .compact
+        #else
+        false
+        #endif
+    }
+    private var posterColumns: [GridItem] {
+        compactLibrary ? Array(repeating: GridItem(.flexible(), spacing: 10), count: 3)
+            : [GridItem(.adaptive(minimum: 155, maximum: 240), spacing: 20)]
+    }
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     var kind: String? = nil
@@ -362,7 +376,7 @@ struct LibraryBrowser: View {
     }
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 28) {
+            LazyVStack(alignment: .leading, spacing: compactLibrary ? 18 : 28) {
                 if browsing, let featured = titles.homeHero {
                     NavigationLink(value: LibraryDestination(id: featured.id)) {
                         LibraryArtwork(id: featured.id, variant: "backdrop")
@@ -409,37 +423,43 @@ struct LibraryBrowser: View {
                     ForEach(homeShelves, id: \.name) { section in shelf(section.name, section.items, allItems: section.allItems) }
                     if !remainingTitles.isEmpty {
                         Text("More to explore").font(.title2.bold())
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 155, maximum: 240), spacing: 20)], alignment: .leading, spacing: 28) {
+                        LazyVGrid(columns: posterColumns, alignment: .leading, spacing: compactLibrary ? 16 : 28) {
                             ForEach(remainingTitles) { title in poster(title) }
                         }
                     }
                 } else {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 155, maximum: 240), spacing: 20)], alignment: .leading, spacing: 28) {
+                    LazyVGrid(columns: posterColumns, alignment: .leading, spacing: compactLibrary ? 16 : 28) {
                         ForEach(titles) { title in poster(title) }
                     }
                 }
-            }.padding(24)
+            }.padding(compactLibrary ? 12 : 24)
         }.background(Theme.canvas)
         #if os(macOS)
         .toolbar {
             MacSearchToolbar(text: $search, focus: $searchFocused, prompt: "Search movies and TV shows")
         }
         .focusedSceneValue(\.searchContent, { searchFocused = true })
+        #elseif os(iOS)
+        .modifier(MobileLibrarySearch(text: $search, prompt: "Search movies and TV shows"))
         #else
         .searchable(text: $search, prompt: "Search movies and TV shows")
         #endif
     }
     @ViewBuilder func shelf(_ name: String, _ items: [LibraryTitle], allItems: [LibraryTitle]? = nil) -> some View {
         if !items.isEmpty {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: compactLibrary ? 8 : 14) {
                 HStack {
-                    Text(L10n.text(name)).font(.title2.bold())
+                    Text(L10n.text(name)).font(compactLibrary ? .headline : .title2.bold())
                     Spacer()
                     NavigationLink(value: LibraryShelfDestination(name: name, ids: (allItems ?? items).map(\.id))) { Text("See All").font(.subheadline.weight(.semibold)) }
                 }
                 ScrollView(.horizontal) {
-                    LazyHStack(alignment: .top, spacing: 18) {
-                        ForEach(Array(items.prefix(8))) { title in poster(title).frame(width: 175) }
+                    LazyHStack(alignment: .top, spacing: compactLibrary ? 10 : 18) {
+                        ForEach(Array(items.prefix(8))) { title in
+                            if compactLibrary {
+                                poster(title).containerRelativeFrame(.horizontal, count: 3, spacing: 10)
+                            } else { poster(title).frame(width: 175) }
+                        }
                     }.padding(.vertical, 6)
                 }.scrollIndicators(.hidden)
             }
@@ -447,11 +467,11 @@ struct LibraryBrowser: View {
     }
     func poster(_ title: LibraryTitle) -> some View {
         NavigationLink(value: LibraryDestination(id: title.id)) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: compactLibrary ? 4 : 8) {
                 LibraryArtwork(id: title.id).aspectRatio(2/3, contentMode: .fit).clipShape(RoundedRectangle(cornerRadius: 12))
                     .opacity(store.offlineLibrary && !store.isDownloaded(title) ? 0.6 : 1)
                     .overlay(alignment: .topTrailing) { if title.watched { WatchedBadge() } }
-                Text(title.title).font(.headline).lineLimit(2).multilineTextAlignment(.leading)
+                Text(title.title).font(compactLibrary ? .caption.weight(.semibold) : .headline).lineLimit(2).multilineTextAlignment(.leading)
                 Text(LocalizedStringKey(title.continuationLabel ?? ((title.year ?? "") + (title.kind == "tv" ? " · TV Show" : "")))).font(.caption).foregroundStyle(Theme.muted)
                 if title.playable.isEmpty { Label("Downloading", systemImage: "arrow.down").font(.caption2).foregroundStyle(Theme.mint) }
             }.foregroundStyle(.primary)

@@ -116,6 +116,15 @@ private struct TorrentDraft: Identifiable {
 }
 
 struct RootView: View {
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
+    private var pageOwnsLanguageControl: Bool {
+        #if os(iOS)
+        guard sizeClass == .regular else { return false }
+        #endif
+        return [Section.library, .movies, .shows, .active, .seeding, .complete, .attention].contains(selection ?? .library)
+    }
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     #if os(macOS)
@@ -160,13 +169,40 @@ struct RootView: View {
                 .help("Back").disabled(past.isEmpty)
             Button(action: forward) { Image(systemName: "chevron.right") }
                 .help("Forward").disabled(future.isEmpty)
+            #if os(macOS)
+            Button { MacLibraryTabs.create { openWindow(id: "library-tab") } } label: {
+                Image(systemName: "plus")
+            }.help("New Tab").accessibilityLabel("New Tab")
+            #endif
         }
+    }
+    private var compactSidebar: Bool {
+        #if os(iOS)
+        sizeClass == .compact
+        #else
+        false
+        #endif
+    }
+    private var mobileSidebar: Bool {
+        #if os(iOS)
+        true
+        #else
+        false
+        #endif
+    }
+    private var sidebarSpacing: CGFloat {
+        #if os(iOS)
+        0
+        #else
+        22
+        #endif
     }
     @State private var showConnect = false
     @State private var torrentDraft: TorrentDraft?
     var body: some View {
         NavigationSplitView {
-            VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: sidebarSpacing) {
+                #if !os(iOS)
                 HStack(spacing: 11) {
                     Image("TorrbabyLogo").resizable().frame(width: 42, height: 42)
                         .clipShape(RoundedRectangle(cornerRadius: 9)).accessibilityHidden(true)
@@ -174,23 +210,50 @@ struct RootView: View {
                         Text("torrbaby").font(.system(size: 24, weight: .bold, design: .rounded))
                     }
                 }.padding(.horizontal, 18).padding(.top, 24)
+                #endif
                 List(selection: Binding(get: { location.section }, set: { navigate(Location(section: $0)) })) {
                     SwiftUI.Section("Library") {
                         ForEach([Section.library, .findTorrents, .movies, .shows]) { section in
-                            Label(LocalizedStringKey(section.rawValue), systemImage: section.icon).padding(.vertical, 5).tag(section)
+                            Label(LocalizedStringKey(section.rawValue), systemImage: section.icon)
+                                .font(compactSidebar ? .callout : .body)
+                                .padding(.vertical, mobileSidebar ? 0 : 5)
+                                .listRowInsets(mobileSidebar ? EdgeInsets(top: 3, leading: 12, bottom: 3, trailing: 12) : nil)
+                                .tag(section)
                         }
                     }
                     SwiftUI.Section("Torrents") {
                         ForEach([Section.active, .seeding, .complete, .subtitles, .attention]) { section in
-                            Label(LocalizedStringKey(section.rawValue), systemImage: section.icon).padding(.vertical, 5).tag(section)
+                            Label(LocalizedStringKey(section.rawValue), systemImage: section.icon)
+                                .font(compactSidebar ? .callout : .body)
+                                .padding(.vertical, mobileSidebar ? 0 : 5)
+                                .listRowInsets(mobileSidebar ? EdgeInsets(top: 3, leading: 12, bottom: 3, trailing: 12) : nil)
+                                .tag(section)
                         }
                     }
                     SwiftUI.Section("Server") {
                         ForEach([Section.automation, .settings]) { section in
-                            Label(LocalizedStringKey(section.rawValue), systemImage: section.icon).padding(.vertical, 5).tag(section)
+                            Label(LocalizedStringKey(section.rawValue), systemImage: section.icon)
+                                .font(compactSidebar ? .callout : .body)
+                                .padding(.vertical, mobileSidebar ? 0 : 5)
+                                .listRowInsets(mobileSidebar ? EdgeInsets(top: 3, leading: 12, bottom: 3, trailing: 12) : nil)
+                                .tag(section)
                         }
                     }
                 }.listStyle(.sidebar)
+                .environment(\.defaultMinListRowHeight, compactSidebar ? 36 : 44)
+                #if os(iOS)
+                .listSectionSpacing(8)
+                .contentMargins(.top, 0, for: .scrollContent)
+                #endif
+                #if os(iOS)
+                HStack(spacing: 7) {
+                    Circle().fill(store.connected ? Theme.mint : .orange).frame(width: 6, height: 6)
+                    Text(LocalizedStringKey(store.connected ? "Connected" : (store.offline ? "Offline mode" : "Connecting…")))
+                        .font(.caption.weight(.semibold))
+                    Spacer(minLength: 0)
+                }.padding(.horizontal, 18).padding(.vertical, 6)
+                #endif
+                #if !os(iOS)
                 VStack(alignment: .leading, spacing: 9) {
                     HStack(spacing: 7) {
                         Circle().fill(store.connected ? Theme.mint : .orange).frame(width: 6, height: 6)
@@ -199,9 +262,28 @@ struct RootView: View {
                     if store.status?.settings.paused == true {
                         Label("Automation paused", systemImage: "pause.circle").font(.caption2).foregroundStyle(.orange)
                     }
+                    #if !os(iOS)
                     Button("Connection settings") { showConnect = true }.font(.caption)
+                    #endif
                 }.padding(20)
+                #endif
             }.navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if sizeClass == .compact {
+                    ToolbarItem(placement: .topBarTrailing) { InterfaceLanguagePicker() }
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    HStack(spacing: 7) {
+                        Image("TorrbabyLogo").resizable().frame(width: 28, height: 28)
+                            .clipShape(RoundedRectangle(cornerRadius: 6)).accessibilityHidden(true)
+                        Text(verbatim: "torrbaby").font(.system(size: 18, weight: .bold, design: .rounded))
+                            .lineLimit(1).minimumScaleFactor(0.8)
+                    }.fixedSize()
+                }
+            }
+            #endif
         } detail: {
             NavigationStack(path: Binding(get: { location.path }, set: { navigate(Location(section: selection, path: $0)) })) {
                 Group {
@@ -222,13 +304,6 @@ struct RootView: View {
                 #endif
                 .toolbar {
                     historyControls
-                    #if os(macOS)
-                    if ![Section.library, .movies, .shows, .active, .seeding, .complete, .attention].contains(selection ?? .library) {
-                        languageControls
-                    }
-                    #else
-                    languageControls
-                    #endif
                     ToolbarItemGroup(placement: .primaryAction) {
                         if store.busy { ProgressView().controlSize(.small) }
                         if [.active, .seeding, .complete, .attention].contains(selection) {
@@ -238,13 +313,14 @@ struct RootView: View {
                                 .help("Refresh").disabled(!store.configured)
                         }
                     }
+                    if !pageOwnsLanguageControl { languageControls }
                 }
                 .navigationDestination(for: String.self) { hash in TorrentDetail(hash: hash).navigationBarBackButtonHidden().toolbar { historyControls; languageControls } }
                 .navigationDestination(for: LibraryShelfDestination.self) { route in
                     LibraryBrowser(shelfIDs: route.ids).navigationTitle(route.name).navigationBarBackButtonHidden().toolbar {
                         historyControls
-                        #if !os(macOS)
-                        languageControls
+                        #if os(iOS)
+                        if sizeClass != .regular { languageControls }
                         #endif
                     }
                 }
@@ -413,6 +489,8 @@ struct TorrentListView: View {
             MacSearchToolbar(text: $search, focus: $searchFocused, prompt: "Find a torrent")
         }
         .focusedSceneValue(\.searchContent, { searchFocused = true })
+        #elseif os(iOS)
+        .modifier(MobileLibrarySearch(text: $search, prompt: "Find a torrent"))
         #else
         .searchable(text: $search, prompt: "Find a torrent")
         #endif

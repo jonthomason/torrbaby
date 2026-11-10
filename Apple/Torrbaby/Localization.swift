@@ -127,3 +127,41 @@ struct MacSearchToolbar: ToolbarContent {
     }
 }
 #endif
+
+#if os(iOS)
+struct TabletSearchToolbar: ToolbarContent {
+    @Binding var text: String
+    let prompt: String
+    var body: some ToolbarContent {
+        if #available(iOS 26, *) {
+            ToolbarItem(placement: .topBarTrailing) { controls }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .topBarTrailing) { controls }
+        }
+    }
+    private var controls: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField(LocalizedStringKey(prompt), text: $text).textFieldStyle(.plain)
+                    .autocorrectionDisabled()
+            }.padding(.horizontal, 10).padding(.vertical, 7)
+                .frame(width: 220).background(.quaternary, in: Capsule())
+            InterfaceLanguagePicker()
+        }
+    }
+}
+struct MobileLibrarySearch: ViewModifier {
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @Binding var text: String
+    let prompt: String
+    func body(content: Content) -> some View {
+        if sizeClass == .regular {
+            content.toolbar { TabletSearchToolbar(text: $text, prompt: prompt) }
+        } else {
+            content.searchable(text: $text, placement: .navigationBarDrawer(displayMode: .automatic), prompt: LocalizedStringKey(prompt))
+        }
+    }
+}
+#endif

@@ -8,7 +8,7 @@ struct TorrbabyApp: App {
     init() {
         #if os(macOS)
         MacInstance.enforce()
-        // The library is one window; playback has its own windows.
+        // Tabs are created only by an explicit New Tab action.
         NSWindow.allowsAutomaticWindowTabbing = false
         #endif
     }
@@ -35,6 +35,8 @@ struct TorrbabyApp: App {
         Window("Torrbaby", id: "main") { mainContent }
             .defaultSize(width: 1180, height: 820)
             .commands { TorrbabyCommands(store: store) }
+        WindowGroup("Torrbaby", id: "library-tab") { mainContent }
+            .defaultSize(width: 1180, height: 820)
         #else
         WindowGroup(id: "main") { mainContent }
         #endif
@@ -123,7 +125,10 @@ enum MacLibraryTabs {
     }
     static func attach(_ window: NSWindow) {
         window.tabbingIdentifier = "torrbaby.library"
-        guard let source = parent, source !== window else { return }
+        let source = parent ?? NSApp.windows.first {
+            $0 !== window && $0.tabbingIdentifier == "torrbaby.library" && $0.isVisible
+        }
+        guard let source, source !== window else { return }
         parent = nil
         // Explicit grouping is independent of macOS's automatic-tab preference.
         source.addTabbedWindow(window, ordered: .above)
@@ -177,7 +182,9 @@ private struct TorrbabyCommands: Commands {
     @FocusedValue(\.addTorrent) private var addTorrent
     @FocusedValue(\.searchContent) private var searchContent
     var body: some Commands {
-        CommandGroup(after: .newItem) {
+        CommandGroup(replacing: .newItem) {
+            Button("New Tab") { MacLibraryTabs.create { openWindow(id: "library-tab") } }
+                .keyboardShortcut("t", modifiers: .command)
             Button("Add Torrent…") { addTorrent?() }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
                 .disabled(addTorrent == nil || !store.connected)
