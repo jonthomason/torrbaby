@@ -49,6 +49,8 @@ enum Command {
     /// Search torrent indexers without adding anything to Transmission.
     SearchTorrents {
         query: String,
+        #[arg(long, default_value="world", value_parser=["world", "china"])]
+        market: String,
         #[arg(long)]
         year: Option<u16>,
         #[arg(long)]
@@ -215,6 +217,7 @@ async fn main() -> Result<()> {
         }
         Command::SearchTorrents {
             query,
+            market,
             year,
             season,
             episode,
@@ -223,6 +226,7 @@ async fn main() -> Result<()> {
             let search = torrent_search::Search::new()?;
             let result = search
                 .search(torrent_search::Query {
+                    market: if market == "china" { torrent_search::Market::China } else { torrent_search::Market::World },
                     query,
                     year,
                     season,

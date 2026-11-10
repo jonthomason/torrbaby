@@ -10,7 +10,17 @@ use std::{
 };
 
 #[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Market { World, China }
+impl Default for Market { fn default() -> Self { Self::World } }
+impl Market {
+    fn defaults(&self) -> Vec<String> { self.allowed()[..2].iter().map(|v| (*v).into()).collect() }
+    fn allowed(&self) -> &[&str] { match self { Self::World => &["tpb", "csv", "nyaa"], Self::China => &["dmhy", "mikan"] } }
+}
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Query {
+    #[serde(default)]
+    pub market: Market,
     pub query: String,
     #[serde(default)]
     pub year: Option<u16>,
@@ -118,7 +128,7 @@ impl Search {
             "Choose a season with an episode"
         );
         if query.sources.is_empty() {
-            query.sources = vec!["tpb".into(), "csv".into()];
+            query.sources = query.market.defaults();
         }
         query.sources.sort();
         query.sources.dedup();
@@ -126,7 +136,7 @@ impl Search {
             query
                 .sources
                 .iter()
-                .all(|p| ["tpb", "nyaa", "csv"].contains(&p.as_str())),
+                .all(|p| query.market.allowed().contains(&p.as_str())),
             "Unsupported search source"
         );
         let key = serde_json::to_string(&query)?;
@@ -169,6 +179,16 @@ impl Search {
                         .append_pair("size", "100");
                     match self.read(url).await {
                         Ok(raw) => parse_csv(&raw),
+                        Err(e) => Err(e),
+                    }
+                } else if provider == "dmhy" || provider == "mikan" {
+                    let (base, key) = if provider == "dmhy" {
+                        ("https://share.dmhy.org/topics/rss/rss.xml", "keyword")
+                    } else { ("https://mikanani.me/RSS/Search", "searchstr") };
+                    let mut url = reqwest::Url::parse(base).unwrap();
+                    url.query_pairs_mut().append_pair(key, terms);
+                    match self.read(url).await {
+                        Ok(raw) => parse_chinese_feed(&raw, provider),
                         Err(e) => Err(e),
                     }
                 } else {
@@ -263,6 +283,10 @@ impl Search {
         Ok(result)
     }
     pub async fn detail(&self, provider: &str, id: &str) -> Result<Value> {
+        if provider == "dmhy" || provider == "mikan" {
+            ensure!(hash(id).is_some(), "Invalid listing ID");
+            return Ok(json!({"description":"", "files":null,"evidence":"source_listing","media_verified":false}));
+        }
         ensure!(
             !id.is_empty() && id.len() <= 20 && id.bytes().all(|b| b.is_ascii_digit()),
             "Invalid listing ID"
@@ -477,6 +501,52 @@ fn parse_nyaa(raw: &str) -> Result<Vec<Item>> {
             Some(row)
         })
         .collect())
+}
+// Public RSS feeds: normalize hashes without downloading torrent payloads.
+#[derive(Deserialize)]
+struct ChineseFeed { channel: ChineseChannel }
+#[derive(Deserialize)]
+struct ChineseChannel { #[serde(default, rename="item")] items: Vec<ChineseRow> }
+#[derive(Deserialize)]
+struct ChineseRow {
+    title: String, link: String, enclosure: Enclosure,
+    #[serde(default, rename="pubDate")] added: Option<String>,
+}
+#[derive(Deserialize)]
+struct Enclosure {
+    #[serde(rename="@url")] url: String,
+    #[serde(default, rename="@length")] length: Option<u64>,
+}
+fn magnet_hash(value: &str) -> Option<String> {
+    let url = reqwest::Url::parse(value).ok()?;
+    if url.scheme() != "magnet" { return None; }
+    let xt = url.query_pairs().find(|(k,_)| k == "xt")?.1.into_owned();
+    let value = xt.strip_prefix("urn:btih:")?;
+    if let Some(h) = hash(value) { return Some(h); }
+    if value.len() != 32 { return None; }
+    let mut bits = 0u32; let mut count = 0; let mut bytes = Vec::new();
+    for c in value.bytes() {
+        let n = match c.to_ascii_uppercase() { b'A'..=b'Z' => c.to_ascii_uppercase()-b'A', b'2'..=b'7' => c-b'2'+26, _=>return None };
+        bits = (bits << 5) | u32::from(n); count += 5;
+        if count >= 8 { count -= 8; bytes.push((bits >> count) as u8); }
+    }
+    hash(&bytes.iter().map(|b| format!("{b:02x}")).collect::<String>())
+}
+fn parse_chinese_feed(raw: &str, provider: &str) -> Result<Vec<Item>> {
+    let feed: ChineseFeed = quick_xml::de::from_str(raw)?;
+    Ok(feed.channel.items.into_iter().take(200).filter_map(|r| {
+        if r.title.is_empty() || r.title.len() > 4096 { return None; }
+        let mut url = reqwest::Url::parse(&r.link).ok()?;
+        let expected = if provider == "dmhy" { "share.dmhy.org" } else { "mikanani.me" };
+        if url.host_str() != Some(expected) || !["https","http"].contains(&url.scheme()) { return None; }
+        url.set_scheme("https").ok()?;
+        let info_hash = if provider == "dmhy" { magnet_hash(&r.enclosure.url)? }
+            else { hash(url.path().strip_prefix("/Home/Episode/")?)? };
+        let mut row = item(r.title, info_hash.clone(), Source { provider:provider.into(), id:info_hash, url:url.to_string() });
+        row.size_bytes = r.enclosure.length.filter(|n| *n>0);
+        row.added = r.added;
+        Some(row)
+    }).collect())
 }
 fn html_text(raw: &str) -> String {
     let raw = raw.replace("&nbsp;", " ");
@@ -711,6 +781,24 @@ fn score(item: &mut Item, query: &Query) {
 mod tests {
     use super::*;
     #[test]
+    fn chinese_feeds_and_market_partition() {
+        let old: Query = serde_json::from_str(r#"{"query":"example"}"#).unwrap();
+        assert_eq!(old.market.defaults(), vec!["tpb", "csv"]);
+        assert!(!Market::China.allowed().contains(&"tpb"));
+        assert!(!Market::World.allowed().contains(&"dmhy"));
+        let raw = r#"<rss><channel><item><title>三体 1080p AAC</title><link>http://share.dmhy.org/topics/view/637444_example.html</link><enclosure url="magnet:?xt=urn:btih:WD2Z2SVVPK66W2UXOPWWLAF3R233GF5D" length="123"/></item></channel></rss>"#;
+        let rows = parse_chinese_feed(raw, "dmhy").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].info_hash, "b0f59d4ab57abdeb6a9773ed6580bb8eb7b317a3");
+        assert_eq!(rows[0].size_bytes, Some(123));
+        assert!(rows[0].sources[0].url.starts_with("https://share.dmhy.org/"));
+        assert!(parse_chinese_feed(&raw.replace("share.dmhy.org", "example.com"), "dmhy").unwrap().is_empty());
+        let raw = r#"<rss><channel><item><title>三体</title><link>https://mikanani.me/Home/Episode/27e60d74cc5b47ba2d9110450f66065cbee3173e</link><enclosure url="https://mikanani.me/Download/file.torrent" length="343366688"/></item></channel></rss>"#;
+        let rows = parse_chinese_feed(raw, "mikan").unwrap();
+        assert_eq!(rows[0].info_hash, "27e60d74cc5b47ba2d9110450f66065cbee3173e");
+        assert_eq!(rows[0].size_bytes, Some(343366688));
+    }
+    #[test]
     fn matching_does_not_promote_the_wrong_episode() {
         let source = Source {
             provider: "tpb".into(),
@@ -718,6 +806,7 @@ mod tests {
             url: "https://example.com".into(),
         };
         let q = Query {
+            market: Market::World,
             query: "Example Show".into(),
             year: None,
             season: Some(2),
