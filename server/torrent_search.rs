@@ -893,7 +893,7 @@ fn hints(name: &str) -> Hints {
             .and_then(|c| c[2].parse().ok())
             .or_else(|| chinese_episodes.as_ref().and_then(|c| c.get(2)?.as_str().parse().ok()))
             .filter(|end| episode.is_some_and(|start| *end >= start)),
-        resolution: RES.find(name).map(|m| m.as_str().to_ascii_lowercase()),
+        resolution: RES.find(name).map(|m| { let value=m.as_str().to_ascii_lowercase(); if value=="4k" {"2160p".to_owned()} else {value} }),
         video_codec: CODEC.find(name).map(|m| m.as_str().to_ascii_uppercase()),
         release_source: SOURCE.find(name).map(|m| m.as_str().to_owned()),
         audio: AUDIO

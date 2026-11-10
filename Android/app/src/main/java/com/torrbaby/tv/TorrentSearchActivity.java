@@ -25,7 +25,18 @@ public final class TorrentSearchActivity extends Activity {
   private TextView status;
   private Button search, sourceButton;
   private ListView list;
-  private JSONArray results = new JSONArray();
+  private JSONArray results = new JSONArray(), allResults = new JSONArray();
+  private String resolution="all";
+  private Button resolutionButton;
+  private volatile int enrichmentGeneration;
+  private String resolutionLabel(){return resolution.equals("all")?L10n.t("All resolutions"):resolution;}
+  private void applyResolution(){
+    results=new JSONArray();for(int i=0;i<allResults.length();i++){
+      JSONObject item=allResults.optJSONObject(i), hints=item.optJSONObject("hints");
+      if(resolution.equals("all") || (hints!=null && resolution.equalsIgnoreCase(hints.optString("resolution"))))results.put(item);
+    }
+    if(list!=null)((BaseAdapter)list.getAdapter()).notifyDataSetChanged();
+  }
   private int source, generation;
   private boolean china;
   private boolean inDetail;
@@ -48,7 +59,7 @@ public final class TorrentSearchActivity extends Activity {
     Ui.add(resultsRoot, markets, -1, 48);
     markets.setOnCheckedChangeListener((group,id) -> {
       china = id == chinese.getId(); getPreferences(MODE_PRIVATE).edit().putBoolean("china",china).apply();
-      ++generation; source=0; sourceButton.setText(L10n.t("Recommended")); results=new JSONArray();
+      ++generation; source=0; sourceButton.setText(L10n.t("Recommended")); results=new JSONArray();allResults=new JSONArray();enrichmentGeneration++;
       ((BaseAdapter)list.getAdapter()).notifyDataSetChanged(); status.setText(""); search.setEnabled(true); list.setEnabled(true);
       if(query.getText().toString().trim().length()>=2)search();
     });
@@ -64,6 +75,14 @@ public final class TorrentSearchActivity extends Activity {
         .setSingleChoiceItems(L10n.labels(sourceNames()), source, (dialog, which) -> { source=which; sourceButton.setText(L10n.t(sourceNames()[which])); dialog.dismiss(); }).show());
     Ui.add(controls, sourceButton, 180, 46); Ui.add(resultsRoot, controls, -1, 48);
     status = Ui.text(this, "", 14, Ui.MUTED); Ui.add(resultsRoot, status, -1, 36);
+    resolution=getPreferences(MODE_PRIVATE).getString("resolution","all");
+    resolutionButton=Ui.button(this,L10n.t("Resolution")+": "+resolutionLabel(),()->{
+      String[] labels={L10n.t("All resolutions"),"2160p","1080p","720p"};String[] values={"all","2160p","1080p","720p"};
+      new AlertDialog.Builder(this).setTitle(L10n.t("Resolution")).setSingleChoiceItems(labels,Arrays.asList(values).indexOf(resolution),(d,which)->{
+        resolution=values[which];getPreferences(MODE_PRIVATE).edit().putString("resolution",resolution).apply();
+        resolutionButton.setText(L10n.t("Resolution")+": "+resolutionLabel());enrichmentGeneration++;applyResolution();d.dismiss();
+      }).show();
+    });Ui.add(resultsRoot,resolutionButton,240,44);
     list = new ListView(this); list.setDivider(null); list.setDividerHeight(Ui.dp(this, 10));
     list.setAdapter(new Results()); list.setOnItemClickListener((parent, view, position, id) -> { JSONObject item=results.optJSONObject(position); if(!isBT(item))details(item); });
     resultsRoot.addView(list, new LinearLayout.LayoutParams(-1,0,1));
@@ -74,7 +93,7 @@ public final class TorrentSearchActivity extends Activity {
       query.setText(state.getString("query", ""));
       source = state.getInt("source", 0);
       sourceButton.setText(L10n.t(sourceNames()[source]));
-      try { results = new JSONArray(state.getString("results", "[]")); } catch (JSONException ignored) { }
+      try { allResults = new JSONArray(state.getString("results", "[]"));applyResolution(); } catch (JSONException ignored) { }
       added.addAll(state.getStringArrayList("added") == null ? Collections.emptyList() : state.getStringArrayList("added"));
       ((BaseAdapter)list.getAdapter()).notifyDataSetChanged();
       list.setSelection(state.getInt("position", 0));
@@ -87,7 +106,7 @@ public final class TorrentSearchActivity extends Activity {
     super.onSaveInstanceState(state);
     state.putString("query", query.getText().toString());
     state.putInt("source", source);
-    state.putString("results", results.toString());
+    state.putString("results", allResults.toString());
     state.putStringArrayList("added", new ArrayList<>(added));
     state.putInt("position", list.getFirstVisiblePosition());
     state.putBoolean("searching", !search.isEnabled());
@@ -96,6 +115,7 @@ public final class TorrentSearchActivity extends Activity {
   private LinearLayout page() { LinearLayout root=Ui.column(this); root.setBackgroundColor(Ui.BG); Ui.pad(root,36,24); return root; }
   private void search() {
     String value=query.getText().toString().trim(); if (value.length()<2) return;
+    enrichmentGeneration++;
     int request=++generation; int provider=source; boolean requestChina=china; search.setEnabled(false); list.setEnabled(false); status.setText(L10n.t("Searching…"));
     ((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(query.getWindowToken(),0);
     io.execute(() -> {
@@ -110,7 +130,7 @@ public final class TorrentSearchActivity extends Activity {
         JSONObject response=api.request("POST","/v1/search/torrents",body);
         runOnUiThread(() -> {
           if(isDestroyed() || request!=generation)return;
-          search.setEnabled(true); list.setEnabled(true); results=response.optJSONArray("items"); if(results==null)results=new JSONArray();
+          search.setEnabled(true); list.setEnabled(true); allResults=response.optJSONArray("items"); if(allResults==null)allResults=new JSONArray();applyResolution();
           List<String> messages=new ArrayList<>();
           JSONArray providers=response.optJSONArray("providers");
           if(providers!=null) for(int i=0;i<providers.length();i++) {JSONObject p=providers.optJSONObject(i); if(p!=null&&!p.isNull("error"))messages.add(label(p.optString("provider"))+": "+p.optString("error"));}
@@ -145,10 +165,13 @@ public final class TorrentSearchActivity extends Activity {
     return String.join(" · ",values);
   }
   private void loadSize(JSONObject item) {
-    String key=item.optString("name"); if(!sizeRequests.add(key))return;
+    String key=item.optString("name"); if(attachmentChoices.containsKey(key))return;
+    String requestKey=enrichmentGeneration+":"+key; if(!sizeRequests.add(requestKey))return;
     JSONArray sources=item.optJSONArray("sources"); JSONObject source=sources==null?null:sources.optJSONObject(0);
     if(source==null || !source.optString("provider").equals("1lou"))return;
+    int enrichment=enrichmentGeneration;
     sizeIo.execute(() -> {
+      if(enrichment!=enrichmentGeneration){runOnUiThread(()->sizeRequests.remove(requestKey));return;}
       String label=""; JSONArray choices=null;
       try {
         JSONObject d=api.request("POST","/v1/search/torrents/summary",new JSONObject().put("provider","1lou").put("id",source.optString("id")));

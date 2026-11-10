@@ -23,6 +23,7 @@
     <string name="ui_6a72085653e4" formatted="false">全部</string>
     <string name="ui_360e1182021a" formatted="false">一切正常</string>
     <string name="ui_09ac5f615d7d" formatted="false">所有类型</string>
+    <string name="ui_f1f67dc07e63" formatted="false">所有分辨率</string>
     <string name="ui_9d12608fc0bd" formatted="false">按名称排序</string>
     <string name="ui_f2de57952082" formatted="false">已在种子列表中</string>
     <string name="ui_dcc38ee5a416" formatted="false">适用于使用服务器默认设置的种子</string>
@@ -352,6 +353,7 @@
     <string name="ui_d3f4cb898fbe" formatted="false">重命名</string>
     <string name="ui_f013e1dcb608" formatted="false">通过 Transmission 重命名</string>
     <string name="ui_7d1e95ef4177" formatted="false">重命名种子</string>
+    <string name="ui_516aae52959d" formatted="false">分辨率</string>
     <string name="ui_b3bd0b5a7049" formatted="false">继续播放</string>
     <string name="ui_b5ed1ec09384" formatted="false">继续下载</string>
     <string name="ui_a15dffd81328" formatted="false">播放结束后继续</string>

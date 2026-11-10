@@ -23,6 +23,7 @@
     <string name="ui_6a72085653e4" formatted="false">All</string>
     <string name="ui_360e1182021a" formatted="false">All clear</string>
     <string name="ui_09ac5f615d7d" formatted="false">All genres</string>
+    <string name="ui_f1f67dc07e63" formatted="false">All resolutions</string>
     <string name="ui_9d12608fc0bd" formatted="false">Alphabetical</string>
     <string name="ui_f2de57952082" formatted="false">Already in your torrents</string>
     <string name="ui_dcc38ee5a416" formatted="false">Applies to torrents that use the server\'s default</string>
@@ -352,6 +353,7 @@
     <string name="ui_d3f4cb898fbe" formatted="false">Rename</string>
     <string name="ui_f013e1dcb608" formatted="false">Rename through Transmission</string>
     <string name="ui_7d1e95ef4177" formatted="false">Rename torrent</string>
+    <string name="ui_516aae52959d" formatted="false">Resolution</string>
     <string name="ui_b3bd0b5a7049" formatted="false">Resume</string>
     <string name="ui_b5ed1ec09384" formatted="false">Resume download</string>
     <string name="ui_a15dffd81328" formatted="false">Resumes after playback</string>

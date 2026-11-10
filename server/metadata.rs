@@ -3,7 +3,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 use std::{
     path::{Path, PathBuf},
-    sync::LazyLock,
+    sync::{Arc, LazyLock},
     time::Duration,
 };
 use tokio::sync::Mutex;
@@ -83,8 +83,18 @@ fn array(value: &Value) -> &[Value] {
     value.as_array().map(Vec::as_slice).unwrap_or(&[])
 }
 
+fn tmdb_cache_key(path: &str, query: &[(&str,&str)]) -> String {
+    use sha2::{Digest,Sha256};
+    let mut parameters=query.iter().map(|(key,value)|((*key).to_owned(),
+        if *key=="query" {value.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()} else {(*value).to_owned()})).collect::<Vec<_>>();
+    parameters.sort();
+    let identity=serde_json::to_vec(&(path,parameters)).expect("Serializable TMDB request");
+    Sha256::digest(identity).iter().map(|b|format!("{b:02x}")).collect()
+}
+
 #[derive(Default)]
 struct SearchArtworkCache {
+    images: std::collections::HashMap<String, String>,
     size: Option<String>,
     entries: std::collections::HashMap<String, (std::time::Instant, Value)>,
 }
@@ -95,6 +105,9 @@ pub struct Metadata {
     host: Mutex<String>,
     cache: Mutex<std::collections::HashMap<String, Value>>,
     search_artwork: Mutex<SearchArtworkCache>,
+    artwork_dir: PathBuf,
+    response_dir: PathBuf,
+    responses: Mutex<std::collections::HashMap<String, Arc<Mutex<Option<(std::time::Instant, Value)>>>>>,
 }
 impl Metadata {
     pub fn new(directory: &Path) -> Result<Self> {
@@ -107,6 +120,9 @@ impl Metadata {
             host: Mutex::new("api.tmdb.org".to_owned()),
             cache: Mutex::new(std::collections::HashMap::new()),
             search_artwork: Mutex::new(SearchArtworkCache::default()),
+            artwork_dir: directory.join("search-artwork"),
+            response_dir: directory.join("tmdb-cache"),
+            responses: Mutex::new(std::collections::HashMap::new()),
         })
     }
     pub fn configured(&self) -> bool {
@@ -125,10 +141,44 @@ impl Metadata {
         }
     }
     pub async fn request(&self, path: &str, query: &[(&str, &str)]) -> Result<Value> {
-        let token = tokio::fs::read_to_string(&self.token)
-            .await
-            .context("Configure a TMDB token on Diamond")?;
-        self.request_with_token(path, query, token.trim()).await
+        let key=tmdb_cache_key(path,query);
+        let slot={
+            let mut cache=self.responses.lock().await;
+            if cache.len()>=256 {cache.retain(|_,slot|Arc::strong_count(slot)>1);}
+            cache.entry(key.clone()).or_insert_with(||Arc::new(Mutex::new(None))).clone()
+        };
+        let mut cached=slot.lock().await;
+        let ttl=Duration::from_secs(if path.starts_with("search/"){6*3600}else{86400});
+        if let Some((at,value))=&*cached {if at.elapsed()<ttl {return Ok(value.clone());}}
+        let file=self.response_dir.join(&key);
+        if let Ok(meta)=std::fs::metadata(&file) {
+            let age=meta.modified().ok().and_then(|t|t.elapsed().ok());
+            if meta.len()<=8*1024*1024 && age.is_some_and(|age|age<ttl) {
+                if let Ok(bytes)=std::fs::read(&file) {
+                    if let Ok(value)=serde_json::from_slice::<Value>(&bytes) {
+                        *cached=Some((std::time::Instant::now()-age.unwrap_or_default(),value.clone()));
+                        return Ok(value);
+                    }
+                }
+            }
+        }
+        let token = tokio::fs::read_to_string(&self.token).await.context("Configure a TMDB token on Diamond")?;
+        let value=self.request_with_token(path,query,token.trim()).await?;
+        if let Ok(bytes)=serde_json::to_vec(&value) {
+            if bytes.len()<=8*1024*1024 && std::fs::create_dir_all(&self.response_dir).is_ok() {
+                let tmp=file.with_extension("tmp");
+                if std::fs::write(&tmp,bytes).is_ok(){let _=std::fs::rename(tmp,&file);}
+                let mut files=std::fs::read_dir(&self.response_dir).into_iter().flatten().filter_map(Result::ok)
+                    .filter_map(|e|{let m=e.metadata().ok()?;Some((m.modified().ok()?,m.len(),e.path()))}).collect::<Vec<_>>();
+                files.sort_by_key(|e|e.0);let mut total:u64=files.iter().map(|e|e.1).sum();
+                for (modified,len,path) in files {
+                    if total<=128*1024*1024 && modified.elapsed().unwrap_or_default()<Duration::from_secs(86400){continue;}
+                    if std::fs::remove_file(path).is_ok(){total=total.saturating_sub(len);}
+                }
+            }
+        }
+        *cached=Some((std::time::Instant::now(),value.clone()));
+        Ok(value)
     }
     async fn request_with_token(
         &self,
@@ -233,15 +283,36 @@ impl Metadata {
                         .filter_map(|size| Some((size.strip_prefix('w')?.parse::<u32>().ok()?, size)))
                         .min_by_key(|(width, _)| *width).map(|(_, size)| size.to_owned());
                 }
-                if let Some(size) = &cache.size {
-                    let mut response = self.client.get(format!("https://image.tmdb.org/t/p/{size}{path}"))
-                        .send().await?.error_for_status()?;
-                    let mut bytes = Vec::new();
-                    while let Some(chunk) = response.chunk().await? {
-                        anyhow::ensure!(bytes.len() + chunk.len() <= 512 * 1024, "Thumbnail too large");
-                        bytes.extend_from_slice(&chunk);
-                    }
-                    result = json!({"data":base64::engine::general_purpose::STANDARD.encode(bytes),
+                if let Some(size) = cache.size.clone() {
+                    let image_key=format!("{size}{path}");
+                    use sha2::{Digest,Sha256};
+                    let file=self.artwork_dir.join(Sha256::digest(image_key.as_bytes()).iter().map(|b|format!("{b:02x}")).collect::<String>());
+                    let encoded=if let Some(value)=cache.images.get(&image_key) {value.clone()} else {
+                        let stored=std::fs::metadata(&file).ok().filter(|m|m.len()<=512*1024)
+                            .and_then(|_|std::fs::read(&file).ok());
+                        let bytes=if let Some(bytes)=stored {bytes} else {
+                            let mut response=self.client.get(format!("https://image.tmdb.org/t/p/{image_key}"))
+                                .send().await?.error_for_status()?;
+                            let mut bytes=Vec::new();
+                            while let Some(chunk)=response.chunk().await? {
+                                anyhow::ensure!(bytes.len()+chunk.len()<=512*1024,"Thumbnail too large");
+                                bytes.extend_from_slice(&chunk);
+                            }
+                            if std::fs::create_dir_all(&self.artwork_dir).is_ok() {
+                                let tmp=file.with_extension("tmp");
+                                if std::fs::write(&tmp,&bytes).is_ok(){let _=std::fs::rename(tmp,&file);}
+                                let mut files=std::fs::read_dir(&self.artwork_dir).into_iter().flatten().filter_map(Result::ok)
+                                    .filter_map(|e|{let m=e.metadata().ok()?;Some((m.modified().ok()?,m.len(),e.path()))}).collect::<Vec<_>>();
+                                files.sort_by_key(|e|e.0);let mut total:u64=files.iter().map(|e|e.1).sum();
+                                for (_,len,path) in files {if total<=64*1024*1024 {break;}if std::fs::remove_file(path).is_ok(){total=total.saturating_sub(len);}}
+                            }
+                            bytes
+                        };
+                        let encoded=base64::engine::general_purpose::STANDARD.encode(bytes);
+                        if cache.images.len()>=128 {cache.images.clear();}
+                        cache.images.insert(image_key,encoded.clone());encoded
+                    };
+                    result = json!({"data":encoded,
                         "provider":"TMDB","provider_id":exact[0]["id"],"size":size,
                         "confidence":if year.is_empty() {"exact_unique_title"} else {"exact_title_year"}});
                 }
@@ -464,5 +535,25 @@ mod chinese_title_tests {
             let (title,_,kind)=parse_name(name); assert_eq!(title,"逐玉");assert_eq!(kind,"tv");
         }
         assert_eq!(parse_name("流浪地球[国语配音/中文字幕].2019.1080p").0,"流浪地球");
+    }
+}
+
+#[cfg(test)]
+mod response_cache_checks {
+    use super::*;
+    #[tokio::test]
+    async fn persisted_tmdb_response_reuses_content_without_token_or_network() {
+        let root=std::env::temp_dir().join(format!("torrbaby-tmdb-cache-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("tmdb-cache")).unwrap();
+        let key=tmdb_cache_key("search/tv", &[("query","Pursuit of Jade"),("language","en-US")]);
+        assert_eq!(key,tmdb_cache_key("search/tv", &[("language","en-US"),("query"," pursuit  OF jade ")]));
+        let expected=json!({"results":[{"id":123,"name":"Pursuit of Jade","poster_path":"/poster.jpg"}]});
+        std::fs::write(root.join("tmdb-cache").join(key),serde_json::to_vec(&expected).unwrap()).unwrap();
+        for _ in 0..2 {
+            let metadata=Metadata::new(&root).unwrap();
+            // No token exists: cache misses fail before any remote request.
+            assert_eq!(metadata.request("search/tv", &[("query","Pursuit of Jade"),("language","en-US")]).await.unwrap(),expected);
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -34,6 +34,7 @@ final class L10n {
     IDS.put("All", R.string.ui_6a72085653e4);
     IDS.put("All clear", R.string.ui_360e1182021a);
     IDS.put("All genres", R.string.ui_09ac5f615d7d);
+    IDS.put("All resolutions", R.string.ui_f1f67dc07e63);
     IDS.put("Alphabetical", R.string.ui_9d12608fc0bd);
     IDS.put("Already in your torrents", R.string.ui_f2de57952082);
     IDS.put("Applies to torrents that use the server's default", R.string.ui_dcc38ee5a416);
@@ -363,6 +364,7 @@ final class L10n {
     IDS.put("Rename", R.string.ui_d3f4cb898fbe);
     IDS.put("Rename through Transmission", R.string.ui_f013e1dcb608);
     IDS.put("Rename torrent", R.string.ui_7d1e95ef4177);
+    IDS.put("Resolution", R.string.ui_516aae52959d);
     IDS.put("Resume", R.string.ui_b3bd0b5a7049);
     IDS.put("Resume download", R.string.ui_b5ed1ec09384);
     IDS.put("Resumes after playback", R.string.ui_a15dffd81328);
