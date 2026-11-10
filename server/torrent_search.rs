@@ -86,8 +86,13 @@ pub struct Search {
 }
 impl Search {
     pub fn new() -> Result<Self> {
+        let mut builder = reqwest::Client::builder();
+        if let Ok(proxy) = std::env::var("TORRBABY_SEARCH_PROXY") {
+            ensure!(!proxy.trim().is_empty(), "TORRBABY_SEARCH_PROXY must not be empty");
+            builder = builder.proxy(reqwest::Proxy::all(&proxy).map_err(|_| anyhow::anyhow!("Invalid search proxy configuration"))?);
+        }
         Ok(Self {
-            http: reqwest::Client::builder()
+            http: builder
                 .user_agent("Torrbaby/0.3 (personal media library)")
                 .connect_timeout(Duration::from_secs(5))
                 .timeout(Duration::from_secs(12))
@@ -543,6 +548,7 @@ fn parse_chinese_feed(raw: &str, provider: &str) -> Result<Vec<Item>> {
         let info_hash = if provider == "dmhy" { magnet_hash(&r.enclosure.url)? }
             else { hash(url.path().strip_prefix("/Home/Episode/")?)? };
         let mut row = item(r.title, info_hash.clone(), Source { provider:provider.into(), id:info_hash, url:url.to_string() });
+        if provider == "dmhy" { row.magnet = r.enclosure.url; }
         row.size_bytes = r.enclosure.length.filter(|n| *n>0);
         row.added = r.added;
         Some(row)

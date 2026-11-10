@@ -21,16 +21,30 @@ public final class TorrentSearchActivity extends Activity {
   private ListView list;
   private JSONArray results = new JSONArray();
   private int source, generation;
+  private boolean china;
   private boolean inDetail;
   private final Set<String> added = new HashSet<>();
   private static final String[] SOURCE_NAMES = {"Recommended", "The Pirate Bay", "Nyaa", "Torrent CSV"};
 
+  private String[] sourceNames() { return china ? new String[]{"Recommended", "动漫花园", "蜜柑计划"} : SOURCE_NAMES; }
   public void onCreate(Bundle state) {
     super.onCreate(state);
     try { api = new SecureStore(this).load(); } catch (Exception ignored) {}
     if (api == null) { finish(); return; }
     resultsRoot = page();
     Ui.add(resultsRoot, Ui.title(this, "Find torrents", 28), -1, 48);
+    china = getPreferences(MODE_PRIVATE).getBoolean("china", false);
+    RadioGroup markets = new RadioGroup(this); markets.setOrientation(LinearLayout.HORIZONTAL);
+    RadioButton world = new RadioButton(this); world.setText("World"); world.setId(View.generateViewId()); world.setTextColor(Ui.TEXT);
+    RadioButton chinese = new RadioButton(this); chinese.setText("China"); chinese.setId(View.generateViewId()); chinese.setTextColor(Ui.TEXT);
+    markets.addView(world); markets.addView(chinese); markets.check(china ? chinese.getId() : world.getId());
+    Ui.add(resultsRoot, markets, -1, 48);
+    markets.setOnCheckedChangeListener((group,id) -> {
+      china = id == chinese.getId(); getPreferences(MODE_PRIVATE).edit().putBoolean("china",china).apply();
+      ++generation; source=0; sourceButton.setText("Recommended"); results=new JSONArray();
+      ((BaseAdapter)list.getAdapter()).notifyDataSetChanged(); status.setText(""); search.setEnabled(true); list.setEnabled(true);
+      if(query.getText().toString().trim().length()>=2)search();
+    });
     LinearLayout controls = Ui.row(this);
     query = new EditText(this); query.setSingleLine(true); query.setHint("Search torrents");
     query.setTextColor(Ui.TEXT); query.setHintTextColor(Ui.MUTED); query.setTextSize(17);
@@ -40,7 +54,7 @@ public final class TorrentSearchActivity extends Activity {
     search = Ui.button(this, "Search", this::search); Ui.add(controls, search, 120, 46);
     Ui.gap(controls, 12);
     sourceButton = Ui.button(this, SOURCE_NAMES[0], () -> new AlertDialog.Builder(this).setTitle("Sources")
-        .setSingleChoiceItems(SOURCE_NAMES, source, (dialog, which) -> { source=which; sourceButton.setText(SOURCE_NAMES[which]); dialog.dismiss(); }).show());
+        .setSingleChoiceItems(sourceNames(), source, (dialog, which) -> { source=which; sourceButton.setText(sourceNames()[which]); dialog.dismiss(); }).show());
     Ui.add(controls, sourceButton, 180, 46); Ui.add(resultsRoot, controls, -1, 48);
     status = Ui.text(this, "", 14, Ui.MUTED); Ui.add(resultsRoot, status, -1, 36);
     list = new ListView(this); list.setDivider(null); list.setDividerHeight(Ui.dp(this, 10));
@@ -53,12 +67,12 @@ public final class TorrentSearchActivity extends Activity {
   private LinearLayout page() { LinearLayout root=Ui.column(this); root.setBackgroundColor(Ui.BG); Ui.pad(root,36,24); return root; }
   private void search() {
     String value=query.getText().toString().trim(); if (value.length()<2) return;
-    int request=++generation; int provider=source; search.setEnabled(false); list.setEnabled(false); status.setText("Searching…");
+    int request=++generation; int provider=source; boolean requestChina=china; search.setEnabled(false); list.setEnabled(false); status.setText("Searching…");
     ((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(query.getWindowToken(),0);
     io.execute(() -> {
       try {
-        JSONArray sources=new JSONArray(); if(provider>0)sources.put(provider==1?"tpb":provider==2?"nyaa":"csv");
-        JSONObject body = new JSONObject().put("query",value).put("sources",sources);
+        JSONArray sources=new JSONArray(); if(provider>0)sources.put(requestChina ? (provider==1?"dmhy":"mikan") : (provider==1?"tpb":provider==2?"nyaa":"csv"));
+        JSONObject body = new JSONObject().put("query",value).put("market",requestChina?"china":"world").put("sources",sources);
         // Context applies only while searching the original library title.
         if(value.equals(getIntent().getStringExtra("query"))) {
           if(getIntent().hasExtra("year"))body.put("year",getIntent().getIntExtra("year",0));
@@ -77,7 +91,7 @@ public final class TorrentSearchActivity extends Activity {
       } catch(Exception error) {runOnUiThread(() -> {if(!isDestroyed()&&request==generation){search.setEnabled(true);list.setEnabled(true);status.setText(MainActivity.message(error));}});}
     });
   }
-  private static String label(String provider) {return provider.equals("tpb")?"The Pirate Bay":provider.equals("csv")?"Torrent CSV":"Nyaa";}
+  private static String label(String provider) {return provider.equals("dmhy")?"动漫花园":provider.equals("mikan")?"蜜柑计划":provider.equals("tpb")?"The Pirate Bay":provider.equals("csv")?"Torrent CSV":"Nyaa";}
   private String summary(JSONObject item) {
     List<String> parts=new ArrayList<>(); if(!item.isNull("size_bytes"))parts.add(android.text.format.Formatter.formatFileSize(this,item.optLong("size_bytes")));
     if(!item.isNull("seeders"))parts.add(item.optLong("seeders")+(item.optLong("seeders")==1?" seed":" seeds"));

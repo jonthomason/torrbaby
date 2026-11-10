@@ -4,7 +4,8 @@ struct TorrentSearchSource: Decodable {
     let provider: String
     let id: String
     let url: String
-    var label: String { provider == "tpb" ? "The Pirate Bay" : provider == "csv" ? "Torrent CSV" : "Nyaa" }
+    var label: String { Self.label(provider) }
+    static func label(_ provider: String) -> String { ["tpb":"The Pirate Bay", "csv":"Torrent CSV", "nyaa":"Nyaa", "dmhy":"动漫花园", "mikan":"蜜柑计划"][provider] ?? provider }
 }
 struct TorrentReleaseHints: Decodable {
     let year: Int?
@@ -101,6 +102,7 @@ struct TorrentSearchView: View {
         _query = State(initialValue: initialQuery); _year = State(initialValue: year)
         _season = State(initialValue: season); _episode = State(initialValue: episode)
     }
+    @AppStorage("torrentSearchMarket") private var market = "world"
     @State private var source = "all"
     @State private var response: TorrentSearchResponse?
     @State private var error: String?
@@ -162,6 +164,14 @@ struct TorrentSearchView: View {
     }
     private var searchHeader: some View {
         VStack(alignment: .leading, spacing: 12) {
+            Picker("Search region", selection: $market) {
+                Text("World").tag("world")
+                Text("China").tag("china")
+            }.pickerStyle(.segmented).frame(maxWidth: 320)
+                .onChange(of: market) {
+                    work?.cancel(); searching = false; response = nil; selectedID = nil; error = nil; source = "all"
+                    if query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 { search() }
+                }
             HStack(spacing: 12) {
                 Image(systemName: "magnifyingglass").foregroundStyle(Theme.mint)
                 searchField
@@ -174,9 +184,14 @@ struct TorrentSearchView: View {
             HStack {
                 Picker("Sources", selection: $source) {
                     Text("Recommended").tag("all")
-                    Text("The Pirate Bay").tag("tpb")
-                    Text("Torrent CSV").tag("csv")
-                    Text("Nyaa").tag("nyaa")
+                    if market == "china" {
+                        Text("动漫花园").tag("dmhy")
+                        Text("蜜柑计划").tag("mikan")
+                    } else {
+                        Text("The Pirate Bay").tag("tpb")
+                        Text("Torrent CSV").tag("csv")
+                        Text("Nyaa").tag("nyaa")
+                    }
                 }
                 #if os(tvOS)
                 .pickerStyle(.segmented)
@@ -196,7 +211,7 @@ struct TorrentSearchView: View {
             if let error { Text(error).font(.caption).foregroundStyle(.orange) }
             if let response {
                 ForEach(response.providers.filter { $0.error != nil }, id: \.provider) { provider in
-                    Text("\(provider.provider == "tpb" ? "The Pirate Bay" : provider.provider == "csv" ? "Torrent CSV" : "Nyaa"): \(provider.error ?? "")")
+                    Text("\(TorrentSearchSource.label(provider.provider)): \(provider.error ?? "")")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -235,7 +250,7 @@ struct TorrentSearchView: View {
         searchFocused = false
         guard query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 else { return }
         work?.cancel(); searching = true; error = nil
-        var body: [String: Any] = ["query": query, "sources": source == "all" ? [] : [source]]
+        var body: [String: Any] = ["query": query, "market": market, "sources": source == "all" ? [] : [source]]
         if let year { body["year"] = year }; if let season { body["season"] = season }; if let episode { body["episode"] = episode }
         work = Task { @MainActor in
             do {
