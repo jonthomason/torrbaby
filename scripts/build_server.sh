@@ -33,13 +33,18 @@ swiftc -parse-as-library -O -target "$(uname -m)-apple-macos26.0" \
     -o "$APP/Contents/MacOS/torrbaby-subtitle-extractor"
 codesign --force --options runtime --sign "$MAC_SIGNING_IDENTITY" \
     "$APP/Contents/MacOS/torrbaby-subtitle-extractor"
+# Both Vision helpers must share one signing identifier. Vision's compiled-model
+# cache is per bundle, but aned keys the compiled Neural Engine programs by
+# signing identifier. With two identifiers, each helper's compile replaced the
+# other's, and they recompiled the text models in turn every minute.
+VISION_IDENTIFIER=org.torrbaby.server.vision
 swiftc -parse-as-library -O -target "$(uname -m)-apple-macos26.0" \
     "$ROOT/helpers/SubtitleOCR.swift" -o "$APP/Contents/MacOS/torrbaby-subtitle-ocr"
-codesign --force --options runtime --sign "$MAC_SIGNING_IDENTITY" "$APP/Contents/MacOS/torrbaby-subtitle-ocr"
+codesign --force --options runtime --identifier "$VISION_IDENTIFIER" --sign "$MAC_SIGNING_IDENTITY" "$APP/Contents/MacOS/torrbaby-subtitle-ocr"
 swiftc -parse-as-library -O -target "$(uname -m)-apple-macos26.0" \
     "$ROOT/helpers/CreditsScanner.swift" "$ROOT/helpers/CreditCards.swift" \
     -o "$APP/Contents/MacOS/torrbaby-credits-scanner"
-codesign --force --options runtime --sign "$MAC_SIGNING_IDENTITY" "$APP/Contents/MacOS/torrbaby-credits-scanner"
+codesign --force --options runtime --identifier "$VISION_IDENTIFIER" --sign "$MAC_SIGNING_IDENTITY" "$APP/Contents/MacOS/torrbaby-credits-scanner"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
