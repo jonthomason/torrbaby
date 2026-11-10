@@ -12,7 +12,12 @@ struct TorrbabyApp: App {
         NSWindow.allowsAutomaticWindowTabbing = false
         #endif
     }
-    @StateObject private var store = Store()
+    @StateObject private var store: Store = {
+        #if os(macOS)
+        MacInstance.migratePreferences()
+        #endif
+        return Store()
+    }()
     #if os(iOS)
     @UIApplicationDelegateAdaptor(DownloadAppDelegate.self) private var downloadDelegate
     #endif
@@ -220,6 +225,20 @@ private struct MacSettingsView: View {
 @MainActor
 private enum MacInstance {
     private static var descriptor: Int32 = -1
+    static func migratePreferences() {
+        let defaults = UserDefaults.standard
+        guard let current = Bundle.main.bundleIdentifier,
+              current == "com.jonthomason.torrbaby.mac",
+              !defaults.bool(forKey: "migratedLegacyBundlePreferences") else { return }
+        var values = defaults.persistentDomain(forName: current) ?? [:]
+        for legacy in ["org.torrbaby.mac", "org.torrbaby.app"] {
+            for (key, value) in defaults.persistentDomain(forName: legacy) ?? [:] where values[key] == nil {
+                values[key] = value
+            }
+        }
+        values["migratedLegacyBundlePreferences"] = true
+        defaults.setPersistentDomain(values, forName: current)
+    }
     static func enforce() {
         let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Torrbaby")
         do { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
@@ -229,7 +248,7 @@ private enum MacInstance {
         let acquired = flock(descriptor, LOCK_EX | LOCK_NB) == 0
         let other = NSWorkspace.shared.runningApplications.first {
             $0.processIdentifier != ProcessInfo.processInfo.processIdentifier &&
-            ["org.torrbaby.mac", "org.torrbaby.app"].contains($0.bundleIdentifier ?? "") && !$0.isTerminated
+            ["com.jonthomason.torrbaby.mac", "org.torrbaby.mac", "org.torrbaby.app"].contains($0.bundleIdentifier ?? "") && !$0.isTerminated
         }
         if !acquired || other != nil {
             if let other {

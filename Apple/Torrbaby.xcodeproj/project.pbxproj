@@ -112,11 +112,11 @@
 				<key>MARKETING_VERSION</key>
 				<string>0.2.0</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
-				<string>org.torrbaby.ios</string>
+				<string>com.jonthomason.torrbaby.ios</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER[sdk=appletv*]</key>
 				<string>org.torrbaby.tv</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]</key>
-				<string>org.torrbaby.mac</string>
+				<string>com.jonthomason.torrbaby.mac</string>
 				<key>PRODUCT_NAME</key>
 				<string>$(TARGET_NAME)</string>
 				<key>SDKROOT</key>
@@ -333,11 +333,11 @@
 				<key>MARKETING_VERSION</key>
 				<string>0.2.0</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
-				<string>org.torrbaby.ios</string>
+				<string>com.jonthomason.torrbaby.ios</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER[sdk=appletv*]</key>
 				<string>org.torrbaby.tv</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]</key>
-				<string>org.torrbaby.mac</string>
+				<string>com.jonthomason.torrbaby.mac</string>
 				<key>PRODUCT_NAME</key>
 				<string>$(TARGET_NAME)</string>
 				<key>SDKROOT</key>
