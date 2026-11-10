@@ -46,6 +46,23 @@ fn language(track: &Value) -> Option<&'static str> {
     else { None }
 }
 
+/// Text always wins. Bitmap OCR is admitted only when no text track exists.
+fn subtitle_source(tracks:&[Value])->Option<(&Value,&'static str,&'static str)> {
+    let has=|lang|tracks.iter().any(|t|language(t)==Some(lang) && t["text_extractable"]==true);
+    if has("en") && has("zh-Hans") {return None;}
+    let wanted=if has("zh-Hans") {("zh-Hans","en")} else {("en","zh-Hans")};
+    if let Some(t)=tracks.iter().find(|t|language(t)==Some(wanted.0) && t["extraction_supported"]==true && t["forced"]!=true) {return Some((t,wanted.0,wanted.1));}
+    if let Some(t)=tracks.iter().find(|t|t["extraction_supported"]==true && language(t).is_none() && t["forced"]!=true && t["language"].as_str().is_none_or(|s|s.is_empty() || s=="und")) {return Some((t,"auto","auto"));}
+    if tracks.iter().any(|t|t["text_extractable"]==true || t["sidecar"]==true) {return None;}
+    for lang in ["en","zh-Hans","auto"] {
+        if let Some(t)=tracks.iter().find(|t|t["codec"]=="S_VOBSUB" && t["forced"]!=true &&
+            (language(t)==Some(lang) || (lang=="auto" && t["language"].as_str().is_none_or(|s|s.is_empty() || s=="und")))) {
+            return Some((t,lang,if lang=="en" {"zh-Hans"} else if lang=="zh-Hans" {"en"} else {"auto"}));
+        }
+    }
+    None
+}
+
 fn priorities(db: &Database) -> Result<std::collections::HashMap<String, i64>> {
     let mut statement = db.connection.prepare("SELECT asset_id,priority FROM subtitle_priorities")?;
     Ok(statement.query_map([], |row| Ok((row.get(0)?,row.get(1)?)))?
@@ -136,7 +153,7 @@ pub async fn tick(s: &Service) -> Result<()> {
             if let Ok(mut job)=status {
                 if job["state"]=="ready" {
                     job["language"]=job["target"].as_str().or(job["source"].as_str()).map(|s|json!(s)).unwrap_or(json!("und"));
-                    job["generated"]=json!(!job["target"].is_null());
+                    job["generated"]=json!(!job["target"].is_null() || job["extraction_method"]=="ocr");
                     prepared.push(job);
                 } else if job["state"]=="queued" || job["state"]=="running" { active=true; }
                 else if ["interrupted","expired","stale"].iter().any(|state|job["state"]==*state) { interrupted=true; }
@@ -154,13 +171,7 @@ pub async fn tick(s: &Service) -> Result<()> {
         }
         if !jobs.is_empty() || s.subtitle_jobs.busy() { continue; }
         let tracks=info["subtitle_tracks"].as_array().context("Invalid track inventory")?;
-        // Existing Chinese is already available; never translate over it. Unknown
-        // languages and bitmap tracks require no guessing and no OCR.
-        let has_chinese=tracks.iter().any(|t|language(t)==Some("zh-Hans") && t["text_extractable"]==true);
-        let has_english=tracks.iter().any(|t|language(t)==Some("en") && t["text_extractable"]==true);
-        let (source_language,target_language)=if !has_chinese { ("en","zh-Hans") }
-            else if !has_english { ("zh-Hans","en") } else { continue; };
-        let Some(source)=tracks.iter().find(|t| language(t)==Some(source_language) && t["extraction_supported"]==true && t["forced"]!=true) else { continue; };
+        let Some((source,source_language,target_language))=subtitle_source(tracks) else {continue;};
         let Some(track)=source["track"].as_u64() else { continue; };
         let input=crate::api::media_file(s,id,0).await?;
         let input=if source["sidecar"]==true {
@@ -194,9 +205,7 @@ pub fn summary(db: &Database, jobs: &crate::subtitle_jobs::Manager) -> Result<Va
         let info=cached(db,id)?;
         let title=asset["path"].as_str().and_then(|p|Path::new(p).file_stem()).and_then(|s|s.to_str()).unwrap_or(id);
         let tracks=info["subtitle_tracks"].as_array().cloned().unwrap_or_default();
-        let has=|lang| tracks.iter().any(|t|language(t)==Some(lang) && t["text_extractable"]==true);
-        let source=if !has("zh-Hans") {Some(("en","zh-Hans"))} else if !has("en") {Some(("zh-Hans","en"))} else {None};
-        let eligible=source.filter(|(lang,_)|tracks.iter().any(|t|language(t)==Some(*lang) && t["extraction_supported"]==true && t["forced"]!=true));
+        let eligible=subtitle_source(&tracks).map(|(_,source,target)|(source,target));
         let mut listed=false;
         for status in statuses.iter().filter(|job|job["asset_id"]==id) {
             let mut job=status.clone();
@@ -207,11 +216,12 @@ pub fn summary(db: &Database, jobs: &crate::subtitle_jobs::Manager) -> Result<Va
         if !listed && (eligible.is_some() || info["state"]!="ready") {
             queue.push(json!({"id":id,"asset_id":id,"title":title,
                 "state":if info["state"]=="failed" || info["preparation_state"]=="failed" {"failed"} else if info["state"]=="pending" {"scanning"} else {"queued"},
-                "target":eligible.map(|(_,target)|target),"error":info["error"],"completed_cues":0,"total_cues":0}));
+                "target":eligible.and_then(|(_,target)|(target!="auto").then_some(target)),"error":info["error"],"completed_cues":0,"total_cues":0}));
         }
         if info["state"]=="ready" { scanned+=1; }
         let mut ready=false;
         for job in statuses.iter().filter(|job|job["asset_id"]==id) {
+            if job["state"]=="running" && job["stage"]=="ocr" {current=json!({"asset_id":id,"language":job["source"],"stage":"ocr","completed_cues":job["completed_cues"],"total_cues":job["total_cues"]});}
             if job["target"].is_null() {continue;}
             if job["state"]=="ready" {ready=true;}
             if job["state"]=="failed" {failed+=1;}
@@ -266,5 +276,20 @@ mod priority_tests {
             [json!({"id":"partial","available":true,"complete":false}).to_string()])?;
         assert!(prioritize(&db,"partial").is_err());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod ocr_fallback_tests {
+    use super::*;
+    #[test]
+    fn text_and_sidecars_always_precede_bitmap_ocr() {
+        let bitmap=json!({"track":3,"codec":"S_VOBSUB","language":null});
+        let text=json!({"track":4,"text_extractable":true,"extraction_supported":true,"language":"en"});
+        let tracks=vec![bitmap.clone(),text.clone()];assert_eq!(subtitle_source(&tracks).unwrap().0["track"],4);
+        let tracks=vec![bitmap.clone(),json!({"sidecar":true,"text_extractable":true,"extraction_supported":true,"language":"en","track":1})];assert_eq!(subtitle_source(&tracks).unwrap().0["sidecar"],true);
+        let tracks=vec![bitmap.clone(),json!({"text_extractable":true,"extraction_supported":false,"language":"en"})];assert!(subtitle_source(&tracks).is_none());
+        let tracks=vec![bitmap];assert_eq!(subtitle_source(&tracks).unwrap().1,"auto");
+        let tracks=vec![text,json!({"text_extractable":true,"extraction_supported":true,"language":"zh-Hans"})];assert!(subtitle_source(&tracks).is_none());
     }
 }

@@ -10,6 +10,7 @@ mod media_inventory;
 mod media_packaging;
 mod metadata;
 mod native_subtitles;
+mod ocr_subtitles;
 mod offline;
 mod organizer;
 mod pairing;
@@ -42,6 +43,8 @@ struct Arguments {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Internal isolated bitmap subtitle decoding worker.
+    OcrSubtitles { #[arg(long)] input: PathBuf, #[arg(long)] track: u64, #[arg(long)] output: PathBuf },
     /// Search torrent indexers without adding anything to Transmission.
     SearchTorrents {
         query: String,
@@ -228,6 +231,7 @@ async fn main() -> Result<()> {
                 .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
+        Command::OcrSubtitles { input, track, output } => { ocr_subtitles::decode(&input, track, &output)?; }
         Command::IndexMatroska { input, output } => {
             println!("{}", virtual_mkv::build(&input, &output)?);
         }

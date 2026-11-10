@@ -28,6 +28,10 @@ struct Job {
     completed_cues: usize,
     #[serde(default)]
     total_cues: usize,
+    #[serde(default)]
+    extraction_method: Option<String>,
+    #[serde(default)]
+    unreadable_cues: usize,
 }
 
 #[derive(Deserialize)]
@@ -64,6 +68,7 @@ impl Manager {
     pub fn new(data: &Path) -> Result<Arc<Self>> {
         let root = data.join("subtitles");
         fs::create_dir_all(&root)?;
+        crate::ocr_subtitles::cleanup(&root)?;
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
         // A server lease already protects this data directory. Recover only our
         // own interrupted atomic writes; never sweep arbitrary user filenames.
@@ -127,10 +132,12 @@ impl Manager {
         {
             job.state = "interrupted".into();
         }
+        let ocr_progress=if job.state=="running" {fs::read(self.root.join(format!("{id}.ocr-progress"))).ok().and_then(|b|serde_json::from_slice::<Value>(&b).ok())} else {None};
+        if let Some(p)=&ocr_progress {job.completed_cues=p["completed_cues"].as_u64().unwrap_or(0) as usize;job.total_cues=p["total_cues"].as_u64().unwrap_or(0) as usize;}
         Ok(
-            json!({"id":job.id,"asset_id":job.asset_id,"state":job.state,"error":job.error,
+            json!({"extraction_method":job.extraction_method,"unreadable_cues":job.unreadable_cues,"stage":if ocr_progress.is_some(){"ocr"}else if job.target.is_some(){"translation"}else{"extraction"},"id":job.id,"asset_id":job.asset_id,"state":job.state,"error":job.error,
             "sidecar":if job.input.extension().is_some_and(|e|e.eq_ignore_ascii_case("srt")) { job.input.file_name().and_then(|n|n.to_str()).map(|name|sha2::Sha256::digest(name.as_bytes()).iter().map(|b|format!("{b:02x}")).collect::<String>()) } else {None},
-            "track":job.track,"source":job.source,"target":job.target,"completed_cues":job.completed_cues,"total_cues":job.total_cues,
+            "track":job.track,"source":job.source.as_deref().filter(|s|*s!="auto"),"target":job.target.as_deref().filter(|s|*s!="auto"),"completed_cues":job.completed_cues,"total_cues":job.total_cues,
             "path":if job.state=="ready" {Some(format!("/v1/subtitle-jobs/{id}.vtt"))} else {None}}),
         )
     }
@@ -174,6 +181,7 @@ impl Manager {
             "Preparation supports Matroska, MP4 and SRT text subtitles"
         );
         ensure!(
+            (source.as_deref()==Some("auto") && (target.is_none() || target.as_deref()==Some("auto"))) ||
             (target.is_none() && source.as_deref().is_none_or(|s| ["en", "zh-Hans"].contains(&s)))
                 || (source != target
                     && source
@@ -220,7 +228,7 @@ impl Manager {
                 state: "queued".into(),
                 updated: crate::storage::now(),
                 error: None,
-                completed_cues: 0, total_cues: 0,
+                completed_cues: 0, total_cues: 0, extraction_method: None, unreadable_cues: 0,
             };
             self.save(&job)?;
             pending.insert(id.clone());
@@ -276,7 +284,23 @@ impl Manager {
             let _permit = self.gate.acquire().await?;
             job.state = "running".into();
             self.save(&job)?;
-            let mut cues = crate::native_subtitles::extract(&job.input, job.track).await?;
+            let bitmap=if job.input.extension().is_some_and(|e|e.eq_ignore_ascii_case("mkv") || e.eq_ignore_ascii_case("webm")) {
+                let tracks=crate::native_subtitles::tracks(&job.input).await?;
+                let selected=tracks["tracks"].as_array().and_then(|t|t.iter().find(|t|t["track"]==job.track)).context("Subtitle track missing")?;
+                if selected["codec"]=="S_VOBSUB" {
+                    let sidecar_input=job.input.clone();
+                    let sidecars=tokio::task::spawn_blocking(move ||crate::subtitles::discover(&sidecar_input)).await??;
+                    ensure!(sidecars.is_empty() && !tracks["tracks"].as_array().unwrap().iter().any(|t|t["text_extractable"]==true),"Text subtitles are available; OCR is only a fallback");true
+                } else {false}
+            } else {false};
+            let mut cues=if bitmap {
+                job.extraction_method=Some("ocr".into());self.save(&job)?;
+                let output=crate::ocr_subtitles::extract(&job.input,job.track,job.source.as_deref().unwrap_or("auto"),&self.root,&self.root.join(format!("{}.ocr-progress",job.id))).await?;
+                job.source=Some(output.language);job.unreadable_cues=output.unreadable_cues;output.cues
+            } else {job.extraction_method=Some("text".into());crate::native_subtitles::extract(&job.input,job.track).await?};
+            if job.source.as_deref()==Some("auto") {job.source=Some(crate::ocr_subtitles::detect_language(&cues).await?);}
+            if job.target.as_deref()==Some("auto") {job.target=Some(if job.source.as_deref()==Some("en") {"zh-Hans"}else{"en"}.into());}
+            self.save(&job)?;
             let timings: Vec<_> = cues.iter().map(|cue| (cue.start_ms, cue.end_ms)).collect();
             ensure!(!cues.is_empty(), "No subtitle cues extracted");
             job.total_cues = cues.len();

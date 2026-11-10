@@ -33,6 +33,9 @@ swiftc -parse-as-library -O -target "$(uname -m)-apple-macos26.0" \
     -o "$APP/Contents/MacOS/torrbaby-subtitle-extractor"
 codesign --force --options runtime --sign "$MAC_SIGNING_IDENTITY" \
     "$APP/Contents/MacOS/torrbaby-subtitle-extractor"
+swiftc -parse-as-library -O -target "$(uname -m)-apple-macos26.0" \
+    "$ROOT/helpers/SubtitleOCR.swift" -o "$APP/Contents/MacOS/torrbaby-subtitle-ocr"
+codesign --force --options runtime --sign "$MAC_SIGNING_IDENTITY" "$APP/Contents/MacOS/torrbaby-subtitle-ocr"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -52,5 +55,5 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict></plist>
 PLIST
 codesign --force --options runtime --sign "$MAC_SIGNING_IDENTITY" "$APP"
-codesign --verify --strict "$APP"
+"$ROOT/scripts/verify_server_bundle.sh" "$APP"
 printf 'Built: %s\n' "$APP"

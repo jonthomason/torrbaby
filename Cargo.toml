@@ -33,6 +33,8 @@ uuid = { version = "1.29.2", features = ["v4"] }
 matroska-demuxer = "=0.8.1"
 oxideav-core = "0.1"
 oxideav-mp4 = "=0.0.11"
+oxideav-sub-image = "=0.0.9"
+flate2 = "1"
 quick-xml = { version = "0.42.0", features = ["serialize"] }
 tl = "0.7.8"
 
