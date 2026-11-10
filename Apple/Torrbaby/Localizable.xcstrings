@@ -9951,6 +9951,23 @@
           }
         }
       }
+    },
+    "Waiting for connection": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for connection"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待连接"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

@@ -523,6 +523,7 @@
     <string name="ui_31a7604a3c74" formatted="false">查看来源</string>
     <string name="ui_33d30632848d" formatted="false">等待中</string>
     <string name="ui_91df8bb76aa2" formatted="false">等待活动</string>
+    <string name="ui_99c90cff2803" formatted="false">等待连接</string>
     <string name="ui_0736f273254e" formatted="false">等待节点</string>
     <string name="ui_83ed73bbc425" formatted="false">等待播放结束</string>
     <string name="ui_640215e9fe28" formatted="false">等待校验</string>

@@ -222,9 +222,9 @@ final class Store: ObservableObject {
     @Published var server: String = UserDefaults.standard.string(forKey: "server") ?? ""
     @Published var token: String = Credentials.read()
     @Published var torrents: [Torrent] = []
-    @Published var status: DaemonStatus?
+    @Published var status: DaemonStatus? { didSet { updateDownloadConnection() } }
     @Published var events: [AuditEvent] = []
-    @Published var connectionError: String?
+    @Published var connectionError: String? { didSet { updateDownloadConnection() } }
     @Published var torrentError: String?
     @Published var libraryOperations: [PendingLibraryOperation] = []
     @Published var libraryOperationsError: String?
@@ -236,7 +236,12 @@ final class Store: ObservableObject {
     @Published var busy = false
     @Published var lastUpdated: Date?
     @Published var isConnecting = false
-    @Published private(set) var networkAvailable = true
+    @Published private(set) var networkAvailable = true { didSet { updateDownloadConnection() } }
+    private func updateDownloadConnection() {
+        #if !os(tvOS)
+        DownloadQueue.shared.connectionChanged()
+        #endif
+    }
     private let networkMonitor = NWPathMonitor()
     private var refreshing = false
     private var etaSmoother = TorrentETASmoother()
@@ -246,6 +251,8 @@ final class Store: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let restored = !self.networkAvailable && available
+                // A restored Wi-Fi/cellular path still needs a successful server probe.
+                if !available { self.connectionError = URLError(.notConnectedToInternet).localizedDescription }
                 self.networkAvailable = available
                 if restored { await self.refresh() }
             }

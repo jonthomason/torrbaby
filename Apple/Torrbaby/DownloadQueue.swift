@@ -53,10 +53,22 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             for item in items where item.state == .transferring && tasks[item.id] == nil {
                 try? storage?.pause(item.id, received: item.received, error: "Transfer interrupted. Tap resume.")
             }
-            restored = true; reload(); pump()
+            restored = true; reload(); connectionChanged()
         }
     }
-    func attach(_ store: Store) { self.store = store; pump() }
+    func attach(_ store: Store) { self.store = store; connectionChanged() }
+    func connectionChanged() {
+        guard restored else { return }
+        for (id, task) in tasks {
+            guard items.first(where: { $0.id == id })?.state == .transferring else { continue }
+            if store?.connected == true {
+                if task.state == .suspended { task.resume() }
+            } else if task.state == .running {
+                task.suspend()
+            }
+        }
+        pump()
+    }
     func reload() {
         guard let storage else { return }
         items = storage.items.map { $0.forProfile(store?.activeProfile?.id ?? "") }; policy = storage.policy
@@ -70,7 +82,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         } catch { self.error = error.localizedDescription }
     }
     func enqueue(_ asset: LibraryAsset, title: LibraryTitle) async {
-        guard let store, let storage else { return }
+        guard let store, store.connected, let storage else { return }
         let server = store.server, identity = store.profileIdentity
         if let existing=items.first(where: { $0.server == server && $0.assetID == asset.id && $0.state != .removed }) {
             if existing.state == .failed { resume(existing.id) }
@@ -98,7 +110,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         return storage.posterURL(key)
     }
     private func cachePoster(for item: DownloadStorage.Item) async {
-        guard let store, let storage, store.server == item.server else { return }
+        guard let store, store.connected, let storage, store.server == item.server else { return }
         let key = SHA256.hash(data: Data((item.server + "\n" + item.titleID).utf8)).map { String(format: "%02x", $0) }.joined()
         do {
             if let url = storage.posterURL(key), let data = try? Data(contentsOf: url) {
@@ -123,7 +135,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         } catch { /* Artwork is optional; the media transfer continues independently. */ }
     }
     private func pump() {
-        guard restored, tasks.isEmpty, let store, store.configured, let storage else { return }
+        guard restored, tasks.isEmpty, let store, store.connected, let storage else { return }
         guard let item = items.first(where: { $0.state == .queued && $0.server == store.server }) else { return }
         do {
             try storage.markTransferring(item.id)
@@ -404,13 +416,23 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             guard self.tasks[id] === task else { return }
             // A requested pause owns its resume-data callback and task removal.
             guard self.items.first(where: { $0.id == id })?.state == .transferring else { return }
+            let code = (error as NSError).code
+            let lostConnection = self.store?.connected != true ||
+                ((error as NSError).domain == NSURLErrorDomain &&
+                 [NSURLErrorTimedOut, NSURLErrorCannotFindHost, NSURLErrorCannotConnectToHost,
+                  NSURLErrorNetworkConnectionLost, NSURLErrorDNSLookupFailed,
+                  NSURLErrorNotConnectedToInternet, NSURLErrorInternationalRoamingOff,
+                  NSURLErrorDataNotAllowed].contains(code))
+            if lostConnection { self.store?.connectionError = error.localizedDescription }
             if let storage = self.storage {
                 if let resume { try? resume.write(to: storage.resumeURL(id), options: .atomic) }
                 else {
                     try? FileManager.default.removeItem(at: storage.resumeURL(id))
                     self.received[id] = 0
                 }
-                try? storage.pause(id, received: self.received[id] ?? 0, error: "Download interrupted. Tap resume.")
+                try? storage.pause(id, received: self.received[id] ?? 0,
+                                   error: lostConnection ? nil : "Download interrupted. Tap resume.")
+                if lostConnection { try? storage.queue(id) }
             }
             self.tasks.removeValue(forKey: id); self.reload(); self.pump()
         }

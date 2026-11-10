@@ -46,7 +46,9 @@ struct DownloadsView: View {
                             } else {
                                 Text("\(bytes(queue.received[item.id] ?? item.received)) / \(bytes(item.size))")
                                     .font(.caption.monospacedDigit()).foregroundStyle(Theme.muted)
-                                Text(item.error ?? item.state.rawValue.capitalized).font(.caption).foregroundStyle(Theme.muted)
+                                Text(L10n.text(!store.connected && [.queued, .transferring].contains(item.state)
+                                              ? "Waiting for connection" : (item.error ?? item.state.rawValue.capitalized)))
+                                    .font(.caption).foregroundStyle(Theme.muted)
                             }
                         }
                         Spacer(minLength: 8)

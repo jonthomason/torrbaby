@@ -523,6 +523,7 @@
     <string name="ui_31a7604a3c74" formatted="false">View source</string>
     <string name="ui_33d30632848d" formatted="false">Waiting</string>
     <string name="ui_91df8bb76aa2" formatted="false">Waiting for activity</string>
+    <string name="ui_99c90cff2803" formatted="false">Waiting for connection</string>
     <string name="ui_0736f273254e" formatted="false">Waiting for peers</string>
     <string name="ui_83ed73bbc425" formatted="false">Waiting for playback to finish</string>
     <string name="ui_640215e9fe28" formatted="false">Waiting to verify</string>
