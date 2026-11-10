@@ -74,7 +74,7 @@ struct TorrentSearchItem: Decodable, Identifiable {
         }.joined(separator: " · ")
     }
     var availability: String {
-        guard let seeders else { return "Peers not reported" }
+        guard let seeders else { return "" }
         return seeders == 0 ? "No reported seeds" : "\(seeders.formatted()) \(seeders == 1 ? "seed" : "seeds")"
     }
     var size: String { sizeBytes.map { ByteCountFormatter.string(fromByteCount: Int64(clamping: $0), countStyle: .file) } ?? sizeLabel ?? "" }
@@ -357,21 +357,21 @@ private struct TorrentSearchRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             SearchReleaseArtwork(name: item.name)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text(item.title).font(.headline).foregroundStyle(.primary).lineLimit(2)
-                    Spacer(minLength: 0)
-                    Text(item.size.isEmpty ? (fetchedSize ?? "Size…") : item.size)
-                        .font(.subheadline.weight(.semibold)).monospacedDigit().foregroundStyle(Theme.mint)
-                        .multilineTextAlignment(.trailing).fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title).font(.title3.bold()).foregroundStyle(.primary).lineLimit(2)
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text(LocalizedStringKey(item.size.isEmpty ? (fetchedSize ?? "Size…") : item.size))
+                        .foregroundStyle(Theme.mint)
+                    if item.seeders != nil {
+                        Text(item.availability).foregroundStyle(item.seeders == 0 ? Color.orange : Theme.mint)
+                    }
                 }
-                if !metadata.isEmpty { Text(metadata).font(.subheadline).foregroundStyle(.secondary).lineLimit(2) }
-                if !tracks.isEmpty { Text(tracks).font(.subheadline).foregroundStyle(.secondary).lineLimit(2) }
-                if item.seeders != nil {
-                    Text(item.availability).font(.subheadline).foregroundStyle(item.seeders == 0 ? Color.orange : Theme.mint)
-                }
+                .font(.title3.weight(.semibold)).monospacedDigit()
+                .fixedSize(horizontal: false, vertical: true)
+                if !metadata.isEmpty { Text(metadata).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                if !tracks.isEmpty { Text(tracks).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
             }
-        }.padding(.vertical, 3).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+        }.padding(.vertical, 2).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             .task(id: store.server + item.id) {
                 guard item.size.isEmpty else { return }
                 do { fetchedSize = try await SearchReleaseSizes.load(item, store: store) }

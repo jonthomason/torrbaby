@@ -102,7 +102,6 @@ public final class TorrentSearchActivity extends Activity {
     else parts.add(sizes.getOrDefault(item.optString("name"), "Size…"));
     if(!item.isNull("seeders"))parts.add(item.optLong("seeders")+(item.optLong("seeders")==1?" seed":" seeds"));
     if(!item.isNull("leechers"))parts.add(item.optLong("leechers")+(item.optLong("leechers")==1?" peer":" peers"));
-    JSONArray sources=item.optJSONArray("sources");if(sources!=null)for(int i=0;i<sources.length();i++)parts.add(label(sources.optJSONObject(i).optString("provider")));
     return String.join(" · ",parts);
   }
   private static String title(JSONObject item) {
@@ -141,7 +140,7 @@ public final class TorrentSearchActivity extends Activity {
     public View getView(int position, View old, ViewGroup parent) {
       LinearLayout row; if(old instanceof LinearLayout)row=(LinearLayout)old; else {
         row=Ui.column(TorrentSearchActivity.this); Ui.pad(row,16,6);row.setBackground(Ui.shape(Ui.PANEL,0,TorrentSearchActivity.this));
-        TextView title=Ui.title(TorrentSearchActivity.this,"",18);title.setMaxLines(2);Ui.add(row,title,-1,-2);Ui.add(row,Ui.text(TorrentSearchActivity.this,"",13,Ui.ACCENT),-1,22);Ui.add(row,Ui.text(TorrentSearchActivity.this,"",13,Ui.MUTED),-1,-2);
+        TextView title=Ui.title(TorrentSearchActivity.this,"",20);title.setMaxLines(2);Ui.add(row,title,-1,-2);Ui.add(row,Ui.text(TorrentSearchActivity.this,"",18,Ui.ACCENT),-1,-2);Ui.add(row,Ui.text(TorrentSearchActivity.this,"",13,Ui.MUTED),-1,-2);
       }
       JSONObject item=results.optJSONObject(position);loadSize(item);((TextView)row.getChildAt(0)).setText(title(item));((TextView)row.getChildAt(1)).setText(summary(item));((TextView)row.getChildAt(2)).setText(tags(item));return row;
     }
