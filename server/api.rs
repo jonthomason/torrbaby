@@ -540,6 +540,9 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value) -> R
             s.metadata.search_artwork(text(&body, "name")?)).await
             .ok().and_then(Result::ok).unwrap_or_else(|| json!({"data":null})));
     }
+    if method == Method::POST && path == "/v1/search/torrents/resolve" {
+        return s.torrent_search.resolve(text(&body,"provider")?,text(&body,"id")?,body["attachment"].as_str()).await;
+    }
     if method == Method::POST && path == "/v1/search/torrents/detail" {
         return s
             .torrent_search

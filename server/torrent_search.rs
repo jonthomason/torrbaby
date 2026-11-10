@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
-    sync::{LazyLock, Mutex},
+    sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant},
 };
 
@@ -89,12 +89,20 @@ impl std::fmt::Display for RateLimited {
 }
 impl std::error::Error for RateLimited {}
 
+fn release_key(item: &Item) -> String {
+    if !item.info_hash.is_empty() { return item.info_hash.to_ascii_lowercase(); }
+    // Group identical listings, not just identical display titles. Keep encodes/sizes distinct.
+    format!("listing:{}:{}:{:?}:{:?}", item.sources.first().map(|s|s.provider.as_str()).unwrap_or(""),
+        item.name.split_whitespace().collect::<Vec<_>>().join(" "), item.size_bytes, item.size_label)
+}
+
 pub struct Search {
     lou: tokio::sync::Mutex<(Instant, HashMap<String, (Instant, Vec<Item>)>)>,
     http: reqwest::Client,
     cache: Mutex<HashMap<String, (Instant, SearchResult)>>,
     gate: tokio::sync::Semaphore,
     details: Mutex<HashMap<String, (Instant, Value)>>,
+    reads: Mutex<HashMap<String, Arc<tokio::sync::Mutex<Option<(Instant, Vec<u8>)>>>>>,
 }
 impl Search {
     pub fn new() -> Result<Self> {
@@ -114,12 +122,29 @@ impl Search {
             cache: Mutex::new(HashMap::new()),
             gate: tokio::sync::Semaphore::new(4),
             details: Mutex::new(HashMap::new()),
+            reads: Mutex::new(HashMap::new()),
         })
     }
     async fn read(&self, url: reqwest::Url) -> Result<String> {
         Ok(String::from_utf8(self.read_bytes(url).await?)?)
     }
     async fn read_bytes(&self, url: reqwest::Url) -> Result<Vec<u8>> {
+        // Row sizes, details and Add share one fetch for each public attachment/page.
+        if url.host_str() == Some("www.1lou.me") && !url.path().contains("/search/") {
+            let slot = {
+                let mut reads=self.reads.lock().map_err(|_|anyhow::anyhow!("Source cache unavailable"))?;
+                if reads.len()>=256 { reads.retain(|_,slot| Arc::strong_count(slot)>1); }
+                reads.entry(url.to_string()).or_insert_with(||Arc::new(tokio::sync::Mutex::new(None))).clone()
+            };
+            let mut cached=slot.lock().await;
+            if let Some((at,bytes))=cached.as_ref() { if at.elapsed()<Duration::from_secs(600) {return Ok(bytes.clone());} }
+            let bytes=self.fetch_bytes(url).await?;
+            *cached=Some((Instant::now(),bytes.clone()));
+            return Ok(bytes);
+        }
+        self.fetch_bytes(url).await
+    }
+    async fn fetch_bytes(&self, url: reqwest::Url) -> Result<Vec<u8>> {
         match self.read_once(url.clone()).await {
             Ok(bytes) => Ok(bytes),
             Err(error) if error.downcast_ref::<reqwest::Error>().is_some_and(|e| e.is_connect() || e.is_body() || e.is_request()) => {
@@ -134,7 +159,7 @@ impl Search {
         if url.host_str() == Some("www.1lou.me") { request = request.header(reqwest::header::CONNECTION, "close"); }
         let response = request.send().await?;
         if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            let delay=response.headers().get(reqwest::header::RETRY_AFTER).and_then(|v|v.to_str().ok()).and_then(|s|s.parse::<u64>().ok()).unwrap_or(15).clamp(1,3600);
+            let delay=response.headers().get(reqwest::header::RETRY_AFTER).and_then(|v|v.to_str().ok()).and_then(|s|s.parse::<u64>().ok()).unwrap_or(0).min(3600);
             return Err(RateLimited(delay).into());
         }
         let mut response = response.error_for_status()?;
@@ -158,12 +183,11 @@ impl Search {
         state.1.retain(|_,(at,_)|at.elapsed()<Duration::from_secs(600));
         if let Some((_,items))=state.1.get(terms) { return Ok(items.clone()); }
         let wait=state.0.saturating_duration_since(Instant::now());
-        if wait>Duration::from_secs(5) { return Err(RateLimited(wait.as_secs()+1).into()); }
-        tokio::time::sleep(wait).await;
+        if !wait.is_zero() { anyhow::bail!("Source requested a retry delay; try again in {} seconds", wait.as_secs()+1); }
         let mut url=reqwest::Url::parse("http://www.1lou.me/search/api/search.php")?;
         url.query_pairs_mut().append_pair("q",terms).append_pair("sort","newest").append_pair("track","0");
         let result=match self.read(url).await { Ok(raw)=>chinese::listings(&raw),Err(e)=>Err(e) };
-        let delay=result.as_ref().err().and_then(|e|e.downcast_ref::<RateLimited>()).map(|e|e.0).unwrap_or(5);
+        let delay=result.as_ref().err().and_then(|e|e.downcast_ref::<RateLimited>()).map(|e|e.0).unwrap_or(0);
         state.0=Instant::now()+Duration::from_secs(delay);
         match &result {
             Ok(items)=> { if state.1.len()>=32 {state.1.clear();} state.1.insert(terms.to_owned(),(Instant::now(),items.clone())); },
@@ -284,7 +308,7 @@ impl Search {
                     });
                     for mut item in items {
                         score(&mut item, &query);
-                        let key = if item.info_hash.is_empty() { format!("{}:{}", item.sources[0].provider, item.sources[0].id) } else { item.info_hash.clone() };
+                        let key = release_key(&item);
                         if let Some(existing) = unique.get_mut(&key) {
                             if item.match_score > existing.match_score
                                 || (item.match_score == existing.match_score
@@ -293,6 +317,8 @@ impl Search {
                                 std::mem::swap(existing, &mut item);
                             }
                             existing.sources.extend(item.sources);
+                            let mut seen=HashSet::new();
+                            existing.sources.retain(|s|seen.insert((s.provider.clone(),s.id.clone())));
                             existing.seeders = existing.seeders.max(item.seeders);
                             existing.leechers = existing.leechers.max(item.leechers);
                             if existing.size_bytes.is_none() {
@@ -306,7 +332,9 @@ impl Search {
                 Err(error) => {
                     // Keep remote bodies/URLs out of client errors and logs.
                     let message = if error.downcast_ref::<RateLimited>().is_some() {
-                        "Source is rate limiting searches. Please wait briefly and try again."
+                        "The search source refused this request (rate limit). Please try again later."
+                    } else if error.to_string().starts_with("Source requested a retry delay") {
+                        "Waiting for the search source’s requested retry time."
                     } else if error
                         .downcast_ref::<reqwest::Error>()
                         .is_some_and(|e| e.is_timeout())
@@ -350,6 +378,23 @@ impl Search {
         }
         Ok(result)
     }
+    pub async fn resolve(&self, provider: &str, id: &str, attachment: Option<&str>) -> Result<Value> {
+        ensure!(provider=="1lou", "This source requires a magnet link");
+        ensure!(!id.is_empty() && id.len()<=12 && id.bytes().all(|b|b.is_ascii_digit()), "Invalid listing ID");
+        let url=format!("http://www.1lou.me/thread-{id}.htm");
+        let raw=self.read(reqwest::Url::parse(&url)?).await?;
+        let choices=chinese::attachment_choices(&raw)?;
+        ensure!(!choices.is_empty(), "This listing has no downloadable torrent");
+        let selected=match attachment {
+            Some(selected)=>choices.iter().find(|(id,_)|id==selected).context("Release no longer available")?,
+            None if choices.len()==1=>&choices[0],
+            None=>return Ok(json!({"choices":choices.iter().map(|(id,name)|json!({"id":id,"name":name})).collect::<Vec<_>>()})),
+        };
+        let bytes=self.read_bytes(reqwest::Url::parse(&format!("http://www.1lou.me/attach-download-{}.htm",selected.0))?).await?;
+        let release=chinese::torrent(&bytes,id,&url)?;
+        use base64::Engine;
+        Ok(json!({"item":release["item"],"metainfo":base64::engine::general_purpose::STANDARD.encode(bytes)}))
+    }
     pub async fn detail(&self, provider: &str, id: &str) -> Result<Value> {
         if provider == "1lou" {
             ensure!(!id.is_empty() && id.len() <= 12 && id.bytes().all(|b| b.is_ascii_digit()), "Invalid listing ID");
@@ -369,7 +414,10 @@ impl Search {
                     let bytes = self.read_bytes(reqwest::Url::parse(&format!("http://www.1lou.me/attach-download-{attachment}.htm"))?).await?;
                     chinese::torrent(&bytes, id, url)
                 }
-            })).buffered(4).collect::<Vec<Result<Value>>>().await.into_iter().collect::<Result<Vec<_>>>()?;
+            })).buffered(2).collect::<Vec<Result<Value>>>().await.into_iter().filter_map(Result::ok).collect::<Vec<_>>();
+            ensure!(!releases.is_empty(), "Could not load torrent files; try Add torrent to retry the selected release");
+            let mut seen=HashSet::new();
+            let releases=releases.into_iter().filter(|r|seen.insert(r["item"]["info_hash"].as_str().unwrap_or_default().to_owned())).collect::<Vec<_>>();
             let value = json!({"description": description, "releases":releases, "files":null, "evidence":"torrent_metadata", "media_verified":false});
             let mut cache = self.details.lock().map_err(|_| anyhow::anyhow!("Search cache unavailable"))?;
             cache.retain(|_,(at,_)| at.elapsed() < Duration::from_secs(600));
@@ -990,5 +1038,17 @@ mod tests {
         assert_eq!(detail["description"], "English & Japanese");
         assert_eq!(detail["files"][0]["name"], "Season 1/Example.S01E01.mkv");
         assert_eq!(detail["files"][0]["size_bytes"], 1_610_612_736u64);
+    }
+}
+
+#[cfg(test)]
+mod listing_dedup_tests {
+    use super::*;
+    #[test]
+    fn identical_posts_group_but_different_encodes_do_not() {
+        let a=item("逐玉 2160p HDR".into(),String::new(),Source{provider:"1lou".into(),id:"1".into(),url:String::new()});
+        let mut b=a.clone();b.sources[0].id="2".into();assert_eq!(release_key(&a),release_key(&b));
+        b.name="逐玉 2160p Dolby Vision".into();assert_ne!(release_key(&a),release_key(&b));
+        b=a.clone();b.size_bytes=Some(123);assert_ne!(release_key(&a),release_key(&b));
     }
 }

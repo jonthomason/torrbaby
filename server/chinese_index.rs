@@ -27,14 +27,23 @@ pub(super) fn thread(raw: &str) -> Result<(String, Vec<String>)> {
     let p=dom.parser();
     let description=dom.query_selector(".message").and_then(|mut q|q.next()).and_then(|h|h.get(p))
         .map(|n|html_text(&n.inner_text(p))).unwrap_or_default();
-    let re=Regex::new(r"^attach-download-([0-9]{1,12})\.htm$")?;
-    let attachments=dom.query_selector("a").into_iter().flatten().filter_map(|h| {
-        let tag=h.get(p)?.as_tag()?;
-        if !tag.inner_text(p).trim().ends_with(".torrent") { return None; }
-        let href=tag.attributes().get("href")??.as_utf8_str();
-        Some(re.captures(&href)?[1].to_owned())
-    }).collect();
+    let attachments=attachment_choices(raw)?.into_iter().map(|(id,_)|id).collect();
     Ok((description.chars().take(20000).collect(),attachments))
+}
+pub(super) fn attachment_choices(raw: &str) -> Result<Vec<(String,String)>> {
+    let dom=tl::parse(raw,tl::ParserOptions::default())?;
+    let p=dom.parser();
+    let re=Regex::new(r"(?:^|/)attach-download-([0-9]{1,12})\.htm$")?;
+    let mut seen=HashSet::new();
+    Ok(dom.query_selector("a").into_iter().flatten().filter_map(|h| {
+        let tag=h.get(p)?.as_tag()?;
+        let name=tag.inner_text(p).trim().to_owned();
+        if !name.to_ascii_lowercase().ends_with(".torrent") { return None; }
+        let href=tag.attributes().get("href")??.as_utf8_str();
+        let id=re.captures(&href)?[1].to_owned();
+        if !seen.insert(id.clone()) {return None;}
+        Some((id,name.trim_end_matches(".torrent").to_owned()))
+    }).collect())
 }
 
 // Bounded parser retains the original info dictionary bytes for the v1 hash.
@@ -102,6 +111,11 @@ pub(super) fn torrent(bytes:&[u8],id:&str,url:&str)->Result<Value>{
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn repeated_attachment_links_are_one_choice() {
+        let html=r#"<a href="attach-download-12.htm">A.torrent</a><a href="/attach-download-12.htm">A.torrent</a><a href="attach-download-13.htm">B.torrent</a>"#;
+        assert_eq!(attachment_choices(html).unwrap(),vec![("12".into(),"A".into()),("13".into(),"B".into())]);
+    }
     #[test]
     fn bounded_torrent_parser_rejects_non_torrents() {
         assert!(torrent(b"<html>login</html>","1","http://www.1lou.me/thread-1.htm").is_err());

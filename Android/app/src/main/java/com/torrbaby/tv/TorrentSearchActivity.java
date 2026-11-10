@@ -151,13 +151,13 @@ public final class TorrentSearchActivity extends Activity {
     Ui.gap(root,12);Ui.add(root,Ui.text(this,summary(item),14,Ui.MUTED),-1,30);
     LinearLayout actions=Ui.row(this);Ui.add(actions,Ui.button(this,"Back",this::onBackPressed),100,44);Ui.gap(actions,12);
     CheckBox paused=new CheckBox(this);paused.setText("Add paused");paused.setTextColor(Ui.TEXT);Ui.add(actions,paused,150,44);
-    String hash=item.optString("info_hash");Button add=Ui.button(this,added.contains(hash)?"Added":"Add torrent",()->{});
-    add.setEnabled(!added.contains(hash) && !item.optString("magnet").isEmpty());add.setOnClickListener(v -> add(item,paused.isChecked(),add));Ui.primary(add);Ui.add(actions,add,190,44);Ui.add(root,actions,-1,50);
+    String hash=item.optString("info_hash").isEmpty()?item.optString("name"):item.optString("info_hash");Button add=Ui.button(this,added.contains(hash)?"Added":"Add torrent",()->{});
+    add.setEnabled(!added.contains(hash));add.setOnClickListener(v -> add(item,paused.isChecked(),add));Ui.primary(add);Ui.add(actions,add,190,44);Ui.add(root,actions,-1,50);
     if(!tags(item).isEmpty())Ui.add(root,Ui.text(this,"Release tags · "+tags(item),14,Ui.MUTED),-1,40);
     Spinner attachments = new Spinner(this); attachments.setVisibility(View.GONE); Ui.add(root,attachments,-1,48);
     ListView files=new ListView(this);TextView description=Ui.text(this,"",15,Ui.TEXT);Ui.pad(description,0,14);files.addHeaderView(description,null,false);
     TextView note=Ui.text(this,"Loading details…",14,Ui.MUTED);files.addHeaderView(note,null,false);
-    root.addView(files,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);add.requestFocus();
+    root.addView(files,new LinearLayout.LayoutParams(-1,0,1));root.addView(ProfileUi.header(this, api),0);setContentView(root);add.requestFocus();
     JSONArray sources=item.optJSONArray("sources");JSONObject chosen=null;
     if(sources!=null)for(int i=0;i<sources.length();i++)if(sources.optJSONObject(i).optString("provider").equals("tpb")){chosen=sources.optJSONObject(i);break;}
     if(chosen==null && sources!=null)for(int i=0;i<sources.length();i++)if(sources.optJSONObject(i).optString("provider").equals("nyaa")){chosen=sources.optJSONObject(i);break;}
@@ -177,8 +177,10 @@ public final class TorrentSearchActivity extends Activity {
             public void onNothingSelected(AdapterView<?> p){}
             public void onItemSelected(AdapterView<?> p,View v,int position,long id){
               JSONObject resolved=releases.optJSONObject(position).optJSONObject("item");
+              if(!Boolean.TRUE.equals(add.getTag())) {
               add.setEnabled(!added.contains(resolved.optString("info_hash")));add.setText(added.contains(resolved.optString("info_hash"))?"Added":"Add torrent");
               add.setOnClickListener(view->add(resolved,paused.isChecked(),add));
+              }
               JSONArray fs=releases.optJSONObject(position).optJSONArray("files");List<String> labels=new ArrayList<>();
               if(fs!=null)for(int j=0;j<fs.length();j++){JSONObject f=fs.optJSONObject(j);labels.add(f.optString("name")+"\n"+android.text.format.Formatter.formatFileSize(TorrentSearchActivity.this,f.optLong("size_bytes")));}
               note.setText(labels.size()+" files");files.setAdapter(new ArrayAdapter<String>(TorrentSearchActivity.this,android.R.layout.simple_list_item_1,labels){public View getView(int p,View old,ViewGroup parent){TextView row=(TextView)super.getView(p,old,parent);row.setTextColor(Ui.TEXT);row.setTextSize(14);return row;}});
@@ -200,11 +202,31 @@ public final class TorrentSearchActivity extends Activity {
     if(text.length()>0)text.append("\n"); return text.toString();
   }
   private void add(JSONObject item, boolean paused, Button button) {
-    button.setEnabled(false);button.setText("Adding…");
+    if(Boolean.TRUE.equals(button.getTag()))return;
+    button.setTag(true);button.setEnabled(false);button.setText("Adding…");
     io.execute(()->{try{
-      JSONObject response=api.request("POST","/v1/torrents",new JSONObject().put("magnet",item.getString("magnet")).put("paused",paused));
-      runOnUiThread(()->{if(isDestroyed())return;added.add(item.optString("info_hash"));button.setText("Added");Toast.makeText(this,response.has("torrent_duplicate")?"Already in your torrents":"Torrent added",Toast.LENGTH_LONG).show();});
-    }catch(Exception error){runOnUiThread(()->{if(!isDestroyed()){button.setEnabled(true);button.setText("Add torrent");new AlertDialog.Builder(this).setTitle("Couldn’t add torrent").setMessage(MainActivity.message(error)).setPositiveButton("Close",null).show();}});}});
+      JSONObject payload=new JSONObject().put("paused",paused);
+      if(!item.optString("magnet").isEmpty() && !item.has("selected_attachment"))payload.put("magnet",item.getString("magnet"));
+      else {
+        JSONArray sources=item.optJSONArray("sources");JSONObject source=null;
+        if(sources!=null)for(int i=0;i<sources.length();i++)if(sources.optJSONObject(i).optString("provider").equals("1lou")){source=sources.optJSONObject(i);break;}
+        if(source==null)throw new Exception("This release has no downloadable torrent.");
+        JSONObject request=new JSONObject().put("provider","1lou").put("id",source.getString("id"));
+        if(item.has("selected_attachment"))request.put("attachment",item.getString("selected_attachment"));
+        JSONObject resolution=api.request("POST","/v1/search/torrents/resolve",request);
+        JSONArray choices=resolution.optJSONArray("choices");
+        if(choices!=null && choices.length()>0){
+          String[] labels=new String[choices.length()];for(int i=0;i<labels.length;i++)labels[i]=choices.getJSONObject(i).getString("name");
+          runOnUiThread(()->{if(isDestroyed())return;button.setTag(false);button.setEnabled(true);button.setText("Add torrent");
+            new AlertDialog.Builder(this).setTitle("Choose a release").setItems(labels,(dialog,index)->{
+              try{JSONObject selected=new JSONObject(item.toString()).put("selected_attachment",choices.getJSONObject(index).getString("id"));add(selected,paused,button);}catch(JSONException ignored){}
+            }).setNegativeButton("Cancel",null).show();});return;
+        }
+        payload.put("metainfo",resolution.getString("metainfo"));
+      }
+      JSONObject response=api.request("POST","/v1/torrents",payload);
+      runOnUiThread(()->{if(isDestroyed())return;added.add(item.optString("info_hash").isEmpty()?item.optString("name"):item.optString("info_hash"));button.setText("Added");Toast.makeText(this,response.has("torrent_duplicate")?"Already in your torrents":"Torrent added",Toast.LENGTH_LONG).show();});
+    }catch(Exception error){runOnUiThread(()->{if(!isDestroyed()){button.setTag(false);button.setEnabled(true);button.setText("Add torrent");new AlertDialog.Builder(this).setTitle("Couldn’t add torrent").setMessage(MainActivity.message(error)).setPositiveButton("Close",null).show();}});}});
   }
   public void onBackPressed(){if(inDetail){inDetail=false;generation++;setContentView(resultsRoot);list.requestFocus();}else super.onBackPressed();}
   protected void onDestroy(){generation++;sizeIo.shutdownNow();io.shutdownNow();super.onDestroy();}

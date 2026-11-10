@@ -400,6 +400,11 @@ private struct TorrentSearchDetail: View {
     @State private var added = false
     @State private var message: String?
     @State private var detailError: String?
+    private struct Choice: Decodable, Identifiable { let id: String; let name: String }
+    private struct Resolution: Decodable { let choices: [Choice]?; let item: TorrentSearchItem?; let metainfo: String? }
+    @State private var choices: [Choice] = []
+    @State private var selectedAttachment: String?
+
     var body: some View {
         List {
             SwiftUI.Section {
@@ -416,11 +421,17 @@ private struct TorrentSearchDetail: View {
                     }
                 }
                 if item.magnet.isEmpty, let release { Text(release.item.size).font(.subheadline).foregroundStyle(.secondary) }
+                if !choices.isEmpty {
+                    Picker("Release", selection: $selectedAttachment) {
+                        Text("Choose a release").tag(String?.none)
+                        ForEach(choices) { choice in Text(choice.name).tag(Optional(choice.id)) }
+                    }
+                }
                 Toggle("Add paused", isOn: $paused).disabled(adding || added)
                 Button { Task { await add() } } label: {
-                    Label(added ? "Added to Transmission" : adding ? "Adding…" : "Add torrent", systemImage: added ? "checkmark.circle.fill" : "plus.circle.fill")
-                }.buttonStyle(.borderedProminent).disabled(adding || added || resolved.magnet.isEmpty)
-                if let message { Text(message).foregroundStyle(.secondary) }
+                    Label(LocalizedStringKey(added ? "Added to Transmission" : adding ? "Adding…" : "Add torrent"), systemImage: added ? "checkmark.circle.fill" : "plus.circle.fill")
+                }.buttonStyle(.borderedProminent).disabled(adding || added)
+                if let message { Text(L10n.text(message)).foregroundStyle(.secondary) }
             }
             if !item.hints.summary.isEmpty {
                 SwiftUI.Section("Release tags") { Text(item.hints.summary) }
@@ -466,16 +477,29 @@ private struct TorrentSearchDetail: View {
             guard let source = item.sources.first(where: { $0.provider == "tpb" }) ?? item.sources.first(where: { $0.provider == "nyaa" }) ?? item.sources.first else { return }
             loading = true; defer { loading = false }
             do { detail = try await store.request("POST", "/v1/search/torrents/detail", body: ["provider": source.provider, "id": source.id], timeout: 45) }
-            catch { if !Task.isCancelled { detailError = item.magnet.isEmpty ? "Couldn’t load this release. Please reopen it to retry." : "Couldn’t load source details. You can still add this torrent." } }
+            catch { if !Task.isCancelled { detailError = "Couldn’t load source details. You can still add this torrent." } }
         }
     }
     private func add() async {
-        guard !adding && !added && !resolved.magnet.isEmpty else { return }; adding = true; message = nil
+        guard !adding && !added else { return }; adding = true; message = nil
         defer { adding = false }
         do {
             struct Torrent: Decodable { let name: String?; let hashString: String? }
             struct Added: Decodable { let torrentAdded: Torrent?; let torrentDuplicate: Torrent? }
-            let result: Added = try await store.request("POST", "/v1/torrents", body: ["magnet": resolved.magnet, "paused": paused], timeout: 45)
+            var payload: [String: Any] = ["paused": paused]
+            if !resolved.magnet.isEmpty && choices.isEmpty {
+                payload["magnet"] = resolved.magnet
+            } else if let source = item.sources.first(where: { $0.provider == "1lou" }) {
+                var request: [String: Any] = ["provider": source.provider, "id": source.id]
+                if let selectedAttachment { request["attachment"] = selectedAttachment }
+                let resolution: Resolution = try await store.request("POST", "/v1/search/torrents/resolve", body: request, timeout: 45)
+                if let options = resolution.choices, !options.isEmpty {
+                    choices = options; message = "Choose a release, then add it."; return
+                }
+                guard let metainfo = resolution.metainfo else { message = "Couldn’t retrieve this torrent. Try again."; return }
+                payload["metainfo"] = metainfo
+            } else { message = "This release has no downloadable torrent."; return }
+            let result: Added = try await store.request("POST", "/v1/torrents", body: payload, timeout: 45)
             added = true; message = result.torrentDuplicate == nil ? "Torrent added" : "Already in your torrents"
             store.notify(message ?? "Torrent added", detail: item.name, torrentHash: resolved.infoHash)
             #if !os(tvOS)
