@@ -72,7 +72,7 @@ final class Api {
     if (path.equals("/v1/library")) StartupTrace.mark("Library HTTP started");
     HttpURLConnection c = (HttpURLConnection) new URL(url(path)).openConnection();
     c.setConnectTimeout(8000);
-    c.setReadTimeout(path.endsWith("/remove") && method.equals("POST") ? 90000 : path.startsWith("/v1/search/") ? 30000 : path.equals("/v1/torrents") && method.equals("POST") ? 45000 : 15000);
+    c.setReadTimeout(path.endsWith("/remove") && method.equals("POST") ? 90000 : path.equals("/v1/search/torrents/detail") ? 45000 : path.startsWith("/v1/search/") ? 30000 : path.equals("/v1/torrents") && method.equals("POST") ? 45000 : 15000);
     c.setRequestMethod(method);
     c.setInstanceFollowRedirects(false);
     c.setRequestProperty("Accept", "application/json");

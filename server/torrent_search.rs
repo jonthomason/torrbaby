@@ -16,7 +16,7 @@ use std::{
 pub enum Market { World, China }
 impl Default for Market { fn default() -> Self { Self::World } }
 impl Market {
-    fn defaults(&self) -> Vec<String> { self.allowed()[..2].iter().map(|v| (*v).into()).collect() }
+    fn defaults(&self) -> Vec<String> { let sources: &[&str] = match self { Self::World => &["tpb", "csv"], Self::China => &["1lou"] }; sources.iter().map(|v| (*v).into()).collect() }
     fn allowed(&self) -> &[&str] { match self { Self::World => &["tpb", "csv", "nyaa"], Self::China => &["1lou", "dmhy", "mikan"] } }
 }
 #[derive(Clone, Deserialize, Serialize)]
@@ -85,6 +85,7 @@ pub struct Search {
     http: reqwest::Client,
     cache: Mutex<HashMap<String, (Instant, SearchResult)>>,
     gate: tokio::sync::Semaphore,
+    details: Mutex<HashMap<String, (Instant, Value)>>,
 }
 impl Search {
     pub fn new() -> Result<Self> {
@@ -102,13 +103,26 @@ impl Search {
                 .build()?,
             cache: Mutex::new(HashMap::new()),
             gate: tokio::sync::Semaphore::new(4),
+            details: Mutex::new(HashMap::new()),
         })
     }
     async fn read(&self, url: reqwest::Url) -> Result<String> {
         Ok(String::from_utf8(self.read_bytes(url).await?)?)
     }
     async fn read_bytes(&self, url: reqwest::Url) -> Result<Vec<u8>> {
-        let mut response = self.http.get(url).send().await?.error_for_status()?;
+        match self.read_once(url.clone()).await {
+            Ok(bytes) => Ok(bytes),
+            Err(error) if error.downcast_ref::<reqwest::Error>().is_some_and(|e| e.is_connect() || e.is_body() || e.is_request()) => {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                self.read_once(url).await
+            }
+            Err(error) => Err(error),
+        }
+    }
+    async fn read_once(&self, url: reqwest::Url) -> Result<Vec<u8>> {
+        let mut request = self.http.get(url.clone());
+        if url.host_str() == Some("www.1lou.me") { request = request.header(reqwest::header::CONNECTION, "close"); }
+        let mut response = request.send().await?.error_for_status()?;
         ensure!(
             response.content_length().is_none_or(|n| n <= 4_194_304),
             "Indexer response too large"
@@ -300,6 +314,9 @@ impl Search {
     pub async fn detail(&self, provider: &str, id: &str) -> Result<Value> {
         if provider == "1lou" {
             ensure!(!id.is_empty() && id.len() <= 12 && id.bytes().all(|b| b.is_ascii_digit()), "Invalid listing ID");
+            if let Some((at, value)) = self.details.lock().map_err(|_| anyhow::anyhow!("Search cache unavailable"))?.get(id) {
+                if at.elapsed() < Duration::from_secs(600) { return Ok(value.clone()); }
+            }
             let _permit = self.gate.try_acquire().context("Search is busy. Try again shortly.")?;
             let url = format!("http://www.1lou.me/thread-{id}.htm");
             let raw = self.read(reqwest::Url::parse(&url)?).await?;
@@ -314,7 +331,12 @@ impl Search {
                     chinese::torrent(&bytes, id, url)
                 }
             })).buffered(4).collect::<Vec<Result<Value>>>().await.into_iter().collect::<Result<Vec<_>>>()?;
-            return Ok(json!({"description": description, "releases":releases, "files":null, "evidence":"torrent_metadata", "media_verified":false}));
+            let value = json!({"description": description, "releases":releases, "files":null, "evidence":"torrent_metadata", "media_verified":false});
+            let mut cache = self.details.lock().map_err(|_| anyhow::anyhow!("Search cache unavailable"))?;
+            cache.retain(|_,(at,_)| at.elapsed() < Duration::from_secs(600));
+            if cache.len() >= 32 { cache.clear(); }
+            cache.insert(id.to_owned(), (Instant::now(), value.clone()));
+            return Ok(value);
         }
         if provider == "dmhy" || provider == "mikan" {
             ensure!(hash(id).is_some(), "Invalid listing ID");
