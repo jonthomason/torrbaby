@@ -1911,7 +1911,10 @@ async fn collect_metadata(s: &Service) -> Result<()> {
         }
         if let Some(hash) = asset["torrent_hash"].as_str() {
             if let Some(record) = torrent_metadata(s, hash)?
-                .filter(|r| r["confirmed"] == true && r["selected"].is_object())
+                .filter(|r| r["selected"].is_object() && (r["confirmed"] == true
+                    || (r["status"] == "matched" && r["selected"]["kind"] == "tv"
+                        && matches!(r["selected"]["match_confidence"].as_str(),
+                            Some("exact_title_year" | "exact_unique_title")))))
             {
                 let path = std::path::Path::new(text(&asset, "path")?);
                 let query = crate::metadata::parse_name(
@@ -1933,7 +1936,7 @@ async fn collect_metadata(s: &Service) -> Result<()> {
                     .count()
                     == 1;
                 if same_title || single_video {
-                    save_match(s, text(&asset, "id")?, record["selected"].clone(), true)?;
+                    save_match(s, text(&asset, "id")?, record["selected"].clone(), record["confirmed"] == true)?;
                     continue;
                 }
             }

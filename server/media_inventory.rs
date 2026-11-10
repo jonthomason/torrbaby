@@ -306,6 +306,15 @@ mod priority_tests {
 mod ocr_fallback_tests {
     use super::*;
     #[test]
+    fn chinese_text_gets_english_only_when_missing() {
+        let chinese=json!({"track":2,"text_extractable":true,"extraction_supported":true,"language":"zh-Hans"});
+        let tracks=vec![chinese.clone()];
+        let (_, source, target)=subtitle_source(&tracks).unwrap();
+        assert_eq!((source,target),("zh-Hans","en"));
+        let english=json!({"track":3,"text_extractable":true,"extraction_supported":true,"language":"eng"});
+        assert!(subtitle_source(&[chinese,english]).is_none());
+    }
+    #[test]
     fn text_and_sidecars_always_precede_bitmap_ocr() {
         let bitmap=json!({"track":3,"codec":"S_VOBSUB","language":null});
         let text=json!({"track":4,"text_extractable":true,"extraction_supported":true,"language":"en"});
