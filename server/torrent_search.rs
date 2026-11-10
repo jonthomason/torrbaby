@@ -1,4 +1,6 @@
-//! Read-only indexer search. Adding a result remains an explicit Transmission action.
+#[path = "chinese_index.rs"]
+mod chinese;
+// Read-only indexer search. Adding a result remains an explicit Transmission action.
 use anyhow::{Context, Result, ensure};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -15,7 +17,7 @@ pub enum Market { World, China }
 impl Default for Market { fn default() -> Self { Self::World } }
 impl Market {
     fn defaults(&self) -> Vec<String> { self.allowed()[..2].iter().map(|v| (*v).into()).collect() }
-    fn allowed(&self) -> &[&str] { match self { Self::World => &["tpb", "csv", "nyaa"], Self::China => &["dmhy", "mikan"] } }
+    fn allowed(&self) -> &[&str] { match self { Self::World => &["tpb", "csv", "nyaa"], Self::China => &["1lou", "dmhy", "mikan"] } }
 }
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Query {
@@ -103,6 +105,9 @@ impl Search {
         })
     }
     async fn read(&self, url: reqwest::Url) -> Result<String> {
+        Ok(String::from_utf8(self.read_bytes(url).await?)?)
+    }
+    async fn read_bytes(&self, url: reqwest::Url) -> Result<Vec<u8>> {
         let mut response = self.http.get(url).send().await?.error_for_status()?;
         ensure!(
             response.content_length().is_none_or(|n| n <= 4_194_304),
@@ -116,7 +121,7 @@ impl Search {
             );
             bytes.extend_from_slice(&chunk);
         }
-        Ok(String::from_utf8(bytes)?)
+        Ok(bytes)
     }
     pub async fn search(&self, mut query: Query) -> Result<SearchResult> {
         query.query = query.query.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -186,6 +191,10 @@ impl Search {
                         Ok(raw) => parse_csv(&raw),
                         Err(e) => Err(e),
                     }
+                } else if provider == "1lou" {
+                    let mut url = reqwest::Url::parse("http://www.1lou.me/search/api/search.php").unwrap();
+                    url.query_pairs_mut().append_pair("q", terms).append_pair("sort", "newest").append_pair("track", "0");
+                    match self.read(url).await { Ok(raw) => chinese::listings(&raw), Err(e) => Err(e) }
                 } else if provider == "dmhy" || provider == "mikan" {
                     let (base, key) = if provider == "dmhy" {
                         ("https://share.dmhy.org/topics/rss/rss.xml", "keyword")
@@ -224,7 +233,8 @@ impl Search {
                     });
                     for mut item in items {
                         score(&mut item, &query);
-                        if let Some(existing) = unique.get_mut(&item.info_hash) {
+                        let key = if item.info_hash.is_empty() { format!("{}:{}", item.sources[0].provider, item.sources[0].id) } else { item.info_hash.clone() };
+                        if let Some(existing) = unique.get_mut(&key) {
                             if item.match_score > existing.match_score
                                 || (item.match_score == existing.match_score
                                     && item.name.len() > existing.name.len())
@@ -238,7 +248,7 @@ impl Search {
                                 existing.size_bytes = item.size_bytes;
                             }
                         } else {
-                            unique.insert(item.info_hash.clone(), item);
+                            unique.insert(key, item);
                         }
                     }
                 }
@@ -288,6 +298,24 @@ impl Search {
         Ok(result)
     }
     pub async fn detail(&self, provider: &str, id: &str) -> Result<Value> {
+        if provider == "1lou" {
+            ensure!(!id.is_empty() && id.len() <= 12 && id.bytes().all(|b| b.is_ascii_digit()), "Invalid listing ID");
+            let _permit = self.gate.try_acquire().context("Search is busy. Try again shortly.")?;
+            let url = format!("http://www.1lou.me/thread-{id}.htm");
+            let raw = self.read(reqwest::Url::parse(&url)?).await?;
+            let (description, attachments) = chinese::thread(&raw)?;
+            ensure!(!attachments.is_empty(), "This listing has no downloadable torrent attachment");
+            use futures_util::StreamExt;
+            ensure!(attachments.len() <= 8, "This post contains too many attachments; open a more specific listing");
+            let releases = futures_util::stream::iter(attachments.into_iter().map(|attachment| {
+                let url = &url;
+                async move {
+                    let bytes = self.read_bytes(reqwest::Url::parse(&format!("http://www.1lou.me/attach-download-{attachment}.htm"))?).await?;
+                    chinese::torrent(&bytes, id, url)
+                }
+            })).buffered(4).collect::<Vec<Result<Value>>>().await.into_iter().collect::<Result<Vec<_>>>()?;
+            return Ok(json!({"description": description, "releases":releases, "files":null, "evidence":"torrent_metadata", "media_verified":false}));
+        }
         if provider == "dmhy" || provider == "mikan" {
             ensure!(hash(id).is_some(), "Invalid listing ID");
             return Ok(json!({"description":"", "files":null,"evidence":"source_listing","media_verified":false}));

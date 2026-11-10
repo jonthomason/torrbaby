@@ -26,7 +26,7 @@ public final class TorrentSearchActivity extends Activity {
   private final Set<String> added = new HashSet<>();
   private static final String[] SOURCE_NAMES = {"Recommended", "The Pirate Bay", "Nyaa", "Torrent CSV"};
 
-  private String[] sourceNames() { return china ? new String[]{"Recommended", "动漫花园", "蜜柑计划"} : SOURCE_NAMES; }
+  private String[] sourceNames() { return china ? new String[]{"Recommended", "BT之家", "动漫花园", "蜜柑计划"} : SOURCE_NAMES; }
   public void onCreate(Bundle state) {
     super.onCreate(state);
     try { api = new SecureStore(this).load(); } catch (Exception ignored) {}
@@ -71,7 +71,7 @@ public final class TorrentSearchActivity extends Activity {
     ((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(query.getWindowToken(),0);
     io.execute(() -> {
       try {
-        JSONArray sources=new JSONArray(); if(provider>0)sources.put(requestChina ? (provider==1?"dmhy":"mikan") : (provider==1?"tpb":provider==2?"nyaa":"csv"));
+        JSONArray sources=new JSONArray(); if(provider>0)sources.put(requestChina ? (provider==1?"1lou":provider==2?"dmhy":"mikan") : (provider==1?"tpb":provider==2?"nyaa":"csv"));
         JSONObject body = new JSONObject().put("query",value).put("market",requestChina?"china":"world").put("sources",sources);
         // Context applies only while searching the original library title.
         if(value.equals(getIntent().getStringExtra("query"))) {
@@ -91,7 +91,7 @@ public final class TorrentSearchActivity extends Activity {
       } catch(Exception error) {runOnUiThread(() -> {if(!isDestroyed()&&request==generation){search.setEnabled(true);list.setEnabled(true);status.setText(MainActivity.message(error));}});}
     });
   }
-  private static String label(String provider) {return provider.equals("dmhy")?"动漫花园":provider.equals("mikan")?"蜜柑计划":provider.equals("tpb")?"The Pirate Bay":provider.equals("csv")?"Torrent CSV":"Nyaa";}
+  private static String label(String provider) {return provider.equals("1lou")?"BT之家":provider.equals("dmhy")?"动漫花园":provider.equals("mikan")?"蜜柑计划":provider.equals("tpb")?"The Pirate Bay":provider.equals("csv")?"Torrent CSV":"Nyaa";}
   private String summary(JSONObject item) {
     List<String> parts=new ArrayList<>(); if(!item.isNull("size_bytes"))parts.add(android.text.format.Formatter.formatFileSize(this,item.optLong("size_bytes")));
     if(!item.isNull("seeders"))parts.add(item.optLong("seeders")+(item.optLong("seeders")==1?" seed":" seeds"));
@@ -122,8 +122,9 @@ public final class TorrentSearchActivity extends Activity {
     LinearLayout actions=Ui.row(this);Ui.add(actions,Ui.button(this,"Back",this::onBackPressed),100,44);Ui.gap(actions,12);
     CheckBox paused=new CheckBox(this);paused.setText("Add paused");paused.setTextColor(Ui.TEXT);Ui.add(actions,paused,150,44);
     String hash=item.optString("info_hash");Button add=Ui.button(this,added.contains(hash)?"Added":"Add torrent",()->{});
-    add.setEnabled(!added.contains(hash));add.setOnClickListener(v -> add(item,paused.isChecked(),add));Ui.primary(add);Ui.add(actions,add,190,44);Ui.add(root,actions,-1,50);
+    add.setEnabled(!added.contains(hash) && !item.optString("magnet").isEmpty());add.setOnClickListener(v -> add(item,paused.isChecked(),add));Ui.primary(add);Ui.add(actions,add,190,44);Ui.add(root,actions,-1,50);
     if(!tags(item).isEmpty())Ui.add(root,Ui.text(this,"Release tags · "+tags(item),14,Ui.MUTED),-1,40);
+    Spinner attachments = new Spinner(this); attachments.setVisibility(View.GONE); Ui.add(root,attachments,-1,48);
     ListView files=new ListView(this);TextView description=Ui.text(this,"",15,Ui.TEXT);Ui.pad(description,0,14);files.addHeaderView(description,null,false);
     TextView note=Ui.text(this,"Loading details…",14,Ui.MUTED);files.addHeaderView(note,null,false);
     root.addView(files,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);add.requestFocus();
@@ -136,8 +137,26 @@ public final class TorrentSearchActivity extends Activity {
     io.execute(() -> {try{
       JSONObject response=api.request("POST","/v1/search/torrents/detail",new JSONObject().put("provider",source.optString("provider")).put("id",source.optString("id")));
       JSONArray entries=response.optJSONArray("files");List<String> names=new ArrayList<>();if(entries!=null)for(int i=0;i<entries.length();i++){JSONObject f=entries.optJSONObject(i);names.add(f.optString("name")+(f.isNull("size_bytes")?"":"\n"+android.text.format.Formatter.formatFileSize(this,f.optLong("size_bytes"))));}
-      runOnUiThread(()->{if(isDestroyed()||request!=generation)return;description.setText(sourceLanguages(response)+response.optString("description"));note.setText(entries==null?"File list unavailable":names.size()+" files");files.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,names){public View getView(int p,View old,ViewGroup parent){TextView row=(TextView)super.getView(p,old,parent);row.setTextColor(Ui.TEXT);row.setTextSize(14);return row;}});});
-    }catch(Exception error){runOnUiThread(()->{if(!isDestroyed()&&request==generation)note.setText("Couldn’t load source details. You can still add this torrent.");});}});
+      runOnUiThread(()->{if(isDestroyed()||request!=generation)return;description.setText(sourceLanguages(response)+response.optString("description"));
+        JSONArray releases=response.optJSONArray("releases");
+        if(releases!=null && releases.length()>0) {
+          List<String> labels=new ArrayList<>(); for(int j=0;j<releases.length();j++)labels.add(releases.optJSONObject(j).optJSONObject("item").optString("name"));
+          attachments.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,labels));
+          attachments.setVisibility(releases.length()>1?View.VISIBLE:View.GONE);
+          attachments.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
+            public void onNothingSelected(AdapterView<?> p){}
+            public void onItemSelected(AdapterView<?> p,View v,int position,long id){
+              JSONObject resolved=releases.optJSONObject(position).optJSONObject("item");
+              add.setEnabled(!added.contains(resolved.optString("info_hash")));add.setText(added.contains(resolved.optString("info_hash"))?"Added":"Add torrent");
+              add.setOnClickListener(view->add(resolved,paused.isChecked(),add));
+              JSONArray fs=releases.optJSONObject(position).optJSONArray("files");List<String> labels=new ArrayList<>();
+              if(fs!=null)for(int j=0;j<fs.length();j++){JSONObject f=fs.optJSONObject(j);labels.add(f.optString("name")+"\n"+android.text.format.Formatter.formatFileSize(TorrentSearchActivity.this,f.optLong("size_bytes")));}
+              note.setText(labels.size()+" files");files.setAdapter(new ArrayAdapter<String>(TorrentSearchActivity.this,android.R.layout.simple_list_item_1,labels){public View getView(int p,View old,ViewGroup parent){TextView row=(TextView)super.getView(p,old,parent);row.setTextColor(Ui.TEXT);row.setTextSize(14);return row;}});
+            }
+          });
+        }
+        note.setText(entries==null?"File list unavailable":names.size()+" files");files.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,names){public View getView(int p,View old,ViewGroup parent){TextView row=(TextView)super.getView(p,old,parent);row.setTextColor(Ui.TEXT);row.setTextSize(14);return row;}});});
+    }catch(Exception error){runOnUiThread(()->{if(!isDestroyed()&&request==generation)note.setText(item.optString("magnet").isEmpty()?"Couldn’t load this release. Please reopen it to retry.":"Couldn’t load source details. You can still add this torrent.");});}});
   }
   private static String sourceLanguages(JSONObject response) {
     StringBuilder text=new StringBuilder();

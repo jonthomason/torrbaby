@@ -5,7 +5,7 @@ struct TorrentSearchSource: Decodable {
     let id: String
     let url: String
     var label: String { Self.label(provider) }
-    static func label(_ provider: String) -> String { ["tpb":"The Pirate Bay", "csv":"Torrent CSV", "nyaa":"Nyaa", "dmhy":"动漫花园", "mikan":"蜜柑计划"][provider] ?? provider }
+    static func label(_ provider: String) -> String { ["1lou":"BT之家", "tpb":"The Pirate Bay", "csv":"Torrent CSV", "nyaa":"Nyaa", "dmhy":"动漫花园", "mikan":"蜜柑计划"][provider] ?? provider }
 }
 struct TorrentReleaseHints: Decodable {
     let year: Int?
@@ -30,7 +30,7 @@ struct TorrentSearchItem: Decodable, Identifiable {
     let hints: TorrentReleaseHints
     let matchScore: Int
     let matchNotes: [String]
-    var id: String { infoHash }
+    var id: String { infoHash.isEmpty ? sources.map { "\($0.provider):\($0.id)" }.joined(separator: ",") : infoHash }
     var title: String {
         let cleaned = name.replacingOccurrences(of: #"^(?:www\.)?[^ ]+\.(?:org|com|net)\s*[-–]*\s+"#, with: "", options: .regularExpression)
         let marker = cleaned.range(of: #"(?i)\b(?:(?:19|20)\d{2}|S\d{1,2}(?:E\d+)?|Seasons?\s+\d|2160p|1080[pi]|720p|480p|WEB[ ._-]?DL|BluRay|BRRip|x26[45]|HEVC)\b"#, options: .regularExpression, range: cleaned.isEmpty ? nil : cleaned.index(after: cleaned.startIndex)..<cleaned.endIndex)
@@ -71,13 +71,16 @@ private struct TorrentSearchResponse: Decodable {
 }
 private struct TorrentSearchDetails: Decodable {
     struct File: Decodable { let name: String; let sizeBytes: UInt64?; let hints: TorrentReleaseHints }
+    struct Release: Decodable { let item: TorrentSearchItem; let files: [File] }
+    let releases: [Release]?
     let description: String
     let files: [File]?
     let audioLanguage: String?
     let subtitleLanguage: String?
-    enum CodingKeys: String, CodingKey { case description, files, audioLanguage, subtitleLanguage }
+    enum CodingKeys: String, CodingKey { case description, files, audioLanguage, subtitleLanguage, releases }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        releases = try values.decodeIfPresent([Release].self, forKey: .releases)
         description = try values.decode(String.self, forKey: .description)
         files = try values.decodeIfPresent([File].self, forKey: .files)
         audioLanguage = try? values.decode(String.self, forKey: .audioLanguage)
@@ -185,6 +188,7 @@ struct TorrentSearchView: View {
                 Picker("Sources", selection: $source) {
                     Text("Recommended").tag("all")
                     if market == "china" {
+                        Text("BT之家").tag("1lou")
                         Text("动漫花园").tag("dmhy")
                         Text("蜜柑计划").tag("mikan")
                     } else {
@@ -337,6 +341,12 @@ private struct TorrentSearchDetail: View {
     var embedded = false
     var onAdded: () -> Void = {}
     @State private var detail: TorrentSearchDetails?
+    @State private var attachment = 0
+    private var release: TorrentSearchDetails.Release? {
+        guard let values = detail?.releases, values.indices.contains(attachment) else { return nil }
+        return values[attachment]
+    }
+    private var resolved: TorrentSearchItem { release?.item ?? item }
     @State private var loading = false
     @State private var adding = false
     @State private var paused = false
@@ -351,10 +361,18 @@ private struct TorrentSearchDetail: View {
                 Text([item.quality, item.size].filter { !$0.isEmpty }.joined(separator: " · ")).font(.subheadline).foregroundStyle(.secondary)
                 Label(item.availability, systemImage: "arrow.up.circle.fill").font(.caption).foregroundStyle(Theme.mint)
                 Text(item.name).font(.caption).foregroundStyle(.secondary).searchSelectable
+                if let releases = detail?.releases, releases.count > 1 {
+                    Picker("Release", selection: $attachment) {
+                        ForEach(Array(releases.enumerated()), id: \.offset) { index, release in
+                            Text(release.item.name).tag(index)
+                        }
+                    }
+                }
+                if item.magnet.isEmpty, let release { Text(release.item.size).font(.subheadline).foregroundStyle(.secondary) }
                 Toggle("Add paused", isOn: $paused).disabled(adding || added)
                 Button { Task { await add() } } label: {
                     Label(added ? "Added to Transmission" : adding ? "Adding…" : "Add torrent", systemImage: added ? "checkmark.circle.fill" : "plus.circle.fill")
-                }.buttonStyle(.borderedProminent).disabled(adding || added)
+                }.buttonStyle(.borderedProminent).disabled(adding || added || resolved.magnet.isEmpty)
                 if let message { Text(message).foregroundStyle(.secondary) }
             }
             if !item.hints.summary.isEmpty {
@@ -384,7 +402,7 @@ private struct TorrentSearchDetail: View {
                     SwiftUI.Section { DisclosureGroup("Description") { Text(detail.description).font(.callout).searchSelectable } }
                     #endif
                 }
-                if let files = detail.files {
+                if let files = release?.files ?? detail.files {
                     SwiftUI.Section("Files · \(files.count)") {
                         ForEach(Array(files.enumerated()), id: \.offset) { _, file in
                             VStack(alignment: .leading, spacing: 5) {
@@ -400,19 +418,19 @@ private struct TorrentSearchDetail: View {
         .task {
             guard let source = item.sources.first(where: { $0.provider == "tpb" }) ?? item.sources.first(where: { $0.provider == "nyaa" }) ?? item.sources.first else { return }
             loading = true; defer { loading = false }
-            do { detail = try await store.request("POST", "/v1/search/torrents/detail", body: ["provider": source.provider, "id": source.id], timeout: 30) }
-            catch { if !Task.isCancelled { detailError = "Couldn’t load source details. You can still add this torrent." } }
+            do { detail = try await store.request("POST", "/v1/search/torrents/detail", body: ["provider": source.provider, "id": source.id], timeout: 45) }
+            catch { if !Task.isCancelled { detailError = item.magnet.isEmpty ? "Couldn’t load this release. Please reopen it to retry." : "Couldn’t load source details. You can still add this torrent." } }
         }
     }
     private func add() async {
-        guard !adding && !added else { return }; adding = true; message = nil
+        guard !adding && !added && !resolved.magnet.isEmpty else { return }; adding = true; message = nil
         defer { adding = false }
         do {
             struct Torrent: Decodable { let name: String?; let hashString: String? }
             struct Added: Decodable { let torrentAdded: Torrent?; let torrentDuplicate: Torrent? }
-            let result: Added = try await store.request("POST", "/v1/torrents", body: ["magnet": item.magnet, "paused": paused], timeout: 45)
+            let result: Added = try await store.request("POST", "/v1/torrents", body: ["magnet": resolved.magnet, "paused": paused], timeout: 45)
             added = true; message = result.torrentDuplicate == nil ? "Torrent added" : "Already in your torrents"
-            store.notify(message ?? "Torrent added", detail: item.name, torrentHash: item.infoHash)
+            store.notify(message ?? "Torrent added", detail: item.name, torrentHash: resolved.infoHash)
             #if !os(tvOS)
             onAdded()
             if !embedded { dismiss() }
