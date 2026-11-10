@@ -12,7 +12,8 @@ final class PosterCard extends LinearLayout {
   static int created;
   private final ImageView poster;
   private final FrameLayout artwork;
-  private final TextView title, subtitle, watched;
+  private final TextView title, subtitle, watched, remaining;
+  private boolean continuing;
   private final ProgressBar progress;
   private final Art art;
   private Library.Title item;
@@ -44,6 +45,7 @@ final class PosterCard extends LinearLayout {
     Ui.add(this,title,-1,36);
     subtitle=Ui.text(context,"",11,Ui.MUTED); subtitle.setSingleLine(true); subtitle.setEllipsize(TextUtils.TruncateAt.END);
     Ui.add(this,subtitle,-1,17);
+    remaining=Ui.text(context,"",11,Ui.MUTED);remaining.setSingleLine(true);Ui.add(this,remaining,-1,17);remaining.setVisibility(GONE);
     progress=new ProgressBar(context,null,android.R.attr.progressBarStyleHorizontal);
     progress.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.ACCENT));
     Ui.add(this,progress,-1,3);
@@ -60,13 +62,32 @@ final class PosterCard extends LinearLayout {
     subtitle.setText(resume!=null ? (resume.position==0?"Up next · "+resume.label():resume.status()) : value.watched()?L10n.t("Watched"):value.year);
     progress.setVisibility(resume!=null&&resume.duration>0?VISIBLE:INVISIBLE);
     progress.setProgress(resume!=null&&resume.duration>0?(int)(100*resume.position/resume.duration):0);
+    updateCaption();
     art.load(poster,value.id,"poster",value.poster);
+  }
+
+  void showContinuation(boolean enabled) { continuing=enabled;updateCaption(); }
+  private void updateCaption() {
+    remaining.setVisibility(GONE);
+    if(!continuing || item==null)return;
+    Library.Asset resume=item.resume();if(resume==null)return;
+    if(item.kind.equals("tv") && resume.hasSeason) {
+      subtitle.setText((resume.position==0?L10n.t("Up next")+" · ":"")+String.format(java.util.Locale.ROOT,"S%dE%d",resume.season,resume.episode));
+      subtitle.setVisibility(VISIBLE);
+    } else { subtitle.setVisibility(GONE); }
+    if(resume.duration>0) {
+      remaining.setText(String.format(L10n.locale(),L10n.t("%d min remaining"),(int)Math.ceil(Math.max(0,resume.duration-resume.position)/60)));
+      remaining.setVisibility(VISIBLE);
+    }
   }
 
   void focusAppearance(boolean focused) {
     artwork.animate().cancel();
-    artwork.setForeground(focused?Ui.shape(0,Ui.ACCENT,getContext()):null);
-    // Keep the footprint fixed so focus never clips a neighboring poster or causes layout work.
+    android.graphics.drawable.GradientDrawable outline=Ui.shape(0,0,getContext());
+    outline.setStroke(Ui.dp(getContext(),1),0xa6ffffff);
+    artwork.setForeground(focused?outline:null);
+    artwork.animate().scaleX(focused?1.045f:1).scaleY(focused?1.045f:1).setDuration(150).start();
+    // Visual growth does not change layout or scroll geometry.
     title.setTextColor(focused?Color.WHITE:Ui.TEXT);
     subtitle.setTextColor(focused?0xffd2dedb:Ui.MUTED);
     artwork.setElevation(Ui.dp(getContext(),focused?6:0));

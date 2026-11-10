@@ -106,6 +106,7 @@
     <string name="ui_5cbc510fd460" formatted="false">无法加载此资源，请重新打开以重试。</string>
     <string name="ui_b8b71a01afec" formatted="false">无法管理文件</string>
     <string name="ui_043e16ed23b9" formatted="false">无法打开 Torrbaby</string>
+    <string name="ui_4a73957afb95" formatted="false">无法刷新文件操作</string>
     <string name="ui_bf0f3a2d2c62" formatted="false">无法获取此种子，请重试。</string>
     <string name="ui_6e157c5da441" formatted="false">创建</string>
     <string name="ui_bdbcfa0af077" formatted="false">创建用户</string>
@@ -536,6 +537,7 @@
     <string name="ui_39fc72124884" formatted="false">撤销</string>
     <string name="ui_b8bef37b7153" formatted="false">不限量</string>
     <string name="ui_e50bad848e4a" formatted="false">不支持处理此媒体容器</string>
+    <string name="ui_567bfc4dad37" formatted="false">接下来播放</string>
     <string name="ui_8bdf057f91e7" formatted="false">上传</string>
     <string name="ui_2fb6cfd6c7df" formatted="false">使用 Torrbaby 打开磁力链接</string>
     <string name="ui_952de75621d0" formatted="false">使用可用空间</string>

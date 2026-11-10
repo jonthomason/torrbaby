@@ -139,27 +139,34 @@ struct TVRootView: View {
             .navigationDestination(for: LibraryDestination.self) { route in TVMediaDetail(titleID: route.id) }
             .navigationDestination(for: TVShelfDestination.self) { route in TVMediaDetail(titleID: route.id, autoPlay: route.play) }
         }
+        .ignoresSafeArea(.container, edges: [.top, .horizontal])
         .safeAreaInset(edge: .top, spacing: 0) {
-            HStack(spacing: 18) {
-                if store.configured {
-                    Button { store.choosingProfile = true } label: {
-                        if let profile = store.activeProfile { ProfileAvatar(profile: profile, size: 44) }
-                        else { Image(systemName: "person.crop.circle") }
-                    }.accessibilityLabel("Switch user")
-                    Image("TorrbabyLogo").resizable().scaledToFit().frame(width: 52, height: 44)
-                    ForEach(sections, id: \.self) { item in
-                        Button { path = NavigationPath(); settings = false; section = item } label: {
-                            Text(LocalizedStringKey(item)).font(.system(size: 23, weight: .semibold))
-                        }.tint(section == item ? Theme.mint : .gray)
+            ZStack {
+                if store.configured && path.isEmpty {
+                    HStack(spacing: 8) {
+                        ForEach(sections, id: \.self) { item in
+                            Button { settings = false; section = item } label: {
+                                Text(LocalizedStringKey(item)).font(.system(size: 24, weight: .semibold))
+                            }.buttonStyle(TVMonochromeButtonStyle(selected: section == item))
+                        }
+                    }
+                    HStack(spacing: 8) {
+                        Button { store.choosingProfile = true } label: {
+                            if let profile = store.activeProfile { ProfileAvatar(profile: profile, size: 40) }
+                            else { Image(systemName: "person.crop.circle") }
+                        }.buttonStyle(TVMonochromeButtonStyle()).accessibilityLabel("Switch user")
+                        Image("TorrbabyLogo").resizable().scaledToFit().frame(width: 44, height: 44)
+                        Spacer()
                     }
                 }
-                Spacer(minLength: 12)
-                InterfaceLanguagePicker()
+                HStack { Spacer(); TVLanguagePicker() }
             }
-            .buttonBorderShape(.roundedRectangle(radius: 10))
-            .padding(.horizontal, 48).padding(.vertical, 18)
-            .background(.ultraThinMaterial).focusSection()
+            .frame(height: 56).padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 12)
+            .focusSection()
         }
+        .background(Color.black.ignoresSafeArea())
+        .tint(.white)
+        .ignoresSafeArea(.container, edges: [.top, .horizontal])
         .overlay(alignment: .bottom) { ContinueWatchingUndoBanner() }
         .task(id: phase) {
             while !Task.isCancelled && phase == .active {
@@ -202,20 +209,7 @@ private struct TVLibraryView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 48) {
                 if kind == nil, let featured {
-                    NavigationLink(value: LibraryDestination(id: featured.id)) {
-                        LibraryArtwork(id: featured.id, variant: "backdrop", alignment: .top)
-                            .frame(height: 740)
-                            .overlay(LinearGradient(colors: [.black.opacity(0.1), .black.opacity(0.9)], startPoint: .top, endPoint: .bottom))
-                            .overlay(alignment: .bottomLeading) {
-                                VStack(alignment: .leading, spacing: 16) {
-                                    Text(featured.title).font(.system(size: 48, weight: .bold)).lineLimit(2)
-                                    Text(LocalizedStringKey(([featured.year ?? ""] + featured.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · ")))
-                                        .font(.headline)
-                                    Label("Explore", systemImage: "play.circle.fill").font(.headline)
-                                }.foregroundStyle(.white).padding(.horizontal, 90).padding(.bottom, 55)
-                                    .frame(maxWidth: 1250, alignment: .leading)
-                            }
-                    }.buttonStyle(TVHeroButtonStyle()).padding(.horizontal, -70)
+                    TVFeaturedHero(title: featured)
                 }
                 if kind == nil {
                     let continuing = titles.filter { $0.isContinuing }.sorted { $0.continueWatchingAt > $1.continueWatchingAt }
@@ -235,30 +229,65 @@ private struct TVLibraryView: View {
                     Text(LocalizedStringKey(kind == "movie" ? "Movies" : "TV Shows")).font(.largeTitle.bold())
                     TVPosterGrid(titles: titles.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending })
                 }
-                if titles.isEmpty { ContentUnavailableView("Your library", systemImage: "film.stack") }
-                if let error = store.libraryError { Text(L10n.text(error)).foregroundStyle(.orange) }
-            }.padding(.horizontal, 70).padding(.vertical, 40)
-        }.ignoresSafeArea(.container, edges: .horizontal).background {
-            GeometryReader { geometry in
-                if let featured {
-                    LibraryArtwork(id: featured.id, variant: "backdrop")
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                        .blur(radius: 90).saturation(0.65).opacity(0.38)
-                        .overlay(Theme.canvas.opacity(0.4))
+                if titles.isEmpty {
+                    if store.library == nil { ProgressView().tint(.white).frame(maxWidth: .infinity, minHeight: 160) }
+                    else { Text("Your library is empty").font(.headline).foregroundStyle(.secondary).padding(.vertical, 40) }
                 }
-            }.background(Theme.canvas).ignoresSafeArea()
-        }
+                if let error = store.libraryError { Text(L10n.text(error)).foregroundStyle(.orange) }
+            }.padding(.horizontal, 32).padding(.top, 8).padding(.bottom, 40)
+        }.background(Color.black)
     }
+
 }
 
-private struct TVHeroButtonStyle: ButtonStyle {
+private struct TVMonochromeButtonStyle: ButtonStyle {
+    var selected = false
     @Environment(\.isFocused) private var focused
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(Theme.mint).frame(height: focused ? 5 : 0)
-            }
-            .brightness(configuration.isPressed ? -0.08 : 0)
+            .padding(.horizontal, 18).padding(.vertical, 8)
+            .foregroundStyle(focused || selected ? Color.black : .white)
+            .background(focused || selected ? Color.white : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .scaleEffect(focused ? 1.025 : 1)
+            .opacity(configuration.isPressed ? 0.75 : 1)
+            .animation(.easeOut(duration: 0.15), value: focused)
+    }
+}
+
+private struct TVLanguagePicker: View {
+    @ObservedObject private var language = InterfaceLanguage.shared
+    var body: some View {
+        HStack(spacing: 2) {
+            Button { language.choose("en") } label: { Text(verbatim: "EN") }
+                .buttonStyle(TVMonochromeButtonStyle(selected: language.code == "en"))
+            Button { language.choose("zh-Hans") } label: { Text(verbatim: "中文") }
+                .buttonStyle(TVMonochromeButtonStyle(selected: language.code == "zh-Hans"))
+        }.font(.system(size: 22, weight: .semibold))
+    }
+}
+
+private struct TVFeaturedHero: View {
+    let title: LibraryTitle
+    @FocusState private var focused: Bool
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            LibraryArtwork(id: title.id, variant: "backdrop", alignment: .top)
+            LinearGradient(colors: [.clear, .black.opacity(0.88)], startPoint: .center, endPoint: .bottom)
+            VStack(alignment: .leading, spacing: 16) {
+                Text(title.title).font(.system(size: 48, weight: .bold)).lineLimit(2)
+                Text(([title.year ?? ""] + title.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.headline)
+                NavigationLink(value: LibraryDestination(id: title.id)) {
+                    Label("Explore", systemImage: "play.fill").font(.headline)
+                }.buttonStyle(TVMonochromeButtonStyle()).focused($focused)
+            }.foregroundStyle(.white).padding(44)
+        }.frame(height: 650)
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(focused ? 0.65 : 0), lineWidth: 2))
+            .scaleEffect(focused ? 1.006 : 1)
+            .animation(.easeOut(duration: 0.15), value: focused)
+            .defaultFocus($focused, true)
+            .task { focused = true }
     }
 }
 
@@ -268,6 +297,7 @@ private struct TVMediaDetail: View {
     let titleID: String
     var autoPlay = false
     @State private var didAutoPlay = false
+    @FocusState private var heroFocused: Bool
     @State private var season: Int?
     @State private var playback: Playback?
     @State private var loading = false
@@ -286,23 +316,16 @@ private struct TVMediaDetail: View {
                             Text(LocalizedStringKey(([title.year ?? "", title.contentRating ?? ""] + title.genres.prefix(3)).filter { !$0.isEmpty }.joined(separator: " · ")))
                                 .font(.headline).foregroundStyle(.white.opacity(0.8))
                             if let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
-                                ScrollView(.horizontal) {
-                                    HStack(spacing: 20) {
-                                        Button { play(asset, title: title) } label: {
-                                            Label(asset.playbackActionTitle(television: title.kind == "tv"), systemImage: "play.fill")
-                                                .frame(width: title.kind == "tv" ? 650 : nil, alignment: .leading)
-                                        }.buttonStyle(.borderedProminent).tint(Theme.mint).disabled(loading)
-                                        LibraryCastLink(title: title)
-                                        if asset.position > 0 {
-                                            Button("Start from Beginning") { play(asset, title: title, fromBeginning: true) }
-                                                .disabled(loading)
-                                        }
-                                        TVDetailMoreActions(asset: asset, title: title)
-                                    }.buttonBorderShape(.roundedRectangle(radius: 10)).padding(12)
-                                }.scrollClipDisabled().focusSection()
+                                Button { play(asset, title: title) } label: {
+                                    Label(asset.playbackActionTitle(television: title.kind == "tv"), systemImage: "play.fill")
+                                        .font(.headline)
+                                }.buttonStyle(TVMonochromeButtonStyle()).focused($heroFocused).disabled(loading)
                             }
-                        }.padding(.horizontal, 90).padding(.bottom, 50).frame(maxWidth: 1350, alignment: .leading)
-                    }.frame(height: 740)
+                        }.padding(44).frame(maxWidth: 1400, alignment: .leading)
+                    }.frame(height: 650)
+                        .clipShape(RoundedRectangle(cornerRadius: 18))
+                        .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(heroFocused ? 0.65 : 0), lineWidth: 2))
+                        .scaleEffect(heroFocused ? 1.006 : 1)
                     VStack(alignment: .leading, spacing: 38) {
                         if loading {
                             HStack {
@@ -315,6 +338,22 @@ private struct TVMediaDetail: View {
                         }
                         if !title.summary.isEmpty {
                             Text(title.summary).font(.system(size: 27)).lineSpacing(7).frame(maxWidth: 1300, alignment: .leading)
+                                .focusable().focusEffectDisabled()
+                        }
+                        if let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
+                            VStack(alignment: .leading, spacing: 8) {
+                                if let members = title.cast, !members.isEmpty {
+                                    NavigationLink { LibraryCast(title: title.title, members: members, television: title.kind == "tv") } label: {
+                                        Label("Cast", systemImage: "person.2")
+                                    }
+                                }
+                                if asset.position > 0 {
+                                    Button { play(asset, title: title, fromBeginning: true) } label: {
+                                        Label("Start from Beginning", systemImage: "backward.end.fill")
+                                    }.disabled(loading)
+                                }
+                                TVDetailMoreActions(asset: asset, title: title)
+                            }.buttonStyle(TVMonochromeButtonStyle()).focusSection()
                         }
                         let seasons = Array(Set(title.assets.filter { $0.role != "extra" }.compactMap(\.season))).sorted()
                         let selectedSeason = season ?? title.resume?.season ?? title.playable.first(where: { !$0.watched && ($0.season ?? 0) > 0 })?.season ?? seasons.first(where: { $0 > 0 }) ?? seasons.first
@@ -323,7 +362,7 @@ private struct TVMediaDetail: View {
                                 HStack(spacing: 25) {
                                     ForEach(seasons, id: \.self) { number in
                                         Button(LocalizedStringKey(number == 0 ? "Specials" : "Season \(number)")) { season = number }
-                                            .tint(selectedSeason == number ? Theme.mint : .gray)
+                                            .buttonStyle(TVMonochromeButtonStyle(selected: selectedSeason == number))
                                     }
                                 }.padding(15)
                             }.scrollClipDisabled().focusSection()
@@ -343,18 +382,15 @@ private struct TVMediaDetail: View {
                             Text("Special features").font(.title2.bold())
                             ForEach(extras) { asset in assetButton(asset, title: title) }
                         }
-                    }.padding(.horizontal, 90).padding(.bottom, 70)
-                }
+                    }.padding(.horizontal, 12).padding(.bottom, 70)
+                }.padding(.horizontal, 32).padding(.top, 8)
             }
-        }.ignoresSafeArea(.container, edges: .horizontal)
-            .background {
-                if let title {
-                    LibraryArtwork(id: title.id, variant: title.backdrop == nil ? "poster" : "backdrop")
-                        .blur(radius: 90).opacity(0.25).overlay(Theme.canvas.opacity(0.6)).ignoresSafeArea()
-                }
-            }
+        }.background(Color.black)
+            .toolbar(.hidden, for: .navigationBar)
             .fullScreenCover(item: $playback) { PlayerScreen(playback: $0, store: store).onExitCommand { playback = nil } }
+            .defaultFocus($heroFocused, true)
             .task(id: title?.id) {
+                if title != nil { heroFocused = true }
                 guard autoPlay, !didAutoPlay, let title,
                       let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first else { return }
                 didAutoPlay = true; play(asset, title: title)
@@ -412,7 +448,7 @@ private struct TVDetailMoreActions: View {
     @State private var saving = false
     var body: some View {
         Button { showMenu = true } label: {
-            Image(systemName: "ellipsis").frame(minWidth: 44)
+            Label("More", systemImage: "ellipsis")
         }
         .accessibilityLabel("More")
         .disabled(saving)
@@ -449,7 +485,7 @@ private struct TVShelf: View {
                 Text(L10n.text(name)).font(.title2.bold())
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: 24) {
-                        ForEach(titles) { TVPoster(title: $0).frame(width: 220) }
+                        ForEach(titles) { TVPoster(title: $0, continuing: name == "Continue watching").frame(width: 220) }
                     }.padding(20)
                 }.scrollClipDisabled().scrollIndicators(.hidden)
             }.focusSection()
@@ -458,18 +494,41 @@ private struct TVShelf: View {
 }
 
 
+private struct TVPosterButtonStyle: ButtonStyle {
+    @Environment(\.isFocused) private var focused
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(focused ? 0.65 : 0), lineWidth: 2))
+            .scaleEffect(focused ? 1.045 : 1)
+            .brightness(configuration.isPressed ? -0.08 : 0)
+            .animation(.easeOut(duration: 0.15), value: focused)
+    }
+}
+
 private struct TVPoster: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let title: LibraryTitle
+    var continuing = false
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             NavigationLink(value: LibraryDestination(id: title.id)) {
                 LibraryArtwork(id: title.id).aspectRatio(2.0 / 3.0, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                     .overlay(alignment: .topTrailing) { if title.watched { WatchedBadge() } }
-            }.buttonStyle(.card).contextMenu { ContinueWatchingAction(title: title) }
+            }.buttonStyle(TVPosterButtonStyle()).contextMenu { ContinueWatchingAction(title: title) }
             Text(title.title).font(.system(size: 25, weight: .semibold)).lineLimit(2)
-            Text(LocalizedStringKey(title.continuationLabel ?? title.year ?? "")).font(.system(size: 21)).foregroundStyle(Theme.muted)
+            if continuing, let asset = title.resume {
+                VStack(alignment: .leading, spacing: 5) {
+                    if let season = asset.season, let episode = asset.episode {
+                        Text((asset.position == 0 ? L10n.text("Up next") + " · " : "") + EpisodeNumber(season: season, episode: episode).label)
+                    }
+                    if asset.duration > 0 {
+                        Text(L10n.format("%d min remaining", Int(ceil(max(0, asset.duration - asset.position) / 60))))
+                    }
+                }.font(.system(size: 21)).foregroundStyle(Theme.muted)
+            } else {
+                Text(LocalizedStringKey(title.continuationLabel ?? title.year ?? "")).font(.system(size: 21)).foregroundStyle(Theme.muted)
+            }
         }
     }
 }

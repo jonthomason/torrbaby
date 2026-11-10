@@ -76,16 +76,25 @@ struct TorrbabyApp: App {
 }
 
 enum Theme {
-    #if os(iOS)
+    #if os(tvOS)
+    static let mint = Color.white
+    static let onAccent = Color.black
+    #elseif os(iOS)
     static let mint = Color.blue
     static let onAccent = Color.white
     #else
     static let mint = Color(red: 0.44, green: 0.91, blue: 0.76)
     static let onAccent = canvas
     #endif
+    #if os(tvOS)
+    static let canvas = Color.black
+    static let panel = Color(white: 0.08)
+    static let muted = Color(white: 0.65)
+    #else
     static let canvas = Color(red: 0.055, green: 0.075, blue: 0.10)
     static let panel = Color(red: 0.09, green: 0.115, blue: 0.15)
     static let muted = Color(red: 0.56, green: 0.63, blue: 0.69)
+    #endif
 }
 
 struct Card<Content: View>: View {

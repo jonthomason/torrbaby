@@ -117,6 +117,7 @@ final class L10n {
     IDS.put("Couldn’t load this release. Please reopen it to retry.", R.string.ui_5cbc510fd460);
     IDS.put("Couldn’t manage files", R.string.ui_b8b71a01afec);
     IDS.put("Couldn’t open Torrbaby", R.string.ui_043e16ed23b9);
+    IDS.put("Couldn’t refresh file operations", R.string.ui_4a73957afb95);
     IDS.put("Couldn’t retrieve this torrent. Try again.", R.string.ui_bf0f3a2d2c62);
     IDS.put("Create", R.string.ui_6e157c5da441);
     IDS.put("Create user", R.string.ui_bdbcfa0af077);
@@ -547,6 +548,7 @@ final class L10n {
     IDS.put("Undo", R.string.ui_39fc72124884);
     IDS.put("Unlimited", R.string.ui_b8bef37b7153);
     IDS.put("Unsupported media container for processing", R.string.ui_e50bad848e4a);
+    IDS.put("Up next", R.string.ui_567bfc4dad37);
     IDS.put("Upload", R.string.ui_8bdf057f91e7);
     IDS.put("Use Torrbaby for magnet links", R.string.ui_2fb6cfd6c7df);
     IDS.put("Use available space", R.string.ui_952de75621d0);
@@ -612,7 +614,7 @@ final class L10n {
         activity.getSharedPreferences("interface",0).edit().putString("language",code).apply();
         activity.recreate();
       });
-      if(locale().getLanguage().equals(code)) { button.setBackground(Ui.shape(0xff007aff, 0xff007aff, activity)); button.setTextColor(0xffffffff); }
+      Ui.tab(button, locale().getLanguage().equals(code));
       Ui.add(row,button,64,40);Ui.gap(row,4);
     }
     return row;

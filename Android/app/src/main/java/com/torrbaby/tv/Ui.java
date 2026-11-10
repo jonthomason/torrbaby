@@ -11,11 +11,11 @@ final class Ui {
   private static final Typeface BODY_FONT = Typeface.create("sans-serif", Typeface.NORMAL);
   private static final Typeface LABEL_FONT = Typeface.create("sans-serif-medium", Typeface.NORMAL);
   private static final Typeface TITLE_FONT = Typeface.create("sans-serif", Typeface.BOLD);
-  static final int BG = Color.rgb(14, 19, 26),
-      PANEL = Color.rgb(23, 29, 38),
-      TEXT = Color.rgb(240, 243, 245),
-      MUTED = Color.rgb(143, 161, 176),
-      ACCENT = Color.rgb(112, 232, 194);
+  static final int BG = Color.BLACK,
+      PANEL = Color.rgb(20,20,20),
+      TEXT = Color.WHITE,
+      MUTED = Color.rgb(170,170,170),
+      ACCENT = Color.WHITE;
 
   static int dp(Context c, float n) {
     return (int) (n * c.getResources().getDisplayMetrics().density + .5f);
@@ -32,25 +32,19 @@ final class Ui {
   static void focus(View v) {
     Context c = v.getContext();
     StateListDrawable s = new StateListDrawable();
-    s.addState(new int[] {android.R.attr.state_focused}, shape(0xff304d49, ACCENT, c));
-    s.addState(new int[] {android.R.attr.state_pressed}, shape(0xff304d49, ACCENT, c));
-    s.addState(new int[] {}, shape(0xff242e39, 0, c));
+    s.addState(new int[] {android.R.attr.state_focused}, shape(v instanceof TextView ? Color.WHITE : Color.TRANSPARENT, Color.WHITE, c));
+    s.addState(new int[] {android.R.attr.state_pressed}, shape(v instanceof TextView ? Color.WHITE : Color.TRANSPARENT, Color.WHITE, c));
+    s.addState(new int[] {}, shape(Color.TRANSPARENT, 0, c));
     v.setBackground(s);
+    if(v instanceof TextView)((TextView)v).setTextColor(new android.content.res.ColorStateList(
+        new int[][]{new int[]{android.R.attr.state_focused},new int[]{android.R.attr.state_pressed},new int[]{}},
+        new int[]{Color.BLACK,Color.BLACK,Color.WHITE}));
     v.setFocusable(true);
     v.setFocusableInTouchMode(true);
   }
 
   static void primary(Button b) {
-    Context c = b.getContext();
-    StateListDrawable background = new StateListDrawable();
-    GradientDrawable focused = shape(TEXT, ACCENT, c);
-    focused.setCornerRadius(dp(c, 10));
-    GradientDrawable normal = shape(ACCENT, 0, c);
-    normal.setCornerRadius(dp(c, 10));
-    background.addState(new int[] {android.R.attr.state_focused}, focused);
-    background.addState(new int[] {}, normal);
-    b.setBackground(background);
-    b.setTextColor(BG);
+    focus(b);
   }
 
   static TextView text(Context c, String s, int size, int color) {
@@ -79,11 +73,11 @@ final class Ui {
     b.setLetterSpacing(0);
     b.setIncludeFontPadding(false);
     b.setStateListAnimator(null);
-    b.setTextColor(TEXT);
+
     b.setAllCaps(false);
     b.setMinHeight(0);
     b.setMinimumHeight(0);
-    b.setPadding(dp(c, 18), dp(c, 10), dp(c, 18), dp(c, 10));
+    b.setPadding(dp(c, 18), dp(c, 8), dp(c, 18), dp(c, 8));
     focus(b);
     b.setOnClickListener(v -> run.run());
     return b;
@@ -105,14 +99,14 @@ final class Ui {
   static void tab(Button b, boolean selected) {
     StateListDrawable states = new StateListDrawable();
     GradientDrawable focused = shape(TEXT, 0, b.getContext());
-    focused.setCornerRadius(dp(b.getContext(), 22));
+    focused.setCornerRadius(dp(b.getContext(), 8));
     states.addState(new int[] {android.R.attr.state_focused}, focused);
-    states.addState(new int[] {}, shape(Color.TRANSPARENT, 0, b.getContext()));
+    states.addState(new int[] {}, shape(selected ? Color.WHITE : Color.TRANSPARENT, 0, b.getContext()));
     b.setBackground(states);
     b.setTextColor(
         new android.content.res.ColorStateList(
             new int[][] {new int[] {android.R.attr.state_focused}, new int[] {}},
-            new int[] {BG, selected ? TEXT : MUTED}));
+            new int[] {BG, selected ? Color.BLACK : Color.WHITE}));
   }
 
   static void round(View v, int radius) {

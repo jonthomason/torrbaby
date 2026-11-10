@@ -10478,6 +10478,40 @@
           }
         }
       }
+    },
+    "Couldn’t refresh file operations": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn’t refresh file operations"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法刷新文件操作"
+          }
+        }
+      }
+    },
+    "Up next": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Up next"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接下来播放"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

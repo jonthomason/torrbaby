@@ -179,8 +179,8 @@ public final class DiscoveryTestRunner extends Instrumentation {
     Bundle result = new Bundle();
     try {
       android.app.Activity activity = startActivitySync(new android.content.Intent(getTargetContext(), MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
-      org.json.JSONObject asset = new org.json.JSONObject().put("id","episode").put("name","Episode").put("complete",true).put("position",120).put("duration",3000);
-      org.json.JSONObject title = new org.json.JSONObject().put("id","header-fixture").put("title","Send Help").put("kind","movie")
+      org.json.JSONObject asset = new org.json.JSONObject().put("id","episode").put("name","Episode").put("complete",true).put("position",120).put("duration",3000).put("season",4).put("episode",1);
+      org.json.JSONObject title = new org.json.JSONObject().put("id","header-fixture").put("title","Send Help").put("kind","tv")
           .put("cast",new org.json.JSONArray().put(new org.json.JSONObject().put("name","Actor")))
           .put("assets",new org.json.JSONArray().put(asset));
       Library model = Library.parse(new org.json.JSONObject().put("titles",new org.json.JSONArray().put(title)));
@@ -200,7 +200,7 @@ public final class DiscoveryTestRunner extends Instrumentation {
         android.view.View nav=(android.view.View)navField.get(activity);
         java.util.ArrayList<android.view.View> focus=new java.util.ArrayList<>();
         java.lang.reflect.Method collect=MainActivity.class.getDeclaredMethod("collectNavigationFocus",android.view.View.class,java.util.List.class);collect.setAccessible(true);collect.invoke(activity,nav,focus);
-        if(focus.size()!=9)throw new Exception("Expected profile, six menu buttons and two language buttons: "+focus.size());
+        if(focus.size()!=2)throw new Exception("Expected only two language buttons on detail: "+focus.size());
         runOnMainSync(()->focus.get(0).requestFocus());waitForIdleSync();
         for(int i=0;i<focus.size();i++){
           if(activity.getCurrentFocus()!=focus.get(i))throw new Exception("Right focus mismatch at "+i+" expected="+focus.get(i)+" actual="+activity.getCurrentFocus());
@@ -224,8 +224,20 @@ public final class DiscoveryTestRunner extends Instrumentation {
         try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getExternalFilesDir(null),"menu-"+language+".png"))){menuShot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
         navigationKey(4);
         if(activity.getCurrentFocus()!=more)throw new Exception("Menu dismissal lost focus");
+        runOnMainSync(()->{try{
+          java.lang.reflect.Field detail=MainActivity.class.getDeclaredField("detailId");detail.setAccessible(true);detail.set(activity,"");
+          render.invoke(activity);
+          android.view.View first=activity.getWindow().getDecorView().findViewWithTag("title:header-fixture");
+          if(first!=null)first.requestFocus();
+        }catch(Exception e){failure[0]=e;}});
+        waitForIdleSync();SystemClock.sleep(200);if(failure[0]!=null)throw failure[0];
+        if(find(activity.getWindow().getDecorView(),"S4E1")==null)throw new Exception("Missing Continue Watching episode line");
+        if(find(activity.getWindow().getDecorView(),String.format(L10n.locale(),L10n.t("%d min remaining"),48))==null)throw new Exception("Missing separate minutes remaining line");
+        android.graphics.Bitmap captionShot=getUiAutomation().takeScreenshot();
+        try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getExternalFilesDir(null),"captions-"+language+".png"))){captionShot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
+
       }
-      result.putString("stream","PASS: EN/ZH header fits, all 9 controls reachable left/right, detail down/up navigation and More menu contents/focus work. Screenshots saved.\n");finish(-1,result);
+      result.putString("stream","PASS: EN/ZH header fits, detail language controls reachable left/right, detail down/up navigation and More menu contents/focus work. Screenshots saved.\n");finish(-1,result);
     }catch(Exception e){result.putString("stream","FAIL: "+e+"\n");finish(0,result);}
   }
 

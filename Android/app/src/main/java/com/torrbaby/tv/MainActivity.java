@@ -186,18 +186,20 @@ public class MainActivity extends Activity {
     root.removeAllViews(); // The library uses one shared navigation row.
     nav = Ui.row(this);
     nav.setGravity(Gravity.CENTER_VERTICAL);
-    Ui.pad(nav, 24, 4);
+    Ui.pad(nav, 10, 2);
     LinearLayout profile = ProfileUi.badge(this, api, () -> chooseProfile(true));
     profile.getChildAt(1).setVisibility(View.GONE);
     profile.getChildAt(2).setVisibility(View.GONE);
     Ui.add(nav, profile, 56, 44);
     Ui.gap(nav, 8);
     ImageView brand = new ImageView(this);
-    brand.setImageResource(R.drawable.torrbaby_icon);
+    brand.setImageResource(R.drawable.torrbaby_mark);
     brand.setContentDescription("Torrbaby");
     brand.setFocusable(false);
     Ui.add(nav, brand, 36, 36);
     Ui.gap(nav, 12);
+    LinearLayout menus=Ui.row(this);menus.setGravity(Gravity.CENTER);
+    nav.addView(menus,new LinearLayout.LayoutParams(0,-2,1));
     for (String label : new String[] {"Home", "Movies", "TV Shows", "Torrents", "Search"}) {
       Button b =
           Ui.button(
@@ -217,17 +219,20 @@ public class MainActivity extends Activity {
       b.setTag("nav:" + label);
       b.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 8));
       Ui.tab(b, section.equals(label));
-      Ui.add(nav, b, -2, 40);
-      Ui.gap(nav, 4);
+      Ui.add(menus, b, -2, 36);
+      Ui.gap(menus, 4);
     }
-    View spacer = new View(this);
-    nav.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
+
     Button settings = Ui.button(this, L10n.t("Settings"), this::settings);
     Ui.tab(settings, false);
     settings.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 8));
-    Ui.add(nav, settings, -2, 40);
+    Ui.add(menus, settings, -2, 36);
     Ui.gap(nav, 8);
     nav.addView(L10n.picker(this));
+    if(!detailId.isEmpty()) {
+      nav.removeAllViews();nav.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
+      nav.addView(L10n.picker(this));
+    }
     Ui.add(root, nav, -1, 52);
     Ui.gap(root, 6);
     content = Ui.column(this);
@@ -412,22 +417,7 @@ public class MainActivity extends Activity {
     return s;
   }
 
-  private void ambient(Library.Title title) {
-    if (title == null || title.backdrop.isEmpty()) return;
-    FrameLayout backdrop = new FrameLayout(this);
-    backdrop.setBackgroundColor(Ui.BG);
-    ImageView image = new ImageView(this);
-    image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-    // A quiet backdrop avoids a full-screen live blur pass on television GPUs.
-    image.setAlpha(.08f);
-    backdrop.addView(image, new FrameLayout.LayoutParams(-1, -1));
-    if (root.getParent() instanceof android.view.ViewGroup)
-      ((android.view.ViewGroup) root.getParent()).removeView(root);
-    root.setBackgroundColor(android.graphics.Color.TRANSPARENT);
-    backdrop.addView(root, new FrameLayout.LayoutParams(-1, -1));
-    setContentView(backdrop);
-    art.load(image, title.id, "backdrop", title.backdrop);
-  }
+  private void ambient(Library.Title title) { root.setBackgroundColor(Ui.BG); }
 
   private void home() {
     ScrollView sc = scroll(content);
@@ -506,7 +496,10 @@ public class MainActivity extends Activity {
 
   private void hero(LinearLayout parent, Library.Title t, boolean detail) {
     FrameLayout frame = new FrameLayout(this);
-    Ui.add(parent, frame, -1, detail ? 325 : 300);
+    Ui.add(parent, frame, -1, 325);
+    LinearLayout.LayoutParams heroParams=(LinearLayout.LayoutParams)frame.getLayoutParams();
+    heroParams.setMargins(Ui.dp(this,16),Ui.dp(this,4),Ui.dp(this,16),Ui.dp(this,8));
+    Ui.round(frame,12);
     ImageView image = new ImageView(this);
     image.setScaleType(ImageView.ScaleType.CENTER_CROP);
     frame.addView(image, new FrameLayout.LayoutParams(-1, -1));
@@ -527,7 +520,7 @@ public class MainActivity extends Activity {
     name.setMaxLines(2);
     Ui.add(info, name, -1, -2);
     Ui.gap(info, 10);
-    Ui.add(info, Ui.text(this, t.metadata(), 14, 0xffbdc9d4), -1, -2);
+    Ui.add(info, Ui.text(this, t.metadata(), 14, 0xffcccccc), -1, -2);
     Ui.gap(info, 15);
     Library.Asset asset = t.preferred();
     if (detail) {
@@ -543,40 +536,19 @@ public class MainActivity extends Activity {
       Ui.primary(play);
       play.setTag("hero");
       Ui.add(buttons, play, t.kind.equals("tv") ? 390 : -2, 48);
-      Ui.gap(buttons, 12);
-
-      if (asset != null) {
-        if (asset.complete) {
-          if (t.cast != null && t.cast.length() > 0) {
-            Ui.gap(buttons, 12);
-            Button cast = Ui.button(this, L10n.t("Cast"), () -> { showingCast = true; render(); });
-            cast.setTag("cast");
-            Ui.add(buttons, cast, -2, 48);
-          }
-          if (asset.position > 0) {
-            Ui.gap(buttons, 12);
-            Ui.add(buttons, Ui.button(this, L10n.t("Start from Beginning"), () -> play(t, asset, true)), -2, 48);
-          }
-        }
-        Ui.gap(buttons, 12);
-        Button more = Ui.button(this, "…", () -> detailOptions(t, asset));
-        more.setContentDescription(L10n.t("More"));
-        more.setTag("detail-more");
-        Ui.add(buttons, more, 64, 48);
-      }
-      HorizontalScrollView actionScroll = new HorizontalScrollView(this);
-      actionScroll.setHorizontalScrollBarEnabled(false);
-      actionScroll.setClipToPadding(false);
-      actionScroll.addView(buttons);
-      Ui.add(info, actionScroll, -1, 52);
+      Ui.add(info, buttons, -1, 52);
+      play.setOnFocusChangeListener((v,f)-> {
+        frame.setForeground(f ? Ui.shape(0,0x99ffffff,this) : null);
+        frame.animate().scaleX(f?1.006f:1).scaleY(f?1.006f:1).setDuration(140).start();
+      });
       play.requestFocus();
     } else {
-      Ui.add(info, Ui.title(this, L10n.t("▶  Explore"), 17), -1, 23);
-      frame.setFocusable(true);
-      frame.setFocusableInTouchMode(true);
-      frame.setContentDescription("Explore " + t.title);
-      frame.setTag("hero");
-      frame.setOnClickListener(v -> open(t));
+      Button explore=Ui.button(this,L10n.t("▶  Explore"),()->open(t));
+      Ui.add(info,explore,-2,44);explore.setTag("hero");
+      explore.setOnFocusChangeListener((v,f)-> {
+        frame.setForeground(f ? Ui.shape(0,0x99ffffff,this) : null);
+        frame.animate().scaleX(f?1.006f:1).scaleY(f?1.006f:1).setDuration(140).start();
+      });
       onCatalogUpdate(() -> {
         Library.Title latest=null;
         for(Library.Title candidate:library.titles)
@@ -585,20 +557,11 @@ public class MainActivity extends Activity {
         final Library.Title selected=latest;
         name.setText(selected.title);
         ((TextView)info.getChildAt(2)).setText(selected.metadata());
-        frame.setContentDescription("Explore "+selected.title);
-        frame.setOnClickListener(v -> open(selected));
+        explore.setContentDescription(L10n.t("Explore")+" "+selected.title);
+        explore.setOnClickListener(v -> open(selected));
         art.load(image,selected.id,selected.backdrop.isEmpty()?"poster":"backdrop",selected.backdrop.isEmpty()?selected.poster:selected.backdrop);
       });
-      View line = new View(this);
-      line.setBackgroundColor(Ui.ACCENT);
-      line.setVisibility(View.INVISIBLE);
-      frame.addView(line, new FrameLayout.LayoutParams(-1, Ui.dp(this, 3), Gravity.BOTTOM));
-      frame.setOnFocusChangeListener(
-          (v, f) -> {
-            line.setVisibility(f ? View.VISIBLE : View.INVISIBLE);
-            frame.setForeground(f ? Ui.shape(0x00000000, Ui.ACCENT, this) : null);
-          });
-      if (restoreId.isEmpty()) frame.requestFocus();
+      if (restoreId.isEmpty()) explore.requestFocus();
     }
   }
 
@@ -626,7 +589,7 @@ public class MainActivity extends Activity {
       if(available<=0)return;
       int gap=Ui.dp(this,12),columns=Math.max(3,(available+gap)/Ui.dp(this,130));
       int width=(available-gap*(columns-1))/columns;
-      int height=width*3/2+Ui.dp(this,66);
+      int height=width*3/2+Ui.dp(this,name.equals("Continue watching")?83:66);
       for(int i=0;i<row.getChildCount();i+=2) {
         View child=row.getChildAt(i);
         if(child.getLayoutParams().width!=width || child.getLayoutParams().height!=height) {
@@ -645,6 +608,7 @@ public class MainActivity extends Activity {
       int end=Math.min(list.size(),start+12);
       for(int index=start;index<end;index++) {
         View posterCard=card(list.get(index));
+        ((PosterCard)posterCard).showContinuation(name.equals("Continue watching"));
         posterCard.setId(View.generateViewId());
         posterCard.setOnKeyListener((v,key,event) -> {
           if(event.getAction()==KeyEvent.ACTION_DOWN && key==KeyEvent.KEYCODE_DPAD_RIGHT
@@ -691,6 +655,7 @@ public class MainActivity extends Activity {
       for(Library.Title title:shown) {
         View child=existing.get("title:"+title.id);
         if(child==null)child=card(title);
+        ((PosterCard)child).showContinuation(name.equals("Continue watching"));
         if(child.getId()==View.NO_ID)child.setId(View.generateViewId());
         child.setOnKeyListener((v,key,event)-> {
           if(event.getAction()==KeyEvent.ACTION_DOWN && key==KeyEvent.KEYCODE_DPAD_RIGHT
@@ -970,7 +935,7 @@ public class MainActivity extends Activity {
                 torrentCategory = category;
                 render();
               });
-      if (category.equals(torrentCategory)) button.setTextColor(Ui.ACCENT);
+      Ui.tab(button,category.equals(torrentCategory));
       Ui.add(controls, button, -2, 42);
       Ui.gap(controls, 12);
     }
@@ -1004,7 +969,7 @@ public class MainActivity extends Activity {
                     .apply();
                 render();
               });
-      if (choice.equals(order)) button.setTextColor(Ui.ACCENT);
+      Ui.tab(button,choice.equals(order));
       Ui.add(sortRow, button, -2, 40);
       Ui.gap(sortRow, 10);
     }
@@ -1082,7 +1047,7 @@ public class MainActivity extends Activity {
         String operationError = fileOperation.isNull("error") ? "" : fileOperation.optString("error");
         String operationLabel = junk ? "Junk · delete after seeding" : "Deleting files…";
         Ui.add(row, Ui.text(this, operationError.isEmpty() ? operationLabel : operationLabel + " · " + operationError,
-            14, operationError.isEmpty() ? Ui.ACCENT : 0xffff8a80), -1, -2);
+            14, operationError.isEmpty() ? Ui.ACCENT : 0xffffffff), -1, -2);
         Ui.gap(row, 8);
       }
       long size = 0;
@@ -1101,7 +1066,7 @@ public class MainActivity extends Activity {
       if (!complete) {
         Ui.gap(row, 10);
         ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        bar.setProgressTintList(android.content.res.ColorStateList.valueOf(0xffb36eff));
+        bar.setProgressTintList(android.content.res.ColorStateList.valueOf(0xffffffff));
         bar.setProgress((int) (100 * progress));
         Ui.add(row, bar, -1, 8);
         Ui.gap(row, 6);
@@ -1122,14 +1087,14 @@ public class MainActivity extends Activity {
             -2);
       if (item.optInt("error") != 0) {
         Ui.gap(row, 8);
-        Ui.add(row, Ui.text(this, item.optString("error_string"), 13, 0xffffbb77), -1, -2);
+        Ui.add(row, Ui.text(this, item.optString("error_string"), 13, 0xffcccccc), -1, -2);
       }
       Ui.add(rows, row, -1, -2);
       Ui.gap(rows, 14);
     }
     if (torrentCategory.equals("Seeding")) {
       if (!libraryOperationsError.isEmpty())
-        Ui.add(rows, Ui.text(this, "Couldn’t refresh file operations: " + libraryOperationsError, 14, 0xffff8a80), -1, -2);
+        Ui.add(rows, Ui.text(this, L10n.t("Couldn’t refresh file operations") + ": " + libraryOperationsError, 14, 0xffffffff), -1, -2);
       java.util.Set<String> shown = new java.util.HashSet<>();
       for (JSONObject item : sorted) {
         JSONObject operation = item.optJSONObject("file_operation");
@@ -1154,7 +1119,7 @@ public class MainActivity extends Activity {
             : phase.equals("cleanup") ? "Finishing cleanup…" : "Removing from library…";
         Ui.add(row, Ui.text(this, label, 14, Ui.MUTED), -1, -2);
         if (!operation.isNull("error") && !operation.optString("error").isEmpty()) {
-          Ui.add(row, Ui.text(this, operation.optString("error"), 14, 0xffff8a80), -1, -2);
+          Ui.add(row, Ui.text(this, operation.optString("error"), 14, 0xffffffff), -1, -2);
           Ui.add(row, Ui.text(this, L10n.t("The server will retry automatically."), 12, Ui.MUTED), -1, -2);
         }
         Ui.add(rows, row, -1, -2);
@@ -1379,7 +1344,7 @@ public class MainActivity extends Activity {
       TextView text = Ui.text(this, line, compact ? 12 : 14, Ui.MUTED);
       android.text.SpannableString styled = new android.text.SpannableString(line);
       for (int i = 0; i < line.length(); i++) if (line.charAt(i) == '\uFFFC') {
-        android.graphics.drawable.Drawable icon = getDrawable(R.drawable.torrbaby_icon);
+        android.graphics.drawable.Drawable icon = getDrawable(R.drawable.torrbaby_mark);
         int size = Ui.dp(this, compact ? 14 : 18);
         icon.setBounds(0, 0, size, size);
         styled.setSpan(new android.text.style.ImageSpan(icon, android.text.style.ImageSpan.ALIGN_BASELINE), i, i + 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
@@ -1441,7 +1406,7 @@ public class MainActivity extends Activity {
     }
     ListView list = new ListView(this);
     list.setDividerHeight(Ui.dp(this, 6));
-    list.setSelector(Ui.shape(0xff304d49, Ui.ACCENT, this));
+    list.setSelector(Ui.shape(0xff333333, Ui.ACCENT, this));
     list.setPadding(Ui.dp(this, 36), 0, Ui.dp(this, 36), Ui.dp(this, 24));
     list.setAdapter(new BaseAdapter() {
       public int getCount() { return rows.size(); }
@@ -1489,6 +1454,16 @@ public class MainActivity extends Activity {
       Ui.add(body, summary, 650, -2);
       Ui.gap(body, 24);
     }
+    Library.Asset preferred=t.preferred();
+    if(preferred!=null) {
+      if(t.cast!=null && t.cast.length()>0) {
+        Button cast=Ui.button(this,L10n.t("Cast"),()->{showingCast=true;render();});cast.setTag("cast");
+        Ui.add(body,cast,-2,44);
+      }
+      if(preferred.position>0)Ui.add(body,Ui.button(this,L10n.t("Start from Beginning"),()->play(t,preferred,true)),-2,44);
+      Button more=Ui.button(this,L10n.t("More"),()->detailOptions(t,preferred));more.setTag("detail-more");
+      Ui.add(body,more,-2,44);Ui.gap(body,16);
+    }
     if (t.kind.equals("tv")) {
       TreeSet<Integer> seasons = new TreeSet<>();
       for (Library.Asset a : t.assets) if (!a.extra() && a.hasSeason) seasons.add(a.season);
@@ -1512,7 +1487,7 @@ public class MainActivity extends Activity {
                   View selected = content.findViewWithTag("season:" + number);
                   if (selected != null) selected.requestFocus();
                 });
-        if (number == season) button.setTextColor(Ui.ACCENT);
+        Ui.tab(button,number == season);
         button.setTag("season:" + number);
         Ui.add(row, button, -2, 42);
         Ui.gap(row, 12);
@@ -1928,7 +1903,7 @@ public class MainActivity extends Activity {
   private TextView connectionScreen() {
     root.setGravity(Gravity.CENTER);
     ImageView logo = new ImageView(this);
-    logo.setImageResource(R.drawable.torrbaby_icon);
+    logo.setImageResource(R.drawable.torrbaby_mark);
     logo.setContentDescription("Torrbaby");
     Ui.add(root, logo, 160, 160);
     Ui.gap(root, 24);

@@ -615,3 +615,6 @@ Trial cancelled	试下载已取消
 Couldn’t add release	无法添加版本
 %lld connected · %lld sending	%lld 个已连接 · %lld 个正在发送
 No trial made progress	所有试下载均无进展
+
+Couldn’t refresh file operations	无法刷新文件操作
+Up next	接下来播放
