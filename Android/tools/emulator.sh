@@ -8,4 +8,11 @@ mkdir -p "$ANDROID_AVD_HOME"
 if [ ! -f "$ANDROID_AVD_HOME/Torrbaby-TV.ini" ]; then
   printf 'no\n' | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd -n Torrbaby-TV -k 'system-images;android-36;android-tv;arm64-v8a' -d tv_1080p -p "$ANDROID_AVD_HOME/Torrbaby-TV.avd"
 fi
+# The remote controls need an attached key input device, including on TV AVDs.
+AVD_CONFIG="$ROOT/.local/avd/Torrbaby-TV.avd/config.ini"
+if grep -q "^hw.keyboard=" "$AVD_CONFIG"; then
+  sed -i '' 's/^hw.keyboard=.*/hw.keyboard=yes/' "$AVD_CONFIG"
+else
+  printf 'hw.keyboard=yes\n' >> "$AVD_CONFIG"
+fi
 exec "$ANDROID_HOME/emulator/emulator" -avd Torrbaby-TV -no-snapshot -no-boot-anim -gpu auto -memory 2048 "$@"
