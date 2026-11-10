@@ -622,3 +622,6 @@ Up next	接下来播放
 %dm left	剩余 %d 分钟
 Season %d Ep %d	第 %d 季 第 %d 集
 ▶	▶
+Transmission has not confirmed the add yet. The torrent may still appear in Torrents; check there before trying again.	Transmission 尚未确认添加结果。种子仍可能出现在“种子”列表中，请先查看列表，再决定是否重试。
+Transmission took too long to respond. Please try again.	Transmission 响应超时，请重试。
+The connection to Transmission was interrupted. Please try again.	与 Transmission 的连接已中断，请重试。

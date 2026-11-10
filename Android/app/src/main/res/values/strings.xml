@@ -483,6 +483,7 @@
     <string name="ui_987f5ab80eb3" formatted="false">Target upload/download ratio</string>
     <string name="ui_1c7a30e57131" formatted="false">Text color</string>
     <string name="ui_83e097038017" formatted="false">Text opacity</string>
+    <string name="ui_17640422b43a" formatted="false">The connection to Transmission was interrupted. Please try again.</string>
     <string name="ui_9a212ea4c5bb" formatted="false">The entire package will be hidden from everyone, continue seeding, and be permanently deleted when seeding finishes.</string>
     <string name="ui_fa9822b1acbe" formatted="false">The entire package will be hidden now, continue seeding, and be permanently deleted when seeding finishes.</string>
     <string name="ui_d3fdb91c3f77" formatted="false">The saved connection could not be opened.</string>
@@ -523,7 +524,9 @@
     <string name="ui_cbb4cc49824b" formatted="false">Transfer</string>
     <string name="ui_7317cb083a2d" formatted="false">Translating subtitles</string>
     <string name="ui_8ad8302d110b" formatted="false">Translations</string>
+    <string name="ui_533c8cf527e8" formatted="false">Transmission has not confirmed the add yet. The torrent may still appear in Torrents; check there before trying again.</string>
     <string name="ui_9a14b54f2d98" formatted="false">Transmission reports this torrent as stalled</string>
+    <string name="ui_a31802b8dabb" formatted="false">Transmission took too long to respond. Please try again.</string>
     <string name="ui_855c2e4674d0" formatted="false">Trial cancelled</string>
     <string name="ui_f5c1aa962501" formatted="false">Trial complete</string>
     <string name="ui_afb32e2b2409" formatted="false">Trial measured</string>

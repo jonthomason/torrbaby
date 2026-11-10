@@ -10580,6 +10580,57 @@
           }
         }
       }
+    },
+    "Transmission has not confirmed the add yet. The torrent may still appear in Torrents; check there before trying again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transmission has not confirmed the add yet. The torrent may still appear in Torrents; check there before trying again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transmission 尚未确认添加结果。种子仍可能出现在“种子”列表中，请先查看列表，再决定是否重试。"
+          }
+        }
+      }
+    },
+    "Transmission took too long to respond. Please try again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transmission took too long to respond. Please try again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transmission 响应超时，请重试。"
+          }
+        }
+      }
+    },
+    "The connection to Transmission was interrupted. Please try again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The connection to Transmission was interrupted. Please try again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "与 Transmission 的连接已中断，请重试。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

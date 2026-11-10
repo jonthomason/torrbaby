@@ -224,7 +224,9 @@ pub(crate) async fn add_at(s: &Service, body: &Value, directory:Option<&Path>) -
         params["metainfo"] = json!(metainfo);
     }
     let _guard = s.mutation_lock.lock().await;
-    let result = s.rpc.call("torrent_add", params).await?;
+    let added = s.rpc.add(params).await;
+    s.invalidate_torrents(); // An unconfirmed add may still finish in Transmission.
+    let result = added?;
     if directory.is_none() { if let Some(hash) = result["torrent_added"]["hash_string"].as_str()
         .or_else(||result["torrent_duplicate"]["hash_string"].as_str()) {
         s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?
