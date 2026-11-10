@@ -608,6 +608,9 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
     if method == Method::POST && path == "/v1/search/torrents/resolve" {
         return s.torrent_search.resolve(text(&body,"provider")?,text(&body,"id")?,body["attachment"].as_str()).await;
     }
+    if method == Method::POST && path == "/v1/search/torrents/summary" {
+        return s.torrent_search.summary(text(&body,"provider")?,text(&body,"id")?).await;
+    }
     if method == Method::POST && path == "/v1/search/torrents/detail" {
         return s
             .torrent_search

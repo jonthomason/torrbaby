@@ -22,6 +22,25 @@ pub(super) fn listings(raw: &str) -> Result<Vec<Item>> {
         Some(row)
     }).collect())
 }
+// Size in the post's full release title describes the payload, unlike attachment
+// link sizes (which describe the small .torrent file). Never scan the whole page.
+pub(super) fn summary_size(raw: &str) -> Result<Option<String>> {
+    let dom=tl::parse(raw,tl::ParserOptions::default())?;
+    let p=dom.parser();
+    static SIZE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)([0-9]+(?:\.[0-9]+)?)\s*(GiB|GB|MiB|MB|TiB|TB)\b").unwrap());
+    let mut sizes=Vec::new();
+    for handle in dom.query_selector("blockquote").into_iter().flatten() {
+        let Some(node)=handle.get(p) else {continue};
+        let text=node.inner_text(p);
+        if !text.contains("完整标题") {continue;}
+        for cap in SIZE.captures_iter(&text) {
+            let size=format!("{} {}",&cap[1],cap[2].to_ascii_uppercase());
+            if !sizes.contains(&size) {sizes.push(size);}
+        }
+    }
+    Ok(if sizes.len()==1 {sizes.pop()} else {None})
+}
+
 pub(super) fn thread(raw: &str) -> Result<(String, Vec<String>)> {
     let dom=tl::parse(raw,tl::ParserOptions::default())?;
     let p=dom.parser();
@@ -135,6 +154,8 @@ mod tests {
         let search=std::fs::read_to_string(format!("{dir}/1lou-results.json")).unwrap();
         let rows=listings(&search).unwrap();assert!(!rows.is_empty());assert!(rows.iter().all(|r|r.magnet.is_empty()));
         let html=std::fs::read_to_string(format!("{dir}/1lou-detail.html")).unwrap();
+        assert_eq!(summary_size(&html).unwrap().as_deref(),Some("21.40 GB"));
+        assert_eq!(summary_size("<div class=message><a>torrent 12 MB</a></div>").unwrap(),None);
         let (_,attachments)=thread(&html).unwrap();assert!(attachments.contains(&"13093".into()));
         let raw=std::fs::read(format!("{dir}/1lou-attachment")).unwrap();
         let release=torrent(&raw,"10231","http://www.1lou.me/thread-10231.htm").unwrap();

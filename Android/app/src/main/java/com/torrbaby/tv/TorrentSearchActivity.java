@@ -124,7 +124,7 @@ public final class TorrentSearchActivity extends Activity {
   private String summary(JSONObject item) {
     List<String> parts=new ArrayList<>(); if(!item.isNull("size_bytes"))parts.add(android.text.format.Formatter.formatFileSize(this,item.optLong("size_bytes")));
     else if(!item.isNull("size_label") && !item.optString("size_label").isEmpty())parts.add(item.optString("size_label"));
-    else parts.add(sizes.getOrDefault(item.optString("name"), "Size…"));
+    else { String size=sizes.getOrDefault(item.optString("name"), ""); if(!size.isEmpty())parts.add(size); }
     if(!item.isNull("seeders"))parts.add(item.optLong("seeders")+(item.optLong("seeders")==1?" seed":" seeds"));
     if(!item.isNull("leechers"))parts.add(item.optLong("leechers")+(item.optLong("leechers")==1?" peer":" peers"));
     return String.join(" · ",parts);
@@ -149,12 +149,10 @@ public final class TorrentSearchActivity extends Activity {
     JSONArray sources=item.optJSONArray("sources"); JSONObject source=sources==null?null:sources.optJSONObject(0);
     if(source==null || !source.optString("provider").equals("1lou"))return;
     sizeIo.execute(() -> {
-      String label="Size unavailable";
+      String label="";
       try {
-        JSONObject d=api.request("POST","/v1/search/torrents/detail",new JSONObject().put("provider","1lou").put("id",source.optString("id")));
-        JSONArray releases=d.optJSONArray("releases");long min=Long.MAX_VALUE,max=0;
-        if(releases!=null)for(int i=0;i<releases.length();i++){JSONObject r=releases.optJSONObject(i).optJSONObject("item");if(!r.isNull("size_bytes")){long n=r.optLong("size_bytes");min=Math.min(min,n);max=Math.max(max,n);}}
-        if(max>0)label=android.text.format.Formatter.formatFileSize(this,min)+(min==max?"":"–"+android.text.format.Formatter.formatFileSize(this,max));
+        JSONObject d=api.request("POST","/v1/search/torrents/summary",new JSONObject().put("provider","1lou").put("id",source.optString("id")));
+        if(!d.isNull("size_label"))label=d.optString("size_label");
       } catch(Exception ignored) {}
       final String value=label;
       runOnUiThread(() -> {if(!isDestroyed()){sizes.put(key,value);((BaseAdapter)list.getAdapter()).notifyDataSetChanged();}});
@@ -165,9 +163,9 @@ public final class TorrentSearchActivity extends Activity {
     public View getView(int position, View old, ViewGroup parent) {
       LinearLayout row; if(old instanceof LinearLayout)row=(LinearLayout)old; else {
         row=Ui.column(TorrentSearchActivity.this); Ui.pad(row,16,6);row.setBackground(Ui.shape(Ui.PANEL,0,TorrentSearchActivity.this));
-        TextView title=Ui.title(TorrentSearchActivity.this,"",20);title.setMaxLines(2);Ui.add(row,title,-1,-2);Ui.add(row,Ui.text(TorrentSearchActivity.this,"",18,Ui.ACCENT),-1,-2);Ui.add(row,Ui.text(TorrentSearchActivity.this,"",13,Ui.MUTED),-1,-2);
+        TextView title=Ui.title(TorrentSearchActivity.this,"",20);title.setMaxLines(2);Ui.add(row,title,-1,-2);Ui.add(row,Ui.text(TorrentSearchActivity.this,"",16,Ui.ACCENT),-1,-2);Ui.add(row,Ui.text(TorrentSearchActivity.this,"",13,Ui.MUTED),-1,-2);
       }
-      JSONObject item=results.optJSONObject(position);loadSize(item);((TextView)row.getChildAt(0)).setText(title(item));((TextView)row.getChildAt(1)).setText(summary(item));((TextView)row.getChildAt(2)).setText(tags(item));return row;
+      JSONObject item=results.optJSONObject(position);loadSize(item);((TextView)row.getChildAt(0)).setText(title(item));TextView summaryView=(TextView)row.getChildAt(1);String summaryText=summary(item);summaryView.setText(summaryText);summaryView.setVisibility(summaryText.isEmpty()?View.GONE:View.VISIBLE);((TextView)row.getChildAt(2)).setText(tags(item));return row;
     }
   }
   private void details(JSONObject item) {

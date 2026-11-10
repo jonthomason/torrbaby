@@ -395,6 +395,15 @@ impl Search {
         use base64::Engine;
         Ok(json!({"item":release["item"],"metainfo":base64::engine::general_purpose::STANDARD.encode(bytes)}))
     }
+    pub async fn summary(&self, provider: &str, id: &str) -> Result<Value> {
+        ensure!(provider == "1lou", "Unsupported listing source");
+        ensure!(!id.is_empty() && id.len() <= 12 && id.bytes().all(|b| b.is_ascii_digit()), "Invalid listing ID");
+        let raw=self.read(reqwest::Url::parse(&format!("http://www.1lou.me/thread-{id}.htm"))?).await?;
+        let choices=chinese::attachment_choices(&raw)?.into_iter().map(|(id,name)| {
+            json!({"url":format!("http://www.1lou.me/attach-download-{id}.htm"),"id":id,"name":name})
+        }).collect::<Vec<_>>();
+        Ok(json!({"size_label":chinese::summary_size(&raw)?,"choices":choices}))
+    }
     pub async fn detail(&self, provider: &str, id: &str) -> Result<Value> {
         if provider == "1lou" {
             ensure!(!id.is_empty() && id.len() <= 12 && id.bytes().all(|b| b.is_ascii_digit()), "Invalid listing ID");

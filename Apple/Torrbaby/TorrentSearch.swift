@@ -328,6 +328,9 @@ private struct SearchReleaseArtwork: View {
 
 @MainActor
 private enum SearchReleaseSizes {
+    struct Choice: Decodable, Identifiable { let id: String; let name: String; let url: String? }
+    struct Summary: Decodable { let sizeLabel: String?; let choices: [Choice] }
+    static var summaries: [String: Summary] = [:]
     static var cache: [String: String] = [:]
     static var active = 0
     static func load(_ item: TorrentSearchItem, store: Store) async throws -> String {
@@ -338,13 +341,11 @@ private enum SearchReleaseSizes {
         if let cached = cache[key] { return cached }
         active += 1
         defer { active -= 1 }
-        guard let source = item.sources.first(where: { $0.provider == "1lou" }) else { return "Size unavailable" }
-        let detail: TorrentSearchDetails = try await store.request("POST", "/v1/search/torrents/detail", body: ["provider": source.provider, "id": source.id], timeout: 45)
-        let sizes = detail.releases?.compactMap { $0.item.sizeBytes }.sorted() ?? []
-        guard let first = sizes.first, let last = sizes.last else { return "Size unavailable" }
-        let format: (UInt64) -> String = { ByteCountFormatter.string(fromByteCount: Int64(clamping: $0), countStyle: .file) }
-        let value = first == last ? format(first) : "\(format(first))–\(format(last))"
-        if cache.count >= 128 { cache.removeAll() }
+        guard let source = item.sources.first(where: { $0.provider == "1lou" }) else { return "" }
+        let summary: Summary = try await store.request("POST", "/v1/search/torrents/summary", body: ["provider": source.provider, "id": source.id], timeout: 25)
+        let value = summary.sizeLabel ?? ""
+        if cache.count >= 128 { cache.removeAll(); summaries.removeAll() }
+        summaries[key] = summary
         cache[key] = value
         return value
     }
@@ -355,6 +356,7 @@ private struct TorrentSearchRow: View {
     @EnvironmentObject var store: Store
     let item: TorrentSearchItem
     @State private var fetchedSize: String?
+    private var displayedSize: String { item.size.isEmpty ? (fetchedSize ?? "") : item.size }
     private var metadata: String { [item.edition, item.quality].filter { !$0.isEmpty }.joined(separator: " · ") }
     private var tracks: String { (item.hints.audio + [item.languages]).filter { !$0.isEmpty }.joined(separator: " · ") }
     var body: some View {
@@ -362,15 +364,18 @@ private struct TorrentSearchRow: View {
             SearchReleaseArtwork(name: item.name)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title).font(.title3.bold()).foregroundStyle(.primary).lineLimit(2)
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text(LocalizedStringKey(item.size.isEmpty ? (fetchedSize ?? "Size…") : item.size))
-                        .foregroundStyle(Theme.mint)
-                    if item.seeders != nil {
-                        Text(item.availability).foregroundStyle(item.seeders == 0 ? Color.orange : Theme.mint)
+                if !displayedSize.isEmpty || item.seeders != nil {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        if !displayedSize.isEmpty {
+                            Text(verbatim: displayedSize).foregroundStyle(Theme.mint)
+                        }
+                        if item.seeders != nil {
+                            Text(item.availability).foregroundStyle(item.seeders == 0 ? Color.orange : Theme.mint)
+                        }
                     }
+                    .font(.headline).monospacedDigit()
+                    .fixedSize(horizontal: false, vertical: true)
                 }
-                .font(.title3.weight(.semibold)).monospacedDigit()
-                .fixedSize(horizontal: false, vertical: true)
                 if !metadata.isEmpty { Text(metadata).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
                 if !tracks.isEmpty { Text(tracks).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
             }
@@ -379,7 +384,7 @@ private struct TorrentSearchRow: View {
                 guard item.size.isEmpty else { return }
                 do { fetchedSize = try await SearchReleaseSizes.load(item, store: store) }
                 catch is CancellationError { }
-                catch { fetchedSize = "Size unavailable" }
+                catch { fetchedSize = nil }
             }
     }
 }
@@ -404,7 +409,7 @@ private struct TorrentSearchDetail: View {
     @State private var added = false
     @State private var message: String?
     @State private var detailError: String?
-    private struct Choice: Decodable, Identifiable { let id: String; let name: String }
+    private typealias Choice = SearchReleaseSizes.Choice
     private struct Resolution: Decodable { let choices: [Choice]?; let item: TorrentSearchItem?; let metainfo: String? }
     @State private var choices: [Choice] = []
     @State private var selectedAttachment: String?
@@ -479,6 +484,10 @@ private struct TorrentSearchDetail: View {
         }.searchDetailTitle(embedded: embedded)
         .task {
             guard let source = item.sources.first(where: { $0.provider == "tpb" }) ?? item.sources.first(where: { $0.provider == "nyaa" }) ?? item.sources.first else { return }
+            if let summary = SearchReleaseSizes.summaries[store.server + item.id] {
+                if summary.choices.count == 1 { selectedAttachment = summary.choices.first?.id }
+                else if summary.choices.count > 1 { choices = summary.choices }
+            }
             loading = true; defer { loading = false }
             do { detail = try await store.request("POST", "/v1/search/torrents/detail", body: ["provider": source.provider, "id": source.id], timeout: 45) }
             catch { if !Task.isCancelled { detailError = "Couldn’t load source details. You can still add this torrent." } }
@@ -494,6 +503,10 @@ private struct TorrentSearchDetail: View {
             if !resolved.magnet.isEmpty && choices.isEmpty {
                 payload["magnet"] = resolved.magnet
             } else if let source = item.sources.first(where: { $0.provider == "1lou" }) {
+                if selectedAttachment == nil, let summary = SearchReleaseSizes.summaries[store.server + item.id] {
+                    if summary.choices.count == 1 { selectedAttachment = summary.choices.first?.id }
+                    else if summary.choices.count > 1 { choices = summary.choices; message = "Choose a release, then add it."; return }
+                }
                 var request: [String: Any] = ["provider": source.provider, "id": source.id]
                 if let selectedAttachment { request["attachment"] = selectedAttachment }
                 let resolution: Resolution = try await store.request("POST", "/v1/search/torrents/resolve", body: request, timeout: 45)
