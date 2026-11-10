@@ -99,8 +99,8 @@ fn release_key(item: &Item) -> String {
 pub struct Search {
     lou: tokio::sync::Mutex<(Instant, HashMap<String, (Instant, Vec<Item>)>)>,
     http: reqwest::Client,
+    cache_dir: Option<std::path::PathBuf>,
     cache: Mutex<HashMap<String, (Instant, SearchResult)>>,
-    gate: tokio::sync::Semaphore,
     details: Mutex<HashMap<String, (Instant, Value)>>,
     reads: Mutex<HashMap<String, Arc<tokio::sync::Mutex<Option<(Instant, Vec<u8>)>>>>>,
 }
@@ -112,6 +112,7 @@ impl Search {
             builder = builder.proxy(reqwest::Proxy::all(&proxy).map_err(|_| anyhow::anyhow!("Invalid search proxy configuration"))?);
         }
         Ok(Self {
+            cache_dir: None,
             lou: tokio::sync::Mutex::new((Instant::now(), HashMap::new())),
             http: builder
                 .user_agent("Torrbaby/0.3 (personal media library)")
@@ -120,25 +121,60 @@ impl Search {
                 .redirect(reqwest::redirect::Policy::none())
                 .build()?,
             cache: Mutex::new(HashMap::new()),
-            gate: tokio::sync::Semaphore::new(4),
             details: Mutex::new(HashMap::new()),
             reads: Mutex::new(HashMap::new()),
         })
+    }
+    pub fn with_cache_dir(mut self, dir: std::path::PathBuf) -> Result<Self> {
+        std::fs::create_dir_all(&dir)?;
+        self.cache_dir=Some(dir);
+        self.trim_disk_cache();
+        Ok(self)
+    }
+    fn trim_disk_cache(&self) {
+        let Some(dir)=&self.cache_dir else {return};
+        let mut entries=std::fs::read_dir(dir).into_iter().flatten().filter_map(Result::ok)
+            .filter_map(|e| { let m=e.metadata().ok()?; if !m.is_file(){return None}; Some((m.modified().ok()?,m.len(),e.path())) }).collect::<Vec<_>>();
+        entries.sort_by_key(|e|e.0);
+        let mut total:u64=entries.iter().map(|e|e.1).sum();
+        for (modified,len,path) in entries {
+            if total<=64*1024*1024 && modified.elapsed().unwrap_or_default()<Duration::from_secs(86400) {continue;}
+            if std::fs::remove_file(path).is_ok(){total=total.saturating_sub(len);}
+        }
     }
     async fn read(&self, url: reqwest::Url) -> Result<String> {
         Ok(String::from_utf8(self.read_bytes(url).await?)?)
     }
     async fn read_bytes(&self, url: reqwest::Url) -> Result<Vec<u8>> {
         // Row sizes, details and Add share one fetch for each public attachment/page.
-        if url.host_str() == Some("www.1lou.me") && !url.path().contains("/search/") {
+        if url.host_str() == Some("www.1lou.me") {
             let slot = {
                 let mut reads=self.reads.lock().map_err(|_|anyhow::anyhow!("Source cache unavailable"))?;
                 if reads.len()>=256 { reads.retain(|_,slot| Arc::strong_count(slot)>1); }
                 reads.entry(url.to_string()).or_insert_with(||Arc::new(tokio::sync::Mutex::new(None))).clone()
             };
             let mut cached=slot.lock().await;
-            if let Some((at,bytes))=cached.as_ref() { if at.elapsed()<Duration::from_secs(600) {return Ok(bytes.clone());} }
+            let ttl=Duration::from_secs(if url.path().contains("/search/"){600}else{86400});
+            if let Some((at,bytes))=cached.as_ref() { if at.elapsed()<ttl {return Ok(bytes.clone());} }
+            use sha2::{Digest,Sha256};
+            let disk=self.cache_dir.as_ref().map(|dir|dir.join(format!("{}.cache",Sha256::digest(url.as_str().as_bytes()).iter().map(|b|format!("{b:02x}")).collect::<String>())));
+            if let Some(path)=&disk {
+                if let Ok(meta)=std::fs::metadata(path) {
+                    let age=meta.modified().ok().and_then(|t|t.elapsed().ok());
+                    if meta.len()<=4_194_304 && age.is_some_and(|a|a<ttl) {
+                        if let Ok(bytes)=std::fs::read(path) {
+                            *cached=Some((Instant::now()-age.unwrap_or_default(),bytes.clone()));
+                            return Ok(bytes);
+                        }
+                    }
+                }
+            }
             let bytes=self.fetch_bytes(url).await?;
+            if let Some(path)=&disk {
+                let tmp=path.with_extension("tmp");
+                if std::fs::write(&tmp,&bytes).is_ok() {let _=std::fs::rename(tmp,path);}
+                self.trim_disk_cache();
+            }
             *cached=Some((Instant::now(),bytes.clone()));
             return Ok(bytes);
         }
@@ -239,10 +275,6 @@ impl Search {
                 return Ok(result);
             }
         }
-        let _permit = self
-            .gate
-            .try_acquire()
-            .context("Search is busy. Try again shortly.")?;
         // Keep title searches broad: requiring S02 would hide "Season 2" and
         // S01-S04 packs. Rank the requested season/episode locally instead.
         let terms = query.query.clone();
@@ -410,7 +442,6 @@ impl Search {
             if let Some((at, value)) = self.details.lock().map_err(|_| anyhow::anyhow!("Search cache unavailable"))?.get(id) {
                 if at.elapsed() < Duration::from_secs(600) { return Ok(value.clone()); }
             }
-            let _permit = self.gate.try_acquire().context("Search is busy. Try again shortly.")?;
             let url = format!("http://www.1lou.me/thread-{id}.htm");
             let raw = self.read(reqwest::Url::parse(&url)?).await?;
             let (description, attachments) = chinese::thread(&raw)?;
@@ -446,10 +477,6 @@ impl Search {
             ["tpb", "nyaa", "csv"].contains(&provider),
             "Unsupported search source"
         );
-        let _permit = self
-            .gate
-            .try_acquire()
-            .context("Search is busy. Try again shortly.")?;
         if provider == "csv" {
             return Ok(
                 json!({"description":"This index does not provide a description or file list.",
@@ -943,6 +970,21 @@ fn score(item: &mut Item, query: &Query) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn persistent_bt_cache_avoids_network_after_restart() {
+        use sha2::{Digest,Sha256};
+        let dir=std::env::temp_dir().join(format!("torrbaby-search-cache-test-{}",uuid::Uuid::new_v4()));
+        let url=reqwest::Url::parse("http://www.1lou.me/thread-123.htm").unwrap();
+        let name=format!("{}.cache",Sha256::digest(url.as_str().as_bytes()).iter().map(|b|format!("{b:02x}")).collect::<String>());
+        let first=Search::new().unwrap().with_cache_dir(dir.clone()).unwrap();
+        std::fs::write(dir.join(name),b"saved fixture page").unwrap();
+        drop(first);
+        let mut restarted=Search::new().unwrap().with_cache_dir(dir.clone()).unwrap();
+        // Even a regression must never contact a real indexer during this test.
+        restarted.http=reqwest::Client::builder().proxy(reqwest::Proxy::all("http://127.0.0.1:9").unwrap()).build().unwrap();
+        assert_eq!(restarted.read_bytes(url).await.unwrap(),b"saved fixture page");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn chinese_release_hints_distinguish_complete_and_partial_packs() {
         let complete = hints("逐玉[全40集][国语音轨/简繁英字幕].Pursuit.of.Jade.S01.2026.1080p.IQ.WEB-DL.H264.AAC-BlackTV");

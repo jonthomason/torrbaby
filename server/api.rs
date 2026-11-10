@@ -114,7 +114,7 @@ pub async fn serve(
         .context("Another Torrbaby server owns this database")?;
     let service = Arc::new(Service {
         lan_limiter: crate::lan::Limiter::default(),
-        torrent_search: crate::torrent_search::Search::new()?,
+        torrent_search: crate::torrent_search::Search::new()?.with_cache_dir(database.parent().context("Database needs a parent directory")?.join("search-cache"))?,
         token: config.token()?,
         rpc: Transmission::new(&config)?,
         db: Mutex::new(Database::open(&database, None)?),

@@ -369,7 +369,7 @@ private struct TorrentSearchRow: View {
     private var metadata: String { [item.edition, item.quality].filter { !$0.isEmpty }.joined(separator: " · ") }
     private var tracks: String { (item.hints.audio + [item.languages]).filter { !$0.isEmpty }.joined(separator: " · ") }
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .center, spacing: 10) {
             SearchReleaseArtwork(name: item.name)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title).font(.title3.bold()).foregroundStyle(.primary).lineLimit(2)
@@ -404,7 +404,7 @@ private struct TorrentSearchRow: View {
             }
         }.padding(.vertical, 2).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             .sheet(isPresented: $showBTDetails) {
-                NavigationStack { TorrentSearchDetail(item:item, loadBTDetails:true)
+                NavigationStack { TorrentSearchDetail(item:item, loadBTDetails:true, knownSize:displayedSize)
                     .toolbar { ToolbarItem(placement:.cancellationAction) { Button("Close") { showBTDetails=false } } }
                 }
                     .frame(minWidth:320,minHeight:400)
@@ -442,6 +442,7 @@ private struct TorrentSearchDetail: View {
     let item: TorrentSearchItem
     var embedded = false
     var loadBTDetails = false
+    var knownSize = ""
     var onAdded: () -> Void = {}
     @State private var detail: TorrentSearchDetails?
     @State private var attachment = 0
@@ -450,6 +451,7 @@ private struct TorrentSearchDetail: View {
         return values[attachment]
     }
     private var resolved: TorrentSearchItem { release?.item ?? item }
+    private var displayedSize: String { resolved.size.isEmpty ? knownSize : resolved.size }
     private var isBTListing: Bool { item.sources.contains { $0.provider == "1lou" } }
     @State private var loading = false
     @State private var adding = false
@@ -467,7 +469,7 @@ private struct TorrentSearchDetail: View {
             SwiftUI.Section {
                 Text(item.title).font(.title2.bold()).searchSelectable
                 if !item.edition.isEmpty { Text(item.edition).foregroundStyle(.secondary) }
-                Text([item.quality, resolved.size].filter { !$0.isEmpty }.joined(separator: " · ")).font(.subheadline).foregroundStyle(.secondary)
+                Text([item.quality, displayedSize].filter { !$0.isEmpty }.joined(separator: " · ")).font(.subheadline).foregroundStyle(.secondary)
                 if item.seeders != nil { Label(item.availability, systemImage: "arrow.up.circle.fill").font(.subheadline).foregroundStyle(Theme.mint) }
                 Text(item.name).font(.caption).foregroundStyle(.secondary).searchSelectable
                 if let releases = detail?.releases, releases.count > 1 {
@@ -477,7 +479,6 @@ private struct TorrentSearchDetail: View {
                         }
                     }
                 }
-                if item.magnet.isEmpty, let release { Text(release.item.size).font(.subheadline).foregroundStyle(.secondary) }
                 if !choices.isEmpty {
                     Picker("Release", selection: $selectedAttachment) {
                         Text("Choose a release").tag(String?.none)
