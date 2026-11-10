@@ -368,6 +368,8 @@ struct LibraryBrowser: View {
         append("Recently added", titles)
         append("Movies", titles.filter { $0.kind == "movie" })
         append("TV Shows", titles.filter { $0.kind == "tv" })
+        let watched = titles.filter { $0.watched }.sorted { ($0.assets.map(\.lastPlayed).max() ?? 0) > ($1.assets.map(\.lastPlayed).max() ?? 0) }
+        if !watched.isEmpty { result.append(("Recently watched", watched, watched)) }
         for genre in genres { append(genre, titles.filter { $0.genres.contains(genre) }) }
         return result
     }
@@ -390,7 +392,7 @@ struct LibraryBrowser: View {
                                 Text(LocalizedStringKey(([featured.year ?? ""] + featured.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · "))).font(.subheadline)
                                 Label("Explore", systemImage: "play.circle.fill").font(.headline).padding(.top, 5)
                             }.padding(28).foregroundStyle(.white)
-                        }.clipShape(RoundedRectangle(cornerRadius: 24))
+                        }.clipShape(RoundedRectangle(cornerRadius: 12))
                     }.buttonStyle(.plain)
                 }
                 if !titles.isEmpty { HStack {
@@ -457,24 +459,43 @@ struct LibraryBrowser: View {
                     LazyHStack(alignment: .top, spacing: compactLibrary ? 10 : 18) {
                         ForEach(Array(items.prefix(8))) { title in
                             if compactLibrary {
-                                poster(title).containerRelativeFrame(.horizontal, count: 3, spacing: 10)
-                            } else { poster(title).frame(width: 175) }
+                                poster(title, continuing: name == "Continue watching").containerRelativeFrame(.horizontal, count: 3, spacing: 10)
+                            } else { poster(title, continuing: name == "Continue watching").frame(width: 175) }
                         }
                     }.padding(.vertical, 6)
                 }.scrollIndicators(.hidden)
             }
         }
     }
-    func poster(_ title: LibraryTitle) -> some View {
+    func poster(_ title: LibraryTitle, continuing: Bool = false) -> some View {
         NavigationLink(value: LibraryDestination(id: title.id)) {
-            VStack(alignment: .leading, spacing: compactLibrary ? 4 : 8) {
-                LibraryArtwork(id: title.id).aspectRatio(2/3, contentMode: .fit).clipShape(RoundedRectangle(cornerRadius: 12))
+            VStack(alignment: .leading, spacing: 8) {
+                LibraryArtwork(id: title.id).aspectRatio(2/3, contentMode: .fit)
+                    .overlay { if title.poster?.isEmpty != false { Text(title.title).font(.headline).multilineTextAlignment(.center).padding(10) } }
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
                     .overlay(alignment: .topTrailing) { if title.watched { WatchedBadge() } }
-                Text(title.title).font(compactLibrary ? .caption.weight(.semibold) : .headline).lineLimit(2).multilineTextAlignment(.leading)
-                Text(LocalizedStringKey(title.continuationLabel ?? ((title.year ?? "") + (title.kind == "tv" ? " · TV Show" : "")))).font(.caption).foregroundStyle(Theme.muted)
-                if title.playable.isEmpty { Label("Downloading", systemImage: "arrow.down").font(.caption2).foregroundStyle(Theme.mint) }
+                if continuing, let asset = title.resume {
+                    GeometryReader { geometry in
+                        ZStack(alignment: .leading) {
+                            Rectangle().fill(.primary.opacity(0.18))
+                            Rectangle().fill(.primary.opacity(0.85)).frame(width: geometry.size.width * (asset.duration > 0 ? min(1, max(0, asset.position / asset.duration)) : 0))
+                        }
+                    }.frame(height: 3).accessibilityHidden(true)
+                    VStack(spacing: 3) {
+                        if let season = asset.season, let episode = asset.episode {
+                            Text(L10n.format("Season %d Ep %d", season, episode))
+                        }
+                        if asset.duration > 0 {
+                            let minutes = Int(ceil(max(0, asset.duration - asset.position) / 60))
+                            Text(minutes >= 60 ? L10n.format("%dh %dm left", minutes / 60, minutes % 60) : L10n.format("%dm left", minutes))
+                        }
+                    }.font(.caption).foregroundStyle(Theme.muted).frame(maxWidth: .infinity)
+                } else {
+                    Text(([title.genres.first, title.year].compactMap { $0 }.filter { !$0.isEmpty }).joined(separator: " · "))
+                        .font(.caption).foregroundStyle(Theme.muted).lineLimit(1).frame(maxWidth: .infinity)
+                }
             }.foregroundStyle(.primary)
-        }.buttonStyle(.plain)
+        }.buttonStyle(.plain).accessibilityLabel(title.title)
             .contextMenu { ContinueWatchingAction(title: title) }
     }
 }
@@ -482,6 +503,16 @@ struct LibraryBrowser: View {
 struct LibraryDetail: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
+    private var contentPadding: CGFloat {
+        #if os(iOS)
+        sizeClass == .compact ? 12 : 24
+        #else
+        24
+        #endif
+    }
     #if os(macOS)
     @Environment(\.openWindow) private var openWindow
     #endif
@@ -500,7 +531,7 @@ struct LibraryDetail: View {
     @ViewBuilder private func playbackActions(_ asset: LibraryAsset, title: LibraryTitle) -> some View {
         Button { play(asset, title: title.title) } label: {
             Label(LocalizedStringKey(store.canPlay(asset) ? asset.playbackActionTitle(television: title.kind == "tv") : "Not downloaded"), systemImage: store.canPlay(asset) ? "play.fill" : "wifi.slash")
-                .font(.headline).frame(minWidth: title.kind == "tv" ? 160 : nil, alignment: .leading).frame(minHeight: 44)
+                .font(.headline).frame(minWidth: title.kind == "tv" ? 120 : nil, alignment: .leading).frame(minHeight: 44)
         }.libraryActionStyle(prominent: true).disabled(loading)
         #if !os(tvOS)
         if title.kind == "tv" {
@@ -513,28 +544,21 @@ struct LibraryDetail: View {
         ScrollView {
             if let title {
                 VStack(alignment: .leading, spacing: 24) {
-                    LibraryArtwork(id: title.id, variant: title.backdrop != nil ? "backdrop" : "poster")
-                        .frame(height: 330).clipShape(RoundedRectangle(cornerRadius: 22))
-                    Text(title.title).font(.largeTitle.bold())
-                    Text(LocalizedStringKey(([title.year ?? "", title.contentRating ?? ""] + title.genres).filter { !$0.isEmpty }.joined(separator: " · "))).foregroundStyle(Theme.muted)
-                    if let asset = store.preferredLibraryAsset(title) {
-                        ViewThatFits(in: .horizontal) {
-                            HStack(spacing: 12) {
-                                playbackActions(asset, title: title)
-                                LibraryAssetActions(asset: asset, showsDownload: false, castTitle: title)
-                            }.fixedSize(horizontal: true, vertical: false)
-                            VStack(alignment: .leading, spacing: 12) {
+                    ZStack(alignment: .bottomLeading) {
+                        LibraryArtwork(id: title.id, variant: title.backdrop != nil ? "backdrop" : "poster", alignment: .top)
+                        LinearGradient(colors: [.clear, .black.opacity(0.94)], startPoint: .top, endPoint: .bottom)
+                        VStack(alignment: .leading, spacing: 14) {
+                            Spacer(minLength: 160)
+                            Text(title.title).font(.largeTitle.bold()).fixedSize(horizontal: false, vertical: true)
+                            Text(([title.year ?? "", title.contentRating ?? ""] + title.genres.prefix(3)).filter { !$0.isEmpty }.joined(separator: " · "))
+                                .font(.subheadline).foregroundStyle(.white.opacity(0.8))
+                            if let asset = store.preferredLibraryAsset(title) {
                                 HStack(spacing: 12) { playbackActions(asset, title: title) }
-                                LibraryAssetActions(asset: asset, showsDownload: false, castTitle: title)
                             }
-                        }
-                    }
-                    if loading {
-                        HStack {
-                            ProgressView().controlSize(.small)
-                            Text(LocalizedStringKey(preparation.isEmpty ? "Preparing playback…" : preparation)).font(.caption)
-                            Button("Cancel") { playbackTask?.cancel() }
-                        }
+                        }.foregroundStyle(.white).padding(16).frame(minHeight: 380, alignment: .bottomLeading)
+                    }.clipShape(RoundedRectangle(cornerRadius: 12)).environment(\.colorScheme, .dark)
+                    if let asset = store.preferredLibraryAsset(title) {
+                        LibraryAssetActions(asset: asset, showsDownload: false, castTitle: title)
                     }
                     if let asset = store.preferredLibraryAsset(title) {
                         MediaLanguagesView(info: asset.mediaInfo)
@@ -565,9 +589,19 @@ struct LibraryDetail: View {
                             episodeRow(asset, title: title)
                         }
                     }
-                }.padding(24)
+                }.padding(contentPadding)
             }
         }.background(Theme.canvas).navigationTitle(title?.title ?? "Library")
+        .overlay(alignment: .bottom) {
+            if loading {
+                HStack(spacing: 12) {
+                    ProgressView().controlSize(.small)
+                    Text(LocalizedStringKey(preparation.isEmpty ? "Preparing playback…" : preparation)).font(.callout)
+                    Button("Cancel") { playbackTask?.cancel() }
+                }.padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                    .padding(16)
+            }
+        }
         .onDisappear { playbackTask?.cancel() }
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)

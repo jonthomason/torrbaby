@@ -206,8 +206,10 @@
 		<dict>
 			<key>isa</key>
 			<string>PBXTargetDependency</string>
-			<key>platformFilter</key>
-			<string>tvos</string>
+			<key>platformFilters</key>
+			<array>
+				<string>tvos</string>
+			</array>
 			<key>target</key>
 			<string>E41107E7D33B17C46AF1E962</string>
 			<key>targetProxy</key>
@@ -440,8 +442,10 @@
 			<string>D58412960B11BCA678B409B9</string>
 			<key>isa</key>
 			<string>PBXBuildFile</string>
-			<key>platformFilter</key>
-			<string>tvos</string>
+			<key>platformFilters</key>
+			<array>
+				<string>tvos</string>
+			</array>
 			<key>settings</key>
 			<dict>
 				<key>ATTRIBUTES</key>
