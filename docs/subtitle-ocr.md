@@ -32,6 +32,10 @@ Deployed to Diamond on 2026-11-10, preserving the current schema-10 profiles rel
 
 Post-deployment check: the live episode inventory exposes generated `en` and `zh-Hans` tracks (697 cues each). Outlander was prioritized through the normal queue API; the next automatic OCR job advanced to 273/669 cues, confirming daemon-owned fallback scheduling and live progress. Server status had no error.
 
+## VobSub colour mapping
+
+DVD SET_COLOR/SET_CONTR store nibbles as `emphasis2 emphasis1 pattern background`. oxideav-sub-image 0.0.9 keeps them in wire order but labels slot 0 as background, so Torrbaby looks up 2-bit pixel `p` at slot `3 - p` (matching libavcodec). Before this fix, DVD tracks using the common white-fill/black-outline layout (e.g. the Spirited Away featurettes) rendered only scattered dots and failed as "OCR could not read these subtitles"; the white fill now becomes dark ink on white.
+
 ## PGS decoding
 
 PGS display sets are assembled across Matroska blocks and passed to the existing MIT-licensed oxideav-sub-image decoder. It handles fragmented objects, composition/cropping, palettes, windows, and epoch resets. The adapter uses [Matroska block timestamps and durations](https://www.matroska.org/technical/subtitles.html), with subsequent replacement/clear displays ending captions. It never invents an end time for an unterminated final caption.

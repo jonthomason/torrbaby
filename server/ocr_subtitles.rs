@@ -8,6 +8,30 @@ use std::{
     path::Path,
     time::Instant,
 };
+/// Render 2-bit VobSub pixels as dark-on-white grayscale for OCR.
+///
+/// SET_COLOR/SET_CONTR store nibbles as `emphasis2 emphasis1 pattern background`
+/// (the order libavcodec's dvdsubdec uses). oxideav-sub-image 0.0.9 stores those
+/// nibbles in wire order but labels index 0 as background, so a raw pixel value
+/// `p` must be looked up at `3 - p`. Without this, the common white-fill/black-
+/// outline layout rendered only scattered outline pixels and OCR found no text.
+fn vobsub_gray(
+    pixels: &[u8],
+    palette_sel: &[u8; 4],
+    alpha: &[u8; 4],
+    palette: &[[u8; 3]; 16],
+) -> Vec<u8> {
+    pixels
+        .iter()
+        .map(|&pixel| {
+            let slot = 3 - (pixel as usize & 3);
+            let rgb = palette[palette_sel[slot] as usize & 15];
+            let lum = (rgb[0] as u32 * 299 + rgb[1] as u32 * 587 + rgb[2] as u32 * 114) / 1000;
+            (255 - lum * (alpha[slot] as u32 & 15) / 15) as u8
+        })
+        .collect()
+}
+
 pub fn decode(input: &Path, track: u64, out: &Path) -> Result<()> {
     fs::create_dir(out)?;
     let started = Instant::now();
@@ -92,14 +116,7 @@ pub fn decode(input: &Path, track: u64, out: &Path) -> Result<()> {
                     !spu.saw_chg_colcon,
                     "Dynamic subtitle palettes are not supported"
                 );
-                let mut gray = Vec::with_capacity(pixels.len());
-                for pixel in pixels {
-                    let p = pixel as usize;
-                    let rgb = idx.palette_rgb[spu.palette_sel[p] as usize];
-                    let lum =
-                        (rgb[0] as u32 * 299 + rgb[1] as u32 * 587 + rgb[2] as u32 * 114) / 1000;
-                    gray.push((255 - lum * spu.alpha[p] as u32 / 15) as u8);
-                }
+                let gray = vobsub_gray(&pixels, &spu.palette_sel, &spu.alpha, &idx.palette_rgb);
                 let name = format!("{:05}.gray", cues.len());
                 bytes_written += gray.len() as u64;
                 ensure!(
@@ -342,5 +359,38 @@ pub async fn detect_language(cues: &[crate::subtitles::TimedCue]) -> Result<Stri
         Some("en") => Ok("en".into()),
         Some(t) if t.starts_with("zh") => Ok("zh-Hans".into()),
         _ => anyhow::bail!("No supported subtitle language could be identified"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One 2x1 SPU: a pattern pixel then a background pixel, with
+    /// SET_COLOR/SET_CONTR in DVD wire order (e2 e1 / p b).
+    fn spu() -> Vec<u8> {
+        let mut s = vec![0, 0, 0, 5, 0x54];
+        s.extend([0, 0, 0, 5, 0x01]);
+        s.extend([0x03, 0x00, 0x10]); // pattern=palette 1, others palette 0
+        s.extend([0x04, 0xFF, 0xF0]); // background transparent, others opaque
+        s.extend([0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00]);
+        s.extend([0x06, 0x00, 0x04, 0x00, 0x00, 0xFF]);
+        let len = s.len() as u16;
+        s[..2].copy_from_slice(&len.to_be_bytes());
+        s
+    }
+
+    #[test]
+    fn vobsub_pattern_pixels_use_pattern_colour() {
+        let (spu, pixels, size) = oxideav_sub_image::vobsub::parse_and_decode_spu(&spu()).unwrap();
+        assert_eq!(size, (2, 1));
+        assert_eq!(pixels, [1, 0]);
+        let mut palette = [[0u8; 3]; 16];
+        palette[1] = [0xf0, 0xf0, 0xf0];
+        // Light pattern text becomes dark ink; the transparent background stays white.
+        assert_eq!(
+            vobsub_gray(&pixels, &spu.palette_sel, &spu.alpha, &palette),
+            [15, 255]
+        );
     }
 }
