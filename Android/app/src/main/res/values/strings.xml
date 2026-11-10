@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="ui_b909e7d6e8c9" formatted="false">%d min remaining</string>
+    <string name="ui_143c5ba33118" formatted="false">%d torrents added</string>
     <string name="ui_660a76df86fd" formatted="false">%dh %dm left</string>
     <string name="ui_659748ef61cf" formatted="false">%dm left</string>
     <string name="ui_e9c9f7bc39bb" formatted="false">1h</string>
@@ -11,8 +12,10 @@
     <string name="ui_6b21fb791ac0" formatted="false">About</string>
     <string name="ui_cbd19b5c397e" formatted="false">Actor</string>
     <string name="ui_61cc55aa0453" formatted="false">Add</string>
+    <string name="ui_2e29f3ec4698" formatted="false">Add %d episodes?</string>
     <string name="ui_d584a46acc6a" formatted="false">Add Torrent…</string>
     <string name="ui_73d9c5ee15ad" formatted="false">Add a torrent</string>
+    <string name="ui_0d59c5e974a7" formatted="false">Add best of %d episodes</string>
     <string name="ui_d76863c63c2f" formatted="false">Add magnet link</string>
     <string name="ui_8985db712c53" formatted="false">Add magnet link to server</string>
     <string name="ui_676f036428f3" formatted="false">Add media on your Torrbaby server, then refresh here.</string>
@@ -24,11 +27,15 @@
     <string name="ui_802e94122566" formatted="false">Adding download</string>
     <string name="ui_9295ef6a9cf8" formatted="false">Adding download…</string>
     <string name="ui_ffb2e628b0e9" formatted="false">Adding…</string>
+    <string name="ui_1f5b6db4283f" formatted="false">Adds the most-seeded release of each episode that isn’t already in your library or torrents.</string>
     <string name="ui_6a72085653e4" formatted="false">All</string>
     <string name="ui_360e1182021a" formatted="false">All clear</string>
+    <string name="ui_10c927f29963" formatted="false">All episodes</string>
     <string name="ui_09ac5f615d7d" formatted="false">All genres</string>
     <string name="ui_d0038a506519" formatted="false">All processing complete</string>
+    <string name="ui_ef3238d2ee68" formatted="false">All releases</string>
     <string name="ui_f1f67dc07e63" formatted="false">All resolutions</string>
+    <string name="ui_5666605dbc6a" formatted="false">All seasons</string>
     <string name="ui_9d12608fc0bd" formatted="false">Alphabetical</string>
     <string name="ui_f2de57952082" formatted="false">Already in your torrents</string>
     <string name="ui_dcc38ee5a416" formatted="false">Applies to torrents that use the server\'s default</string>
@@ -46,6 +53,7 @@
     <string name="ui_f0926a5af237" formatted="false">Back to library</string>
     <string name="ui_1a0371e373ff" formatted="false">Background color</string>
     <string name="ui_f12e36bd83ed" formatted="false">Background opacity</string>
+    <string name="ui_86f686f840c0" formatted="false">Best match</string>
     <string name="ui_8c84989bcc5e" formatted="false">Bytes/sec</string>
     <string name="ui_77dfd2135f4d" formatted="false">Cancel</string>
     <string name="ui_67bb11d08df2" formatted="false">Cancel download</string>
@@ -84,6 +92,9 @@
     <string name="ui_a3b13fde9c84" formatted="false">Compare releases</string>
     <string name="ui_171b1113ddd7" formatted="false">Comparing releases</string>
     <string name="ui_1f5a1abf2f08" formatted="false">Complete</string>
+    <string name="ui_749a5d0389da" formatted="false">Complete Season %d</string>
+    <string name="ui_d93670a22aa1" formatted="false">Complete seasons</string>
+    <string name="ui_f532a2f643b7" formatted="false">Complete · %d episodes</string>
     <string name="ui_04a212215ef9" formatted="false">Confirm</string>
     <string name="ui_b65463cb6a42" formatted="false">Connect</string>
     <string name="ui_d9c85ddf1ada" formatted="false">Connect to Torrbaby</string>
@@ -161,7 +172,10 @@
     <string name="ui_7e5fe97f0e96" formatted="false">Enter a name</string>
     <string name="ui_cd8763c98e0a" formatted="false">Enter a value</string>
     <string name="ui_5069655cee71" formatted="false">Enter server address</string>
+    <string name="ui_ec4a7319deb9" formatted="false">Ep %d</string>
+    <string name="ui_da66b520661a" formatted="false">Ep %d–%d</string>
     <string name="ui_8669aa56ebc3" formatted="false">Episode</string>
+    <string name="ui_4d9e959a49a6" formatted="false">Episode order</string>
     <string name="ui_49d641ba8893" formatted="false">Episodes</string>
     <string name="ui_e8642ee5ad7e" formatted="false">Estimating…</string>
     <string name="ui_f83b6fe3aebf" formatted="false">Exit</string>
@@ -207,6 +221,7 @@
     <string name="ui_8ed49e014b77" formatted="false">Import connection file…</string>
     <string name="ui_9ea8b1168411" formatted="false">In Junk · delete after seeding</string>
     <string name="ui_1590b4aa625e" formatted="false">In Junk · finishing seeding</string>
+    <string name="ui_00cc7207a45e" formatted="false">In your library</string>
     <string name="ui_fc2d046feac3" formatted="false">Individual torrent limits take precedence.</string>
     <string name="ui_8bfa1406b66d" formatted="false">Initial or emoji</string>
     <string name="ui_9407e9ca65ce" formatted="false">Interface language</string>
@@ -255,6 +270,7 @@
     <string name="ui_216fcddff2f9" formatted="false">Monospace</string>
     <string name="ui_4bab2d8fe13f" formatted="false">More</string>
     <string name="ui_f49ac09d3a35" formatted="false">More to explore</string>
+    <string name="ui_da76cfbbf86f" formatted="false">Most seeds</string>
     <string name="ui_f1f9e40dfd55" formatted="false">Move the entire package to Junk?</string>
     <string name="ui_960728c07953" formatted="false">Move this package to Junk?</string>
     <string name="ui_d1b65f7eb7e8" formatted="false">Move to Complete at target ratio</string>
@@ -421,6 +437,8 @@
     <string name="ui_1a6a5ba8c23d" formatted="false">Searching…</string>
     <string name="ui_62255f5671e8" formatted="false">Season</string>
     <string name="ui_e5444912e049" formatted="false">Season %d Ep %d</string>
+    <string name="ui_7c18fa0f7817" formatted="false">Season %d Ep %d–%d</string>
+    <string name="ui_35f3392ee19c" formatted="false">Seasons %d–%d</string>
     <string name="ui_8196e42428ff" formatted="false">See All</string>
     <string name="ui_e41966be6687" formatted="false">See All  ›</string>
     <string name="ui_2ac9cd891f0d" formatted="false">Seeding</string>
@@ -436,9 +454,11 @@
     <string name="ui_c7f73bb54d92" formatted="false">Settings</string>
     <string name="ui_aef97bb06af4" formatted="false">Settings saved</string>
     <string name="ui_c0f6e98ebf63" formatted="false">Settings → Link a device</string>
+    <string name="ui_d97d1ee339e4" formatted="false">Show</string>
     <string name="ui_4589080623ff" formatted="false">Show download and upload rates</string>
     <string name="ui_3437b8727d9f" formatted="false">Show torrent</string>
     <string name="ui_56b7696a10e7" formatted="false">Showing the first 150 cast entries.</string>
+    <string name="ui_c150b0bcf05d" formatted="false">Single episodes</string>
     <string name="ui_b7152342a267" formatted="false">Size</string>
     <string name="ui_336d9bdb4d4c" formatted="false">Size unavailable</string>
     <string name="ui_b5eedcf44417" formatted="false">Size…</string>

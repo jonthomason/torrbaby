@@ -626,3 +626,23 @@ Season %d Ep %d	第 %d 季 第 %d 集
 Transmission has not confirmed the add yet. The torrent may still appear in Torrents; check there before trying again.	Transmission 尚未确认添加结果。种子仍可能出现在“种子”列表中，请先查看列表，再决定是否重试。
 Transmission took too long to respond. Please try again.	Transmission 响应超时，请重试。
 The connection to Transmission was interrupted. Please try again.	与 Transmission 的连接已中断，请重试。
+Complete Season %d	第 %d 季全集
+Complete · %d episodes	全 %d 集
+Season %d Ep %d–%d	第 %d 季 第 %d–%d 集
+Ep %d	第 %d 集
+Ep %d–%d	第 %d–%d 集
+Seasons %d–%d	第 %d–%d 季
+Show	显示
+All releases	全部资源
+Complete seasons	整季合集
+Single episodes	单集
+All seasons	全部季
+All episodes	全部集
+Best match	最佳匹配
+Episode order	按集数排序
+Most seeds	做种最多
+In your library	已在媒体库中
+Add %d episodes?	添加 %d 集？
+Add best of %d episodes	添加 %d 集的最佳资源
+%d torrents added	已添加 %d 个种子
+Adds the most-seeded release of each episode that isn’t already in your library or torrents.	为每一集添加做种数最多的资源，已在媒体库或种子列表中的剧集会跳过。

@@ -10,6 +10,7 @@ struct TorrentSearchSource: Decodable {
 struct TorrentReleaseHints: Decodable {
     let year: Int?
     let season: Int?
+    var seasonEnd: Int? = nil
     let episode: Int?
     let episodeEnd: Int?
     let episodeCount: Int?
@@ -50,16 +51,37 @@ struct TorrentSearchItem: Decodable, Identifiable {
             .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "([{-–")))
         return readable.isEmpty ? name : readable
     }
-    var edition: String {
-        var values = [hints.year.map(String.init)]
-        if let count = hints.episodeCount { values.append("Complete · \(count) episodes") }
-        else if let episode = hints.episode {
-            let range = hints.episodeEnd.map { "\(episode)–\($0)" } ?? "\(episode)"
-            values.append("Episodes \(range)")
-        }
-        if let season = hints.season { values.append("Season \(season)") }
-        return values.compactMap { $0 }.joined(separator: " · ")
+    /// A whole season (or several), as opposed to individual episodes.
+    var isCompleteSeason: Bool { hints.episodeCount != nil || (hints.season != nil && hints.episode == nil) }
+    var isSingleEpisode: Bool { hints.episode != nil && hints.episodeEnd == nil && hints.episodeCount == nil }
+    func covers(season wanted: Int) -> Bool {
+        guard let season = hints.season else { return false }
+        return (season...max(season, hints.seasonEnd ?? season)).contains(wanted)
     }
+    func covers(episode wanted: Int) -> Bool {
+        guard let episode = hints.episode else { return false }
+        return (episode...max(episode, hints.episodeEnd ?? episode)).contains(wanted)
+    }
+    /// What the release contains, season first: "Season 2 Ep 1", "Complete Season 1".
+    var scope: String {
+        if let count = hints.episodeCount {
+            return hints.season.map { L10n.format("Complete Season %d", $0) } ?? L10n.format("Complete · %d episodes", count)
+        }
+        if let episode = hints.episode {
+            switch (hints.season, hints.episodeEnd) {
+            case let (season?, end?): return L10n.format("Season %d Ep %d–%d", season, episode, end)
+            case let (season?, nil): return L10n.format("Season %d Ep %d", season, episode)
+            case let (nil, end?): return L10n.format("Ep %d–%d", episode, end)
+            case (nil, nil): return L10n.format("Ep %d", episode)
+            }
+        }
+        if let season = hints.season {
+            if let end = hints.seasonEnd, end > season { return L10n.format("Seasons %d–%d", season, end) }
+            return L10n.format("Complete Season %d", season)
+        }
+        return ""
+    }
+    var edition: String { [scope, hints.year.map(String.init) ?? ""].filter { !$0.isEmpty }.joined(separator: " · ") }
     var quality: String { [hints.resolution, hints.releaseSource, hints.videoCodec].compactMap { $0 }.joined(separator: " · ") }
     var languages: String {
         hints.languages.map { tag in
@@ -125,6 +147,12 @@ struct TorrentSearchView: View {
     @AppStorage("torrentSearchMarket") private var market = "world"
     @AppStorage("torrentSearchResolution") private var resolution = "all"
     @State private var source = "all"
+    @State private var scopeFilter = "all"
+    @State private var seasonFilter: Int?
+    @State private var episodeFilter: Int?
+    @AppStorage("torrentSearchSort") private var sortOrder = "match"
+    @State private var confirmBatch = false
+    @State private var batchAdding = false
     @State private var response: TorrentSearchResponse?
     @State private var error: String?
     @State private var searching = false
@@ -141,8 +169,98 @@ struct TorrentSearchView: View {
     #if !os(tvOS)
     @State private var querySelection: TextSelection?
     #endif
-    private var visibleItems: [TorrentSearchItem] {
+    private var resolutionItems: [TorrentSearchItem] {
         (response?.items ?? []).filter { resolution == "all" || $0.hints.resolution?.lowercased() == resolution }
+    }
+    private var availableSeasons: [Int] {
+        Array(Set(resolutionItems.flatMap { item in item.hints.season.map { Array($0...max($0, item.hints.seasonEnd ?? $0)) } ?? [] })).sorted()
+    }
+    private var availableEpisodes: [Int] {
+        Array(Set(resolutionItems.filter { seasonFilter == nil || $0.covers(season: seasonFilter!) }
+            .flatMap { item in item.hints.episode.map { Array($0...max($0, item.hints.episodeEnd ?? $0)) } ?? [] })).sorted()
+    }
+    private var visibleItems: [TorrentSearchItem] {
+        var items = resolutionItems
+        if scopeFilter == "seasons" { items = items.filter(\.isCompleteSeason) }
+        if scopeFilter == "episodes" { items = items.filter(\.isSingleEpisode) }
+        if let seasonFilter { items = items.filter { $0.covers(season: seasonFilter) } }
+        if let episodeFilter { items = items.filter { $0.covers(episode: episodeFilter) } }
+        switch sortOrder {
+        case "episode":
+            // Stable: releases of the same episode keep the server's relevance order.
+            return items.enumerated().sorted { a, b in
+                // Season packs lead their season; releases with no season or episode go last.
+                func key(_ item: TorrentSearchItem) -> (Int, Int, Int) {
+                    (item.hints.season == nil && item.hints.episode == nil && item.hints.episodeCount == nil ? 1 : 0, item.hints.season ?? 0, item.hints.episode ?? 0)
+                }
+                let left = key(a.element), right = key(b.element)
+                if left != right { return left < right }
+                let seeds = (a.element.seeders ?? 0, b.element.seeders ?? 0)
+                return seeds.0 != seeds.1 ? seeds.0 > seeds.1 : a.offset < b.offset
+            }.map(\.element)
+        case "seeds":
+            return items.enumerated().sorted { a, b in
+                let seeds = (a.element.seeders ?? 0, b.element.seeders ?? 0)
+                return seeds.0 != seeds.1 ? seeds.0 > seeds.1 : a.offset < b.offset
+            }.map(\.element)
+        default: return items
+        }
+    }
+    private static func titleKey(_ value: String) -> String {
+        value.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
+    }
+    /// A release without a year borrows the one its same-titled neighbours agree on, so
+    /// artwork lookup is not defeated by an ambiguous bare title.
+    private func artworkYear(_ item: TorrentSearchItem) -> Int? {
+        if let year = item.hints.year { return year }
+        let key = Self.titleKey(item.title)
+        let years = Set((response?.items ?? []).filter { Self.titleKey($0.title) == key }.compactMap(\.hints.year))
+        return years.count == 1 ? years.first : nil
+    }
+    /// What the user already has of this release: a library copy or an existing torrent.
+    private func ownership(_ item: TorrentSearchItem) -> String? {
+        if !item.infoHash.isEmpty, store.torrents.contains(where: { $0.hashString.caseInsensitiveCompare(item.infoHash) == .orderedSame }) {
+            return "Already in your torrents"
+        }
+        let key = Self.titleKey(item.title)
+        let episodic = item.hints.season != nil || item.hints.episode != nil || item.hints.episodeCount != nil
+        guard !key.isEmpty, let title = store.library?.titles.first(where: {
+            Self.titleKey($0.title) == key && ($0.kind == "tv") == episodic
+                && (episodic || item.hints.year == nil || $0.year == nil || $0.year == item.hints.year.map(String.init))
+        }) else { return nil }
+        let files = title.assets.filter { $0.role != "extra" && $0.complete }
+        guard episodic else { return files.isEmpty ? nil : "In your library" }
+        let season = item.hints.season ?? 1
+        if item.isCompleteSeason && item.hints.seasonEnd == nil {
+            return files.contains { ($0.season ?? 1) == season } ? "In your library" : nil
+        }
+        if let episode = item.hints.episode {
+            let wanted = episode...max(episode, item.hints.episodeEnd ?? episode)
+            return wanted.allSatisfy { number in files.contains { ($0.season ?? 1) == season && $0.episode == number } } ? "In your library" : nil
+        }
+        return nil
+    }
+    /// The best-seeded single-episode release of each episode the user does not have yet.
+    /// A search can return several shows; the batch follows the best-matching one.
+    private var batchCandidates: [TorrentSearchItem] {
+        let episodes = resolutionItems.filter { $0.isSingleEpisode && !$0.magnet.isEmpty && ($0.seeders ?? 0) > 0 }
+        guard let lead = episodes.first.map({ Self.titleKey($0.title) }) else { return [] }
+        return episodes.filter { Self.titleKey($0.title) == lead }
+    }
+    private var batchSeason: Int? {
+        if let seasonFilter { return seasonFilter }
+        let seasons = Set(batchCandidates.map { $0.hints.season ?? 1 })
+        return seasons.count == 1 ? seasons.first : nil
+    }
+    private var batchPicks: [TorrentSearchItem] {
+        guard let season = batchSeason else { return [] }
+        var best: [Int: TorrentSearchItem] = [:]
+        for item in batchCandidates where (item.hints.season ?? 1) == season {
+            guard let episode = item.hints.episode, episodeFilter == nil || episode == episodeFilter, ownership(item) == nil else { continue }
+            if (best[episode]?.seeders ?? 0) < (item.seeders ?? 0) { best[episode] = item }
+        }
+        // An episode the library already has is skipped even when this particular release is new.
+        return best.keys.sorted().compactMap { best[$0] }
     }
     private var selectedItem: TorrentSearchItem? { visibleItems.first { $0.id == selectedID } }
     var body: some View {
@@ -243,6 +361,7 @@ struct TorrentSearchView: View {
                     searchStatus
                 }
             }
+            if response != nil { refinements }
             if year != nil || season != nil || episode != nil {
                 HStack {
                     Text([year.map { "\($0)" }, season.map { "Season \($0)" }, episode.map { "Episode \($0)" }].compactMap { $0 }.joined(separator: " · "))
@@ -286,6 +405,75 @@ struct TorrentSearchView: View {
                 }.pickerStyle(.menu).fixedSize()
                     .onChange(of: resolution) { selectedID = visibleItems.first?.id }
     }
+    @ViewBuilder private var refinements: some View {
+        let picks = batchPicks
+        ViewThatFits(in: .horizontal) {
+            HStack { scopePicker; seasonPicker; episodePicker; sortPicker; Spacer(); batchButton(picks) }
+            VStack(alignment: .leading, spacing: 6) {
+                HStack { scopePicker.labelsHidden(); seasonPicker.labelsHidden(); episodePicker.labelsHidden(); Spacer() }
+                HStack { sortPicker.labelsHidden(); Spacer(); batchButton(picks) }
+            }
+        }
+        .confirmationDialog(L10n.format("Add %d episodes?", picks.count), isPresented: $confirmBatch, titleVisibility: .visible) {
+            Button("Add") { Task { await addBatch(picks) } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Adds the most-seeded release of each episode that isn’t already in your library or torrents.")
+        }
+    }
+    private var scopePicker: some View {
+        Picker("Show", selection: $scopeFilter) {
+            Text("All releases").tag("all")
+            Text("Complete seasons").tag("seasons")
+            Text("Single episodes").tag("episodes")
+        }.pickerStyle(.menu).fixedSize()
+            .onChange(of: scopeFilter) { selectedID = visibleItems.first?.id }
+    }
+    @ViewBuilder private var seasonPicker: some View {
+        if availableSeasons.count > 1 {
+            Picker("Season", selection: $seasonFilter) {
+                Text("All seasons").tag(Int?.none)
+                ForEach(availableSeasons, id: \.self) { Text("Season \($0)").tag(Int?.some($0)) }
+            }.pickerStyle(.menu).fixedSize()
+                .onChange(of: seasonFilter) { episodeFilter = nil; selectedID = visibleItems.first?.id }
+        }
+    }
+    @ViewBuilder private var episodePicker: some View {
+        if availableEpisodes.count > 1 {
+            Picker("Episode", selection: $episodeFilter) {
+                Text("All episodes").tag(Int?.none)
+                ForEach(availableEpisodes, id: \.self) { Text("Episode \($0)").tag(Int?.some($0)) }
+            }.pickerStyle(.menu).fixedSize()
+                .onChange(of: episodeFilter) { selectedID = visibleItems.first?.id }
+        }
+    }
+    private var sortPicker: some View {
+        Picker("Sort", selection: $sortOrder) {
+            Text("Best match").tag("match")
+            Text("Episode order").tag("episode")
+            Text("Most seeds").tag("seeds")
+        }.pickerStyle(.menu).fixedSize()
+    }
+    @ViewBuilder private func batchButton(_ picks: [TorrentSearchItem]) -> some View {
+        if picks.count > 1 {
+            if batchAdding { ProgressView().controlSize(.small) }
+            else { Button(L10n.format("Add best of %d episodes", picks.count)) { confirmBatch = true } }
+        }
+    }
+    private func addBatch(_ picks: [TorrentSearchItem]) async {
+        guard !batchAdding else { return }
+        batchAdding = true; error = nil
+        defer { batchAdding = false }
+        var added = 0
+        struct Added: Decodable {}
+        for item in picks {
+            do {
+                let _: Added = try await store.request("POST", "/v1/torrents", body: ["magnet": item.magnet, "paused": false], timeout: 45)
+                added += 1
+            } catch { self.error = error.localizedDescription; break }
+        }
+        if added > 0 { store.notify(L10n.format("%d torrents added", added), detail: picks.first?.title ?? "") }
+    }
     @ViewBuilder private var searchStatus: some View {
                 if response != nil { Text("\(visibleItems.count) releases").font(.caption).foregroundStyle(.secondary) }
                 if searching { ProgressView().controlSize(.small) }
@@ -306,14 +494,14 @@ struct TorrentSearchView: View {
     }
     @ViewBuilder private func ordinaryRow(_ item: TorrentSearchItem, inline: Bool) -> some View {
             if item.sources.contains(where: { $0.provider == "1lou" }) {
-                TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true; focusNextSearch() })
+                TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true; focusNextSearch() }, ownership: ownership(item), artworkYear: artworkYear(item))
             } else if inline {
-                Button { selectedID = item.id } label: { TorrentSearchRow(item: item) }
+                Button { selectedID = item.id } label: { TorrentSearchRow(item: item, ownership: ownership(item), artworkYear: artworkYear(item)) }
                     .buttonStyle(.plain)
                     .listRowBackground(selectedID == item.id ? Theme.mint.opacity(0.13) : Color.clear)
                     .accessibilityAddTraits(selectedID == item.id ? .isSelected : [])
             } else {
-                NavigationLink { TorrentSearchDetail(item: item, onAdded: { prepareNextSearch = true }).id(item.id) } label: { TorrentSearchRow(item: item) }
+                NavigationLink { TorrentSearchDetail(item: item, onAdded: { prepareNextSearch = true }).id(item.id) } label: { TorrentSearchRow(item: item, ownership: ownership(item), artworkYear: artworkYear(item)) }
             }
     }
     #if os(macOS)
@@ -370,6 +558,8 @@ struct TorrentSearchView: View {
             do {
                 let value: TorrentSearchResponse = try await store.request("POST", "/v1/search/torrents", body: body, timeout: 30)
                 guard !Task.isCancelled else { return }; response = value
+                if let seasonFilter, !availableSeasons.contains(seasonFilter) { self.seasonFilter = nil }
+                if let episodeFilter, !availableEpisodes.contains(episodeFilter) { self.episodeFilter = nil }
                 if !visibleItems.contains(where: { $0.id == selectedID }) { selectedID = visibleItems.first?.id }
             } catch {
                 guard !Task.isCancelled else { return }; self.error = error.localizedDescription
@@ -458,6 +648,8 @@ private struct TorrentSearchRow: View {
     var onAdded: () -> Void = {}
     var onTrial: ((String, String, String, String) -> Void)? = nil
     var trialSelected: Set<String> = []
+    var ownership: String? = nil
+    var artworkYear: Int? = nil
     @State private var fetchedSize: String?
     @State private var showBTDetails = false
     @State private var btChoices: [SearchReleaseSizes.Choice] = []
@@ -470,7 +662,10 @@ private struct TorrentSearchRow: View {
     private var tracks: String { (item.hints.audio + [item.languages]).filter { !$0.isEmpty }.joined(separator: " · ") }
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
-            SearchReleaseArtwork(name: item.name, identity: "\(item.title.lowercased()):\(item.hints.year.map(String.init) ?? ""):\(item.hints.season != nil || item.hints.episodeCount != nil ? "tv" : "movie")")
+            let episodic = item.hints.season != nil || item.hints.episodeCount != nil
+            // A year borrowed from same-titled results is sent as a plain "Title Year S01" name.
+            SearchReleaseArtwork(name: item.hints.year == nil && artworkYear != nil ? "\(item.title) \(artworkYear!)\(episodic ? " S01" : "")" : item.name,
+                identity: "\(item.title.lowercased()):\((item.hints.year ?? artworkYear).map(String.init) ?? ""):\(episodic ? "tv" : "movie")")
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title).font(.title3.bold()).foregroundStyle(.primary).lineLimit(2)
                 if !displayedSize.isEmpty || item.seeders != nil {
@@ -487,6 +682,9 @@ private struct TorrentSearchRow: View {
                 }
                 if !metadata.isEmpty { Text(metadata).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
                 if !tracks.isEmpty { Text(tracks).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                if let ownership {
+                    Label(LocalizedStringKey(ownership), systemImage: "checkmark.circle.fill").font(.caption.weight(.semibold)).foregroundStyle(Theme.mint)
+                }
                 if let addError { Text(addError).font(.caption).foregroundStyle(.orange) }
             }
             if let onTrial {

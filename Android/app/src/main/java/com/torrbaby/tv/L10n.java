@@ -12,6 +12,7 @@ final class L10n {
   private static final Map<String,Integer> IDS = new HashMap<>();
   static {
     IDS.put("%d min remaining", R.string.ui_b909e7d6e8c9);
+    IDS.put("%d torrents added", R.string.ui_143c5ba33118);
     IDS.put("%dh %dm left", R.string.ui_660a76df86fd);
     IDS.put("%dm left", R.string.ui_659748ef61cf);
     IDS.put("1h", R.string.ui_e9c9f7bc39bb);
@@ -22,8 +23,10 @@ final class L10n {
     IDS.put("About", R.string.ui_6b21fb791ac0);
     IDS.put("Actor", R.string.ui_cbd19b5c397e);
     IDS.put("Add", R.string.ui_61cc55aa0453);
+    IDS.put("Add %d episodes?", R.string.ui_2e29f3ec4698);
     IDS.put("Add Torrent…", R.string.ui_d584a46acc6a);
     IDS.put("Add a torrent", R.string.ui_73d9c5ee15ad);
+    IDS.put("Add best of %d episodes", R.string.ui_0d59c5e974a7);
     IDS.put("Add magnet link", R.string.ui_d76863c63c2f);
     IDS.put("Add magnet link to server", R.string.ui_8985db712c53);
     IDS.put("Add media on your Torrbaby server, then refresh here.", R.string.ui_676f036428f3);
@@ -35,11 +38,15 @@ final class L10n {
     IDS.put("Adding download", R.string.ui_802e94122566);
     IDS.put("Adding download…", R.string.ui_9295ef6a9cf8);
     IDS.put("Adding…", R.string.ui_ffb2e628b0e9);
+    IDS.put("Adds the most-seeded release of each episode that isn’t already in your library or torrents.", R.string.ui_1f5b6db4283f);
     IDS.put("All", R.string.ui_6a72085653e4);
     IDS.put("All clear", R.string.ui_360e1182021a);
+    IDS.put("All episodes", R.string.ui_10c927f29963);
     IDS.put("All genres", R.string.ui_09ac5f615d7d);
     IDS.put("All processing complete", R.string.ui_d0038a506519);
+    IDS.put("All releases", R.string.ui_ef3238d2ee68);
     IDS.put("All resolutions", R.string.ui_f1f67dc07e63);
+    IDS.put("All seasons", R.string.ui_5666605dbc6a);
     IDS.put("Alphabetical", R.string.ui_9d12608fc0bd);
     IDS.put("Already in your torrents", R.string.ui_f2de57952082);
     IDS.put("Applies to torrents that use the server's default", R.string.ui_dcc38ee5a416);
@@ -57,6 +64,7 @@ final class L10n {
     IDS.put("Back to library", R.string.ui_f0926a5af237);
     IDS.put("Background color", R.string.ui_1a0371e373ff);
     IDS.put("Background opacity", R.string.ui_f12e36bd83ed);
+    IDS.put("Best match", R.string.ui_86f686f840c0);
     IDS.put("Bytes/sec", R.string.ui_8c84989bcc5e);
     IDS.put("Cancel", R.string.ui_77dfd2135f4d);
     IDS.put("Cancel download", R.string.ui_67bb11d08df2);
@@ -95,6 +103,9 @@ final class L10n {
     IDS.put("Compare releases", R.string.ui_a3b13fde9c84);
     IDS.put("Comparing releases", R.string.ui_171b1113ddd7);
     IDS.put("Complete", R.string.ui_1f5a1abf2f08);
+    IDS.put("Complete Season %d", R.string.ui_749a5d0389da);
+    IDS.put("Complete seasons", R.string.ui_d93670a22aa1);
+    IDS.put("Complete · %d episodes", R.string.ui_f532a2f643b7);
     IDS.put("Confirm", R.string.ui_04a212215ef9);
     IDS.put("Connect", R.string.ui_b65463cb6a42);
     IDS.put("Connect to Torrbaby", R.string.ui_d9c85ddf1ada);
@@ -172,7 +183,10 @@ final class L10n {
     IDS.put("Enter a name", R.string.ui_7e5fe97f0e96);
     IDS.put("Enter a value", R.string.ui_cd8763c98e0a);
     IDS.put("Enter server address", R.string.ui_5069655cee71);
+    IDS.put("Ep %d", R.string.ui_ec4a7319deb9);
+    IDS.put("Ep %d–%d", R.string.ui_da66b520661a);
     IDS.put("Episode", R.string.ui_8669aa56ebc3);
+    IDS.put("Episode order", R.string.ui_4d9e959a49a6);
     IDS.put("Episodes", R.string.ui_49d641ba8893);
     IDS.put("Estimating…", R.string.ui_e8642ee5ad7e);
     IDS.put("Exit", R.string.ui_f83b6fe3aebf);
@@ -218,6 +232,7 @@ final class L10n {
     IDS.put("Import connection file…", R.string.ui_8ed49e014b77);
     IDS.put("In Junk · delete after seeding", R.string.ui_9ea8b1168411);
     IDS.put("In Junk · finishing seeding", R.string.ui_1590b4aa625e);
+    IDS.put("In your library", R.string.ui_00cc7207a45e);
     IDS.put("Individual torrent limits take precedence.", R.string.ui_fc2d046feac3);
     IDS.put("Initial or emoji", R.string.ui_8bfa1406b66d);
     IDS.put("Interface language", R.string.ui_9407e9ca65ce);
@@ -266,6 +281,7 @@ final class L10n {
     IDS.put("Monospace", R.string.ui_216fcddff2f9);
     IDS.put("More", R.string.ui_4bab2d8fe13f);
     IDS.put("More to explore", R.string.ui_f49ac09d3a35);
+    IDS.put("Most seeds", R.string.ui_da76cfbbf86f);
     IDS.put("Move the entire package to Junk?", R.string.ui_f1f9e40dfd55);
     IDS.put("Move this package to Junk?", R.string.ui_960728c07953);
     IDS.put("Move to Complete at target ratio", R.string.ui_d1b65f7eb7e8);
@@ -432,6 +448,8 @@ final class L10n {
     IDS.put("Searching…", R.string.ui_1a6a5ba8c23d);
     IDS.put("Season", R.string.ui_62255f5671e8);
     IDS.put("Season %d Ep %d", R.string.ui_e5444912e049);
+    IDS.put("Season %d Ep %d–%d", R.string.ui_7c18fa0f7817);
+    IDS.put("Seasons %d–%d", R.string.ui_35f3392ee19c);
     IDS.put("See All", R.string.ui_8196e42428ff);
     IDS.put("See All  ›", R.string.ui_e41966be6687);
     IDS.put("Seeding", R.string.ui_2ac9cd891f0d);
@@ -447,9 +465,11 @@ final class L10n {
     IDS.put("Settings", R.string.ui_c7f73bb54d92);
     IDS.put("Settings saved", R.string.ui_aef97bb06af4);
     IDS.put("Settings → Link a device", R.string.ui_c0f6e98ebf63);
+    IDS.put("Show", R.string.ui_d97d1ee339e4);
     IDS.put("Show download and upload rates", R.string.ui_4589080623ff);
     IDS.put("Show torrent", R.string.ui_3437b8727d9f);
     IDS.put("Showing the first 150 cast entries.", R.string.ui_56b7696a10e7);
+    IDS.put("Single episodes", R.string.ui_c150b0bcf05d);
     IDS.put("Size", R.string.ui_b7152342a267);
     IDS.put("Size unavailable", R.string.ui_336d9bdb4d4c);
     IDS.put("Size…", R.string.ui_b5eedcf44417);

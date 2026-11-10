@@ -159,8 +159,16 @@ public final class TorrentSearchActivity extends Activity {
   }
   private static String tags(JSONObject item) {
     JSONObject hints=item.optJSONObject("hints");if(hints==null)return ""; List<String> values=new ArrayList<>();
+    // Season first, matching the other clients: "Season 2 Ep 1", "Complete Season 1".
+    int season=hints.optInt("season"),seasonEnd=hints.optInt("season_end"),episode=hints.optInt("episode"),episodeEnd=hints.optInt("episode_end"),count=hints.optInt("episode_count");
+    java.util.Locale locale=L10n.locale();
+    if(count>0)values.add(season>0?String.format(locale,L10n.t("Complete Season %d"),season):String.format(locale,L10n.t("Complete · %d episodes"),count));
+    else if(episode>0) {
+      if(season>0)values.add(episodeEnd>episode?String.format(locale,L10n.t("Season %d Ep %d–%d"),season,episode,episodeEnd):String.format(locale,L10n.t("Season %d Ep %d"),season,episode));
+      else values.add(episodeEnd>episode?String.format(locale,L10n.t("Ep %d–%d"),episode,episodeEnd):String.format(locale,L10n.t("Ep %d"),episode));
+    } else if(season>0)values.add(seasonEnd>season?String.format(locale,L10n.t("Seasons %d–%d"),season,seasonEnd):String.format(locale,L10n.t("Complete Season %d"),season));
+    if(hints.optInt("year")>0)values.add(String.valueOf(hints.optInt("year")));
     for(String key:new String[]{"resolution","video_codec","release_source"})if(!hints.isNull(key))values.add(hints.optString(key));
-    if(hints.optInt("episode_count")>0)values.add("Complete · "+hints.optInt("episode_count")+" episodes");
     for(String key:new String[]{"audio","languages"}) {JSONArray a=hints.optJSONArray(key);if(a!=null)for(int i=0;i<a.length();i++)values.add(a.optString(i));}
     return String.join(" · ",values);
   }

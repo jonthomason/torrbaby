@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="ui_b909e7d6e8c9" formatted="false">剩余 %d 分钟</string>
+    <string name="ui_143c5ba33118" formatted="false">已添加 %d 个种子</string>
     <string name="ui_660a76df86fd" formatted="false">剩余 %d 小时 %d 分钟</string>
     <string name="ui_659748ef61cf" formatted="false">剩余 %d 分钟</string>
     <string name="ui_e9c9f7bc39bb" formatted="false">1 小时</string>
@@ -11,8 +12,10 @@
     <string name="ui_6b21fb791ac0" formatted="false">关于</string>
     <string name="ui_cbd19b5c397e" formatted="false">演员</string>
     <string name="ui_61cc55aa0453" formatted="false">添加</string>
+    <string name="ui_2e29f3ec4698" formatted="false">添加 %d 集？</string>
     <string name="ui_d584a46acc6a" formatted="false">添加种子…</string>
     <string name="ui_73d9c5ee15ad" formatted="false">添加种子</string>
+    <string name="ui_0d59c5e974a7" formatted="false">添加 %d 集的最佳资源</string>
     <string name="ui_d76863c63c2f" formatted="false">添加磁力链接</string>
     <string name="ui_8985db712c53" formatted="false">添加磁力链接到服务器</string>
     <string name="ui_676f036428f3" formatted="false">请在 Torrbaby 服务器上添加媒体，然后在此刷新。</string>
@@ -24,11 +27,15 @@
     <string name="ui_802e94122566" formatted="false">正在添加下载</string>
     <string name="ui_9295ef6a9cf8" formatted="false">正在添加下载…</string>
     <string name="ui_ffb2e628b0e9" formatted="false">正在添加…</string>
+    <string name="ui_1f5b6db4283f" formatted="false">为每一集添加做种数最多的资源，已在媒体库或种子列表中的剧集会跳过。</string>
     <string name="ui_6a72085653e4" formatted="false">全部</string>
     <string name="ui_360e1182021a" formatted="false">一切正常</string>
+    <string name="ui_10c927f29963" formatted="false">全部集</string>
     <string name="ui_09ac5f615d7d" formatted="false">所有类型</string>
     <string name="ui_d0038a506519" formatted="false">全部处理完成</string>
+    <string name="ui_ef3238d2ee68" formatted="false">全部资源</string>
     <string name="ui_f1f67dc07e63" formatted="false">所有分辨率</string>
+    <string name="ui_5666605dbc6a" formatted="false">全部季</string>
     <string name="ui_9d12608fc0bd" formatted="false">按名称排序</string>
     <string name="ui_f2de57952082" formatted="false">已在种子列表中</string>
     <string name="ui_dcc38ee5a416" formatted="false">适用于使用服务器默认设置的种子</string>
@@ -46,6 +53,7 @@
     <string name="ui_f0926a5af237" formatted="false">返回媒体库</string>
     <string name="ui_1a0371e373ff" formatted="false">背景颜色</string>
     <string name="ui_f12e36bd83ed" formatted="false">背景不透明度</string>
+    <string name="ui_86f686f840c0" formatted="false">最佳匹配</string>
     <string name="ui_8c84989bcc5e" formatted="false">字节/秒</string>
     <string name="ui_77dfd2135f4d" formatted="false">取消</string>
     <string name="ui_67bb11d08df2" formatted="false">取消下载</string>
@@ -84,6 +92,9 @@
     <string name="ui_a3b13fde9c84" formatted="false">比较版本</string>
     <string name="ui_171b1113ddd7" formatted="false">正在比较版本</string>
     <string name="ui_1f5a1abf2f08" formatted="false">已完成</string>
+    <string name="ui_749a5d0389da" formatted="false">第 %d 季全集</string>
+    <string name="ui_d93670a22aa1" formatted="false">整季合集</string>
+    <string name="ui_f532a2f643b7" formatted="false">全 %d 集</string>
     <string name="ui_04a212215ef9" formatted="false">确认</string>
     <string name="ui_b65463cb6a42" formatted="false">连接</string>
     <string name="ui_d9c85ddf1ada" formatted="false">连接 Torrbaby</string>
@@ -161,7 +172,10 @@
     <string name="ui_7e5fe97f0e96" formatted="false">输入名称</string>
     <string name="ui_cd8763c98e0a" formatted="false">输入数值</string>
     <string name="ui_5069655cee71" formatted="false">输入服务器地址</string>
+    <string name="ui_ec4a7319deb9" formatted="false">第 %d 集</string>
+    <string name="ui_da66b520661a" formatted="false">第 %d–%d 集</string>
     <string name="ui_8669aa56ebc3" formatted="false">集</string>
+    <string name="ui_4d9e959a49a6" formatted="false">按集数排序</string>
     <string name="ui_49d641ba8893" formatted="false">集数</string>
     <string name="ui_e8642ee5ad7e" formatted="false">正在估算…</string>
     <string name="ui_f83b6fe3aebf" formatted="false">退出</string>
@@ -207,6 +221,7 @@
     <string name="ui_8ed49e014b77" formatted="false">导入连接文件…</string>
     <string name="ui_9ea8b1168411" formatted="false">已移入废弃区 · 做种后删除</string>
     <string name="ui_1590b4aa625e" formatted="false">已移入废弃区 · 完成做种中</string>
+    <string name="ui_00cc7207a45e" formatted="false">已在媒体库中</string>
     <string name="ui_fc2d046feac3" formatted="false">单个种子的限制优先。</string>
     <string name="ui_8bfa1406b66d" formatted="false">首字母或表情符号</string>
     <string name="ui_9407e9ca65ce" formatted="false">界面语言</string>
@@ -255,6 +270,7 @@
     <string name="ui_216fcddff2f9" formatted="false">等宽字体</string>
     <string name="ui_4bab2d8fe13f" formatted="false">更多</string>
     <string name="ui_f49ac09d3a35" formatted="false">发现更多</string>
+    <string name="ui_da76cfbbf86f" formatted="false">做种最多</string>
     <string name="ui_f1f9e40dfd55" formatted="false">将整个下载包移至废弃区？</string>
     <string name="ui_960728c07953" formatted="false">将此下载包移至废弃区？</string>
     <string name="ui_d1b65f7eb7e8" formatted="false">达到目标分享率后移至已完成</string>
@@ -421,6 +437,8 @@
     <string name="ui_1a6a5ba8c23d" formatted="false">正在搜索…</string>
     <string name="ui_62255f5671e8" formatted="false">季</string>
     <string name="ui_e5444912e049" formatted="false">第 %d 季 第 %d 集</string>
+    <string name="ui_7c18fa0f7817" formatted="false">第 %d 季 第 %d–%d 集</string>
+    <string name="ui_35f3392ee19c" formatted="false">第 %d–%d 季</string>
     <string name="ui_8196e42428ff" formatted="false">查看全部</string>
     <string name="ui_e41966be6687" formatted="false">查看全部  ›</string>
     <string name="ui_2ac9cd891f0d" formatted="false">做种中</string>
@@ -436,9 +454,11 @@
     <string name="ui_c7f73bb54d92" formatted="false">设置</string>
     <string name="ui_aef97bb06af4" formatted="false">设置已保存</string>
     <string name="ui_c0f6e98ebf63" formatted="false">设置 → 关联设备</string>
+    <string name="ui_d97d1ee339e4" formatted="false">显示</string>
     <string name="ui_4589080623ff" formatted="false">显示下载和上传速度</string>
     <string name="ui_3437b8727d9f" formatted="false">查看种子</string>
     <string name="ui_56b7696a10e7" formatted="false">仅显示前 150 条演员记录。</string>
+    <string name="ui_c150b0bcf05d" formatted="false">单集</string>
     <string name="ui_b7152342a267" formatted="false">大小</string>
     <string name="ui_336d9bdb4d4c" formatted="false">大小不可用</string>
     <string name="ui_b5eedcf44417" formatted="false">大小…</string>
