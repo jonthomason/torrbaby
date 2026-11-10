@@ -14,4 +14,6 @@
 
 - Publish iPhone/iPad builds to OTA only. Do not install or force-update the user's physical iPad or iPhone; the user installs from the OTA page. Simulator installs remain allowed for validation.
 
-- Never ask for the user's keychain password or trigger interactive keychain access for release signing. Use unsigned simulator validation until a noninteractive signing identity is available.
+- Never ask the user to disclose a keychain password. Publishing signed builds is authorized; use the existing signing setup without collecting or logging passwords. Physical iPhone/iPad installation remains separate from OTA publication.
+
+- Active shared-worktree release coordination: read local-state/credits-release-handoff.txt before publishing. The processing-queue session should record readiness in local-state/processing-release-ready.txt; the UI/release session owns the combined build publication.
