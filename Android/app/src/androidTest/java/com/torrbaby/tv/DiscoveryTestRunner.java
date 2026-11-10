@@ -214,9 +214,14 @@ public final class DiscoveryTestRunner extends Instrumentation {
         android.graphics.Bitmap shot=getUiAutomation().takeScreenshot();
         try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getExternalFilesDir(null),"header-"+language+".png"))){shot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
         if(activity.getWindow().getDecorView().findViewWithTag("detail-more")!=null)throw new Exception("Unexpected More menu");
-        for(String label:new String[]{"Mark as Watched","Manage Files","Remove from Continue Watching"})
+        for(String label:new String[]{"Mark as Watched","Manage files","Remove from Continue Watching"})
           if(find(activity.getWindow().getDecorView(),L10n.t(label))==null)throw new Exception("Missing direct action: "+label);
         if(activity.getWindow().getDecorView().findViewWithTag("watched:episode")!=null)throw new Exception("Unexpected episode action");
+        runOnMainSync(()->find(activity.getWindow().getDecorView(),L10n.t("Manage files")).requestFocus());
+        waitForIdleSync();SystemClock.sleep(800);
+        android.graphics.Bitmap actionsShot=getUiAutomation().takeScreenshot();
+        try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getExternalFilesDir(null),"actions-"+language+".png"))){actionsShot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}
+
         runOnMainSync(()->{try{
           java.lang.reflect.Field detail=MainActivity.class.getDeclaredField("detailId");detail.setAccessible(true);detail.set(activity,"");
           render.invoke(activity);

@@ -51,7 +51,10 @@ final class PosterCard extends LinearLayout {
     subtitle.setGravity(Gravity.CENTER);remaining.setGravity(Gravity.CENTER);year.setGravity(Gravity.CENTER);
     progress=new ProgressBar(context,null,android.R.attr.progressBarStyleHorizontal);
     progress.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.ACCENT));
-    Ui.add(this,progress,-1,3);
+    progress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0xff383838));
+    LinearLayout.LayoutParams progressLayout=new LinearLayout.LayoutParams(-1,Ui.dp(context,2));
+    progressLayout.topMargin=Ui.dp(context,8);
+    addView(progress,1,progressLayout);
     setOnClickListener(v->{if(item!=null)open.accept(item);});
     setOnFocusChangeListener((v,f)->{
       focusAppearance(f);
@@ -78,6 +81,7 @@ final class PosterCard extends LinearLayout {
   void showContinuation(boolean enabled) { continuing=enabled;updateCaption(); }
   private void updateCaption() {
     remaining.setVisibility(GONE);year.setVisibility(GONE);
+    progress.setVisibility(continuing?VISIBLE:GONE);
     if(item==null)return;
     subtitle.setVisibility(VISIBLE);
     subtitle.setText((item.genres.isEmpty()?"":item.genres.get(0))+(item.genres.isEmpty()||item.year.isEmpty()?"":" · ")+item.year);

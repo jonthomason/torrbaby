@@ -83,6 +83,14 @@ final class Ui {
     return b;
   }
 
+  static Button iconButton(Context c, String label, int icon, Runnable run) {
+    Button b=button(c,label,run);
+    b.setCompoundDrawablesRelativeWithIntrinsicBounds(icon,0,0,0);
+    b.setCompoundDrawablePadding(dp(c,10));
+    b.setCompoundDrawableTintList(b.getTextColors());
+    return b;
+  }
+
   static void secondaryContrast(View v, boolean focused) {
     if (v instanceof TextView) {
       TextView text = (TextView) v;

@@ -324,7 +324,7 @@ private struct TVMediaDetail: View {
                                 Button { play(asset, title: title) } label: {
                                     Label(asset.playbackActionTitle(television: title.kind == "tv"), systemImage: "play.fill")
                                         .font(.headline)
-                                }.buttonStyle(TVMonochromeButtonStyle()).focused($heroFocused).disabled(loading)
+                                }.buttonStyle(TVMonochromeButtonStyle()).focused($heroFocused)
                             }
                         }.padding(44).frame(maxWidth: 1400, alignment: .leading)
                     }.frame(height: 650)
@@ -332,12 +332,6 @@ private struct TVMediaDetail: View {
                         .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(heroFocused ? 0.65 : 0), lineWidth: 2))
                         .scaleEffect(heroFocused ? 1.006 : 1)
                     VStack(alignment: .leading, spacing: 38) {
-                        if loading {
-                            HStack {
-                                Text(LocalizedStringKey(preparation.isEmpty ? "Preparing playback…" : preparation))
-                                Button("Cancel") { playbackTask?.cancel() }
-                            }
-                        }
                         if let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
                             MediaLanguagesView(info: asset.mediaInfo)
                         }
@@ -355,7 +349,7 @@ private struct TVMediaDetail: View {
                                 if asset.position > 0 {
                                     Button { play(asset, title: title, fromBeginning: true) } label: {
                                         Label("Start from Beginning", systemImage: "backward.end.fill")
-                                    }.disabled(loading)
+                                    }
                                 }
                                 TVDetailActions(asset: asset, title: title)
                             }.buttonStyle(TVMonochromeButtonStyle()).focusSection()
@@ -391,6 +385,15 @@ private struct TVMediaDetail: View {
                 }.padding(.horizontal, 32).padding(.top, 8)
             }
         }.background(Color.black)
+            .overlay(alignment: .bottom) {
+                if loading {
+                    HStack(spacing: 16) {
+                        ProgressView().tint(.white)
+                        Text(LocalizedStringKey(preparation.isEmpty ? "Preparing playback…" : preparation))
+                    }.padding(20).background(.black.opacity(0.9), in: RoundedRectangle(cornerRadius: 10))
+                        .padding(.bottom, 24).allowsHitTesting(false)
+                }
+            }
             .toolbar(.hidden, for: .navigationBar)
             .fullScreenCover(item: $playback) { PlayerScreen(playback: $0, store: store).onExitCommand { playback = nil } }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("TVFocusDetailPlay"))) { _ in heroFocused = true }
@@ -424,7 +427,7 @@ private struct TVMediaDetail: View {
                 Spacer()
                 if asset.duration > 0 { Text("\(Int(asset.duration / 60)) min").font(.caption) }
             }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
-        }.buttonStyle(.card).disabled(!asset.complete || loading)
+        }.buttonStyle(.card).disabled(!asset.complete)
         }
     }
     private func play(_ asset: LibraryAsset, title: LibraryTitle, fromBeginning: Bool = false) {
@@ -452,7 +455,7 @@ private struct TVDetailActions: View {
     @State private var saving = false
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Button(LocalizedStringKey(asset.watched ? "Mark as Unwatched" : "Mark as Watched")) {
+            Button {
                 saving = true
                 Task {
                     defer { saving = false }
@@ -461,8 +464,12 @@ private struct TVDetailActions: View {
                         await store.refresh()
                     } catch { store.actionError = error.localizedDescription }
                 }
+            } label: {
+                Label(LocalizedStringKey(asset.watched ? "Mark as Unwatched" : "Mark as Watched"), systemImage: asset.watched ? "circle" : "checkmark.circle")
             }
-            if asset.complete { Button("Manage Files") { showFiles = true } }
+            if asset.complete {
+                Button { showFiles = true } label: { Label("Manage files", systemImage: "folder") }
+            }
             if title.isContinuing {
                 Button("Remove from Continue Watching") {
                     Task { await store.setContinueWatchingHidden(title.id, hidden: true) }
@@ -516,6 +523,10 @@ private struct TVPoster: View {
                     .overlay(alignment: .topTrailing) { if title.watched { WatchedBadge() } }
             }.accessibilityLabel(title.title).buttonStyle(TVPosterButtonStyle()).contextMenu { ContinueWatchingAction(title: title) }
             if continuing, let asset = title.resume {
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(.white.opacity(0.22))
+                    Rectangle().fill(.white).frame(width: 220 * (asset.duration > 0 ? min(1, max(0, asset.position / asset.duration)) : 0))
+                }.frame(width: 220, height: 3).padding(.top, 8).accessibilityHidden(true)
                 VStack(alignment: .center, spacing: 5) {
                     if let season = asset.season, let episode = asset.episode {
                         Text(L10n.format("Season %d Ep %d", season, episode))

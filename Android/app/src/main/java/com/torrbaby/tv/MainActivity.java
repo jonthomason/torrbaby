@@ -602,7 +602,7 @@ public class MainActivity extends Activity {
       if(available<=0)return;
       int gap=Ui.dp(this,12),columns=Math.max(3,(available+gap)/Ui.dp(this,130));
       int width=(available-gap*(columns-1))/columns;
-      int height=width*3/2+Ui.dp(this,name.equals("Continue watching")?64:30);
+      int height=width*3/2+Ui.dp(this,name.equals("Continue watching")?72:30);
       for(int i=0;i<row.getChildCount();i+=2) {
         View child=row.getChildAt(i);
         if(child.getLayoutParams().width!=width || child.getLayoutParams().height!=height) {
@@ -1474,8 +1474,8 @@ public class MainActivity extends Activity {
         Ui.add(body,cast,-2,44);
       }
       if(preferred.position>0)Ui.add(body,Ui.button(this,L10n.t("Start from Beginning"),()->play(t,preferred,true)),-2,44);
-      Ui.add(body,Ui.button(this,L10n.t(preferred.watched?"Mark as Unwatched":"Mark as Watched"),()->mark(preferred)),-2,44);
-      if(preferred.complete)Ui.add(body,Ui.button(this,L10n.t("Manage Files"),()->new LibraryFileActions(this,api,io,preferred.id,this::load).show()),-2,44);
+      Ui.add(body,Ui.iconButton(this,L10n.t(preferred.watched?"Mark as Unwatched":"Mark as Watched"),R.drawable.action_watched,()->mark(preferred)),-2,44);
+      if(preferred.complete)Ui.add(body,Ui.iconButton(this,L10n.t("Manage files"),R.drawable.action_files,()->new LibraryFileActions(this,api,io,preferred.id,this::load).show()),-2,44);
       if(t.isContinuing())Ui.add(body,Ui.button(this,L10n.t("Remove from Continue Watching"),()->setContinueWatchingHidden(t,true)),-2,44);
       Ui.gap(body,16);
     }
