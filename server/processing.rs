@@ -48,6 +48,9 @@ pub fn refresh_capacity(s:&Service)->Result<usize> {
 /// Files with a stage task in flight. Aborting a task drops its future, and every
 /// helper process is spawned with kill_on_drop, so backing down is immediate.
 static IN_FLIGHT:std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String,tokio::task::AbortHandle>>>=std::sync::LazyLock::new(Default::default);
+/// Files whose only remaining work is finishing an imported translation. They
+/// run beside the limit: the work is a few seconds of validation and writing.
+static FAST:std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>>=std::sync::LazyLock::new(Default::default);
 /// Catalog revision and time of the last enrollment pass.
 static ENROLLED:std::sync::Mutex<Option<(String,f64)>>=std::sync::Mutex::new(None);
 
@@ -56,7 +59,11 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
     let imported=s.subtitle_jobs.import_external()?;
     let (selected,excess)={
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
-        for id in &imported {db.connection.execute("UPDATE media_processing SET retry_after=0 WHERE asset_id=? AND state='queued'",[id])?;}
+        for id in &imported {
+            db.connection.execute("UPDATE media_processing SET retry_after=0 WHERE asset_id=? AND state='queued'",[id])?;
+            let credits_done:bool=db.connection.query_row("SELECT EXISTS(SELECT 1 FROM media_processing WHERE asset_id=? AND credits_state IN ('ready','not_applicable'))",[id],|r|r.get(0))?;
+            if credits_done {if let Ok(mut fast)=FAST.lock() {fast.insert(id.clone());}}
+        }
         let assets=assets(&db)?;
         let migrating:bool=db.connection.query_row("SELECT NOT EXISTS(SELECT 1 FROM media_processing)",[],|r|r.get(0))?;
         // Enrollment stats every media file; repeat it only when the catalog changes
@@ -83,16 +90,23 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
             }
         }
         let rows=db.rows("SELECT asset_id,state,retry_after FROM media_processing",[])?;
-        let running=|a:&Value|rows.iter().any(|r|r["asset_id"]==a["id"] && r["state"]=="running");
+        let fast:std::collections::HashSet<String>={
+            let mut fast=FAST.lock().map_err(|_|anyhow::anyhow!("Processing pool unavailable"))?;
+            fast.retain(|id|rows.iter().any(|r|r["asset_id"]==id.as_str() && matches!(r["state"].as_str(),Some("queued"|"running"))));
+            if limit==0 {Default::default()} else {fast.clone()}
+        };
+        let is_fast=|a:&Value|a["id"].as_str().is_some_and(|id|fast.contains(id));
+        let running=|a:&Value|!is_fast(a) && rows.iter().any(|r|r["asset_id"]==a["id"] && r["state"]=="running");
         // Retain claimed files first; fill idle slots in title/episode priority order.
         let mut selected:Vec<Value>=assets.iter().filter(|a|running(a)).take(limit).cloned().collect();
         for asset in &assets {
             if selected.len()>=limit {break;}
-            if selected.iter().any(|a|a["id"]==asset["id"]) {continue;}
+            if is_fast(asset) || selected.iter().any(|a|a["id"]==asset["id"]) {continue;}
             if rows.iter().any(|r|r["asset_id"]==asset["id"] && r["state"]!="ready" && r["retry_after"].as_f64().unwrap_or(0.0)<=now()) {selected.push(asset.clone());}
         }
         // Claimed files beyond the current limit give their slot back now. Their
         // partial work may be discarded; they restart from their last finished stage.
+        selected.extend(assets.iter().filter(|a|is_fast(a)).cloned());
         let excess:Vec<String>=rows.iter().filter(|r|r["state"]=="running")
             .filter_map(|r|r["asset_id"].as_str()).filter(|id|!selected.iter().any(|a|a["id"]==*id)).map(str::to_owned).collect();
         for id in &excess {db.connection.execute("UPDATE media_processing SET state='queued',updated=? WHERE asset_id=? AND state='running'",rusqlite::params![now(),id])?;}
@@ -139,6 +153,7 @@ async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()>
     let path=Path::new(asset["path"].as_str().context("Missing asset path")?);
     let supported=path.extension().and_then(|e|e.to_str()).is_some_and(|e|["mkv","webm","mp4","m4v","mov"].contains(&e.to_lowercase().as_str()));
     anyhow::ensure!(supported,"Unsupported media container for processing");
+    let mut external=false;
     if !finished(prior["subtitles_state"].as_str().unwrap_or("")) {
         let progress=crate::media_inventory::process(s,asset).await?;
         let state=progress["state"].as_str().unwrap_or("queued");
@@ -147,12 +162,9 @@ async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()>
             db.connection.execute("UPDATE media_processing SET inventory_state='ready',subtitles_state=?,stage=?,detail=?,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![if done{state}else{"pending"},if done{"credits"}else{progress["stage"].as_str().unwrap_or("subtitles")},progress.to_string(),now(),id,revision])?;
         }
         anyhow::ensure!(state!="failed","{}",progress["error"].as_str().unwrap_or("Subtitle preparation failed"));
-        if state=="external" {
-            // Waiting on the external translation lane: give the slot to other files.
-            let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
-            db.connection.execute("UPDATE media_processing SET state='queued',retry_after=?,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![now()+120.0,now(),id,revision])?;
-        }
-        if !done {return Ok(());}
+        // While the external lane translates, use this slot for credits analysis.
+        external=state=="external";
+        if !done && !external {return Ok(());}
     }
     if !finished(prior["credits_state"].as_str().unwrap_or("")) {
         let not_applicable=asset["role"]=="extra" || path.extension().is_some_and(|e|e.eq_ignore_ascii_case("webm"));
@@ -168,6 +180,13 @@ async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()>
             db.connection.execute("UPDATE media_processing SET state='queued',retry_after=?,error=?,updated=? WHERE asset_id=?",rusqlite::params![now()+60.0,credits["error"].as_str(),now(),id])?;
         }
         if !finished(state){return Ok(());}
+    }
+    if external {
+        // Only the returned translation is missing: release the slot until the
+        // import arrives (which resets retry_after and uses the fast lane).
+        let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+        db.connection.execute("UPDATE media_processing SET state='queued',retry_after=?,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![now()+1800.0,now(),id,revision])?;
+        return Ok(());
     }
     // File replacement during an async stage invalidates the whole sign-off.
     anyhow::ensure!(crate::subtitle_jobs::revision(path)?==revision,"Media changed during processing");

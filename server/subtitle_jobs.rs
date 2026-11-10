@@ -49,6 +49,8 @@ pub struct Manager {
     yielded: Mutex<HashSet<String>>,
     /// Temporary external translation lane (outbox/inbox beside the subtitle cache).
     external: std::sync::atomic::AtomicBool,
+    /// Imported jobs whose next run only validates and writes the result.
+    imported: Mutex<HashSet<String>>,
     /// Job IDs per asset, so lookups do not read every job record on each call.
     index: Mutex<std::collections::HashMap<String, Vec<String>>>,
 }
@@ -120,6 +122,7 @@ impl Manager {
             urgent: std::sync::atomic::AtomicBool::new(false),
             yielded: Mutex::new(HashSet::new()),
             external: std::sync::atomic::AtomicBool::new(false),
+            imported: Mutex::new(HashSet::new()),
             index: Mutex::new(index),
         }))
     }
@@ -209,6 +212,7 @@ impl Manager {
         // Re-admission resumes from the complete checkpoint and validates timing.
         job.state="interrupted".into();job.updated=crate::storage::now();
         self.save(&job)?;
+        if let Ok(mut imported)=self.imported.lock() {imported.insert(job.id.clone());}
         Ok(job.asset_id)
     }
     pub fn busy(&self) -> bool {
@@ -442,12 +446,14 @@ impl Manager {
     async fn run(self: Arc<Self>, mut job: Job) {
         let asset=job.asset_id.clone();
         let result = async {
-            let _permit = loop {
+            // Finishing an imported translation is cheap; it does not wait for a slot.
+            let bypass=self.imported.lock().map(|mut i|i.remove(&job.id)).unwrap_or(false);
+            let _permit = if bypass {None} else {Some(loop {
                 let permit=self.gate.acquire().await?;
                 if MAX_CONCURRENCY-self.gate.available_permits()<=self.concurrency.load(std::sync::atomic::Ordering::Relaxed) {break permit;}
                 drop(permit);
                 tokio::time::sleep(Duration::from_millis(500)).await;
-            };
+            })};
             job.state = "running".into();
             self.save(&job)?;
             let original=if job.target.is_some() {
