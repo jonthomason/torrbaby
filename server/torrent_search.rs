@@ -51,6 +51,13 @@ pub struct Hints {
     pub video_codec: Option<String>,
     pub release_source: Option<String>,
     pub audio: Vec<String>,
+    /// The release's best audio track in plain terms: lossless_atmos, dtsx,
+    /// lossless, atmos, surround, stereo or mono. `audio` keeps the raw tags.
+    #[serde(default)]
+    pub audio_kind: Option<String>,
+    /// Speaker layout of that track when the name states it: "5.1", "7.1", "2.0"…
+    #[serde(default)]
+    pub audio_channels: Option<String>,
     pub languages: Vec<String>,
     pub evidence: String,
 }
@@ -826,6 +833,62 @@ fn parse_size(raw: &str) -> Option<u64> {
     (amount.is_finite() && amount >= 0. && amount * scale <= u64::MAX as f64)
         .then_some((amount * scale) as u64)
 }
+/// Reduce the many audio tags of release names to one plain description of the
+/// best track. Tags are only read after the year or resolution, where release
+/// details start, so words in the title ("Opus", "DD") are not mistaken for them.
+fn audio_summary(name: &str) -> (Option<String>, Option<String>) {
+    static TAGS: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(concat!(
+            r"(?i)(dts[ ._:-]?x|dts[ ._-]?hd[ ._-]?(?:ma|master[ ._-]?audio)|dts[ ._-]?hd[ ._-]?(?:hra?|high[ ._-]?res(?:olution)?)|dts[ ._-]?hd|dts[ ._-]?es|dts[ ._-]?ma|dts",
+            r"|true[ ._-]?hd|ddpa|ddp|dd\+|e[ ._-]?ac[ ._-]?3|dolby[ ._-]?digital[ ._-]?plus|dolby[ ._-]?digital|dd|ac[ ._-]?3",
+            r"|he[ ._-]?aac|aac(?:[ ._-]?lc)?|flac|l?pcm|opus|mp3|atmos)",
+            r"(?:[ ._-]?([125678])[ .]([01]))?"
+        )).expect("valid regex")
+    });
+    static START: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)\b(?:(?:19|20)\d{2}|2160p|1080[pi]|720p|480p|4k|S\d{1,2}(?:E\d+)?)\b").expect("valid regex")
+    });
+    static LAYOUT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:^|[^0-9A-Za-z.])([57])\.(1)(?:[^0-9]|$)").expect("valid regex"));
+    let from = START.find(name).map_or(0, |m| m.start());
+    let tail = &name[from..];
+    // (rank, kind, layout): the highest rank describes the release.
+    let mut best: Option<(u8, &str, Option<String>)> = None;
+    let mut atmos = name.contains("全景声");
+    let mut tracks: Vec<(String, Option<String>)> = Vec::new();
+    for found in TAGS.captures_iter(tail) {
+        let whole = found.get(1).expect("tag group");
+        // Whole tags only: not letters inside a longer word.
+        if tail[..whole.start()].chars().next_back().is_some_and(|c| c.is_alphanumeric()) { continue; }
+        let end = found.get(0).expect("match").end();
+        if found.get(2).is_none() && tail[whole.end()..].chars().next().is_some_and(|c| c.is_alphabetic()) { continue; }
+        if tail[end..].chars().next().is_some_and(|c| c.is_ascii_digit()) && found.get(2).is_some() { continue; }
+        let tag: String = whole.as_str().to_ascii_lowercase().chars().filter(|c| c.is_ascii_alphanumeric() || *c == '+').collect();
+        let layout = found.get(2).map(|a| format!("{}.{}", a.as_str(), &found[3]));
+        if tag == "atmos" || tag == "ddpa" { atmos = true; }
+        if tag != "atmos" { tracks.push((tag, layout)); }
+    }
+    let stated = LAYOUT.captures(tail).map(|c| format!("{}.{}", &c[1], &c[2]));
+    for (tag, layout) in tracks {
+        let lossless = matches!(tag.as_str(), "dtshdma" | "dtshdmasteraudio" | "dtsma" | "truehd" | "flac" | "pcm" | "lpcm");
+        let dolby = matches!(tag.as_str(), "ddpa" | "ddp" | "dd+" | "eac3" | "dolbydigitalplus" | "dolbydigital" | "dd" | "ac3" | "truehd");
+        let small = matches!(tag.as_str(), "aac" | "aaclc" | "heaac" | "mp3" | "opus" | "flac" | "pcm" | "lpcm");
+        // Disc and broadcast formats are surround unless the name says otherwise; AAC, MP3 and the like are stereo.
+        let layout = layout.or_else(|| if small { None } else { stated.clone() });
+        let wide = match layout.as_deref() { Some(l) => !matches!(l, "1.0" | "2.0" | "2.1"), None => !small };
+        let candidate = if tag == "dtsx" { (6, "dtsx", layout) }
+            else if atmos && tag == "truehd" { (7, "lossless_atmos", layout) }
+            else if lossless { (5, "lossless", layout) }
+            else if atmos && dolby { (4, "atmos", layout) }
+            else if wide { (3, "surround", layout) }
+            else if layout.as_deref() == Some("1.0") { (1, "mono", None) }
+            else { (2, "stereo", None) };
+        if best.as_ref().is_none_or(|b| candidate.0 > b.0) { best = Some(candidate); }
+    }
+    // "Atmos" on its own, with no codec named, is the streaming form.
+    if best.is_none() && atmos { best = Some((4, "atmos", stated)); }
+    match best { Some((_, kind, layout)) => (Some(kind.to_owned()), layout), None => (None, None) }
+}
+
 fn hints(name: &str) -> Hints {
     static YEAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b((?:19|20)\d{2})\b").expect("valid regex"));
     static EPISODE: LazyLock<Regex> =
@@ -900,6 +963,8 @@ fn hints(name: &str) -> Hints {
             .find_iter(name)
             .map(|m| m.as_str().to_ascii_uppercase())
             .collect(),
+        audio_kind: audio_summary(name).0,
+        audio_channels: audio_summary(name).1,
         languages,
         evidence: "release_name".into(),
     }
@@ -1061,6 +1126,30 @@ mod tests {
         assert_eq!(right.hints.audio, vec!["DDP5.1"]);
         assert_eq!(hints("Film.2020.AAC2.0.E-AC-3.TrueHD.Atmos").audio,
             vec!["AAC2.0", "E-AC-3", "TRUEHD", "ATMOS"]);
+        let audio = |name: &str| { let h = hints(name); (h.audio_kind.unwrap_or_default(), h.audio_channels.unwrap_or_default()) };
+        let expect = |name: &str, kind: &str, layout: &str| assert_eq!(audio(name), (kind.to_owned(), layout.to_owned()), "{name}");
+        expect("Film.2023.2160p.NF.WEB-DL.DDP5.1.Atmos.DV.H.265-GRP", "atmos", "5.1");
+        expect("Film.2023.1080p.ATVP.WEB-DL.DDPA5.1.H.264-GRP", "atmos", "5.1");
+        expect("Film.2019.2160p.UHD.BluRay.Remux.HEVC.TrueHD.7.1.Atmos-GRP", "lossless_atmos", "7.1");
+        expect("Film 2019 2160p BluRay DTS-X 7.1 x265", "dtsx", "7.1");
+        expect("8 Mile [2002] COMPLETE 1080p BDRip x265 DTS-HD MA 5.1 Kira [SEV]", "lossless", "5.1");
+        expect("Film.2002.1080p.BluRay.DTS-HD.MA.5.1.x264", "lossless", "5.1");
+        expect("Film.2010.1080p.BluRay.FLAC.2.0.x264", "lossless", "2.0");
+        expect("Example.Show.S02E03.1080p.WEB-DL.DDP5.1.x265", "surround", "5.1");
+        expect("Film.2015.1080p.BluRay.x264.DTS-GRP", "surround", "");
+        expect("Film.2015.1080p.BluRay.DD+ 7.1.x264", "surround", "7.1");
+        expect("Film.2015.720p.HDTV.AC3.2.0.x264", "stereo", "");
+        expect("Film.2015.1080p.WEB-DL.AAC2.0.H.264-GRP", "stereo", "");
+        expect("Film.2015.1080p.WEB-DL.AAC5.1.H.264-GRP", "surround", "5.1");
+        expect("Film.2015.1080p.WEBRip.x265.AAC-GRP", "stereo", "");
+        expect("Film.1950.480p.DVDRip.AAC.1.0", "mono", "");
+        expect("逐玉[全40集][国语音轨/简繁英字幕].Pursuit.of.Jade.S01.2026.1080p.IQ.WEB-DL.H264.AAC-BlackTV", "stereo", "");
+        expect("某电影.2024.2160p.WEB-DL.杜比全景声.H265", "atmos", "");
+        // The best track names the release; title words are not audio tags.
+        expect("Film.2020.1080p.BluRay.TrueHD.5.1.AC3.5.1", "lossless", "5.1");
+        expect("Mr.Hollands.Opus.1995.1080p.BluRay.x264", "", "");
+        expect("Daddy.DD.Day.Care.1080p", "", "");
+        expect("Film.2020.1080p.H.264", "", "");
         let url = reqwest::Url::parse(&right.magnet).unwrap();
         assert_eq!(url.scheme(), "magnet");
         assert!(right.magnet.starts_with("magnet:?xt=urn:btih:"));

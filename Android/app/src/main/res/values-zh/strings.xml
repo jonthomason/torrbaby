@@ -160,6 +160,7 @@
     <string name="ui_d9835d7b9245" formatted="false">断开此电视的连接</string>
     <string name="ui_3e06b932237a" formatted="false">断开此电视的连接？</string>
     <string name="ui_dc83cd803134" formatted="false">关闭通知</string>
+    <string name="ui_daaf02ea1ed0" formatted="false">杜比全景声</string>
     <string name="ui_e9b450d14bc2" formatted="false">完成</string>
     <string name="ui_a479c9c34e87" formatted="false">下载</string>
     <string name="ui_4d53d7ff3f86" formatted="false">下载特别篇</string>
@@ -274,6 +275,8 @@
     <string name="ui_82b4b1ef514f" formatted="false">重新查找</string>
     <string name="ui_27d9ea3d190c" formatted="false">正在查找…</string>
     <string name="ui_3f4fc9a34ef7" formatted="false">将重试查找</string>
+    <string name="ui_f3b36f28ca45" formatted="false">无损</string>
+    <string name="ui_359eb9417ecd" formatted="false">无损全景声</string>
     <string name="ui_1268d8430d1c" formatted="false">MIT 许可证</string>
     <string name="ui_30c744051243" formatted="false">磁力链接</string>
     <string name="ui_a3019db80899" formatted="false">磁力链接</string>
@@ -290,6 +293,7 @@
     <string name="ui_13cc75488bfe" formatted="false">媒体文件在处理期间发生变化</string>
     <string name="ui_2f28e570a801" formatted="false">菜单栏</string>
     <string name="ui_9188f98eea10" formatted="false">正在 Diamond 上获取影片信息</string>
+    <string name="ui_c5c5533844c5" formatted="false">单声道</string>
     <string name="ui_216fcddff2f9" formatted="false">等宽字体</string>
     <string name="ui_4bab2d8fe13f" formatted="false">更多</string>
     <string name="ui_f49ac09d3a35" formatted="false">发现更多</string>
@@ -512,6 +516,7 @@
     <string name="ui_cd7984197a67" formatted="false">启动耗时</string>
     <string name="ui_f261ff7629df" formatted="false">状态不可用</string>
     <string name="ui_ae768f766f75" formatted="false">留下</string>
+    <string name="ui_f4f390b6d363" formatted="false">立体声</string>
     <string name="ui_9e253470c876" formatted="false">停止</string>
     <string name="ui_8cf498a528c2" formatted="false">停止在 Transmission 中跟踪此种子，保留 Diamond 上所有已下载的文件。</string>
     <string name="ui_3c3bc1c865fc" formatted="false">备用连接不支持在线播放。请下载此影片后观看。</string>
@@ -525,6 +530,7 @@
     <string name="ui_fd035728d654" formatted="false">此电视的字幕</string>
     <string name="ui_bb959ff245cd" formatted="false">此设备的字幕</string>
     <string name="ui_1f591ba0ae14" formatted="false">字幕不可用</string>
+    <string name="ui_bf6a1da23682" formatted="false">环绕声</string>
     <string name="ui_35b854e73ba9" formatted="false">向左滑动以删除此下载</string>
     <string name="ui_8fa8e660a5af" formatted="false">切换至舒适视图</string>
     <string name="ui_00089d46aa53" formatted="false">切换至紧凑视图</string>

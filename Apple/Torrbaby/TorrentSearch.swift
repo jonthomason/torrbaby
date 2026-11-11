@@ -18,7 +18,22 @@ struct TorrentReleaseHints: Decodable {
     let videoCodec: String?
     let releaseSource: String?
     let audio: [String]
+    let audioKind: String?
+    let audioChannels: String?
     let languages: [String]
+    /// The release's audio in plain words; the raw tags when the server could not classify them.
+    var audioLabel: String {
+        switch audioKind {
+        case "lossless_atmos": return L10n.text("Lossless Atmos")
+        case "dtsx": return "DTS:X"
+        case "atmos": return L10n.text("Dolby Atmos")
+        case "lossless": return L10n.text("Lossless") + (audioChannels.map { " " + $0 } ?? "")
+        case "surround": return L10n.text("Surround") + (audioChannels.map { " " + $0 } ?? "")
+        case "stereo": return L10n.text("Stereo")
+        case "mono": return L10n.text("Mono")
+        default: return audio.joined(separator: " · ")
+        }
+    }
     var summary: String { ([resolution, videoCodec, releaseSource].compactMap { $0 } + audio + languages).joined(separator: " · ") }
 }
 struct TorrentSearchItem: Decodable, Identifiable {
@@ -813,7 +828,7 @@ private struct TorrentSearchRow: View {
     private var isBT: Bool { item.sources.contains { $0.provider == "1lou" } }
     private var displayedSize: String { item.size.isEmpty ? (fetchedSize ?? "") : item.size }
     private var metadata: String { [item.edition, item.quality].filter { !$0.isEmpty }.joined(separator: " · ") }
-    private var tracks: String { (item.hints.audio + [item.languages]).filter { !$0.isEmpty }.joined(separator: " · ") }
+    private var tracks: String { [item.hints.audioLabel, item.languages].filter { !$0.isEmpty }.joined(separator: " · ") }
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             let episodic = item.hints.season != nil || item.hints.episodeCount != nil
@@ -963,7 +978,7 @@ private struct TorrentSearchDetail: View {
             SwiftUI.Section {
                 Text(item.title).font(.title2.bold()).searchSelectable
                 if !item.edition.isEmpty { Text(item.edition).foregroundStyle(.secondary) }
-                Text([item.quality, displayedSize].filter { !$0.isEmpty }.joined(separator: " · ")).font(.subheadline).foregroundStyle(.secondary)
+                Text([item.quality, item.hints.audioLabel, displayedSize].filter { !$0.isEmpty }.joined(separator: " · ")).font(.subheadline).foregroundStyle(.secondary)
                 if item.seeders != nil { Label(item.availability, systemImage: "arrow.up.circle.fill").font(.subheadline).foregroundStyle(Theme.accent) }
                 Text(item.name).font(.caption).foregroundStyle(.secondary).searchSelectable
                 if let releases = detail?.releases, releases.count > 1 {

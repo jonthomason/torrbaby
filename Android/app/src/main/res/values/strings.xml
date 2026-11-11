@@ -160,6 +160,7 @@
     <string name="ui_d9835d7b9245" formatted="false">Disconnect this TV</string>
     <string name="ui_3e06b932237a" formatted="false">Disconnect this TV?</string>
     <string name="ui_dc83cd803134" formatted="false">Dismiss notification</string>
+    <string name="ui_daaf02ea1ed0" formatted="false">Dolby Atmos</string>
     <string name="ui_e9b450d14bc2" formatted="false">Done</string>
     <string name="ui_a479c9c34e87" formatted="false">Download</string>
     <string name="ui_4d53d7ff3f86" formatted="false">Download Specials</string>
@@ -274,6 +275,8 @@
     <string name="ui_82b4b1ef514f" formatted="false">Look up again</string>
     <string name="ui_27d9ea3d190c" formatted="false">Looking up…</string>
     <string name="ui_3f4fc9a34ef7" formatted="false">Lookup will retry</string>
+    <string name="ui_f3b36f28ca45" formatted="false">Lossless</string>
+    <string name="ui_359eb9417ecd" formatted="false">Lossless Atmos</string>
     <string name="ui_1268d8430d1c" formatted="false">MIT License</string>
     <string name="ui_30c744051243" formatted="false">Magnet link</string>
     <string name="ui_a3019db80899" formatted="false">Magnet links</string>
@@ -290,6 +293,7 @@
     <string name="ui_13cc75488bfe" formatted="false">Media changed during processing</string>
     <string name="ui_2f28e570a801" formatted="false">Menu bar</string>
     <string name="ui_9188f98eea10" formatted="false">Metadata is being gathered on Diamond</string>
+    <string name="ui_c5c5533844c5" formatted="false">Mono</string>
     <string name="ui_216fcddff2f9" formatted="false">Monospace</string>
     <string name="ui_4bab2d8fe13f" formatted="false">More</string>
     <string name="ui_f49ac09d3a35" formatted="false">More to explore</string>
@@ -512,6 +516,7 @@
     <string name="ui_cd7984197a67" formatted="false">Startup timings</string>
     <string name="ui_f261ff7629df" formatted="false">Status unavailable</string>
     <string name="ui_ae768f766f75" formatted="false">Stay</string>
+    <string name="ui_f4f390b6d363" formatted="false">Stereo</string>
     <string name="ui_9e253470c876" formatted="false">Stop</string>
     <string name="ui_8cf498a528c2" formatted="false">Stop tracking the torrent in Transmission. Keep all downloaded files on Diamond.</string>
     <string name="ui_3c3bc1c865fc" formatted="false">Streaming is unavailable on fallback. Download this title to watch it.</string>
@@ -525,6 +530,7 @@
     <string name="ui_fd035728d654" formatted="false">Subtitles on this TV</string>
     <string name="ui_bb959ff245cd" formatted="false">Subtitles on this device</string>
     <string name="ui_1f591ba0ae14" formatted="false">Subtitles unavailable</string>
+    <string name="ui_bf6a1da23682" formatted="false">Surround</string>
     <string name="ui_35b854e73ba9" formatted="false">Swipe left to delete this download</string>
     <string name="ui_8fa8e660a5af" formatted="false">Switch to comfortable view</string>
     <string name="ui_00089d46aa53" formatted="false">Switch to compact view</string>

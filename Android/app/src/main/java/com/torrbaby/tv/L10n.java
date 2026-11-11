@@ -171,6 +171,7 @@ final class L10n {
     IDS.put("Disconnect this TV", R.string.ui_d9835d7b9245);
     IDS.put("Disconnect this TV?", R.string.ui_3e06b932237a);
     IDS.put("Dismiss notification", R.string.ui_dc83cd803134);
+    IDS.put("Dolby Atmos", R.string.ui_daaf02ea1ed0);
     IDS.put("Done", R.string.ui_e9b450d14bc2);
     IDS.put("Download", R.string.ui_a479c9c34e87);
     IDS.put("Download Specials", R.string.ui_4d53d7ff3f86);
@@ -285,6 +286,8 @@ final class L10n {
     IDS.put("Look up again", R.string.ui_82b4b1ef514f);
     IDS.put("Looking up…", R.string.ui_27d9ea3d190c);
     IDS.put("Lookup will retry", R.string.ui_3f4fc9a34ef7);
+    IDS.put("Lossless", R.string.ui_f3b36f28ca45);
+    IDS.put("Lossless Atmos", R.string.ui_359eb9417ecd);
     IDS.put("MIT License", R.string.ui_1268d8430d1c);
     IDS.put("Magnet link", R.string.ui_30c744051243);
     IDS.put("Magnet links", R.string.ui_a3019db80899);
@@ -301,6 +304,7 @@ final class L10n {
     IDS.put("Media changed during processing", R.string.ui_13cc75488bfe);
     IDS.put("Menu bar", R.string.ui_2f28e570a801);
     IDS.put("Metadata is being gathered on Diamond", R.string.ui_9188f98eea10);
+    IDS.put("Mono", R.string.ui_c5c5533844c5);
     IDS.put("Monospace", R.string.ui_216fcddff2f9);
     IDS.put("More", R.string.ui_4bab2d8fe13f);
     IDS.put("More to explore", R.string.ui_f49ac09d3a35);
@@ -523,6 +527,7 @@ final class L10n {
     IDS.put("Startup timings", R.string.ui_cd7984197a67);
     IDS.put("Status unavailable", R.string.ui_f261ff7629df);
     IDS.put("Stay", R.string.ui_ae768f766f75);
+    IDS.put("Stereo", R.string.ui_f4f390b6d363);
     IDS.put("Stop", R.string.ui_9e253470c876);
     IDS.put("Stop tracking the torrent in Transmission. Keep all downloaded files on Diamond.", R.string.ui_8cf498a528c2);
     IDS.put("Streaming is unavailable on fallback. Download this title to watch it.", R.string.ui_3c3bc1c865fc);
@@ -536,6 +541,7 @@ final class L10n {
     IDS.put("Subtitles on this TV", R.string.ui_fd035728d654);
     IDS.put("Subtitles on this device", R.string.ui_bb959ff245cd);
     IDS.put("Subtitles unavailable", R.string.ui_1f591ba0ae14);
+    IDS.put("Surround", R.string.ui_bf6a1da23682);
     IDS.put("Swipe left to delete this download", R.string.ui_35b854e73ba9);
     IDS.put("Switch to comfortable view", R.string.ui_8fa8e660a5af);
     IDS.put("Switch to compact view", R.string.ui_00089d46aa53);

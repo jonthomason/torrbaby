@@ -157,6 +157,19 @@ public final class TorrentSearchActivity extends Activity {
     if(bracket>0 && name.substring(0,bracket).matches(".*[\\p{IsHan}].*"))return name.substring(0,bracket).trim();
     return name;
   }
+  private static String audioLabel(JSONObject hints) {
+    String channels=hints.isNull("audio_channels")?"":hints.optString("audio_channels");
+    switch(hints.isNull("audio_kind")?"":hints.optString("audio_kind")) {
+      case "lossless_atmos": return L10n.t("Lossless Atmos");
+      case "dtsx": return "DTS:X";
+      case "atmos": return L10n.t("Dolby Atmos");
+      case "lossless": return L10n.t("Lossless")+(channels.isEmpty()?"":" "+channels);
+      case "surround": return L10n.t("Surround")+(channels.isEmpty()?"":" "+channels);
+      case "stereo": return L10n.t("Stereo");
+      case "mono": return L10n.t("Mono");
+      default: return "";
+    }
+  }
   private static String tags(JSONObject item) {
     JSONObject hints=item.optJSONObject("hints");if(hints==null)return ""; List<String> values=new ArrayList<>();
     // Season first, matching the other clients: "Season 2 Ep 1", "Complete Season 1".
@@ -169,7 +182,11 @@ public final class TorrentSearchActivity extends Activity {
     } else if(season>0)values.add(seasonEnd>season?String.format(locale,L10n.t("Seasons %d–%d"),season,seasonEnd):String.format(locale,L10n.t("Complete Season %d"),season));
     if(hints.optInt("year")>0)values.add(String.valueOf(hints.optInt("year")));
     for(String key:new String[]{"resolution","video_codec","release_source"})if(!hints.isNull(key))values.add(hints.optString(key));
-    for(String key:new String[]{"audio","languages"}) {JSONArray a=hints.optJSONArray(key);if(a!=null)for(int i=0;i<a.length();i++)values.add(a.optString(i));}
+    // Audio in plain words; the raw release tags only when the server could not classify them.
+    String audio=audioLabel(hints);
+    if(!audio.isEmpty())values.add(audio);
+    else {JSONArray a=hints.optJSONArray("audio");if(a!=null)for(int i=0;i<a.length();i++)values.add(a.optString(i));}
+    JSONArray languages=hints.optJSONArray("languages");if(languages!=null)for(int i=0;i<languages.length();i++)values.add(languages.optString(i));
     return String.join(" · ",values);
   }
   private void loadSize(JSONObject item) {
