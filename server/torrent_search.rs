@@ -340,6 +340,13 @@ impl Search {
         for (provider, response) in responses {
             match response {
                 Ok(items) => {
+                    // Some indexes answer a query they cannot search (Chinese text, for
+                    // one) with their list of popular torrents. A result sharing no word
+                    // with the query is not a result. The Chinese forum is searched in its
+                    // own language by its own engine, so its matches are kept as given.
+                    let items: Vec<Item> = if provider == "1lou" { items } else {
+                        items.into_iter().filter(|item| relevant(&item.name, &query.query)).collect()
+                    };
                     providers.push(ProviderStatus {
                         provider,
                         count: items.len(),
@@ -975,6 +982,13 @@ fn words(s: &str) -> HashSet<String> {
         .map(|s| s.to_lowercase())
         .collect()
 }
+/// Whether a release name shares at least one word with the query. Chinese and
+/// other unspaced text is matched as a run inside the name.
+fn relevant(name: &str, query: &str) -> bool {
+    let (wanted, found) = (words(query), words(name));
+    let lowered = name.to_lowercase();
+    wanted.is_empty() || wanted.iter().any(|word| found.contains(word) || (!word.is_ascii() && lowered.contains(word.as_str())))
+}
 fn score(item: &mut Item, query: &Query) {
     let wanted = words(&query.query);
     let found = words(&item.name);
@@ -1126,6 +1140,10 @@ mod tests {
         assert_eq!(right.hints.audio, vec!["DDP5.1"]);
         assert_eq!(hints("Film.2020.AAC2.0.E-AC-3.TrueHD.Atmos").audio,
             vec!["AAC2.0", "E-AC-3", "TRUEHD", "ATMOS"]);
+        assert!(relevant("[ 高清剧集网 ]知否知否应是绿肥红瘦[第01-73集].The.Story.of.Ming.Lan.2018", "知否知否应是绿肥红瘦"));
+        assert!(relevant("某站 知否知否应是绿肥红瘦全集 1080p", "知否"));
+        assert!(!relevant("The Odyssey (2026) [1080p] [BluRay] [5.1]", "知否知否应是绿肥红瘦"));
+        assert!(relevant("Example.Show.S02E03.1080p", "example show") && !relevant("Other.Thing.2020", "example show"));
         let audio = |name: &str| { let h = hints(name); (h.audio_kind.unwrap_or_default(), h.audio_channels.unwrap_or_default()) };
         let expect = |name: &str, kind: &str, layout: &str| assert_eq!(audio(name), (kind.to_owned(), layout.to_owned()), "{name}");
         expect("Film.2023.2160p.NF.WEB-DL.DDP5.1.Atmos.DV.H.265-GRP", "atmos", "5.1");
