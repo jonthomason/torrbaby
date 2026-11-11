@@ -152,6 +152,11 @@ final class PlaybackModel: ObservableObject {
         }
         if canAdvanceEpisode != available { canAdvanceEpisode = available }
     }
+    /// The current file's picture measurements, for fitting it to the screen.
+    var video: MediaTrackInfo.Video? {
+        guard let id = playback.libraryAssetID else { return nil }
+        return store.library?.titles.lazy.flatMap(\.assets).first { $0.id == id }?.mediaInfo?.video
+    }
     func advanceToNextEpisode(reachedEnd: Bool = false) {
         guard !finished, !preparingNext, resumed, reachedEnd || canAdvanceEpisode else { return }
         let playbackID = playback.id

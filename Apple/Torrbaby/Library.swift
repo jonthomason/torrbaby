@@ -245,7 +245,23 @@ struct MediaTrackInfo: Decodable {
         /// Audio only: the format's trade name ("Dolby Digital Plus") and speaker layout ("5.1", "stereo").
         var format: String? = nil; var layout: String? = nil
     }
-    struct Video: Decodable { let resolution: String?; let codec: String?; let hdr: String?; let bitRate: Double? }
+    struct Video: Decodable {
+        let resolution: String?; let codec: String?; let hdr: String?; let bitRate: Double?
+        var width: Double? = nil; var height: Double? = nil
+        /// The picture inside the stored frame, when black bars are baked into the video.
+        var pictureWidth: Double? = nil; var pictureHeight: Double? = nil
+        /// "2.20:1" for a picture with baked-in bars; nil when the frame is all picture.
+        var pictureShape: String? {
+            guard let pictureWidth, let pictureHeight, pictureHeight > 0 else { return nil }
+            return String(format: "%.2f:1", pictureWidth / pictureHeight)
+        }
+        /// Whether zooming to fill a screen of this shape trims only the baked-in bars, or at most a sliver of picture.
+        func fills(screenAspect: Double) -> Bool {
+            guard let width, let height, let pictureWidth, let pictureHeight, height > 0, pictureHeight > 0,
+                  screenAspect > width / height * 1.02, pictureWidth >= width * 0.98, pictureHeight < height * 0.97 else { return false }
+            return 1 - (pictureWidth / pictureHeight) / screenAspect <= 0.1
+        }
+    }
     var video: Video? = nil
     struct Prepared: Decodable { let id: String; let language: String?; let generated: Bool; let state: String; var kind: String? = nil; var sdh: Bool? = nil }
     let state: String
@@ -316,7 +332,7 @@ struct MediaLanguagesView: View {
     /// "1080p · Dolby Vision · H.265 · 12.0 Mb/s"
     private func videoSummary(_ video: MediaTrackInfo.Video) -> String {
         let rate = video.bitRate.flatMap { $0 > 0 ? ($0 >= 1_000_000 ? String(format: "%.1f Mb/s", $0 / 1_000_000) : String(format: "%.0f kb/s", $0 / 1000)) : nil }
-        return [video.resolution, video.hdr, video.codec, rate].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+        return [video.resolution, video.pictureShape, video.hdr, video.codec, rate].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
     }
     /// One line per distinct track: "English · DTS-HD Master Audio 5.1". Empty until the server has read the formats.
     private func audioSummaries(_ tracks: [MediaTrackInfo.Track]) -> [String] {

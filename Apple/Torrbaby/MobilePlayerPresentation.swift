@@ -107,6 +107,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
         var preparationObservation: AnyCancellable?
         var completionObservation: AnyCancellable?
         var closeObservation: AnyCancellable?
+        var fillObservation: AnyCancellable?
         var nextEpisodeObservation: AnyCancellable?
         weak var preparationSpinner: UIActivityIndicatorView?
         var backgroundObserver: NSObjectProtocol?
@@ -174,7 +175,17 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
                 controller.present(alert, animated: true)
             }
             closeObservation = model.$closeRequested.filter { $0 }.sink { [weak self] _ in self?.close() }
+            // On a phone, a show with black bars baked into its frame would sit in a window with
+            // bars on all four sides; zoom it to fill when that trims only those bars. Each new
+            // episode is measured again, and a double tap still switches back.
+            fillObservation = model.$title.sink { [weak self] _ in DispatchQueue.main.async { self?.fitPictureToScreen() } }
             host.present(controller, animated: true)
+        }
+        private func fitPictureToScreen() {
+            guard let controller, let model, UIDevice.current.userInterfaceIdiom == .phone else { return }
+            let screen = UIScreen.main.bounds.size
+            let aspect = Double(max(screen.width, screen.height) / max(1, min(screen.width, screen.height)))
+            controller.videoGravity = model.video?.fills(screenAspect: aspect) == true ? .resizeAspectFill : .resizeAspect
         }
         func close(completion: (() -> Void)? = nil) {
             let view = controller
@@ -190,7 +201,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
             if parent.playback?.id == playbackID { parent.playback = nil }
             model = nil; controller = nil; playbackID = nil; pictureInPicture = false
             errorObservation = nil
-            preparationObservation = nil; completionObservation = nil; closeObservation = nil
+            preparationObservation = nil; completionObservation = nil; closeObservation = nil; fillObservation = nil
             nextEpisodeObservation = nil
             preparationSpinner?.removeFromSuperview(); preparationSpinner = nil
             if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver); self.backgroundObserver = nil }

@@ -8,7 +8,8 @@ use serde_json::{Value, json};
 use std::{io::Read, path::Path, process::{Command, Stdio}, time::{Duration, Instant}};
 
 /// Stored with the result; raise it to describe every file again.
-const VERSION: u64 = 1;
+// Version 2 measures the picture inside the frame (baked-in black bars).
+const VERSION: u64 = 2;
 
 fn helper() -> Option<std::path::PathBuf> {
     let path = std::env::current_exe().ok()?.with_file_name("torrbaby-ffprobe");
@@ -99,6 +100,50 @@ fn describe(report: &Value) -> Value {
     json!({"audio":audio,"video":video})
 }
 
+/// Black rows and columns at each edge of one grey frame: (top, bottom, left, right).
+/// None for a frame too dark to tell picture from bars.
+fn dark_edges(frame: &[u8], width: usize) -> Option<(usize, usize, usize, usize)> {
+    let height = frame.len() / width;
+    if height < 8 { return None; }
+    let row = |y: usize| frame[y * width..(y + 1) * width].iter().map(|v| *v as u64).sum::<u64>() / width as u64;
+    let column = |x: usize| (0..height).map(|y| frame[y * width + x] as u64).sum::<u64>() / height as u64;
+    if frame.iter().map(|v| *v as u64).sum::<u64>() / (frame.len() as u64) < 28 { return None; }
+    const BLACK: u64 = 22;
+    let top = (0..height / 2).take_while(|y| row(*y) < BLACK).count();
+    let bottom = (0..height / 2).take_while(|y| row(height - 1 - *y) < BLACK).count();
+    let left = (0..width / 2).take_while(|x| column(*x) < BLACK).count();
+    let right = (0..width / 2).take_while(|x| column(width - 1 - *x) < BLACK).count();
+    Some((top, bottom, left, right))
+}
+
+/// The picture inside the stored frame, in source pixels, when black bars are
+/// baked in. Sampled at several points; the smallest bar seen at each edge
+/// wins, so dark scenes cannot shrink the picture.
+fn picture(path: &Path, duration: f64, width: u64, height: u64) -> Option<(u64, u64)> {
+    const SCALED: usize = 480;
+    let helper = std::env::current_exe().ok()?.with_file_name("torrbaby-ffmpeg");
+    if !helper.is_file() || width < 320 || height < 180 || duration < 120.0 { return None; }
+    let mut edges: Option<(usize, usize, usize, usize)> = None;
+    let (mut samples, mut rows) = (0, 0);
+    for fraction in [0.12, 0.3, 0.48, 0.66, 0.84] {
+        let output = Command::new(&helper).args(["-nostdin", "-hide_banner", "-loglevel", "error", "-ss", &format!("{:.1}", duration * fraction), "-i"]).arg(path)
+            .args(["-map", "0:v:0", "-frames:v", "1", "-vf", &format!("scale={SCALED}:-2,format=gray"), "-an", "-sn", "-f", "rawvideo", "-"])
+            .stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+        if !output.status.success() || output.stdout.len() < SCALED * 8 || output.stdout.len() % SCALED != 0 { continue; }
+        let Some(found) = dark_edges(&output.stdout, SCALED) else { continue };
+        rows = output.stdout.len() / SCALED;
+        samples += 1;
+        edges = Some(match edges { None => found, Some(e) => (e.0.min(found.0), e.1.min(found.1), e.2.min(found.2), e.3.min(found.3)) });
+    }
+    let (top, bottom, left, right) = edges.filter(|_| samples >= 2)?;
+    let tall = height - ((top + bottom) as u64 * height / rows as u64).min(height / 2);
+    let wide = width - ((left + right) as u64 * width / SCALED as u64).min(width / 2);
+    // Ignore a sliver: encodes often carry a pixel or two of dark edge.
+    let tall = if height - tall < height / 50 { height } else { tall };
+    let wide = if width - wide < width / 50 { width } else { wide };
+    (tall < height || wide < width).then_some((wide, tall))
+}
+
 fn probe(path: &Path) -> Result<Value> {
     let helper = helper().context("Format reader is not installed")?;
     let mut child = Command::new(helper).args(["-v", "error", "-show_streams", "-show_format", "-of", "json"]).arg(path)
@@ -113,7 +158,15 @@ fn probe(path: &Path) -> Result<Value> {
     };
     let bytes = reader.join().unwrap_or_default();
     ensure!(status.success(), "Format reading failed");
-    Ok(describe(&serde_json::from_slice(&bytes)?))
+    let report: Value = serde_json::from_slice(&bytes)?;
+    let mut described = describe(&report);
+    let (width, height) = (described["video"]["width"].as_u64().unwrap_or(0), described["video"]["height"].as_u64().unwrap_or(0));
+    let duration = report["format"]["duration"].as_str().and_then(|d| d.parse::<f64>().ok()).unwrap_or(0.0);
+    if let Some((wide, tall)) = picture(path, duration, width, height) {
+        described["video"]["picture_width"] = json!(wide);
+        described["video"]["picture_height"] = json!(tall);
+    }
+    Ok(described)
 }
 
 /// Describe a few inventoried files that have no format yet. Runs repeatedly, so
@@ -184,5 +237,10 @@ mod tests {
         assert_eq!(audio_format("truehd", "Dolby TrueHD + Dolby Atmos"), "Dolby TrueHD Atmos");
         assert_eq!(layout(8, "7.1"), "7.1");
         assert_eq!(layout(4, "quad"), "4ch");
+        // A 16x10 grey frame with two black rows above and below a mid-grey picture.
+        let mut frame = vec![0u8; 16 * 10];
+        for y in 2..8 { for x in 0..16 { frame[y * 16 + x] = 120; } }
+        assert_eq!(dark_edges(&frame, 16), Some((2, 2, 0, 0)));
+        assert_eq!(dark_edges(&vec![5u8; 16 * 10], 16), None);
     }
 }

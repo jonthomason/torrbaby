@@ -74,8 +74,13 @@ final class MediaLanguages {
   static String video(JSONObject video) {
     if (video == null) return "";
     List<String> parts = new ArrayList<>();
-    for (String key : new String[] {"resolution", "hdr", "codec"})
-      if (!video.isNull(key) && !video.optString(key).isEmpty()) parts.add(video.optString(key));
+    for (String key : new String[] {"resolution", "shape", "hdr", "codec"}) {
+      if (key.equals("shape")) {
+        // The picture's own shape when black bars are baked into the frame.
+        double wide = video.optDouble("picture_width", 0), tall = video.optDouble("picture_height", 0);
+        if (wide > 0 && tall > 0) parts.add(String.format(Locale.US, "%.2f:1", wide / tall));
+      } else if (!video.isNull(key) && !video.optString(key).isEmpty()) parts.add(video.optString(key));
+    }
     double rate = video.optDouble("bit_rate", 0);
     if (rate >= 1_000_000) parts.add(String.format(Locale.US, "%.1f Mb/s", rate / 1_000_000));
     else if (rate > 0) parts.add(String.format(Locale.US, "%.0f kb/s", rate / 1000));

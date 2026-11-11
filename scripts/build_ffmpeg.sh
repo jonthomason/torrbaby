@@ -8,7 +8,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION=9.0.2
 SHA256=8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
 OUT="$ROOT/local-state/ffmpeg"
-STAMP="$OUT/.built-$VERSION-2"
+STAMP="$OUT/.built-$VERSION-4"
 if [[ -x "$OUT/ffmpeg" && -x "$OUT/ffprobe" && -f "$STAMP" ]]; then exit 0; fi
 mkdir -p "$OUT/source"
 ARCHIVE="$OUT/source/ffmpeg-$VERSION.tar.xz"
@@ -28,13 +28,13 @@ cd "$BUILD"
     --disable-everything --disable-autodetect --disable-doc --disable-debug \
     --disable-ffplay --disable-network --disable-shared --enable-static \
     --extra-cflags="-mmacosx-version-min=26.0" --extra-ldflags="-mmacosx-version-min=26.0" \
-    --enable-protocol=file \
+    --enable-protocol=file,pipe \
     --enable-demuxer=matroska,mov,avi,mpegts,wav \
-    --enable-muxer=eac3,wav \
-    --enable-encoder=eac3,pcm_s16le \
+    --enable-muxer=eac3,wav,rawvideo \
+    --enable-encoder=eac3,pcm_s16le,rawvideo \
     --enable-decoder=dca,truehd,mlp,flac,opus,vorbis,mp3,mp2,alac,pcm_s16le,pcm_s24le,pcm_s32le,pcm_s16be,pcm_s24be,pcm_f32le,ac3,eac3,aac,h264,hevc,vp9,mpeg4,mpeg2video \
     --enable-parser=dca,mlp,flac,opus,vorbis,mpegaudio,ac3,aac,h264,hevc,av1,vp9,mpeg4video,mpegvideo \
-    --enable-filter=aresample,aformat,anull >/dev/null
+    --enable-filter=aresample,aformat,anull,scale,format,null >/dev/null
 make -j"$(sysctl -n hw.ncpu)" ffmpeg ffprobe >/dev/null
 cp ffmpeg "$OUT/ffmpeg"
 cp ffprobe "$OUT/ffprobe"
