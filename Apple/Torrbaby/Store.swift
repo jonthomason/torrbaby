@@ -283,7 +283,6 @@ final class Store: ObservableObject {
     }
     @Published var actionError: String?
     @Published var busy = false
-    @Published var lastUpdated: Date?
     @Published var isConnecting = false
     @Published private(set) var networkAvailable = true { didSet { updateDownloadConnection() } }
     private func updateDownloadConnection() {
@@ -343,7 +342,7 @@ final class Store: ObservableObject {
         // App-owned polling continues after the last library window is closed.
         Task { [weak self] in
             while !Task.isCancelled {
-                await self?.refresh()
+                await self?.refresh(polling: true)
                 let delay = self?.connectionError == nil ? 5 : 15
                 try? await Task.sleep(for: .seconds(delay))
                 if self == nil { break }
@@ -465,7 +464,14 @@ final class Store: ObservableObject {
             subtitleQueueError = "Couldn’t refresh the queue. Reconnecting…"
         }
     }
-    func refresh() async {
+    // The catalogue revision last fetched for a profile, and when. A background poll skips
+    // re-downloading and re-decoding the whole library while the server's revision is unchanged.
+    private var fetchedLibrary: (identity: String, revision: String, at: Date)?
+    private struct LibraryRevision: Decodable { let revision: String }
+    /// `polling` marks the periodic refresh; a refresh after a user action always reloads.
+    func refresh(polling: Bool = false) async {
+        // Even if this request coalesces with one in flight, the next poll must reload.
+        if !polling { fetchedLibrary = nil }
         guard configured, !refreshing else { return }
         refreshing = true
         defer { refreshing = false }
@@ -483,13 +489,20 @@ final class Store: ObservableObject {
             let serverStatus = try await probeConnection()
             guard identity == profileIdentity else { return }
             status = serverStatus
-            connectionError = nil
-            subtitleQueueError = nil
+            if connectionError != nil { connectionError = nil }
+            if subtitleQueueError != nil { subtitleQueueError = nil }
             do {
-                let receivedLibrary: MediaLibrary = try await request("GET", "/v1/library", timeout: 8)
-                guard identity == profileIdentity else { return }
-                library = receivedLibrary
-                libraryError = nil
+                // Older servers have no revision route; they simply reload every time.
+                let revision = (try? await request("GET", "/v1/library/revision", timeout: 5) as LibraryRevision)?.revision
+                let current = polling && library != nil && revision != nil && fetchedLibrary?.identity == identity
+                    && fetchedLibrary?.revision == revision && Date().timeIntervalSince(fetchedLibrary?.at ?? .distantPast) < 60
+                if !current {
+                    let receivedLibrary: MediaLibrary = try await request("GET", "/v1/library", timeout: 8)
+                    guard identity == profileIdentity else { return }
+                    library = receivedLibrary
+                    fetchedLibrary = revision.map { (identity, $0, Date()) }
+                }
+                if libraryError != nil { libraryError = nil }
             } catch {
                 libraryError = error.localizedDescription
                 throw error
@@ -524,17 +537,17 @@ final class Store: ObservableObject {
             do {
                 let received: [Torrent] = try await request("GET", "/v1/torrents")
                 guard identity == profileIdentity else { return }
-                torrents = etaSmoother.update(received, server: server, now: Date().timeIntervalSince1970)
+                let next = etaSmoother.update(received, server: server, now: Date().timeIntervalSince1970)
                     .sorted { $0.addedDate > $1.addedDate }
-                torrentError = nil
+                if next != torrents { torrents = next }
+                if torrentError != nil { torrentError = nil }
             } catch {
                 guard identity == profileIdentity else { return }
                 torrentError = error.localizedDescription
             }
             receiveActivity(newEvents)
             events = newEvents.reversed()
-            lastUpdated = Date()
-            connectionError = nil
+            if connectionError != nil { connectionError = nil }
         } catch { connectionError = error.localizedDescription }
     }
     @Published var continueWatchingUndo: (id: String, profile: String)?

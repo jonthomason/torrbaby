@@ -136,17 +136,19 @@ final class PlaybackModel: ObservableObject {
     func updateNextEpisodeAvailability() {
         let duration = player.currentItem?.duration.seconds ?? 0
         let position = player.currentTime().seconds
+        // Runs every second: only look the next episode up near the end, and only publish a change.
         var available = false
-        #if os(tvOS)
-        if let titleID = playback.libraryTitleID, let assetID = playback.libraryAssetID,
-           let title = store.library?.titles.first(where: { $0.id == titleID }) {
-            available = title.nextEpisode(after: assetID)?.complete == true
+        if !finished && !preparingNext && resumed && duration.isFinite && duration > 0 && position.isFinite && position >= duration * 0.9 {
+            #if os(tvOS)
+            if let titleID = playback.libraryTitleID, let assetID = playback.libraryAssetID,
+               let title = store.library?.titles.first(where: { $0.id == titleID }) {
+                available = title.nextEpisode(after: assetID)?.complete == true
+            }
+            #else
+            available = DownloadQueue.shared.hasNextEpisode(after: playback)
+            #endif
         }
-        #else
-        available = DownloadQueue.shared.hasNextEpisode(after: playback)
-        #endif
-        canAdvanceEpisode = !finished && !preparingNext && resumed && available
-            && duration.isFinite && duration > 0 && position.isFinite && position >= duration * 0.9
+        if canAdvanceEpisode != available { canAdvanceEpisode = available }
     }
     func advanceToNextEpisode(reachedEnd: Bool = false) {
         guard !finished, !preparingNext, resumed, reachedEnd || canAdvanceEpisode else { return }

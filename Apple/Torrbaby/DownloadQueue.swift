@@ -84,8 +84,9 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     func setPolicy(_ next: DownloadStorage.Policy) {
         do {
             try storage?.setPolicy(next); reload()
-            // Apply reduced limits and network policy to active requests by pausing them.
-            for id in Array(tasks.keys) { pause(id) }
+            // Re-admit active requests under the new limits and network policy; a plain pause
+            // left the transfer stopped until it was tapped again.
+            for id in Array(tasks.keys) { pause(id, requeue: true) }
         } catch { self.error = error.localizedDescription }
     }
     func enqueue(_ asset: LibraryAsset, title: LibraryTitle) async {
@@ -374,8 +375,9 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         guard let id = downloadTask.taskDescription.flatMap(UUID.init(uuidString:)) else { return }
         DispatchQueue.main.async {
             guard self.tasks[id] === downloadTask else { return }
-            self.received[id] = totalBytesWritten
+            // Publishing every callback re-rendered each download control many times a second.
             guard Date().timeIntervalSince(self.lastUsageRefresh) >= 1 else { return }
+            self.received[id] = totalBytesWritten
             self.lastUsageRefresh = Date()
             self.reload()
             if let storage = self.storage {

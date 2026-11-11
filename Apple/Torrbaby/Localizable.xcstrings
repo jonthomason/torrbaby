@@ -11039,6 +11039,142 @@
           }
         }
       }
+    },
+    "Transfer interrupted. Tap resume.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transfer interrupted. Tap resume."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "传输已中断，请点击继续。"
+          }
+        }
+      }
+    },
+    "Download interrupted. Tap resume.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download interrupted. Tap resume."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下载已中断，请点击继续。"
+          }
+        }
+      }
+    },
+    "Download failed. Reconnect and try again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download failed. Reconnect and try again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下载失败，请重新连接后再试。"
+          }
+        }
+      }
+    },
+    "The file changed. Remove this download and add it again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The file changed. Remove this download and add it again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文件已更改，请移除此下载后重新添加。"
+          }
+        }
+      }
+    },
+    "Download paused: not enough available storage.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download paused: not enough available storage."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下载已暂停：可用存储空间不足。"
+          }
+        }
+      }
+    },
+    "Downloaded file is missing or incomplete. Download it again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloaded file is missing or incomplete. Download it again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已下载的文件缺失或不完整，请重新下载。"
+          }
+        }
+      }
+    },
+    "Transferring": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transferring"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "传输中"
+          }
+        }
+      }
+    },
+    "No more episodes available": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No more episodes available"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有更多可播放的剧集"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

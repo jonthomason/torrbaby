@@ -377,7 +377,7 @@ struct RootView: View {
             if !store.configured { showConnect = true }
             #if !os(macOS)
             while !Task.isCancelled {
-                if phase == .active { await store.refresh() }
+                if phase == .active { await store.refresh(polling: true) }
                 try? await Task.sleep(for: .seconds(store.connectionError == nil ? 5 : 15))
             }
             #endif

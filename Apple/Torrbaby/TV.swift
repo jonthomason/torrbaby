@@ -170,7 +170,7 @@ struct TVRootView: View {
         .overlay(alignment: .bottom) { ContinueWatchingUndoBanner() }
         .task(id: phase) {
             while !Task.isCancelled && phase == .active {
-                await store.refresh()
+                await store.refresh(polling: true)
                 openShelfSelection()
                 await TVTopShelfPublisher.publish(store)
                 try? await Task.sleep(for: .seconds(10))

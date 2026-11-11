@@ -646,3 +646,11 @@ Add %d episodes?	添加 %d 集？
 Add best of %d episodes	添加 %d 集的最佳资源
 %d torrents added	已添加 %d 个种子
 Adds the most-seeded release of each episode that isn’t already in your library or torrents.	为每一集添加做种数最多的资源，已在媒体库或种子列表中的剧集会跳过。
+Transfer interrupted. Tap resume.	传输已中断，请点击继续。
+Download interrupted. Tap resume.	下载已中断，请点击继续。
+Download failed. Reconnect and try again.	下载失败，请重新连接后再试。
+The file changed. Remove this download and add it again.	文件已更改，请移除此下载后重新添加。
+Download paused: not enough available storage.	下载已暂停：可用存储空间不足。
+Downloaded file is missing or incomplete. Download it again.	已下载的文件缺失或不完整，请重新下载。
+Transferring	传输中
+No more episodes available	没有更多可播放的剧集

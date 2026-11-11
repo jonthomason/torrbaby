@@ -19,8 +19,12 @@ enum L10n {
         return Locale.preferredLanguages.first?.hasPrefix("zh") == true ? "zh-Hans" : "en"
     }
     static var locale: Locale { Locale(identifier: code) }
+    // Resolved once; looking the bundle up on every string was repeated per row per render.
+    private static let bundles: [String: Bundle] = Dictionary(uniqueKeysWithValues: ["en", "zh-Hans"].compactMap { code in
+        Bundle.main.path(forResource: code, ofType: "lproj").flatMap(Bundle.init(path:)).map { (code, $0) }
+    })
     static func text(_ key: String) -> String {
-        guard let path = Bundle.main.path(forResource: code, ofType: "lproj"), let bundle = Bundle(path: path) else { return key }
+        guard let bundle = bundles[code] else { return key }
         return bundle.localizedString(forKey: key, value: key, table: "Localizable")
     }
     static func format(_ key: String, _ arguments: CVarArg...) -> String {

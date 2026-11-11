@@ -166,11 +166,15 @@ final class L10n {
     IDS.put("Download Specials", R.string.ui_4d53d7ff3f86);
     IDS.put("Download and seeding updates", R.string.ui_9f86fc7f9614);
     IDS.put("Download complete", R.string.ui_95efb337ce26);
+    IDS.put("Download failed. Reconnect and try again.", R.string.ui_e0d24db8d04c);
+    IDS.put("Download interrupted. Tap resume.", R.string.ui_20aeeeb840f5);
     IDS.put("Download limit (GB)", R.string.ui_c6cf3bcf805a);
+    IDS.put("Download paused: not enough available storage.", R.string.ui_f3c236f285e4);
     IDS.put("Download progress", R.string.ui_9c8fe84bfbc4);
     IDS.put("Download storage", R.string.ui_2d4ee79253e4);
     IDS.put("Download to this device", R.string.ui_2a18b6447c5a);
     IDS.put("Downloaded", R.string.ui_c61970292546);
+    IDS.put("Downloaded file is missing or incomplete. Download it again.", R.string.ui_06a34e14fcd4);
     IDS.put("Downloading", R.string.ui_9b4592f9ae45);
     IDS.put("Downloads", R.string.ui_a862c2b21b5e);
     IDS.put("Downloads unavailable", R.string.ui_022410e4af2e);
@@ -306,6 +310,7 @@ final class L10n {
     IDS.put("No matches", R.string.ui_cd0af6cfca75);
     IDS.put("No matches. You can still enter a name above.", R.string.ui_b0b087bbea50);
     IDS.put("No matching titles", R.string.ui_839030590e08);
+    IDS.put("No more episodes available", R.string.ui_b116c2daafd2);
     IDS.put("No movies or shows yet.", R.string.ui_7678770667a6);
     IDS.put("No peers and no activity for over 5 minutes", R.string.ui_28d608ea4298);
     IDS.put("No processing jobs", R.string.ui_f4f2ec4dc27b);
@@ -520,6 +525,7 @@ final class L10n {
     IDS.put("The connection to Transmission was interrupted. Please try again.", R.string.ui_17640422b43a);
     IDS.put("The entire package will be hidden from everyone, continue seeding, and be permanently deleted when seeding finishes.", R.string.ui_9a212ea4c5bb);
     IDS.put("The entire package will be hidden now, continue seeding, and be permanently deleted when seeding finishes.", R.string.ui_fa9822b1acbe);
+    IDS.put("The file changed. Remove this download and add it again.", R.string.ui_b540d8e8df09);
     IDS.put("The saved connection could not be opened.", R.string.ui_d3fdb91c3f77);
     IDS.put("The server did not supply this torrent's identity.", R.string.ui_9b8b91a1710b);
     IDS.put("The server is deleting this package.", R.string.ui_03a02769fe24);
@@ -556,6 +562,8 @@ final class L10n {
     IDS.put("Torrent removed", R.string.ui_c0fdf7497ff3);
     IDS.put("Torrents", R.string.ui_3e8f36b12ffb);
     IDS.put("Transfer", R.string.ui_cbb4cc49824b);
+    IDS.put("Transfer interrupted. Tap resume.", R.string.ui_8a095c5d2bc7);
+    IDS.put("Transferring", R.string.ui_73f75316f9cd);
     IDS.put("Translating subtitles", R.string.ui_7317cb083a2d);
     IDS.put("Translations", R.string.ui_8ad8302d110b);
     IDS.put("Transmission has not confirmed the add yet. The torrent may still appear in Torrents; check there before trying again.", R.string.ui_533c8cf527e8);

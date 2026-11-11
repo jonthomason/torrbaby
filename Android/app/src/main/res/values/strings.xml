@@ -155,11 +155,15 @@
     <string name="ui_4d53d7ff3f86" formatted="false">Download Specials</string>
     <string name="ui_9f86fc7f9614" formatted="false">Download and seeding updates</string>
     <string name="ui_95efb337ce26" formatted="false">Download complete</string>
+    <string name="ui_e0d24db8d04c" formatted="false">Download failed. Reconnect and try again.</string>
+    <string name="ui_20aeeeb840f5" formatted="false">Download interrupted. Tap resume.</string>
     <string name="ui_c6cf3bcf805a" formatted="false">Download limit (GB)</string>
+    <string name="ui_f3c236f285e4" formatted="false">Download paused: not enough available storage.</string>
     <string name="ui_9c8fe84bfbc4" formatted="false">Download progress</string>
     <string name="ui_2d4ee79253e4" formatted="false">Download storage</string>
     <string name="ui_2a18b6447c5a" formatted="false">Download to this device</string>
     <string name="ui_c61970292546" formatted="false">Downloaded</string>
+    <string name="ui_06a34e14fcd4" formatted="false">Downloaded file is missing or incomplete. Download it again.</string>
     <string name="ui_9b4592f9ae45" formatted="false">Downloading</string>
     <string name="ui_a862c2b21b5e" formatted="false">Downloads</string>
     <string name="ui_022410e4af2e" formatted="false">Downloads unavailable</string>
@@ -295,6 +299,7 @@
     <string name="ui_cd0af6cfca75" formatted="false">No matches</string>
     <string name="ui_b0b087bbea50" formatted="false">No matches. You can still enter a name above.</string>
     <string name="ui_839030590e08" formatted="false">No matching titles</string>
+    <string name="ui_b116c2daafd2" formatted="false">No more episodes available</string>
     <string name="ui_7678770667a6" formatted="false">No movies or shows yet.</string>
     <string name="ui_28d608ea4298" formatted="false">No peers and no activity for over 5 minutes</string>
     <string name="ui_f4f2ec4dc27b" formatted="false">No processing jobs</string>
@@ -509,6 +514,7 @@
     <string name="ui_17640422b43a" formatted="false">The connection to Transmission was interrupted. Please try again.</string>
     <string name="ui_9a212ea4c5bb" formatted="false">The entire package will be hidden from everyone, continue seeding, and be permanently deleted when seeding finishes.</string>
     <string name="ui_fa9822b1acbe" formatted="false">The entire package will be hidden now, continue seeding, and be permanently deleted when seeding finishes.</string>
+    <string name="ui_b540d8e8df09" formatted="false">The file changed. Remove this download and add it again.</string>
     <string name="ui_d3fdb91c3f77" formatted="false">The saved connection could not be opened.</string>
     <string name="ui_9b8b91a1710b" formatted="false">The server did not supply this torrent\'s identity.</string>
     <string name="ui_03a02769fe24" formatted="false">The server is deleting this package.</string>
@@ -545,6 +551,8 @@
     <string name="ui_c0fdf7497ff3" formatted="false">Torrent removed</string>
     <string name="ui_3e8f36b12ffb" formatted="false">Torrents</string>
     <string name="ui_cbb4cc49824b" formatted="false">Transfer</string>
+    <string name="ui_8a095c5d2bc7" formatted="false">Transfer interrupted. Tap resume.</string>
+    <string name="ui_73f75316f9cd" formatted="false">Transferring</string>
     <string name="ui_7317cb083a2d" formatted="false">Translating subtitles</string>
     <string name="ui_8ad8302d110b" formatted="false">Translations</string>
     <string name="ui_533c8cf527e8" formatted="false">Transmission has not confirmed the add yet. The torrent may still appear in Torrents; check there before trying again.</string>
