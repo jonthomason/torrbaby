@@ -48,7 +48,8 @@ final class TorrentActions {
       "Rename",
       "Retry organization",
       "Ignore organization",
-      "Remove torrent…"
+      "Remove torrent…",
+      "Download first"
     };
     new AlertDialog.Builder(activity)
         .setTitle(item.optString("name"))
@@ -88,6 +89,10 @@ final class TorrentActions {
                   break;
                 case 5:
                   send("POST", path + "retry", new JSONObject());
+                  break;
+                case 8:
+                  // Jumps the queue: starts now even when every download slot is taken.
+                  send("POST", path + "prioritize", new JSONObject());
                   break;
                 case 6:
                   confirm(

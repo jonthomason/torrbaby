@@ -484,6 +484,12 @@ struct TorrentListView: View {
                                 Button { store.action(torrent, "stop") } label: {
                                     Label("Stop", systemImage: "stop.fill")
                                 }.disabled(store.busy || !store.connected || torrent.status == 0 || torrent.fileOperation != nil)
+                                // Jumps the queue: starts now even when every download slot is taken.
+                                if !torrent.completed {
+                                    Button { store.action(torrent, "prioritize") } label: {
+                                        Label("Download first", systemImage: "arrow.up.to.line")
+                                    }.disabled(store.busy || !store.connected || torrent.fileOperation != nil)
+                                }
                                 Divider()
                                 Button(role: .destructive) { removing = torrent } label: {
                                     Label("Remove…", systemImage: "trash")

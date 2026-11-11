@@ -106,6 +106,16 @@ pub async fn action(s: &Service, hash: &str, action: &str, body: &Value) -> Resu
         s.invalidate_torrents();
         return Ok(result);
     }
+    if action == "prioritize" {
+        // Download this one first: to the head of the queue, started at once whatever
+        // the queue limit says, and favoured when bandwidth is shared.
+        s.rpc.call("torrent_set", json!({"ids":[hash],"bandwidth_priority":1})).await?;
+        s.rpc.call("queue_move_top", json!({"ids":[hash]})).await?;
+        let result = s.rpc.call("torrent_start_now", json!({"ids":[hash]})).await?;
+        s.event("torrent_prioritize", json!({"hash":hash}))?;
+        s.invalidate_torrents();
+        return Ok(result);
+    }
     if action == "rename" {
         return rename(s, hash, text(body, "path")?, text(body, "name")?).await;
     }
@@ -372,7 +382,23 @@ fn plan(config: &Config, t: &Value) -> Result<Option<Value>> {
     ))
 }
 
+/// A torrent with no activity for this long stops holding a download slot, so the next
+/// queued torrent starts. Transmission keeps the idle one connected and resumes it,
+/// without a slot, as soon as a peer turns up.
+const STALLED_MINUTES: u64 = 2;
+static QUEUE_POLICY_SET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Tell Transmission, once per run, not to let torrents that are waiting for peers clog the queue.
+pub async fn apply_queue_policy(s: &Service) {
+    use std::sync::atomic::Ordering;
+    if QUEUE_POLICY_SET.load(Ordering::Relaxed) { return; }
+    if s.rpc.call("session_set", json!({"queue_stalled_enabled":true,"queue_stalled_minutes":STALLED_MINUTES})).await.is_ok() {
+        QUEUE_POLICY_SET.store(true, Ordering::Relaxed);
+    }
+}
+
 pub async fn tick(s: &Service) -> Result<()> {
+    apply_queue_policy(s).await;
     let _guard = s.mutation_lock.lock().await;
     let config = s.effective_config()?;
     if config.paused {

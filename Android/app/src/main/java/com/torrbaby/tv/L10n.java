@@ -180,6 +180,7 @@ final class L10n {
     IDS.put("Download and seeding updates", R.string.ui_9f86fc7f9614);
     IDS.put("Download complete", R.string.ui_95efb337ce26);
     IDS.put("Download failed. Reconnect and try again.", R.string.ui_e0d24db8d04c);
+    IDS.put("Download first", R.string.ui_a89d78db8f1d);
     IDS.put("Download interrupted. Tap resume.", R.string.ui_20aeeeb840f5);
     IDS.put("Download limit (GB)", R.string.ui_c6cf3bcf805a);
     IDS.put("Download paused: not enough available storage.", R.string.ui_f3c236f285e4);

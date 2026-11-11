@@ -169,6 +169,7 @@
     <string name="ui_9f86fc7f9614" formatted="false">下载和做种更新</string>
     <string name="ui_95efb337ce26" formatted="false">下载完成</string>
     <string name="ui_e0d24db8d04c" formatted="false">下载失败，请重新连接后再试。</string>
+    <string name="ui_a89d78db8f1d" formatted="false">优先下载</string>
     <string name="ui_20aeeeb840f5" formatted="false">下载已中断，请点击继续。</string>
     <string name="ui_c6cf3bcf805a" formatted="false">下载空间上限（GB）</string>
     <string name="ui_f3c236f285e4" formatted="false">下载已暂停：可用存储空间不足。</string>

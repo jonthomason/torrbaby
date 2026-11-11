@@ -12127,6 +12127,23 @@
           }
         }
       }
+    },
+    "Download first": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download first"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "优先下载"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

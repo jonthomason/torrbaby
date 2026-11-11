@@ -169,6 +169,7 @@
     <string name="ui_9f86fc7f9614" formatted="false">Download and seeding updates</string>
     <string name="ui_95efb337ce26" formatted="false">Download complete</string>
     <string name="ui_e0d24db8d04c" formatted="false">Download failed. Reconnect and try again.</string>
+    <string name="ui_a89d78db8f1d" formatted="false">Download first</string>
     <string name="ui_20aeeeb840f5" formatted="false">Download interrupted. Tap resume.</string>
     <string name="ui_c6cf3bcf805a" formatted="false">Download limit (GB)</string>
     <string name="ui_f3c236f285e4" formatted="false">Download paused: not enough available storage.</string>
