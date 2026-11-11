@@ -108,7 +108,14 @@ pub struct Metadata {
     artwork_dir: PathBuf,
     response_dir: PathBuf,
     responses: Mutex<std::collections::HashMap<String, Arc<Mutex<Option<(std::time::Instant, Value)>>>>>,
+    /// Earliest time the next network request to TMDB may start: requests are
+    /// spaced out and pause entirely after a 429 (honouring Retry-After).
+    next_request: Mutex<std::time::Instant>,
+    /// Background lookups that failed recently, by entity: not retried for a while.
+    failed_lookups: Mutex<std::collections::HashMap<String, std::time::Instant>>,
 }
+/// At most this many TMDB network requests per second from Diamond.
+const TMDB_REQUESTS_PER_SECOND: u64 = 8;
 impl Metadata {
     pub fn new(directory: &Path) -> Result<Self> {
         Ok(Self {
@@ -123,6 +130,8 @@ impl Metadata {
             artwork_dir: directory.join("search-artwork"),
             response_dir: directory.join("tmdb-cache"),
             responses: Mutex::new(std::collections::HashMap::new()),
+            next_request: Mutex::new(std::time::Instant::now()),
+            failed_lookups: Mutex::new(std::collections::HashMap::new()),
         })
     }
     pub fn configured(&self) -> bool {
@@ -206,10 +215,23 @@ impl Metadata {
             if !key {
                 request = request.bearer_auth(token);
             }
+            {
+                // Space out network requests; cached responses never reach here.
+                let mut next = self.next_request.lock().await;
+                let now = std::time::Instant::now();
+                if *next > now { tokio::time::sleep(*next - now).await; }
+                *next = std::time::Instant::now() + Duration::from_millis(1000 / TMDB_REQUESTS_PER_SECOND);
+            }
             let response = match request.send().await {
                 Ok(response) => response,
                 Err(_) => continue,
             };
+            if response.status().as_u16() == 429 {
+                let wait = response.headers().get("retry-after").and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.parse::<u64>().ok()).unwrap_or(10).clamp(1, 300);
+                *self.next_request.lock().await = std::time::Instant::now() + Duration::from_secs(wait);
+                bail!("TMDB rate limited; retrying after {wait} s");
+            }
             if !response.status().is_success() {
                 bail!("TMDB HTTP {}", response.status().as_u16());
             }
@@ -382,7 +404,17 @@ impl Metadata {
     pub async fn series_run(&self, entity: &Value) -> Result<Value> {
         let id=entity["provider_id"].as_str().context("Missing metadata ID")?.parse::<u64>()?;
         let detail=self.request(&format!("tv/{id}"), &[("language","en-US")]).await?;
-        Ok(json!({"series_status":detail["status"].as_str().unwrap_or(""),"last_air_date":detail["last_air_date"].as_str().unwrap_or("")}))
+        let status=detail["status"].as_str().filter(|s|!s.is_empty()).context("TMDB returned no series status")?;
+        Ok(json!({"series_status":status,"last_air_date":detail["last_air_date"].as_str().unwrap_or("")}))
+    }
+    /// Whether a background lookup for this entity failed recently (6 h backoff).
+    pub async fn recently_failed(&self, id: &str) -> bool {
+        self.failed_lookups.lock().await.get(id).is_some_and(|at| at.elapsed() < Duration::from_secs(6 * 3600))
+    }
+    pub async fn record_failure(&self, id: &str) {
+        let mut failed = self.failed_lookups.lock().await;
+        if failed.len() >= 4096 { failed.retain(|_, at| at.elapsed() < Duration::from_secs(6 * 3600)); }
+        failed.insert(id.to_owned(), std::time::Instant::now());
     }
 
     pub async fn enrich(&self, candidate: &Value) -> Result<Value> {
@@ -399,7 +431,7 @@ impl Metadata {
             .parse::<u64>()?;
         let key = format!("tmdb:{kind}:{id}");
         if let Some(entity) = self.cache.lock().await.get(&key) {
-            if entity["cast"].is_array() && (kind != "tv" || entity["series_status"].is_string())
+            if entity["cast"].is_array() && (kind != "tv" || entity["series_status"].as_str().is_some_and(|s| !s.is_empty()))
                 && crate::storage::now() - entity["fetched_at"].as_f64().unwrap_or(0.0) < 86400.0 {
                 return Ok(entity.clone());
             }
@@ -434,8 +466,11 @@ impl Metadata {
         entity["year"] = json!(date.get(..4).unwrap_or(""));
         if kind == "tv" {
             // Lets clients show a series' run: "2018–2025", or "2018–" while it continues.
-            entity["series_status"] = json!(detail["status"].as_str().unwrap_or(""));
-            entity["last_air_date"] = json!(detail["last_air_date"].as_str().unwrap_or(""));
+            // Never record an empty status: absent means the backfill will fetch it.
+            if let Some(status) = detail["status"].as_str().filter(|s| !s.is_empty()) {
+                entity["series_status"] = json!(status);
+                entity["last_air_date"] = json!(detail["last_air_date"].as_str().unwrap_or(""));
+            }
         }
         entity["summary"] = detail["overview"].clone();
         entity["cast"] = cast_rows(&detail[if kind=="tv" {"aggregate_credits"} else {"credits"}]["cast"]);

@@ -2125,7 +2125,13 @@ async fn collect_metadata(s: &Service) -> Result<()> {
         return Ok(());
     };
     let entities=s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.documents("entities")?;
+    // Background backfills are capped per pass and back off per entity after a
+    // failure, so a title TMDB cannot serve is not re-requested every minute.
+    let mut lookups=0;
     for entity in entities.iter().filter(|entity| entity["provider"]=="TMDB" && !entity["cast"].is_array()) {
+        let key=entity["id"].as_str().unwrap_or_default();
+        if lookups>=3 || s.metadata.recently_failed(key).await {continue;}
+        lookups+=1;
         match s.metadata.cast(entity).await {
             Ok(cast) => {
                 let id=text(entity,"id")?;
@@ -2136,11 +2142,16 @@ async fn collect_metadata(s: &Service) -> Result<()> {
                     db.connection.execute("UPDATE library_entities SET document=? WHERE id=?",[current.to_string(),id.to_string()])?;
                 }
             }
-            Err(error)=>eprintln!("Cast metadata: {error}"),
+            Err(error)=>{eprintln!("Cast metadata: {error}");s.metadata.record_failure(key).await;}
         }
     }
-    // Series saved before their run was recorded pick it up here, one request each.
-    for entity in entities.iter().filter(|entity| entity["provider"]=="TMDB" && entity["kind"]=="tv" && !entity["series_status"].is_string()) {
+    // Series saved before their run was recorded pick it up here, one request each
+    // (an empty status from earlier builds counts as missing).
+    let mut lookups=0;
+    for entity in entities.iter().filter(|entity| entity["provider"]=="TMDB" && entity["kind"]=="tv" && entity["series_status"].as_str().is_none_or(str::is_empty)) {
+        let key=entity["id"].as_str().unwrap_or_default();
+        if lookups>=3 || s.metadata.recently_failed(key).await {continue;}
+        lookups+=1;
         match s.metadata.series_run(entity).await {
             Ok(run) => {
                 let id=text(entity,"id")?;
@@ -2152,7 +2163,7 @@ async fn collect_metadata(s: &Service) -> Result<()> {
                     db.connection.execute("UPDATE library_entities SET document=? WHERE id=?",[current.to_string(),id.to_string()])?;
                 }
             }
-            Err(error)=>eprintln!("Series run metadata: {error}"),
+            Err(error)=>{eprintln!("Series run metadata: {error}");s.metadata.record_failure(key).await;}
         }
     }
     if let Ok(torrents) = crate::organizer::torrents(s).await {
