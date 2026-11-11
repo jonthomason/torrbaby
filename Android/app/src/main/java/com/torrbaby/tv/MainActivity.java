@@ -1904,6 +1904,7 @@ public class MainActivity extends Activity {
   }
 
   private TextView connectionScreen() {
+    root.removeAllViews(); // Startup has only the brand and spinner, not library navigation.
     root.setGravity(Gravity.CENTER);
     ImageView logo = new ImageView(this);
     logo.setImageResource(R.drawable.torrbaby_mark);
