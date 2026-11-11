@@ -54,6 +54,14 @@ struct Arguments {
 enum Command {
     /// Internal isolated bitmap subtitle decoding worker.
     OcrSubtitles { #[arg(long)] input: PathBuf, #[arg(long)] track: u64, #[arg(long)] output: PathBuf },
+    /// Show how library matching identifies media paths (file name, then its folder),
+    /// without the database or library changes. Uses and fills the TMDB response cache
+    /// in the metadata directory, which holds tmdb.token.
+    IdentifyMedia {
+        #[arg(long)]
+        metadata_dir: PathBuf,
+        paths: Vec<PathBuf>,
+    },
     /// Search torrent indexers without adding anything to Transmission.
     SearchTorrents {
         query: String,
@@ -225,6 +233,18 @@ async fn main() -> Result<()> {
                 .unwrap_or(std::env::current_exe()?.with_file_name("torrbaby-media-segmenter"));
             media_packaging::package(&input, &output, &helper, max_bytes).await?;
             println!("Media packaging complete");
+        }
+        Command::IdentifyMedia { metadata_dir, paths } => {
+            let metadata = metadata::Metadata::new(&metadata_dir)?;
+            for path in paths {
+                let name = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+                let folder = path.parent().and_then(Path::file_name).map(|f| f.to_string_lossy().into_owned());
+                let mut found = metadata.identify(&name, folder.as_deref()).await
+                    .unwrap_or_else(|error| serde_json::json!({"error":error.to_string()}));
+                found["path"] = serde_json::json!(path);
+                found["candidates"] = serde_json::json!(found["candidates"].as_array().map(Vec::len));
+                println!("{}", serde_json::to_string(&found)?);
+            }
         }
         Command::SearchTorrents {
             query,

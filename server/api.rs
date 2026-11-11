@@ -2021,9 +2021,13 @@ async fn scan_library(s: &Service) -> Result<()> {
         Ok(value) => value["torrents"].as_array().cloned().unwrap_or_default(),
         Err(_) => Vec::new(), // Filesystem discovery still works when Transmission is unavailable.
     };
+    // Files in Transmission's incomplete directory belong to torrents being downloaded.
+    let incomplete = s.rpc.call("session_get", json!({"fields":["incomplete_dir","incomplete_dir_enabled"]})).await.ok()
+        .filter(|session| session["incomplete_dir_enabled"] == true)
+        .and_then(|session| session["incomplete_dir"].as_str().map(std::path::PathBuf::from));
     let config = s.effective_config()?;
     let result =
-        tokio::task::spawn_blocking(move || crate::scanner::inventory(&config, old, torrents))
+        tokio::task::spawn_blocking(move || crate::scanner::inventory_with(&config, old, torrents, incomplete.as_deref()))
             .await;
     let mut db =
         s.db.lock()
@@ -2077,6 +2081,9 @@ async fn scan_library(s: &Service) -> Result<()> {
                     rusqlite::params![id, asset.to_string()],
                 )?;
             }
+            for id in &inventory.superseded {
+                drop_superseded_asset(&tx, id)?;
+            }
             tx.commit()?;
             db.link_extras()?;
             state["library_scan"] = json!({"scanning":false,"last_scan":now(),"error":if inventory.errors.is_empty(){None}else{Some(inventory.errors.join("\n"))}});
@@ -2087,6 +2094,36 @@ async fn scan_library(s: &Service) -> Result<()> {
     }
     db.save_state(&state)?;
     Ok(())
+}
+
+/// Remove an untracked duplicate of a torrent file (Transmission's incomplete-directory
+/// copy) together with its per-asset caches. The torrent-tracked record keeps the file's
+/// match, playback and processing. A record that has gained an explicit match, a library
+/// file operation or playback history of its own is kept.
+fn drop_superseded_asset(tx: &rusqlite::Transaction, id: &str) -> Result<bool> {
+    use rusqlite::OptionalExtension;
+    let Some(document) = tx.query_row("SELECT document FROM library_assets WHERE id=?", [id], |r| r.get::<_, String>(0)).optional()? else {
+        return Ok(false);
+    };
+    let asset: Value = serde_json::from_str(&document)?;
+    if !asset["torrent_hash"].is_null() || asset["confirmed"] == true {
+        return Ok(false);
+    }
+    let media = format!("{id}:{}", asset["file_index"].as_u64().unwrap_or(0));
+    let referenced: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM library_operation_assets WHERE asset_id=?1)
+            OR EXISTS(SELECT 1 FROM profile_playback WHERE media_id=?2)
+            OR EXISTS(SELECT 1 FROM playback WHERE media_id=?2)
+            OR EXISTS(SELECT 1 FROM playback_sessions WHERE media_id=?2)",
+        rusqlite::params![id, media], |r| r.get(0))?;
+    if referenced {
+        return Ok(false);
+    }
+    for table in ["media_inventory", "credits_analysis", "media_processing", "processing_failures", "subtitle_priorities"] {
+        tx.execute(&format!("DELETE FROM {table} WHERE asset_id=?"), [id])?;
+    }
+    tx.execute("DELETE FROM library_assets WHERE id=?", [id])?;
+    Ok(true)
 }
 
 /// Fields filled in later by background backfills. A saved match snapshot taken
@@ -2220,6 +2257,7 @@ async fn collect_metadata(s: &Service) -> Result<()> {
         s.db.lock()
             .map_err(|_| anyhow::anyhow!("Database lock failed"))?
             .visible_assets()?;
+    let config = s.effective_config()?;
     for asset in &assets {
         if (asset["available"] != true && asset["torrent_present"] != true) || asset["role"] == "extra" || asset["confirmed"] == true {
             continue;
@@ -2285,7 +2323,13 @@ async fn collect_metadata(s: &Service) -> Result<()> {
                 );
             }
         }
-        let result = s.metadata.search(&name).await;
+        // A file's own folder often names the film plainly (`11.Moonraker.1979/`) when the
+        // file name carries a franchise or site prefix. Library roots are not titles.
+        let folder = path.parent().filter(|parent| {
+            asset["metadata_query"].is_null() && asset["series_query"].is_null() && asset["series_name"].is_null()
+                && ![&config.source, &config.movies, &config.tv].iter().any(|root| *parent == std::path::Path::new(root))
+        }).and_then(|parent| parent.file_name()).map(|folder| folder.to_string_lossy().into_owned());
+        let result = s.metadata.search_in(&name, folder.as_deref()).await;
         match result {
             Ok(result) => {
                 if result["selected"].is_object() {
@@ -2418,6 +2462,32 @@ fn save_torrent_metadata(s: &Service, record: &Value) -> Result<()> {
 #[cfg(test)]
 mod backfill_tests {
     use super::*;
+    #[test]
+    fn superseded_duplicates_are_removed_unless_they_carry_history_or_a_choice() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("torrbaby-superseded-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root)?;
+        let mut db = crate::storage::Database::open(&root.join("state.sqlite3"),None)?;
+        for (id, extra) in [("asset-stale", json!({})), ("asset-watched", json!({})), ("asset-chosen", json!({"confirmed":true})),
+                            ("asset-tracked", json!({"torrent_hash":"bond","file_index":0}))] {
+            let mut asset = json!({"id":id,"path":"/Downloads/Incomplete/007.Set/Moonraker.mp4","status":"review","available":false});
+            asset.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            db.connection.execute("INSERT INTO library_assets VALUES(?,?)",rusqlite::params![id,asset.to_string()])?;
+            db.connection.execute("INSERT INTO media_inventory VALUES(?,'r','{}',0)",[id])?;
+        }
+        db.connection.execute("INSERT INTO media VALUES('asset-watched:0','asset-watched',0,'Moonraker',100)",[])?;
+        db.connection.execute("INSERT INTO profile_playback(profile_id,media_id,position,duration,watched) VALUES('profile-jon','asset-watched:0',50,100,0)",[])?;
+        let tx = db.connection.transaction()?;
+        let dropped: Vec<bool> = ["asset-stale","asset-watched","asset-chosen","asset-tracked","asset-missing"].iter()
+            .map(|id| drop_superseded_asset(&tx, id)).collect::<Result<_>>()?;
+        tx.commit()?;
+        assert_eq!(dropped, [true, false, false, false, false]);
+        let remaining: Vec<String> = db.rows("SELECT id FROM library_assets ORDER BY id",[])?.iter().map(|r|r["id"].as_str().unwrap().to_owned()).collect();
+        assert_eq!(remaining, ["asset-chosen","asset-tracked","asset-watched"]);
+        let caches: i64 = db.connection.query_row("SELECT COUNT(*) FROM media_inventory WHERE asset_id='asset-stale'",[],|r|r.get(0))?;
+        assert_eq!(caches, 0);
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
     #[test]
     fn rewriting_a_stale_match_snapshot_keeps_backfilled_fields() -> Result<()> {
         let connection = rusqlite::Connection::open_in_memory()?;

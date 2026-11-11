@@ -83,6 +83,65 @@ fn array(value: &Value) -> &[Value] {
     value.as_array().map(Vec::as_slice).unwrap_or(&[])
 }
 
+/// TMDB searches per file: the parsed name plus up to three fallbacks.
+pub const MAX_MATCH_QUERIES: usize = 4;
+
+/// The first page's leading results as library match candidates.
+fn search_candidates(data: &Value, kind: &str) -> Vec<Value> {
+    array(&data["results"]).iter().take(8).map(|hit|{
+        let date=hit["release_date"].as_str().or(hit["first_air_date"].as_str()).unwrap_or("");
+        let id=hit["id"].as_u64().unwrap_or(0).to_string();
+        json!({"provider":"TMDB","provider_id":id,"kind":kind,"title":hit.get("title").or(hit.get("name")),
+            "original_title":hit.get("original_title").or(hit.get("original_name")),"year":date.get(..4).unwrap_or(""),
+            "genres":[],"content_rating":null,"duration_minutes":null,"summary":hit["overview"],"thumbnail":image(&hit["poster_path"],"w500"),
+            "logo":null,"source_url":format!("https://www.themoviedb.org/{kind}/{id}"),"episodes":[]})
+    }).collect()
+}
+
+/// Candidates whose normalized title or original title equals the query, in the given year.
+fn exact_candidates<'a>(query: &str, year: &str, candidates: &'a [Value]) -> Vec<&'a Value> {
+    let query = normalized(query);
+    candidates.iter().filter(|c| {
+        !query.is_empty()
+            && (query == normalized(c["title"].as_str().unwrap_or(""))
+                || query == normalized(c["original_title"].as_str().unwrap_or("")))
+            && (year.is_empty() || c["year"] == year)
+    }).collect()
+}
+
+/// Further queries for a name whose parsed title did not match exactly, such as
+/// `007.James.Bond.Moonraker.1979` in `11.Moonraker.1979/`: the folder's title without
+/// a leading index number, the folder's title, then the file's title with leading words
+/// dropped one at a time. Each keeps a release year and is accepted only on an exact
+/// title and year match, so a shortened title cannot select a different film. Packs get
+/// no fallbacks; a file name without a year only tries a folder that has one.
+pub fn fallback_queries(query: &str, year: &str, name: &str, folder: Option<&str>) -> Vec<(String, String)> {
+    static PACK: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+        r"(?i)\b(?:complete|collection|trilogy|anthology|box[ ._-]*set)\b").expect("valid regex"));
+    static INDEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\d{1,3}\s+").expect("valid regex"));
+    if PACK.is_match(name) {
+        return Vec::new();
+    }
+    let mut queries = Vec::new();
+    if let Some(folder) = folder.filter(|folder| !PACK.is_match(folder)) {
+        let (title, folder_year, _) = parse_name(folder);
+        // The folder must name the same release year as the file.
+        if !folder_year.is_empty() && (year.is_empty() || folder_year == year) {
+            queries.push((INDEX.replace(&title, "").into_owned(), folder_year.clone()));
+            queries.push((title, folder_year));
+        }
+    }
+    if !year.is_empty() {
+        let words: Vec<&str> = query.split_whitespace().collect();
+        queries.extend((1..words.len()).map(|start| (words[start..].join(" "), year.to_owned())));
+    }
+    let mut seen = vec![(normalized(query), year.to_owned())];
+    queries.into_iter().filter(|(q, y)| {
+        let key = (normalized(q), y.clone());
+        !key.0.is_empty() && !seen.contains(&key) && { seen.push(key); true }
+    }).take(MAX_MATCH_QUERIES - 1).collect()
+}
+
 fn tmdb_cache_key(path: &str, query: &[(&str,&str)]) -> String {
     use sha2::{Digest,Sha256};
     let mut parameters=query.iter().map(|(key,value)|((*key).to_owned(),
@@ -346,39 +405,15 @@ impl Metadata {
         Ok(result)
     }
     pub async fn search(&self, name: &str) -> Result<Value> {
-        let (query, year, kind) = parse_name(name);
-        if query.is_empty() {
-            bail!("Could not infer a title from the filename");
-        }
-        let data = self
-            .request(
-                &format!("search/{kind}"),
-                &[
-                    ("query", &query),
-                    ("language", "en-US"),
-                    ("include_adult", "false"),
-                ],
-            )
-            .await?;
-        let candidates:Vec<Value>=array(&data["results"]).iter().take(8).map(|hit|{
-            let date=hit["release_date"].as_str().or(hit["first_air_date"].as_str()).unwrap_or("");
-            let id=hit["id"].as_u64().unwrap_or(0).to_string();
-            json!({"provider":"TMDB","provider_id":id,"kind":kind,"title":hit.get("title").or(hit.get("name")),
-                "original_title":hit.get("original_title").or(hit.get("original_name")),"year":date.get(..4).unwrap_or(""),
-                "genres":[],"content_rating":null,"duration_minutes":null,"summary":hit["overview"],"thumbnail":image(&hit["poster_path"],"w500"),
-                "logo":null,"source_url":format!("https://www.themoviedb.org/{kind}/{id}"),"episodes":[]})
-        }).collect();
-        let exact: Vec<_> = candidates
-            .iter()
-            .filter(|c| {
-                (normalized(&query) == normalized(c["title"].as_str().unwrap_or(""))
-                    || normalized(&query) == normalized(c["original_title"].as_str().unwrap_or("")))
-                    && (year.is_empty() || c["year"] == year)
-            })
-            .collect();
-        let selected = if exact.len() == 1 {
-            let mut selected = self.enrich(exact[0]).await?;
-            selected["match_confidence"] = json!(if year.is_empty() {
+        self.search_in(name, None).await
+    }
+    /// Identify a file by its name, falling back to its folder's name. Only an exact
+    /// title and year (or unique exact title) is selected; anything else needs review.
+    pub async fn search_in(&self, name: &str, folder: Option<&str>) -> Result<Value> {
+        let mut found = self.identify(name, folder).await?;
+        let selected = if found["exact"].is_object() {
+            let mut selected = self.enrich(&found["exact"]).await?;
+            selected["match_confidence"] = json!(if found["matched_year"] == "" {
                 "exact_unique_title"
             } else {
                 "exact_title_year"
@@ -387,9 +422,53 @@ impl Metadata {
         } else {
             Value::Null
         };
-        Ok(
-            json!({"status":if !selected.is_null(){"matched"}else if candidates.is_empty(){"no_match"}else{"review"},"query":query,"candidates":candidates,"selected":selected}),
-        )
+        let candidates = found["candidates"].take();
+        let mut record = json!({"status":if !selected.is_null(){"matched"}else if array(&candidates).is_empty(){"no_match"}else{"review"},
+            "query":found["query"],"candidates":candidates,"selected":selected});
+        if found["matched_query"].is_string() && found["matched_query"] != found["query"] {
+            record["matched_query"] = found["matched_query"].take();
+        }
+        Ok(record)
+    }
+    /// TMDB lookups without enrichment or library changes: the parsed query first, then
+    /// at most `MAX_MATCH_QUERIES - 1` folder-derived or shortened queries (see
+    /// `fallback_queries`), stopping at the first exact match. Cached responses are reused.
+    pub async fn identify(&self, name: &str, folder: Option<&str>) -> Result<Value> {
+        let (query, year, kind) = parse_name(name);
+        if query.is_empty() {
+            bail!("Could not infer a title from the filename");
+        }
+        let attempts = std::iter::once((query.clone(), year.clone(), false))
+            .chain(fallback_queries(&query, &year, name, folder).into_iter().map(|(q, y)| (q, y, true)))
+            .take(MAX_MATCH_QUERIES);
+        let mut candidates: Vec<Value> = Vec::new();
+        let mut tried = Vec::new();
+        for (attempt, attempt_year, fallback) in attempts {
+            let mut parameters = vec![("query", attempt.as_str()), ("language", "en-US"), ("include_adult", "false")];
+            // Shortened queries are generic: let TMDB narrow them to the release year.
+            if fallback {
+                parameters.push((if kind == "movie" { "year" } else { "first_air_date_year" }, attempt_year.as_str()));
+            }
+            let data = self.request(&format!("search/{kind}"), &parameters).await?;
+            let hits = search_candidates(&data, kind);
+            let exact = exact_candidates(&attempt, &attempt_year, &hits);
+            tried.push(json!(attempt));
+            for hit in &hits {
+                if candidates.len() < 8 && !candidates.iter().any(|c| c["provider_id"] == hit["provider_id"]) {
+                    candidates.push(hit.clone());
+                }
+            }
+            if exact.len() == 1 {
+                let exact = exact[0].clone();
+                return Ok(json!({"query":query,"year":year,"kind":kind,"candidates":candidates,"exact":exact,
+                    "matched_query":attempt,"matched_year":attempt_year,"attempts":tried}));
+            }
+            // Several exact matches are ambiguous; a shorter query cannot resolve that.
+            if exact.len() > 1 {
+                break;
+            }
+        }
+        Ok(json!({"query":query,"year":year,"kind":kind,"candidates":candidates,"exact":null,"matched_query":null,"attempts":tried}))
     }
     pub async fn cast(&self, entity: &Value) -> Result<Value> {
         let kind=entity["kind"].as_str().context("Missing media kind")?;
@@ -603,6 +682,142 @@ mod response_cache_checks {
             // No token exists: cache misses fail before any remote request.
             assert_eq!(metadata.request("search/tv", &[("query","Pursuit of Jade"),("language","en-US")]).await.unwrap(),expected);
         }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod prefixed_name_tests {
+    use super::*;
+    /// The 25 films of `007.James.Bond.Complete.Set.1962-2015.1080p.BluRay.x264-ETRG`, as
+    /// folder/file names on Diamond, with the TMDB title and year each must resolve to.
+    const BOND: [(&str, &str, &str); 25] = [
+        ("1.Dr. No.1962/DR.No.1962.1080p.BluRay.x264.AC3-Ozlem.mp4", "Dr. No", "1962"),
+        ("2.From.Russia.With.Love.1963/From.Russia.With.Love.1963.1080p.BluRay.x264.AC3-Ozlem.mp4", "From Russia with Love", "1963"),
+        ("3.Goldfinger.1964/007.James.Bond.Goldfinger.1964.1080p.BluRay.x264.AC3-Ozlem.mp4", "Goldfinger", "1964"),
+        ("4.Thunderball.1965/007.James.Bond.Thunderball.1965.1080p.BluRay.x264.AC3-Ozlem.mp4", "Thunderball", "1965"),
+        ("5.You.Only.Live.Twice.1967/You.Only.Live.Twice.1967.1080p.BluRay.x264.AC3-Ozlem.mp4", "You Only Live Twice", "1967"),
+        ("6.On.Her.Majesty's.Secret.Service.1969/007.James.Bond.On.Her.Majesty's.Secret.Service.1969.1080p.BluRay.x264.AC3-Ozlem.mp4", "On Her Majesty's Secret Service", "1969"),
+        ("7.Diamonds.Are.Forever.1971/Diamonds.Are.Forever.1971.1080p.BluRay.x264.AAC-ETRG.mp4", "Diamonds Are Forever", "1971"),
+        ("8.Live.and.Let.Die.1973/007.James.Bond.Live.and.Let.Die.1973.1080p.BluRay.x264.AC3-Ozlem.mp4", "Live and Let Die", "1973"),
+        ("9.The.Man.with.the.Golden.Gun.1974/007.James.Bond.The.with.the.Golden.Gun.1974.1080p.BluRay.x264.AC3-Ozlem.mp4", "The Man with the Golden Gun", "1974"),
+        ("10.The.Spy.Who.Loved.Me.1977/007.James.Bond.The.Spy.Who.Loved.Me.1977.1080p.BluRay.x264.AC3-Ozlem.mp4", "The Spy Who Loved Me", "1977"),
+        ("11.Moonraker.1979/007.James.Bond.Moonraker.1979.1080p.BluRay.x264.AC3-Ozlem.mp4", "Moonraker", "1979"),
+        ("12.For.Your.Eyes.Only.1981/007.James.Bond.For.Your.Eyes.Only.1981.1080p.BluRay.x264.AC3-Ozlem.mp4", "For Your Eyes Only", "1981"),
+        ("13.Never.Say.Never.Again.1983/007.James.Bond.Never.Say.Never.Again.1983.1080p.BluRay.x264.AC3-Ozlem.mp4", "Never Say Never Again", "1983"),
+        ("14.Octopussy.1983/James.Bond.007.Octopussy.1983.1080p.BluRay.x264.AAC-Ozlem.mp4", "Octopussy", "1983"),
+        ("15.A.View.to.a.Kill.1985/007.James.Bond.A.View.to.a.Kill.1985.1080p.BluRay.x264.AAC-Ozlem.mp4", "A View to a Kill", "1985"),
+        ("16.The.Living.Daylights.1987/007.James.Bond.The.Living.Daylights.1987.1080p.BluRay.x264.AAC-Ozlem.mp4", "The Living Daylights", "1987"),
+        ("17.Licence.to.Kill.1989/007.James.Bond.Licence.to.Kill.1989.1080p.BluRay.x264.AAC-Ozlem.mp4", "Licence to Kill", "1989"),
+        ("18.GoldenEye.1995/GoldenEye.1995.1080p.BluRay.x264.AAC-Ozlem.mp4", "GoldenEye", "1995"),
+        ("19.Tomorrow.Never.Dies.1997/007.James.Bond.Tomorrow.Never.Dies.1997.1080p.BluRay.x264.AAC-Ozlem.mp4", "Tomorrow Never Dies", "1997"),
+        ("20.The.World.Is.Not.Enough.1999/The.World.Is.Not.Enough.1999.1080p.BluRay.x264.AAC-Ozlem.mp4", "The World Is Not Enough", "1999"),
+        ("21.Die.Another.Day.2002/007.James.Bond.Die.Another.Day.2002.1080p.BluRay.x264.AAC-Ozlem.mp4", "Die Another Day", "2002"),
+        ("22.Casino.Royale.2006/Casino.Royale.2006.1080p.BluRay.x264.AAC-Ozlem.mp4", "Casino Royale", "2006"),
+        ("23. Quantum.of.Solace.2008/007.James.Bond.Quantum.of.Solace.2008.1080p.BluRay.x264.AAC-Ozlem.mp4", "Quantum of Solace", "2008"),
+        ("24.Skyfall.2012/Skyfall.2012.1080p.BluRay.x264.AAC-Ozlem.mp4", "Skyfall", "2012"),
+        ("25.Spectre.2015/Spectre.2015.1080p.BRRip.x264.AAC-ETRG.mp4", "Spectre", "2015"),
+    ];
+    fn split(path: &str) -> (String, String) {
+        let path = Path::new(path);
+        (path.file_stem().unwrap().to_string_lossy().into_owned(),
+         path.parent().unwrap().file_name().unwrap().to_string_lossy().into_owned())
+    }
+    /// The queries `identify` sends, in order, until one matches.
+    fn queries(name: &str, folder: Option<&str>) -> Vec<(String, String)> {
+        let (query, year, _) = parse_name(name);
+        let mut all = vec![(query.clone(), year.clone())];
+        all.extend(fallback_queries(&query, &year, name, folder));
+        all
+    }
+
+    #[test]
+    fn every_bond_film_reaches_its_title_and_year_within_the_query_cap() {
+        for (path, title, year) in BOND {
+            let (name, folder) = split(path);
+            let sent = queries(&name, Some(&folder));
+            assert!(sent.len() <= MAX_MATCH_QUERIES, "{path}: {sent:?}");
+            let hit = sent.iter().position(|(q, y)| normalized(q) == normalized(title) && y == year);
+            // Plain names match on the first query; prefixed names on the folder's title next.
+            assert!(hit.is_some_and(|hit| hit <= 1), "{path} does not query {title} ({year}) early: {sent:?}");
+        }
+    }
+
+    #[test]
+    fn prefixed_names_without_a_folder_reach_the_title_by_dropping_leading_words() {
+        for (path, title, year) in BOND {
+            let (name, _) = split(path);
+            if normalized(&name).contains("goldengun") { continue; } // the file name lost "Man"
+            let sent = queries(&name, None);
+            assert!(sent.len() <= MAX_MATCH_QUERIES, "{path}: {sent:?}");
+            assert!(sent.iter().any(|(q, y)| normalized(q) == normalized(title) && y == year), "{path}: {sent:?}");
+        }
+        // The folder supplies the word the file name dropped.
+        let sent = queries("007.James.Bond.The.with.the.Golden.Gun.1974.1080p.BluRay.x264.AC3-Ozlem", Some("9.The.Man.with.the.Golden.Gun.1974"));
+        assert_eq!(sent[1], ("The Man with the Golden Gun".to_owned(), "1974".to_owned()));
+    }
+
+    #[test]
+    fn packs_and_mismatched_folders_get_no_fallbacks() {
+        assert_eq!(queries("007.James.Bond.Complete.Set.1962-2015.1080p.BluRay.x264-ETRG", None).len(), 1);
+        // A collection folder is not a title, and a folder's different year is another film.
+        let sent = queries("007.James.Bond.Moonraker.1979.1080p", Some("007.James.Bond.Complete.Set.1962-2015.1080p"));
+        assert_eq!(sent.iter().map(|(q, _)| q.as_str()).collect::<Vec<_>>(),
+            ["007 James Bond Moonraker", "James Bond Moonraker", "Bond Moonraker", "Moonraker"]);
+        assert!(!queries("Bond.Moonraker.1979.1080p", Some("Moonraker.1980")).iter().any(|(_, y)| y == "1980"));
+        // No year in the file or folder: an exact unique title is required as before.
+        assert_eq!(queries("Some.Prefix.Movie.1080p", Some("Downloads")).len(), 1);
+        // A year-less file in a dated folder can use the folder.
+        assert_eq!(queries("movie", Some("The Movie (1999)"))[1], ("The Movie".to_owned(), "1999".to_owned()));
+    }
+
+    #[test]
+    fn shortened_queries_only_accept_an_exact_title_and_year() {
+        let hits = vec![
+            json!({"provider_id":"1","title":"Moonraker","original_title":"Moonraker","year":"1979"}),
+            json!({"provider_id":"2","title":"Moonraker","original_title":"Moonraker","year":"2011"}),
+            json!({"provider_id":"3","title":"Moonraker Revisited","original_title":"","year":"1979"}),
+        ];
+        let exact = exact_candidates("Moonraker", "1979", &hits);
+        assert_eq!(exact.len(), 1);
+        assert_eq!(exact[0]["provider_id"], "1");
+        assert!(exact_candidates("Moonraker", "1980", &hits).is_empty());
+        assert!(exact_candidates("Bond Moonraker", "1979", &hits).is_empty());
+        assert!(exact_candidates("", "1979", &[json!({"title":"","year":"1979"})]).is_empty());
+    }
+
+    /// `identify` against recorded TMDB responses: no token, no network.
+    #[tokio::test]
+    async fn identify_stops_at_the_first_exact_match_from_recorded_responses() {
+        let root = std::env::temp_dir().join(format!("torrbaby-identify-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("tmdb-cache")).unwrap();
+        let record = |query: &[(&str, &str)], results: Value| {
+            let mut query = query.to_vec();
+            query.extend([("language", "en-US"), ("include_adult", "false")]);
+            std::fs::write(root.join("tmdb-cache").join(tmdb_cache_key("search/movie", &query)),
+                serde_json::to_vec(&json!({"page":1,"total_pages":1,"results":results})).unwrap()).unwrap();
+        };
+        // The prefixed name finds nothing; the folder's title finds the film and a namesake.
+        record(&[("query", "007 James Bond The with the Golden Gun")], json!([]));
+        record(&[("query", "The Man with the Golden Gun"), ("year", "1974")], json!([
+            {"id":682,"title":"The Man with the Golden Gun","original_title":"The Man with the Golden Gun","release_date":"1974-12-01"},
+            {"id":9,"title":"The Man with the Golden Gun","original_title":"","release_date":"2006-01-01"}]));
+        let metadata = Metadata::new(&root).unwrap();
+        let found = metadata.identify("007.James.Bond.The.with.the.Golden.Gun.1974.1080p.BluRay.x264.AC3-Ozlem",
+            Some("9.The.Man.with.the.Golden.Gun.1974")).await.unwrap();
+        assert_eq!(found["exact"]["provider_id"], "682");
+        assert_eq!(found["matched_year"], "1974");
+        assert_eq!(found["attempts"].as_array().unwrap().len(), 2);
+        // Only a same-title film from another year: nothing is selected, and the cap holds.
+        record(&[("query", "007 James Bond Moonraker")], json!([]));
+        record(&[("query", "James Bond Moonraker"), ("year", "1979")], json!([]));
+        record(&[("query", "Bond Moonraker"), ("year", "1979")], json!([]));
+        record(&[("query", "Moonraker"), ("year", "1979")], json!([
+            {"id":5,"title":"Moonraker","original_title":"Moonraker","release_date":"2011-01-01"}]));
+        let found = metadata.identify("007.James.Bond.Moonraker.1979.1080p", None).await.unwrap();
+        assert!(found["exact"].is_null());
+        assert_eq!(found["attempts"].as_array().unwrap().len(), MAX_MATCH_QUERIES);
+        assert_eq!(found["candidates"].as_array().unwrap().len(), 1);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -91,6 +91,23 @@ fn tag_container(asset: &mut Value, path: &Path, metadata: Option<&fs::Metadata>
 pub struct Inventory {
     pub assets: Vec<Value>,
     pub errors: Vec<String>,
+    /// Untracked records of in-progress torrent files (see `torrent_copy`).
+    pub superseded: Vec<String>,
+}
+
+/// Transmission keeps unfinished files in its incomplete directory (on Diamond,
+/// `Downloads/Incomplete/<torrent files>`) and moves them to the download directory on
+/// completion. Such a file is a torrent's file, tracked by torrent hash and file index;
+/// a separate record would duplicate it in matching and review, then linger as
+/// unavailable after the move. Recognised by the incomplete directory Transmission
+/// reports, or, without one, as a file under the source root at another location whose
+/// trailing path is a present torrent's file name.
+fn torrent_copy(path: &Path, source: &Path, incomplete: Option<&Path>, names: &HashSet<PathBuf>, tracked: &HashSet<PathBuf>) -> bool {
+    if tracked.contains(path) { return false; }
+    if incomplete.is_some_and(|incomplete| path.starts_with(incomplete)) { return true; }
+    let Ok(relative) = path.strip_prefix(source) else { return false; };
+    let parts: Vec<_> = relative.components().collect();
+    (0..parts.len()).any(|start| names.contains(&parts[start..].iter().collect::<PathBuf>()))
 }
 
 fn package_complete(files: &[Value]) -> bool {
@@ -101,8 +118,18 @@ fn package_complete(files: &[Value]) -> bool {
 }
 
 pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inventory {
+    inventory_with(config, old, torrents, None)
+}
+
+/// `incomplete` is Transmission's incomplete directory, when enabled and known.
+pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, incomplete: Option<&Path>) -> Inventory {
+    // A misconfigured incomplete directory must never hide a library root.
+    let incomplete = incomplete.filter(|dir| dir.is_absolute() && dir.components().count() > 2
+        && ![&config.source, &config.movies, &config.tv].iter().any(|root| Path::new(root).starts_with(dir)));
     let mut candidates: HashMap<PathBuf, Value> = HashMap::new();
     let mut errors = Vec::new();
+    // Present torrents' video file names, those not yet at their final path, and those paths.
+    let (mut torrent_names, mut unfinished_names, mut tracked) = (HashSet::new(), HashSet::new(), HashSet::new());
     for torrent in torrents {
         let Some(root) = torrent["download_dir"].as_str() else {
             continue;
@@ -136,6 +163,9 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
                 if !video(&path) {
                     continue;
                 }
+                torrent_names.insert(PathBuf::from(name));
+                if !path.is_file() { unfinished_names.insert(PathBuf::from(name)); }
+                tracked.insert(path.clone());
                 candidates.insert(path,json!({"torrent_hash":torrent["hash_string"],"torrent_present":true,"file_index":index,
                     "size":file["length"],"complete":package_complete && file["length"].as_u64().unwrap_or(0)>0 && file["bytes_completed"]==file["length"],
                     "added_at":torrent["added_date"],"torrent_name":torrent["name"]}));
@@ -178,7 +208,8 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
                     if entry.file_name()==".torrbaby-trials" {continue;}
                     if entry.path() == Path::new(root).join("Junk") { continue; }
                     pending.push(entry.path());
-                } else if kind.is_file() && video(&entry.path()) {
+                } else if kind.is_file() && video(&entry.path())
+                    && !(root == &config.source && torrent_copy(&entry.path(), Path::new(&config.source), incomplete, &unfinished_names, &tracked)) {
                     candidates.entry(entry.path()).or_insert_with(
                         || json!({"complete":complete,"added_at":now(),"torrent_present":false}),
                     );
@@ -300,8 +331,21 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
         }
         assets.push(asset);
     }
+    let mut superseded = Vec::new();
     for mut asset in old {
         if seen.contains(asset["id"].as_str().unwrap_or("")) {
+            continue;
+        }
+        // An explicit user match is kept even on a duplicate record. Once a torrent's file
+        // is in place, only a record whose own file has gone can be its earlier copy.
+        if asset["torrent_hash"].is_null() && asset["confirmed"] != true
+            && asset["path"].as_str().is_some_and(|path| {
+                let gone = matches!(fs::metadata(path), Err(e) if e.kind() == std::io::ErrorKind::NotFound);
+                torrent_copy(Path::new(path), Path::new(&config.source), incomplete,
+                    if gone { &torrent_names } else { &unfinished_names }, &tracked)
+            })
+        {
+            if let Some(id) = asset["id"].as_str() { superseded.push(id.to_owned()); }
             continue;
         }
         asset["torrent_present"] = json!(false);
@@ -312,7 +356,7 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
         }
         assets.push(asset);
     }
-    Inventory { assets, errors }
+    Inventory { assets, errors, superseded }
 }
 
 #[cfg(test)]
@@ -451,5 +495,68 @@ mod tests {
             resolve_episode_title(&mut a,&json!({"kind":"tv","episodes":episodes}));
             assert!(a.get("episode").is_none());
         }
+    }
+    #[test]
+    fn incomplete_directory_copies_are_not_separate_assets() {
+        let root = std::env::temp_dir().join(format!("torrbaby-incomplete-{}",uuid::Uuid::new_v4()));
+        let config: Config = serde_json::from_value(json!({
+            "listen_host":"127.0.0.1","listen_port":8765,"token_file":"unused","state_file":"unused",
+            "transmission_url":"http://127.0.0.1:9091","transmission_auth_file":null,
+            "source":root.join("Downloads"),"movies":root.join("Movies"),"tv":root.join("TV"),"poll_seconds":60
+        })).unwrap();
+        for directory in [&config.source,&config.movies,&config.tv] { fs::create_dir_all(directory).unwrap(); }
+        let source = Path::new(&config.source);
+        let name = "007.Set/11.Moonraker.1979/007.James.Bond.Moonraker.1979.mp4";
+        let incomplete = source.join("Incomplete").join(name);
+        fs::create_dir_all(incomplete.parent().unwrap()).unwrap();
+        fs::write(&incomplete, vec![0;100]).unwrap();
+        // An unrelated file that merely shares the film folder name stays a separate asset.
+        fs::create_dir_all(source.join("Other/11.Moonraker.1979")).unwrap();
+        fs::write(source.join("Other/11.Moonraker.1979/Moonraker.mp4"), vec![0;100]).unwrap();
+        let mut torrent = json!({"hash_string":"bond","download_dir":config.source,"name":"007.Set",
+            "files":[{"name":name,"length":100,"bytes_completed":100},{"name":"007.Set/other.mp4","length":100,"bytes_completed":0}]});
+        // While downloading, the finished file sits in Transmission's incomplete directory.
+        let downloading = inventory(&config,vec![],vec![torrent.clone()]);
+        assert!(downloading.superseded.is_empty());
+        assert_eq!(downloading.assets.len(),3);
+        assert!(!downloading.assets.iter().any(|a|a["path"].as_str().unwrap().contains("/Incomplete/")));
+        let tracked = downloading.assets.iter().find(|a|a["file_index"]==0).unwrap().clone();
+        assert_eq!((tracked["available"].clone(),tracked["complete"].clone()),(json!(false),json!(false)));
+        // Records left by earlier builds: an automatic match and an explicit one.
+        let stale = json!({"id":"asset-stale","path":incomplete,"status":"review","available":true,"complete":false,"role":"main"});
+        let chosen = json!({"id":"asset-chosen","path":incomplete,"status":"matched","confirmed":true,"entity_id":"tmdb:movie:698","available":true,"complete":false,"role":"main"});
+        // A torrent since renamed or removed: only Transmission's incomplete directory identifies it.
+        let renamed = json!({"id":"asset-renamed","path":source.join("Incomplete/Show/Show.S01E01.mkv"),"status":"review","available":false,"complete":false,"role":"main"});
+        let mut old = downloading.assets.clone();
+        old.extend([stale, chosen, renamed]);
+        // Transmission moves the finished package out of the incomplete directory.
+        fs::create_dir_all(source.join("007.Set/11.Moonraker.1979")).unwrap();
+        fs::rename(&incomplete, source.join(name)).unwrap();
+        fs::write(source.join("007.Set/other.mp4"), vec![0;100]).unwrap();
+        torrent["files"][1]["bytes_completed"] = json!(100);
+        let complete = inventory(&config,old.clone(),vec![torrent.clone()]);
+        assert_eq!(complete.superseded,["asset-stale"]);
+        let moonraker = complete.assets.iter().find(|a|a["file_index"]==0).unwrap();
+        assert_eq!(moonraker["id"],tracked["id"]);
+        assert_eq!((moonraker["available"].clone(),moonraker["complete"].clone()),(json!(true),json!(true)));
+        assert!(complete.assets.iter().any(|a|a["id"]=="asset-chosen" && a["available"]==false));
+        assert!(complete.assets.iter().any(|a|a["path"].as_str().unwrap().ends_with("Other/11.Moonraker.1979/Moonraker.mp4")));
+        assert_eq!(complete.assets.len(),5);
+        let with_directory = inventory_with(&config,old,vec![torrent],Some(&source.join("Incomplete")));
+        assert_eq!(with_directory.superseded,["asset-stale","asset-renamed"]);
+        assert_eq!(with_directory.assets.len(),4);
+        // A deliberate copy of a finished torrent's file elsewhere stays its own asset.
+        fs::write(source.join("Single.mkv"), vec![0;100]).unwrap();
+        fs::create_dir_all(source.join("Copies")).unwrap();
+        fs::write(source.join("Copies/Single.mkv"), vec![0;100]).unwrap();
+        let single = json!({"hash_string":"single","download_dir":config.source,"name":"Single.mkv","files":[{"name":"Single.mkv","length":100,"bytes_completed":100}]});
+        let copied = inventory(&config,vec![],vec![single.clone()]);
+        assert!(copied.assets.iter().any(|a|a["path"].as_str().unwrap().ends_with("Copies/Single.mkv") && a["torrent_hash"].is_null()));
+        let copy = copied.assets.iter().find(|a|a["torrent_hash"].is_null() && a["path"].as_str().unwrap().ends_with("Copies/Single.mkv")).unwrap().clone();
+        assert!(inventory(&config,vec![copy],vec![single]).superseded.is_empty());
+        // An incomplete directory that would contain a library root is ignored.
+        let stale = json!({"id":"asset-movie","path":Path::new(&config.movies).join("Film.mkv"),"available":false,"role":"main"});
+        assert!(inventory_with(&config,vec![stale],vec![],Some(&root)).superseded.is_empty());
+        fs::remove_dir_all(root).unwrap();
     }
 }

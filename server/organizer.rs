@@ -422,6 +422,15 @@ pub async fn tick(s: &Service) -> Result<()> {
     Ok(())
 }
 
+/// Every video in the torrent is identified through its own record, keyed by torrent
+/// hash and file index. Untracked records for the same files (such as copies seen in
+/// Transmission's incomplete directory while downloading) neither satisfy nor block this.
+fn identified(hash: &str, files: &[Value], assets: &[Value]) -> bool {
+    files.iter().enumerate().filter(|(_,f)|f["name"].as_str().is_some_and(|n|video(Path::new(n))))
+        .all(|(index,_)|assets.iter().any(|a|a["torrent_hash"]==hash && a["file_index"]==index
+            && (a["role"]=="extra" || (a["status"]=="matched" && a["entity_id"].is_string()))))
+}
+
 async fn advance(
     s: &Service,
     config: &Config,
@@ -432,14 +441,8 @@ async fn advance(
     let hash = text(t, "hash_string")?;
     if job.is_null() || job["phase"] == "blocked" {
         if t["download_dir"] == config.source && complete(t) {
-            let ready={
-            let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
-            let assets=db.documents("assets")?;
-            files(t)?.iter().enumerate().filter(|(_,f)|f["name"].as_str().is_some_and(|n|video(Path::new(n))))
-                .all(|(index,_)|assets.iter().any(|a|a["torrent_hash"]==hash && a["file_index"]==index
-                    && (a["role"]=="extra" || (a["status"]=="matched" && a["entity_id"].is_string()))))
-            };
-            if !ready { bail!("Waiting for media identification before moving to the library"); }
+            let assets=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?.documents("assets")?;
+            if !identified(hash, files(t)?, &assets) { bail!("Waiting for media identification before moving to the library"); }
             auto_name(s,config,hash).await?;
         }
         // Renames use Transmission and can change paths; plan from its fresh file list.
@@ -740,4 +743,27 @@ async fn auto_name(s: &Service, config: &Config, hash: &str) -> Result<()> {
     })?;
     s.event("automatic_rename_complete", json!({"hash":hash}))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn identification_uses_tracked_records_and_ignores_stale_duplicates() {
+        let files = json!([{"name":"Set/1.Dr.No.1962/DR.No.1962.mp4"},{"name":"Set/1.Dr.No.1962/DR.No.1962.srt"},
+            {"name":"Set/11.Moonraker.1979/007.James.Bond.Moonraker.1979.mp4"}]);
+        let files = files.as_array().unwrap();
+        let tracked = |index: u64, status: &str| json!({"torrent_hash":"bond","file_index":index,"status":status,"role":"main",
+            "available":true,"complete":true,"entity_id":if status=="matched" {json!(format!("tmdb:movie:{index}"))} else {Value::Null}});
+        // Untracked records from the incomplete directory, matched or not.
+        let stale = [json!({"path":"/Downloads/Incomplete/Set/11.Moonraker.1979/007.James.Bond.Moonraker.1979.mp4","status":"review","available":false,"complete":false,"role":"main"}),
+                     json!({"path":"/Downloads/Incomplete/Set/1.Dr.No.1962/DR.No.1962.mp4","status":"matched","entity_id":"tmdb:movie:646","available":false,"complete":false,"role":"main"})];
+        let mut assets = vec![tracked(0, "matched"), tracked(2, "review")];
+        assets.extend(stale.clone());
+        assert!(!identified("bond", files, &assets), "an unidentified tracked film waits");
+        assets[1] = tracked(2, "matched");
+        assert!(identified("bond", files, &assets), "stale duplicates do not block");
+        // A stale matched duplicate cannot stand in for the tracked record.
+        assert!(!identified("bond", files, &[tracked(0, "matched"), stale[1].clone(), stale[0].clone()]));
+    }
 }
