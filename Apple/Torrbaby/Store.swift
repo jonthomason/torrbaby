@@ -275,6 +275,8 @@ final class Store: ObservableObject {
     }
     var canStream: Bool { connected && !usingFallback }
     var connectionLabel: String { connected ? (usingFallback ? "Fallback" : "Connected") : "Offline" }
+    /// The one deliberate use of colour in the chrome: a traffic light for the connection.
+    var connectionColor: Color { connected ? (usingFallback ? .yellow : .green) : .red }
     func saveFallback(_ address: String) throws {
         let value = ServerRoutes.normalized(address)
         if !value.isEmpty { _ = try ServerRoutes.endpoint(value, path: "/v1/status") }

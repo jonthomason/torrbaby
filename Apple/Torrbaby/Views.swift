@@ -267,7 +267,7 @@ struct RootView: View {
                     }
                 }
                 HStack(spacing: 7) {
-                    Circle().fill(store.canStream ? Theme.accent : .orange).frame(width: 6, height: 6)
+                    Circle().fill(store.connectionColor).frame(width: 7, height: 7)
                     Text(LocalizedStringKey(store.connectionLabel))
                         .font(.caption.weight(.semibold))
                 }

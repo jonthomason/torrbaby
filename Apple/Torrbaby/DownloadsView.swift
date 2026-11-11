@@ -28,7 +28,11 @@ struct DownloadsView: View {
                     HStack { Text(L10n.text(error)).foregroundStyle(.orange); Spacer(); Button { queue.error = nil } label: { Image(systemName: "xmark.circle") } }
                 }
                 let visible = queue.items.filter { $0.state != .removed }
-                if visible.isEmpty { ContentUnavailableView("No downloads", systemImage: "arrow.down.circle") }
+                if visible.isEmpty {
+                    ContentUnavailableView("No downloads", systemImage: "arrow.down.circle")
+                        .frame(maxWidth: .infinity, minHeight: 320, alignment: .center)
+                        .listRowSeparator(.hidden)
+                }
                 ForEach(visible) { item in
                     VStack(alignment: .leading, spacing: 8) {
                       HStack(spacing: 16) {
