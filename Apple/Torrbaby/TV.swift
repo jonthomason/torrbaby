@@ -107,6 +107,17 @@ struct TVRootView: View {
     @State private var section = "Home"
     @State private var path = NavigationPath()
     @State private var pendingShelfURL: URL?
+    /// The focused section tab, or nil while focus is in the page below.
+    @FocusState private var focusedTab: String?
+    @State private var homeReset = UUID()
+    /// Back from anywhere in a section returns to the top of Home; Back from the tabs on Home leaves the app.
+    private var returnHome: (() -> Void)? {
+        guard store.configured, !settings, path.isEmpty, section != "Home" || focusedTab == nil else { return nil }
+        return {
+            section = "Home"; homeReset = UUID()
+            DispatchQueue.main.async { focusedTab = "Home" }
+        }
+    }
     private let sections = ["Home", "Movies", "TV Shows", "Torrents", "Search", "Settings"]
     var body: some View {
         NavigationStack(path: $path) {
@@ -132,7 +143,7 @@ struct TVRootView: View {
                                 Button("Connection settings") { settings = true }
                             }.padding(40)
                         }
-                    default: TVLibraryView(kind: nil)
+                    default: TVLibraryView(kind: nil).id(homeReset)
                     }
                 }
             }
@@ -147,7 +158,7 @@ struct TVRootView: View {
                         ForEach(sections, id: \.self) { item in
                             Button { settings = false; section = item } label: {
                                 Text(LocalizedStringKey(item)).font(.system(size: 24, weight: .semibold))
-                            }.buttonStyle(TVMonochromeButtonStyle(selected: section == item))
+                            }.buttonStyle(TVMonochromeButtonStyle(selected: section == item)).focused($focusedTab, equals: item)
                         }
                     }
                     HStack(spacing: 8) {
@@ -167,6 +178,7 @@ struct TVRootView: View {
         .background(Color.black.ignoresSafeArea())
         .tint(.white)
         .ignoresSafeArea(.container, edges: [.top, .horizontal])
+        .onExitCommand(perform: returnHome)
         .overlay(alignment: .bottom) { ContinueWatchingUndoBanner() }
         .task(id: phase) {
             while !Task.isCancelled && phase == .active {
