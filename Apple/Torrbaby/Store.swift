@@ -320,11 +320,17 @@ final class Store: ObservableObject {
                 // A restored Wi-Fi/cellular path still needs a successful server probe.
                 if !available { self.connectionError = URLError(.notConnectedToInternet).localizedDescription }
                 self.networkAvailable = available
-                if restored || (available && self.usingFallback) {
+                if restored {
                     // A new network may make the primary route reachable again.
                     self.connectionError = URLError(.networkConnectionLost).localizedDescription
                     self.activeServer = nil; activeRouteTunnelled = false
                     await self.refresh()
+                } else if available && self.usingFallback {
+                    // On cellular with Tailscale the path changes often. Keep the working
+                    // fallback and only give the home address a quick try; dropping the
+                    // route here showed Offline and made the status come and go.
+                    self.lastPrimaryRetry = .distantPast
+                    await self.refresh(polling: true)
                 }
             }
         }
@@ -426,7 +432,9 @@ final class Store: ObservableObject {
             let (route, probed): (String, (DaemonStatus, Bool)) = try await ServerRoutes.probe(addresses: addresses) { address in
                 let quick = retryPrimary && ServerRoutes.normalized(address) == ServerRoutes.normalized(primary)
                 let observer = RouteObserver()
-                let value: DaemonStatus = try await self.request("GET", "/v1/status", timeout: quick ? 2 : 4, address: address, observer: observer)
+                // A tunnelled route over cellular can take longer than the LAN to answer.
+                let away = ServerRoutes.normalized(address) != ServerRoutes.normalized(primary)
+                let value: DaemonStatus = try await self.request("GET", "/v1/status", timeout: quick ? 2 : away ? 10 : 4, address: address, observer: observer)
                 return (value, observer.tunnelled)
             }
             guard self.server == identityServer, self.fallbackServer == fallback else { throw CancellationError() }
