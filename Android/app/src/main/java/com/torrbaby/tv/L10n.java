@@ -647,6 +647,7 @@ final class L10n {
     IDS.put("Waiting for Wi-Fi", R.string.ui_819ba5c9dca6);
     IDS.put("Waiting for activity", R.string.ui_91df8bb76aa2);
     IDS.put("Waiting for connection", R.string.ui_99c90cff2803);
+    IDS.put("Waiting for media identification before moving to the library", R.string.ui_d1884a2d21c7);
     IDS.put("Waiting for peers", R.string.ui_0736f273254e);
     IDS.put("Waiting for playback to finish", R.string.ui_83ed73bbc425);
     IDS.put("Waiting to verify", R.string.ui_640215e9fe28);

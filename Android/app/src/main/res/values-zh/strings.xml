@@ -636,6 +636,7 @@
     <string name="ui_819ba5c9dca6" formatted="false">等待 Wi-Fi</string>
     <string name="ui_91df8bb76aa2" formatted="false">等待活动</string>
     <string name="ui_99c90cff2803" formatted="false">等待连接</string>
+    <string name="ui_d1884a2d21c7" formatted="false">等待识别影片后才能移入媒体库，请选择正确的片名</string>
     <string name="ui_0736f273254e" formatted="false">等待节点</string>
     <string name="ui_83ed73bbc425" formatted="false">等待播放结束</string>
     <string name="ui_640215e9fe28" formatted="false">等待校验</string>

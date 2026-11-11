@@ -3,7 +3,7 @@ import SwiftUI
 import Charts
 
 enum Section: String, CaseIterable, Identifiable {
-    case findTorrents = "Find", downloads = "Downloads", library = "Home", movies = "Movies", shows = "TV Shows", active = "Downloading", seeding = "Seeding", complete = "Complete", subtitles = "Processing", attention = "Not progressing", automation = "Automation", settings = "Settings"
+    case findTorrents = "Find", downloads = "Downloads", library = "Home", movies = "Movies", shows = "TV Shows", active = "Downloading", seeding = "Seeding", complete = "Complete", subtitles = "Processing", attention = "Needs attention", automation = "Automation", settings = "Settings"
     var id: String { rawValue }
     var icon: String {
         switch self {

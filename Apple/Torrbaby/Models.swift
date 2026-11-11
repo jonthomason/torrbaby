@@ -60,12 +60,14 @@ struct Torrent: Codable, Identifiable, Hashable {
     let uploadedEver: Int64?
     let isStalled: Bool
     var fileOperation: TorrentFileOperation? = nil
+    /// Why the server has not filed this finished download into the library.
+    var libraryIssue: String? = nil
     var isJunk: Bool { fileOperation?.action == "junk" }
     var id: String { hashString }
     var completed: Bool { percentDone >= 1 }
     var needsAttention: Bool { progressIssue != nil }
     var progressIssue: String? {
-        guard !completed else { return error != 0 ? errorString : nil }
+        guard !completed else { return error != 0 ? errorString : libraryIssue.map { L10n.text($0) } }
         if error != 0 { return errorString }
         guard status != 0 else { return nil }
         if isStalled { return L10n.text("Transmission reports this torrent as stalled") }

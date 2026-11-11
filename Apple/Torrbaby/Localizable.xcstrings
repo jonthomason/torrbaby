@@ -12076,6 +12076,23 @@
           }
         }
       }
+    },
+    "Waiting for media identification before moving to the library": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for media identification before moving to the library"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待识别影片后才能移入媒体库，请选择正确的片名"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

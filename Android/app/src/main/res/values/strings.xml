@@ -636,6 +636,7 @@
     <string name="ui_819ba5c9dca6" formatted="false">Waiting for Wi-Fi</string>
     <string name="ui_91df8bb76aa2" formatted="false">Waiting for activity</string>
     <string name="ui_99c90cff2803" formatted="false">Waiting for connection</string>
+    <string name="ui_d1884a2d21c7" formatted="false">Waiting for media identification before moving to the library</string>
     <string name="ui_0736f273254e" formatted="false">Waiting for peers</string>
     <string name="ui_83ed73bbc425" formatted="false">Waiting for playback to finish</string>
     <string name="ui_640215e9fe28" formatted="false">Waiting to verify</string>

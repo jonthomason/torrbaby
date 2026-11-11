@@ -1218,16 +1218,18 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             .filter(|(updated, _)| updated.elapsed().as_secs() < 15)
             .map(|(_, torrents)| json!(torrents));
         if let Some(torrents) = cached {
-            let operations = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.library_operations()?;
-            return Ok(crate::library_files::annotate_torrents(torrents, &operations));
+            let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+            let operations = db.library_operations()?;
+            return Ok(library_issues(crate::library_files::annotate_torrents(torrents, &operations), &db.state()?));
         }
         let torrents = s
             .rpc
             .call("torrent_get", json!({"fields":crate::transmission::FIELDS}))
             .await?["torrents"]
             .take();
-        let operations = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.library_operations()?;
-        return Ok(crate::library_files::annotate_torrents(torrents, &operations));
+        let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+        let operations = db.library_operations()?;
+        return Ok(library_issues(crate::library_files::annotate_torrents(torrents, &operations), &db.state()?));
     }
     let effective = if path == "/v1/status" {
         Some(s.effective_config()?)
@@ -1844,6 +1846,22 @@ fn byte_range(header: Option<&str>, size: u64) -> Result<(u64, u64)> {
         bail!("Unsatisfiable range");
     }
     Ok((start, end))
+}
+
+/// Why a finished download has not been filed into the library, for the
+/// clients' "Needs attention" list (for example, a title waiting to be identified).
+fn library_issues(mut torrents: Value, state: &Value) -> Value {
+    if let Some(rows) = torrents.as_array_mut() {
+        for torrent in rows {
+            let job = &state["jobs"][torrent["hash_string"].as_str().unwrap_or("")];
+            if job["phase"] == "blocked" && torrent["percent_done"].as_f64().is_some_and(|done| done >= 1.0) {
+                if let Some(reason) = job["error"].as_str().filter(|reason| !reason.is_empty()) {
+                    torrent["library_issue"] = json!(reason);
+                }
+            }
+        }
+    }
+    torrents
 }
 
 async fn artwork(s: &Service, id: &str, variant: &str) -> Result<Value> {
