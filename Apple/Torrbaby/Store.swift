@@ -231,30 +231,43 @@ final class Store: ObservableObject {
     @Published var fallbackServer = "" {
         didSet {
             UserDefaults.standard.set(fallbackServer, forKey: "fallback-server:" + server)
-            UserDefaults.standard.set(true, forKey: "fallback-routing-v2:" + server)
+            UserDefaults.standard.set(true, forKey: routingFlag)
         }
     }
     @Published private(set) var activeServer: String?
     private var connectionProbe: Task<DaemonStatus, Error>?
+    // Marks that this device's fallback was saved under the LAN-first routing rules.
+    // The Mac adopted them later than iOS, so it has its own marker for the one-time repair.
+    private var routingFlag: String {
+        #if os(macOS)
+        "fallback-routing-mac:" + server
+        #else
+        "fallback-routing-v2:" + server
+        #endif
+    }
     private func savedFallback() -> String {
         let saved = UserDefaults.standard.string(forKey: "fallback-server:" + server)
-        #if os(iOS)
-        // Build 121 persisted an empty fallback for devices already paired via TS.
-        if saved == "", !UserDefaults.standard.bool(forKey: "fallback-routing-v2:" + server),
+        #if os(tvOS)
+        return saved ?? ""
+        #else
+        // A device paired through the Tailscale address saved an empty fallback before
+        // LAN-first routing existed; give it the Tailscale route once.
+        if saved == "", !UserDefaults.standard.bool(forKey: routingFlag),
            ServerRoutes.primaryAddress(for: server) != server {
             return ServerRoutes.defaultFallback(for: server)
         }
         if let saved { return saved }
         return ServerRoutes.defaultFallback(for: server)
-        #else
-        return saved ?? ""
         #endif
     }
+    /// At home the LAN address is the primary route even when the device was paired through
+    /// Tailscale. The Mac used to skip this, so a Tailscale-paired Mac was always "Fallback"
+    /// and could not stream.
     var primaryAddress: String {
-        #if os(iOS)
-        return ServerRoutes.primaryAddress(for: server)
-        #else
+        #if os(tvOS)
         return server
+        #else
+        return ServerRoutes.primaryAddress(for: server)
         #endif
     }
     var usingFallback: Bool {
@@ -390,13 +403,24 @@ final class Store: ObservableObject {
     func endpoint(_ path: String) throws -> URL {
         try ServerRoutes.endpoint(activeServer ?? primaryAddress, path: path)
     }
+    private var lastPrimaryRetry = Date.distantPast
     private func probeConnection() async throws -> DaemonStatus {
         if let connectionProbe { return try await connectionProbe.value }
         let identityServer = server, primary = primaryAddress, fallback = fallbackServer
-        let addresses = ServerRoutes.candidates(primary: primary, fallback: fallback, current: activeServer)
+        var addresses = ServerRoutes.candidates(primary: primary, fallback: fallback, current: activeServer)
+        // The working route is tried first, so a brief outage of the primary (a server
+        // restart, say) used to leave the client on the fallback until the network changed.
+        // While on the fallback, give the primary a short first try every 30 seconds.
+        let retryPrimary = usingFallback && Date().timeIntervalSince(lastPrimaryRetry) >= 30
+        if retryPrimary {
+            lastPrimaryRetry = Date()
+            addresses = ServerRoutes.candidates(primary: primary, fallback: fallback, current: primary) + addresses.filter { ServerRoutes.normalized($0) != ServerRoutes.normalized(primary) }
+            addresses = addresses.reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
+        }
         let task = Task { @MainActor in
             let (route, value): (String, DaemonStatus) = try await ServerRoutes.probe(addresses: addresses) { address in
-                try await self.request("GET", "/v1/status", timeout: 4, address: address)
+                let quick = retryPrimary && ServerRoutes.normalized(address) == ServerRoutes.normalized(primary)
+                return try await self.request("GET", "/v1/status", timeout: quick ? 2 : 4, address: address)
             }
             guard self.server == identityServer, self.fallbackServer == fallback else { throw CancellationError() }
             self.activeServer = route
