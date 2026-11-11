@@ -1615,10 +1615,10 @@ public class MainActivity extends Activity {
         Button cast=Ui.iconButton(this,L10n.t("Cast"),R.drawable.action_cast,()->{showingCast=true;render();});cast.setTag("cast");
         Ui.add(body,cast,-2,44);
       }
-      if(preferred.position>0)Ui.add(body,Ui.button(this,L10n.t("Start from Beginning"),()->play(t,preferred,true)),-2,44);
+      if(preferred.position>0)Ui.add(body,Ui.iconButton(this,L10n.t("Start from Beginning"),R.drawable.action_restart,()->play(t,preferred,true)),-2,44);
       Ui.add(body,Ui.iconButton(this,L10n.t(preferred.watched?"Mark as Unwatched":"Mark as Watched"),R.drawable.action_watched,()->mark(preferred)),-2,44);
       if(preferred.complete)Ui.add(body,Ui.iconButton(this,L10n.t("Manage files"),R.drawable.action_files,()->new LibraryFileActions(this,api,io,preferred.id,this::load).show()),-2,44);
-      if(t.isContinuing())Ui.add(body,Ui.button(this,L10n.t("Remove from Continue Watching"),()->setContinueWatchingHidden(t,true)),-2,44);
+      if(t.isContinuing())Ui.add(body,Ui.iconButton(this,L10n.t("Remove from Continue Watching"),R.drawable.action_remove,()->setContinueWatchingHidden(t,true)),-2,44);
       Ui.gap(body,16);
     }
   }
