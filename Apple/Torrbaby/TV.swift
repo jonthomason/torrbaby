@@ -369,20 +369,25 @@ private struct TVMediaDetail: View {
                                 TVDetailActions(asset: asset, title: title)
                             }.buttonStyle(TVMonochromeButtonStyle()).focusSection()
                         }
+                        // Extras are their own tab after the last season, not a tail on every season.
+                        let extras = title.assets.filter { $0.role == "extra" }
                         let seasons = Array(Set(title.assets.filter { $0.role != "extra" }.compactMap(\.season))).sorted()
-                        let selectedSeason = season ?? title.resume?.season ?? title.playable.first(where: { !$0.watched && ($0.season ?? 0) > 0 })?.season ?? seasons.first(where: { $0 > 0 }) ?? seasons.first
-                        if title.kind == "tv" && seasons.count > 1 {
+                        let tabs = title.kind == "tv" && !extras.isEmpty ? seasons + [LibraryTitle.extrasTab] : seasons
+                        let chosen = season.flatMap { tabs.contains($0) ? $0 : nil }
+                        let selectedSeason = chosen ?? title.resume?.season ?? title.playable.first(where: { !$0.watched && ($0.season ?? 0) > 0 })?.season ?? seasons.first(where: { $0 > 0 }) ?? seasons.first
+                        if title.kind == "tv" && tabs.count > 1 {
                             ScrollView(.horizontal) {
                                 HStack(spacing: 25) {
-                                    ForEach(seasons, id: \.self) { number in
-                                        Button(LocalizedStringKey(number == 0 ? "Specials" : "Season \(number)")) { season = number }
+                                    ForEach(tabs, id: \.self) { number in
+                                        Button(LocalizedStringKey(number == LibraryTitle.extrasTab ? "Extras" : number == 0 ? "Specials" : "Season \(number)")) { season = number }
                                             .buttonStyle(TVMonochromeButtonStyle(selected: selectedSeason == number))
                                             .focused($seasonFocus, equals: number)
                                     }
                                 }.padding(15)
                             }.scrollClipDisabled().focusSection().defaultFocus($seasonFocus, selectedSeason, priority: .userInitiated)
                         }
-                        let assets = title.assets.filter { $0.role != "extra" && (title.kind != "tv" || $0.season == selectedSeason) }
+                        let showingExtras = title.kind == "tv" && selectedSeason == LibraryTitle.extrasTab
+                        let assets = showingExtras ? extras : title.assets.filter { $0.role != "extra" && (title.kind != "tv" || $0.season == selectedSeason) }
                             .sorted { ($0.episode ?? 0, $0.name ?? "") < ($1.episode ?? 0, $1.name ?? "") }
                         if title.kind == "tv" || assets.count > 1 {
                             // Arriving from the hero or season row lands on the next episode to watch.
@@ -393,12 +398,11 @@ private struct TVMediaDetail: View {
                             }.focusSection().defaultFocus($episodeFocus, entry?.id, priority: .userInitiated)
                         }
                         let unnumbered = title.assets.filter { $0.role != "extra" && $0.season == nil }
-                        if title.kind == "tv" && selectedSeason != nil && !unnumbered.isEmpty {
+                        if title.kind == "tv" && selectedSeason != nil && !showingExtras && !unnumbered.isEmpty {
                             Text("Other episodes").font(.title2.bold())
                             ForEach(unnumbered) { asset in assetButton(asset, title: title) }
                         }
-                        let extras = title.assets.filter { $0.role == "extra" }
-                        if !extras.isEmpty {
+                        if title.kind != "tv" && !extras.isEmpty {
                             Text("Special features").font(.title2.bold())
                             ForEach(extras) { asset in assetButton(asset, title: title) }
                         }

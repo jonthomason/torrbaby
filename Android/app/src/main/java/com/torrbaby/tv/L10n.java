@@ -198,6 +198,7 @@ final class L10n {
     IDS.put("Explore", R.string.ui_b965ae66fcc4);
     IDS.put("Extracting", R.string.ui_c3c5fb3f17e9);
     IDS.put("Extracting subtitles", R.string.ui_f5febee5e9e1);
+    IDS.put("Extras", R.string.ui_3b7782ff05e2);
     IDS.put("FILES", R.string.ui_9fb4f1d17ef8);
     IDS.put("Failed", R.string.ui_09fef5d8d9a3);
     IDS.put("Fallback", R.string.ui_b4a100ebc4c1);

@@ -11192,6 +11192,23 @@
           }
         }
       }
+    },
+    "Extras": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Extras"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "花絮"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

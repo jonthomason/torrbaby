@@ -143,6 +143,8 @@ struct LibraryTitle: Decodable, Identifiable {
     /// The year a finished series last aired, and whether it is still running, when known.
     var endYear: String? = nil
     var ongoing: Bool? = nil
+    /// The season selector's value for a show's extras, which follow its last season.
+    static let extrasTab = Int.max
     /// A movie's year, or a series' run: "2018–2025", or "2018–" while it continues.
     var yearLabel: String {
         guard let year, !year.isEmpty else { return "" }
@@ -571,6 +573,7 @@ struct LibraryDetail: View {
     private var selectedSeason: Int? {
         guard let title else { return nil }
         let seasons=Array(Set(title.assets.filter { $0.role != "extra" }.compactMap(\.season))).sorted()
+        if season == LibraryTitle.extrasTab, title.assets.contains(where: { $0.role == "extra" }) { return season }
         if seasons.contains(season) { return season }
         return title.resume?.season ?? title.playable.first(where: { !$0.watched && ($0.season ?? 0) > 0 })?.season ?? seasons.first(where: { $0 > 0 }) ?? seasons.first
     }
@@ -589,7 +592,7 @@ struct LibraryDetail: View {
         }.libraryActionStyle(prominent: true).disabled(loading)
         #if !os(tvOS)
         if title.kind == "tv" {
-            if let number=selectedSeason { DownloadSeasonControl(title: title, season: number) }
+            if let number=selectedSeason, number != LibraryTitle.extrasTab { DownloadSeasonControl(title: title, season: number) }
         } else { DownloadAssetControl(asset: asset, title: title) }
         #endif
     }
@@ -618,26 +621,28 @@ struct LibraryDetail: View {
                         MediaLanguagesView(info: asset.mediaInfo)
                     }
                     Text(title.summary).font(.body).lineSpacing(5).frame(maxWidth: 900, alignment: .leading)
+                    // Extras are their own tab after the last season, not a tail on every season.
+                    let extras = title.assets.filter { $0.role == "extra" }.sorted { ($0.name ?? "").localizedStandardCompare($1.name ?? "") == .orderedAscending }
                     if title.kind == "tv" {
                         let seasons = Array(Set(title.assets.filter { $0.role != "extra" }.compactMap(\.season))).sorted()
+                        let tabs = extras.isEmpty ? seasons : seasons + [LibraryTitle.extrasTab]
                         ScrollView(.horizontal) {
                             HStack(spacing: 10) {
-                                ForEach(seasons, id: \.self) { number in
-                                    Button(LocalizedStringKey(number == 0 ? "Specials" : "Season \(number)")) { season = number }
+                                ForEach(tabs, id: \.self) { number in
+                                    Button(LocalizedStringKey(number == LibraryTitle.extrasTab ? "Extras" : number == 0 ? "Specials" : "Season \(number)")) { season = number }
                                         .libraryActionStyle(prominent: selectedSeason == number, compact: true)
                                         .accessibilityAddTraits(selectedSeason == number ? .isSelected : [])
                                 }
                             }.padding(.vertical, 4)
                         }.scrollIndicators(.hidden)
-                    }
-                    if title.kind == "tv" {
-                    ForEach(title.assets.filter { $0.role != "extra" && (title.kind != "tv" || $0.season == selectedSeason || $0.season == nil) }.sorted { ($0.season ?? 0, $0.episode ?? 0) < ($1.season ?? 0, $1.episode ?? 0) }) { asset in
-                        episodeRow(asset, title: title)
-                    }
-                    }
-
-                    let extras = title.assets.filter { $0.role == "extra" }.sorted { ($0.name ?? "").localizedStandardCompare($1.name ?? "") == .orderedAscending }
-                    if !extras.isEmpty {
+                        if selectedSeason == LibraryTitle.extrasTab {
+                            ForEach(extras) { asset in episodeRow(asset, title: title) }
+                        } else {
+                            ForEach(title.assets.filter { $0.role != "extra" && ($0.season == selectedSeason || $0.season == nil) }.sorted { ($0.season ?? 0, $0.episode ?? 0) < ($1.season ?? 0, $1.episode ?? 0) }) { asset in
+                                episodeRow(asset, title: title)
+                            }
+                        }
+                    } else if !extras.isEmpty {
                         Text("Special features").font(.title2.bold())
                         ForEach(extras) { asset in
                             episodeRow(asset, title: title)

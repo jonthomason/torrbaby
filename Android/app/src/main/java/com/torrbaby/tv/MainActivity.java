@@ -43,6 +43,8 @@ public class MainActivity extends Activity {
   private boolean inLibrary, refreshingLibrary;
   private String librarySnapshot = "";
   // Keep one browse hierarchy, including its scroll and focus, while viewing a title.
+  /** The season selector's value for a show's extras, which follow its last season. */
+  private static final int EXTRAS = Integer.MAX_VALUE;
   private View savedBrowseView, savedBrowseFocus;
   // Top bar labels match tvOS (24pt at 1920) rather than the larger content buttons.
   private static final float NAV_TEXT = 12f;
@@ -1299,7 +1301,7 @@ public class MainActivity extends Activity {
     if(!Objects.toString(a.cast,"").equals(Objects.toString(b.cast,""))||!a.title.equals(b.title)||!a.summary.equals(b.summary)||!a.poster.equals(b.poster)||!a.backdrop.equals(b.backdrop)||!a.metadata().equals(b.metadata())||a.assets.size()!=b.assets.size())return false;
     for(int i=0;i<a.assets.size();i++) {
       Library.Asset x=a.assets.get(i),y=b.assets.get(i);
-      if(!x.id.equals(y.id)||!x.name.equals(y.name)||!x.summary.equals(y.summary)||x.position!=y.position||x.duration!=y.duration||x.watched!=y.watched||x.complete!=y.complete||!x.mediaInfo.toString().equals(y.mediaInfo.toString()))return false;
+      if(!x.id.equals(y.id)||!x.name.equals(y.name)||!x.summary.equals(y.summary)||x.position!=y.position||x.duration!=y.duration||x.watched!=y.watched||x.complete!=y.complete||!Objects.toString(x.mediaInfo,"").equals(Objects.toString(y.mediaInfo,"")))return false;
     }
     return true;
   }
@@ -1504,6 +1506,9 @@ public class MainActivity extends Activity {
             t.preferred() == null || !t.preferred().hasSeason
                 ? (seasons.higher(0) == null ? seasons.first() : seasons.higher(0))
                 : t.preferred().season;
+      // Extras are their own tab after the last season, not a tail on every season.
+      for (Library.Asset a : t.assets) if (a.extra()) { seasons.add(EXTRAS); break; }
+      if (season == EXTRAS && !seasons.contains(EXTRAS)) season = seasons.isEmpty() ? -1 : seasons.first();
       HorizontalScrollView scroll = new TvHorizontalScrollView(this);
       scroll.setHorizontalScrollBarEnabled(false);
       LinearLayout row = Ui.row(this);
@@ -1515,7 +1520,7 @@ public class MainActivity extends Activity {
         Button button =
             Ui.button(
                 this,
-                number == 0 ? L10n.t("Specials") : "Season " + number,
+                number == EXTRAS ? L10n.t("Extras") : number == 0 ? L10n.t("Specials") : "Season " + number,
                 () -> {
                   season = number;
                   for(int i=0;i<row.getChildCount();i++) {
@@ -1528,8 +1533,15 @@ public class MainActivity extends Activity {
                 });
         Ui.tab(button,number == season);
         button.setTag("season:" + number);
+        button.setId(View.generateViewId());
         Ui.add(row, button, -2, 42);
         Ui.gap(row, 12);
+      }
+      // Left of the first tab and right of the last go nowhere, rather than up to the language switch.
+      if (row.getChildCount() > 0) {
+        View first = row.getChildAt(0), last = row.getChildAt(row.getChildCount() - 2);
+        first.setNextFocusLeftId(first.getId());
+        last.setNextFocusRightId(last.getId());
       }
       Ui.add(body, scroll, -1, seasons.size() < 2 ? 0 : 46);
       if (seasons.size() > 1) Ui.gap(body, 20);
@@ -1596,6 +1608,10 @@ public class MainActivity extends Activity {
   }
 
   private void detailEpisodes(LinearLayout body, Library.Title t) {
+    if (t.kind.equals("tv") && season == EXTRAS) {
+      for (Library.Asset a : t.assets) if (a.extra()) episode(body, t, a);
+      return;
+    }
     long mainCount = t.assets.stream().filter(a -> !a.extra()).count();
     if (t.kind.equals("tv") || mainCount > 1)
       for (Library.Asset a : t.assets)
@@ -1614,7 +1630,7 @@ public class MainActivity extends Activity {
         }
     }
     boolean extras = false;
-    for (Library.Asset a : t.assets)
+    if (!t.kind.equals("tv")) for (Library.Asset a : t.assets)
       if (a.extra()) {
         if (!extras) {
           Ui.gap(body, 16);
