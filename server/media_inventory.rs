@@ -195,6 +195,49 @@ pub(crate) fn order_assets(assets: &mut [Value], priorities: &std::collections::
 }
 
 const INVENTORY_VERSION:u64=4;
+/// The audio and subtitle tracks of a file and its sidecars: a quick read of the
+/// container, with no subtitle preparation.
+async fn read_tracks(input:&Path)->Result<Value> {
+    let inventory=crate::native_subtitles::tracks(input).await?;
+    let sidecar_input=input.to_owned();
+    let sidecars=tokio::task::spawn_blocking(move ||crate::subtitles::discover(&sidecar_input)).await??;
+    let mut tracks=inventory["tracks"].as_array().cloned().unwrap_or_default();
+    tracks.extend(sidecars.into_iter().map(|t|json!({"id":t.id,"track":1,"language":t.language,"name":t.name,"sidecar":true,"text_extractable":true,"extraction_supported":true,"forced":t.forced,"hearing_impaired":t.hearing_impaired})));
+    Ok(json!({"state":"ready","language_inventory_version":INVENTORY_VERSION,"audio_tracks":inventory["audio_tracks"],"subtitle_tracks":tracks,"scanned_at":now()}))
+}
+/// Files this run has already tried to list, so an unreadable one is not retried
+/// every pass (the processing queue reports its failure in its own turn).
+static LISTED:std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>>=std::sync::LazyLock::new(Default::default);
+/// List the languages of files still waiting for a processing slot. Subtitle
+/// preparation can hold every slot for hours; a new title should show its audio
+/// and subtitle languages within seconds regardless.
+pub async fn list_waiting(s:&Service)->Result<usize> {
+    let waiting:Vec<(String,String)>={
+        let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+        let mut statement=db.connection.prepare(
+            "SELECT p.asset_id,p.revision FROM media_processing p LEFT JOIN media_inventory m ON m.asset_id=p.asset_id AND m.revision=p.revision \
+             WHERE p.state='queued' AND p.inventory_state='pending' AND p.revision!='unavailable' AND m.asset_id IS NULL")?;
+        let rows=statement.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let listed=LISTED.lock().map_err(|_|anyhow::anyhow!("Language listing unavailable"))?;
+        rows.into_iter().filter(|(id,revision)|!listed.contains(&format!("{id}:{revision}"))).take(8).collect()
+    };
+    let mut done=0;
+    for (id,revision) in waiting {
+        if let Ok(mut listed)=LISTED.lock() {listed.insert(format!("{id}:{revision}"));}
+        let Ok(input)=crate::api::media_file(s,&id,0).await else{continue};
+        if crate::subtitle_jobs::revision(&input).ok().as_deref()!=Some(revision.as_str()) {continue;}
+        let mut info=match read_tracks(&input).await {
+            Ok(info)=>info,
+            Err(error)=>{tracing::info!(asset=id,%error,"Languages not listed ahead of processing");continue}
+        };
+        info["prepared"]=json!([]);info["jobs"]=json!([]);info["preparation_state"]=json!("preparing");
+        let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+        // The file's processing turn may have started meanwhile; its record wins.
+        done+=db.connection.execute("INSERT INTO media_inventory VALUES(?,?,?,?) ON CONFLICT(asset_id) DO UPDATE SET revision=excluded.revision,document=excluded.document,updated=excluded.updated WHERE media_inventory.revision!=excluded.revision",
+            rusqlite::params![id,revision,info.to_string(),now()])?;
+    }
+    Ok(done)
+}
 /// Advance the subtitle stages of one file. The SQLite processing coordinator owns
 /// scheduling; artifact jobs are implementation details, never queue membership.
 pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
@@ -213,12 +256,7 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
     } else {false};
     // Version 4: sidecars in legacy encodings are labelled and advert-only files dropped.
     if sidecars_moved || info["state"]!="ready" || info["language_inventory_version"].as_u64().is_none_or(|v|v<INVENTORY_VERSION) {
-        let inventory=crate::native_subtitles::tracks(&input).await?;
-        let sidecar_input=input.clone();
-        let sidecars=tokio::task::spawn_blocking(move ||crate::subtitles::discover(&sidecar_input)).await??;
-        let mut tracks=inventory["tracks"].as_array().cloned().unwrap_or_default();
-        tracks.extend(sidecars.into_iter().map(|t|json!({"id":t.id,"track":1,"language":t.language,"name":t.name,"sidecar":true,"text_extractable":true,"extraction_supported":true,"forced":t.forced,"hearing_impaired":t.hearing_impaired})));
-        info=json!({"state":"ready","language_inventory_version":INVENTORY_VERSION,"audio_tracks":inventory["audio_tracks"],"subtitle_tracks":tracks,"scanned_at":now()});
+        info=read_tracks(&input).await?;
     }
     let tracks=info["subtitle_tracks"].as_array().context("Invalid track inventory")?;
     let plan=subtitle_plan(tracks);

@@ -263,8 +263,11 @@ pub async fn serve(
         workers.push(tokio::spawn(async move {
             loop {
                 // Brisk while files are waiting to be described, idle otherwise.
+                // Languages first: the format pass describes files that have a track list.
+                let listed = crate::media_inventory::list_waiting(&formats).await
+                    .unwrap_or_else(|error| { tracing::warn!(%error,"Language listing failed"); 0 });
                 let pause = match crate::media_format::tick(&formats).await {
-                    Ok(0) => 60,
+                    Ok(0) if listed == 0 => 15,
                     Ok(_) => 1,
                     Err(error) => { tracing::warn!(%error,"Media format pass failed"); 60 }
                 };
