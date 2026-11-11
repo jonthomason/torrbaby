@@ -707,3 +707,7 @@ Waiting for media identification before moving to the library	等待识别影片
 Status	状态
 Version	版本
 Download first	优先下载
+%lld peer	%lld 个节点
+%lld peers	%lld 个节点
+Downloading first	已优先下载
+Stop downloading first	取消优先下载

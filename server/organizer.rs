@@ -106,6 +106,13 @@ pub async fn action(s: &Service, hash: &str, action: &str, body: &Value) -> Resu
         s.invalidate_torrents();
         return Ok(result);
     }
+    if action == "unprioritize" {
+        // Back to an ordinary download; its place in the queue is left alone.
+        let result = s.rpc.call("torrent_set", json!({"ids":[hash],"bandwidth_priority":0})).await?;
+        s.event("torrent_unprioritize", json!({"hash":hash}))?;
+        s.invalidate_torrents();
+        return Ok(result);
+    }
     if action == "prioritize" {
         // Download this one first: to the head of the queue, started at once whatever
         // the queue limit says, and favoured when bandwidth is shared.

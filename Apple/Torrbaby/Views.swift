@@ -486,8 +486,8 @@ struct TorrentListView: View {
                                 }.disabled(store.busy || !store.connected || torrent.status == 0 || torrent.fileOperation != nil)
                                 // Jumps the queue: starts now even when every download slot is taken.
                                 if !torrent.completed {
-                                    Button { store.action(torrent, "prioritize") } label: {
-                                        Label("Download first", systemImage: "arrow.up.to.line")
+                                    Button { store.action(torrent, torrent.downloadsFirst ? "unprioritize" : "prioritize") } label: {
+                                        Label(LocalizedStringKey(torrent.downloadsFirst ? "Stop downloading first" : "Download first"), systemImage: torrent.downloadsFirst ? "arrow.up.to.line.circle.fill" : "arrow.up.to.line")
                                     }.disabled(store.busy || !store.connected || torrent.fileOperation != nil)
                                 }
                                 Divider()
@@ -696,7 +696,7 @@ private struct MobileTorrentRow: View {
 }
 #endif
 
-private func peerCount(_ count: Int) -> String { "\(count) " + (count == 1 ? "peer" : "peers") }
+func peerCount(_ count: Int) -> String { L10n.format(count == 1 ? "%lld peer" : "%lld peers", count) }
 
 private struct TransferRate: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared

@@ -1070,6 +1070,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
                 "retry",
                 "ignore",
                 "prioritize",
+                "unprioritize",
             ]
             .contains(&action)
             {

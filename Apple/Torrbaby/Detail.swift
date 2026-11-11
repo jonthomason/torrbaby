@@ -94,7 +94,7 @@ struct TorrentDetail: View {
     @ViewBuilder func transferStats(_ t: Torrent) -> some View {
         Label(rate(t.rateDownload), systemImage: "arrow.down").foregroundStyle(Theme.accent)
         Label(rate(t.rateUpload), systemImage: "arrow.up").foregroundStyle(Theme.muted)
-        Text("\(t.peersConnected) \(t.peersConnected == 1 ? "peer" : "peers")").foregroundStyle(Theme.muted)
+        Text(verbatim: peerCount(t.peersConnected)).foregroundStyle(Theme.muted)
         Text("Ratio \(max(0, t.uploadRatio), specifier: "%.2f")").foregroundStyle(Theme.muted)
         if !t.completed { Text(t.etaText).foregroundStyle(Theme.muted) }
         Text("\(bytes(t.downloaded)) / \(bytes(t.size))").foregroundStyle(Theme.muted)
@@ -108,8 +108,12 @@ struct TorrentDetail: View {
         }.buttonStyle(MonoButtonStyle(prominent: true)).foregroundStyle(Theme.onAccent)
         // Jumps the queue: starts now, ahead of other downloads. Also in the row's long-press menu.
         if !t.completed {
-            Button { store.action(t, "prioritize") } label: { Label("Download first", systemImage: "arrow.up.to.line") }
-                .buttonStyle(MonoButtonStyle()).disabled(store.busy || !store.connected)
+            // Once chosen it reads as a state; pressing again returns it to an ordinary download.
+            Button { store.action(t, t.downloadsFirst ? "unprioritize" : "prioritize") } label: {
+                Label(LocalizedStringKey(t.downloadsFirst ? "Downloading first" : "Download first"), systemImage: t.downloadsFirst ? "checkmark" : "arrow.up.to.line")
+            }.buttonStyle(MonoButtonStyle()).foregroundStyle(t.downloadsFirst ? Theme.accent : Color.primary)
+                .accessibilityHint(Text(LocalizedStringKey(t.downloadsFirst ? "Stop downloading first" : "")))
+                .disabled(store.busy || !store.connected)
         }
         Menu {
             Button("Verify downloaded data") { store.action(t, "verify") }

@@ -179,6 +179,7 @@
     <string name="ui_c61970292546" formatted="false">已下载</string>
     <string name="ui_06a34e14fcd4" formatted="false">已下载的文件缺失或不完整，请重新下载。</string>
     <string name="ui_9b4592f9ae45" formatted="false">下载中</string>
+    <string name="ui_af948f4e4aee" formatted="false">已优先下载</string>
     <string name="ui_a862c2b21b5e" formatted="false">下载</string>
     <string name="ui_022410e4af2e" formatted="false">下载不可用</string>
     <string name="ui_b3171b22b733" formatted="false">编辑连接</string>
@@ -524,6 +525,7 @@
     <string name="ui_ae768f766f75" formatted="false">留下</string>
     <string name="ui_f4f390b6d363" formatted="false">立体声</string>
     <string name="ui_9e253470c876" formatted="false">停止</string>
+    <string name="ui_76a8ecfbed37" formatted="false">取消优先下载</string>
     <string name="ui_8cf498a528c2" formatted="false">停止在 Transmission 中跟踪此种子，保留 Diamond 上所有已下载的文件。</string>
     <string name="ui_3c3bc1c865fc" formatted="false">备用连接不支持在线播放。请下载此影片后观看。</string>
     <string name="ui_99a0efc6cfd8" formatted="false">样式</string>

@@ -59,6 +59,9 @@ struct Torrent: Codable, Identifiable, Hashable {
     let downloadedEver: Int64?
     let uploadedEver: Int64?
     let isStalled: Bool
+    /// Transmission's bandwidth priority: 1 after "Download first". Absent on older servers.
+    let bandwidthPriority: Int?
+    var downloadsFirst: Bool { !completed && (bandwidthPriority ?? 0) > 0 }
     var fileOperation: TorrentFileOperation? = nil
     /// Why the server has not filed this finished download into the library.
     var libraryIssue: String? = nil
@@ -72,7 +75,7 @@ struct Torrent: Codable, Identifiable, Hashable {
         guard status != 0 else { return nil }
         if isStalled { return L10n.text("Transmission reports this torrent as stalled") }
         if status == 4 && rateDownload == 0 && Date().timeIntervalSince1970 - max(addedDate, activityDate) > 300 {
-            return peersConnected == 0 ? "No peers and no activity for over 5 minutes" : "Peers connected, but no activity for over 5 minutes"
+            return L10n.text(peersConnected == 0 ? "No peers and no activity for over 5 minutes" : "Peers connected, but no activity for over 5 minutes")
         }
         return nil
     }
@@ -84,7 +87,7 @@ struct Torrent: Codable, Identifiable, Hashable {
         case 1: return L10n.text("Waiting to verify")
         case 2: return L10n.text("Verifying")
         case 3: return L10n.text("Queued")
-        case 4: return isStalled ? "Waiting for peers" : "Downloading"
+        case 4: return L10n.text(isStalled ? "Waiting for peers" : "Downloading")
         case 5: return L10n.text("Queued to seed")
         case 6: return L10n.text("Seeding")
         default: return L10n.text("Status unavailable")

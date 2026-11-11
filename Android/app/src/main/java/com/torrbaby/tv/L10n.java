@@ -190,6 +190,7 @@ final class L10n {
     IDS.put("Downloaded", R.string.ui_c61970292546);
     IDS.put("Downloaded file is missing or incomplete. Download it again.", R.string.ui_06a34e14fcd4);
     IDS.put("Downloading", R.string.ui_9b4592f9ae45);
+    IDS.put("Downloading first", R.string.ui_af948f4e4aee);
     IDS.put("Downloads", R.string.ui_a862c2b21b5e);
     IDS.put("Downloads unavailable", R.string.ui_022410e4af2e);
     IDS.put("Edit connection", R.string.ui_b3171b22b733);
@@ -535,6 +536,7 @@ final class L10n {
     IDS.put("Stay", R.string.ui_ae768f766f75);
     IDS.put("Stereo", R.string.ui_f4f390b6d363);
     IDS.put("Stop", R.string.ui_9e253470c876);
+    IDS.put("Stop downloading first", R.string.ui_76a8ecfbed37);
     IDS.put("Stop tracking the torrent in Transmission. Keep all downloaded files on Diamond.", R.string.ui_8cf498a528c2);
     IDS.put("Streaming is unavailable on fallback. Download this title to watch it.", R.string.ui_3c3bc1c865fc);
     IDS.put("Style", R.string.ui_99a0efc6cfd8);

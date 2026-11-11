@@ -163,6 +163,7 @@ pub const FIELDS: &[&str] = &[
     "labels",
     "is_stalled",
     "is_finished",
+    "bandwidth_priority",
 ];
 
 #[cfg(test)]

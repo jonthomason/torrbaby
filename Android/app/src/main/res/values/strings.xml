@@ -179,6 +179,7 @@
     <string name="ui_c61970292546" formatted="false">Downloaded</string>
     <string name="ui_06a34e14fcd4" formatted="false">Downloaded file is missing or incomplete. Download it again.</string>
     <string name="ui_9b4592f9ae45" formatted="false">Downloading</string>
+    <string name="ui_af948f4e4aee" formatted="false">Downloading first</string>
     <string name="ui_a862c2b21b5e" formatted="false">Downloads</string>
     <string name="ui_022410e4af2e" formatted="false">Downloads unavailable</string>
     <string name="ui_b3171b22b733" formatted="false">Edit connection</string>
@@ -524,6 +525,7 @@
     <string name="ui_ae768f766f75" formatted="false">Stay</string>
     <string name="ui_f4f390b6d363" formatted="false">Stereo</string>
     <string name="ui_9e253470c876" formatted="false">Stop</string>
+    <string name="ui_76a8ecfbed37" formatted="false">Stop downloading first</string>
     <string name="ui_8cf498a528c2" formatted="false">Stop tracking the torrent in Transmission. Keep all downloaded files on Diamond.</string>
     <string name="ui_3c3bc1c865fc" formatted="false">Streaming is unavailable on fallback. Download this title to watch it.</string>
     <string name="ui_99a0efc6cfd8" formatted="false">Style</string>
