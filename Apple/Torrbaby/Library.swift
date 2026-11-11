@@ -635,14 +635,14 @@ struct LibraryBrowser: View {
                             Rectangle().fill(.primary.opacity(0.85)).frame(width: geometry.size.width * (asset.duration > 0 ? min(1, max(0, asset.position / asset.duration)) : 0))
                         }
                     }.frame(height: 3).accessibilityHidden(true)
+                    // Always two lines tall: a lazy shelf takes its height from the first card, so a
+                    // movie's one-line caption would otherwise clip the episode cards' second line.
+                    let minutes = Int(ceil(max(0, asset.duration - asset.position) / 60))
+                    let left = asset.duration > 0 ? (minutes >= 60 ? L10n.format("%dh %dm left", minutes / 60, minutes % 60) : L10n.format("%dm left", minutes)) : ""
+                    let episode = asset.season.flatMap { season in asset.episode.map { L10n.format("Season %d Ep %d", season, $0) } }
                     VStack(spacing: 3) {
-                        if let season = asset.season, let episode = asset.episode {
-                            Text(L10n.format("Season %d Ep %d", season, episode))
-                        }
-                        if asset.duration > 0 {
-                            let minutes = Int(ceil(max(0, asset.duration - asset.position) / 60))
-                            Text(minutes >= 60 ? L10n.format("%dh %dm left", minutes / 60, minutes % 60) : L10n.format("%dm left", minutes))
-                        }
+                        Text(verbatim: episode ?? left).lineLimit(1)
+                        Text(verbatim: episode == nil || left.isEmpty ? " " : left).lineLimit(1)
                     }.font(.caption).foregroundStyle(Theme.muted).frame(maxWidth: .infinity)
                 } else {
                     Text(verbatim: title.yearLabel)
