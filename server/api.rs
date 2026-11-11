@@ -2085,6 +2085,23 @@ async fn scan_library(s: &Service) -> Result<()> {
     Ok(())
 }
 
+/// Fields filled in later by background backfills. A saved match snapshot taken
+/// before they existed must not erase them when it is written again.
+const BACKFILLED_ENTITY_FIELDS: [&str; 3] = ["series_status", "last_air_date", "cast"];
+fn keep_backfilled(connection: &rusqlite::Connection, id: &str, mut entity: Value) -> Result<Value> {
+    use rusqlite::OptionalExtension;
+    let stored: Option<String> = connection
+        .query_row("SELECT document FROM library_entities WHERE id=?", [id], |r| r.get(0))
+        .optional()?;
+    if let Some(stored) = stored.and_then(|text: String| serde_json::from_str::<Value>(&text).ok()) {
+        for field in BACKFILLED_ENTITY_FIELDS {
+            let missing = entity[field].is_null() || entity[field].as_str() == Some("");
+            let known = !(stored[field].is_null() || stored[field].as_str() == Some(""));
+            if missing && known && entity.is_object() { entity[field] = stored[field].clone(); }
+        }
+    }
+    Ok(entity)
+}
 fn save_match(s: &Service, id: &str, entity: Value, confirmed: bool) -> Result<()> {
     let mut db =
         s.db.lock()
@@ -2094,7 +2111,8 @@ fn save_match(s: &Service, id: &str, entity: Value, confirmed: bool) -> Result<(
         return Ok(());
     }
     crate::scanner::resolve_episode_title(&mut asset, &entity);
-    let entity_id = entity["id"].as_str().context("Invalid metadata identity")?;
+    let entity_id = entity["id"].as_str().context("Invalid metadata identity")?.to_owned();
+    let entity_id = entity_id.as_str();
     asset["entity_id"] = json!(entity_id);
     asset["matched_at"] = json!(now());
     asset["status"] = json!("matched");
@@ -2104,6 +2122,7 @@ fn save_match(s: &Service, id: &str, entity: Value, confirmed: bool) -> Result<(
         asset["confirmed"] = json!(true);
     }
     let tx = db.connection.transaction()?;
+    let entity = keep_backfilled(&tx, entity_id, entity)?;
     tx.execute(
         "INSERT OR REPLACE INTO library_entities VALUES(?,?)",
         rusqlite::params![entity_id, entity.to_string()],
@@ -2382,11 +2401,35 @@ fn save_torrent_metadata(s: &Service, record: &Value) -> Result<()> {
         rusqlite::params![text(record, "hash")?, record.to_string()],
     )?;
     if let Some(id) = record["selected"]["id"].as_str() {
+        let entity = keep_backfilled(&tx, id, record["selected"].clone())?;
         tx.execute(
             "INSERT OR REPLACE INTO library_entities VALUES(?,?)",
-            rusqlite::params![id, record["selected"].to_string()],
+            rusqlite::params![id, entity.to_string()],
         )?;
     }
     tx.commit()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod backfill_tests {
+    use super::*;
+    #[test]
+    fn rewriting_a_stale_match_snapshot_keeps_backfilled_fields() -> Result<()> {
+        let connection = rusqlite::Connection::open_in_memory()?;
+        connection.execute("CREATE TABLE library_entities (id TEXT PRIMARY KEY, document TEXT NOT NULL)", [])?;
+        connection.execute("INSERT INTO library_entities VALUES('tmdb:tv:1437',?)",
+            [json!({"id":"tmdb:tv:1437","title":"Firefly","series_status":"Canceled","last_air_date":"2002-12-20","cast":[{"name":"Nathan Fillion"}]}).to_string()])?;
+        let stale = json!({"id":"tmdb:tv:1437","title":"Firefly","year":"2002"});
+        let merged = keep_backfilled(&connection, "tmdb:tv:1437", stale)?;
+        assert_eq!(merged["series_status"], "Canceled");
+        assert_eq!(merged["last_air_date"], "2002-12-20");
+        assert_eq!(merged["cast"][0]["name"], "Nathan Fillion");
+        assert_eq!(merged["year"], "2002");
+        // A fresh snapshot with its own values wins.
+        let fresh = json!({"id":"tmdb:tv:1437","series_status":"Ended","last_air_date":"2003-01-01","cast":[]});
+        assert_eq!(keep_backfilled(&connection, "tmdb:tv:1437", fresh)?["series_status"], "Ended");
+        assert_eq!(keep_backfilled(&connection, "unknown", json!({"id":"unknown"}))?["series_status"], Value::Null);
+        Ok(())
+    }
 }
