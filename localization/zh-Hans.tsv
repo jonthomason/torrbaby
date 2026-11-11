@@ -663,3 +663,23 @@ Clear search	清除搜索
 Season %d	第 %d 季
 Resume (%d min left)	继续播放（剩余 %d 分钟）
 Resume (%d hr %d min left)	继续播放（剩余 %d 小时 %d 分钟）
+English Text	英文文本
+English Images	英文图像
+English Voice Transcribed	英文语音转写
+English Translated	英文翻译
+Chinese Text	中文文本
+Chinese Images	中文图像
+Chinese Voice Transcribed	中文语音转写
+Chinese Translated	中文翻译
+Text	文本
+Images	图像
+Voice Transcribed	语音转写
+Translated	翻译
+SDH	听障字幕
+Transcribing audio	正在转写音频
+Reading image subtitles (OCR)	正在识别图像字幕（OCR）
+Translating OCR subtitles	正在翻译 OCR 字幕
+Translating audio transcript	正在翻译音频转写
+Translating text subtitles	正在翻译文本字幕
+Preparing audio transcript	正在准备音频转写
+Extracting text subtitles	正在提取文本字幕

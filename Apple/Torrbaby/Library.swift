@@ -241,7 +241,7 @@ struct LibraryAsset: Decodable, Identifiable {
 
 struct MediaTrackInfo: Decodable {
     struct Track: Decodable { let language: String?; let codec: String?; let extractionSupported: Bool? }
-    struct Prepared: Decodable { let id: String; let language: String?; let generated: Bool; let state: String }
+    struct Prepared: Decodable { let id: String; let language: String?; let generated: Bool; let state: String; var kind: String? = nil }
     let state: String
     let audioTracks: [Track]
     let subtitleTracks: [Track]
@@ -274,7 +274,7 @@ struct MediaLanguagesView: View {
                         if !original.isEmpty { Text(original.joined(separator: " · ")) }
                         ForEach(Array(generated.enumerated()), id: \.element.id) { index, track in
                             if !original.isEmpty || index > 0 { Text("·") }
-                            Text(name(track.language))
+                            Text(SubtitleTrackName.text(language: track.language, kind: track.kind) ?? name(track.language))
                             Image("TorrbabyLogo").resizable().frame(width: 18, height: 18)
                                 .clipShape(RoundedRectangle(cornerRadius: 3))
                                 .accessibilityLabel("Generated subtitles")

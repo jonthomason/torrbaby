@@ -86,6 +86,10 @@ final class L10n {
     IDS.put("Chinese", R.string.ui_15dc18865567);
     IDS.put("Chinese (Simplified)", R.string.ui_78bba35bec31);
     IDS.put("Chinese (Traditional)", R.string.ui_db2dff441f0d);
+    IDS.put("Chinese Images", R.string.ui_da9d6066b08e);
+    IDS.put("Chinese Text", R.string.ui_0cd88f513ebe);
+    IDS.put("Chinese Translated", R.string.ui_15101682201f);
+    IDS.put("Chinese Voice Transcribed", R.string.ui_54ef86452c0f);
     IDS.put("Choose a profile", R.string.ui_f47537b34855);
     IDS.put("Choose a release", R.string.ui_bf1604f52dd4);
     IDS.put("Choose a release, then add it.", R.string.ui_9d6a2b12fd09);
@@ -186,6 +190,10 @@ final class L10n {
     IDS.put("Enable device notifications", R.string.ui_9c98222b05e5);
     IDS.put("English", R.string.ui_649df08a448e);
     IDS.put("English (CC)", R.string.ui_ec6f5bc52086);
+    IDS.put("English Images", R.string.ui_d22733e2d012);
+    IDS.put("English Text", R.string.ui_f83664ca0270);
+    IDS.put("English Translated", R.string.ui_5193195201eb);
+    IDS.put("English Voice Transcribed", R.string.ui_67dad522b027);
     IDS.put("Enter a magnet link beginning with magnet:?", R.string.ui_341df26b4074);
     IDS.put("Enter a name", R.string.ui_7e5fe97f0e96);
     IDS.put("Enter a value", R.string.ui_cd8763c98e0a);
@@ -200,6 +208,7 @@ final class L10n {
     IDS.put("Explore", R.string.ui_b965ae66fcc4);
     IDS.put("Extracting", R.string.ui_c3c5fb3f17e9);
     IDS.put("Extracting subtitles", R.string.ui_f5febee5e9e1);
+    IDS.put("Extracting text subtitles", R.string.ui_de30de94a734);
     IDS.put("Extras", R.string.ui_3b7782ff05e2);
     IDS.put("FILES", R.string.ui_9fb4f1d17ef8);
     IDS.put("Failed", R.string.ui_09fef5d8d9a3);
@@ -237,6 +246,7 @@ final class L10n {
     IDS.put("Ignore for organization", R.string.ui_114d8bdfc753);
     IDS.put("Ignore organization", R.string.ui_d86fde95dbbf);
     IDS.put("Ignore organization?", R.string.ui_e88dc41ad40e);
+    IDS.put("Images", R.string.ui_09e871c98fef);
     IDS.put("Import connection file…", R.string.ui_8ed49e014b77);
     IDS.put("In Junk · delete after seeding", R.string.ui_9ea8b1168411);
     IDS.put("In Junk · finishing seeding", R.string.ui_1590b4aa625e);
@@ -371,6 +381,7 @@ final class L10n {
     IDS.put("Please try again.", R.string.ui_83a6fd7b7878);
     IDS.put("Prepare translations automatically", R.string.ui_3480a027386f);
     IDS.put("Preparing", R.string.ui_96a9b7cdbe40);
+    IDS.put("Preparing audio transcript", R.string.ui_2381f39df5a4);
     IDS.put("Preparing download", R.string.ui_f9b13bce28d6);
     IDS.put("Preparing next episode", R.string.ui_8be25e2451fb);
     IDS.put("Preparing playback…", R.string.ui_de58cdcf6ca3);
@@ -395,6 +406,7 @@ final class L10n {
     IDS.put("REMAINING", R.string.ui_03e91053622d);
     IDS.put("Ratio", R.string.ui_794f65e9d206);
     IDS.put("Reading image subtitles", R.string.ui_41f4b068f102);
+    IDS.put("Reading image subtitles (OCR)", R.string.ui_3a421a191f8f);
     IDS.put("Ready", R.string.ui_20c7c5522fc2);
     IDS.put("Ready to watch", R.string.ui_b10fbdb5d835);
     IDS.put("Reannounce to trackers", R.string.ui_1bded3d08e57);
@@ -438,6 +450,7 @@ final class L10n {
     IDS.put("Revoke access", R.string.ui_094386f681e2);
     IDS.put("Rolling credits", R.string.ui_1ad552dc5275);
     IDS.put("Running", R.string.ui_73989d9c5926);
+    IDS.put("SDH", R.string.ui_52086310ba80);
     IDS.put("SEEDING", R.string.ui_c24ea1cb444a);
     IDS.put("SERVER ADDRESS", R.string.ui_0b25507fa566);
     IDS.put("Sans serif", R.string.ui_ecc39dc53993);
@@ -529,6 +542,7 @@ final class L10n {
     IDS.put("TV Shows", R.string.ui_09bb08ece119);
     IDS.put("TV shows", R.string.ui_ac32c5b119ff);
     IDS.put("Target upload/download ratio", R.string.ui_987f5ab80eb3);
+    IDS.put("Text", R.string.ui_c3328c39b0e2);
     IDS.put("Text color", R.string.ui_1c7a30e57131);
     IDS.put("Text opacity", R.string.ui_83e097038017);
     IDS.put("The connection to Transmission was interrupted. Please try again.", R.string.ui_17640422b43a);
@@ -570,10 +584,15 @@ final class L10n {
     IDS.put("Torrent details", R.string.ui_b05aed6afa6a);
     IDS.put("Torrent removed", R.string.ui_c0fdf7497ff3);
     IDS.put("Torrents", R.string.ui_3e8f36b12ffb);
+    IDS.put("Transcribing audio", R.string.ui_44f08a6839a5);
     IDS.put("Transfer", R.string.ui_cbb4cc49824b);
     IDS.put("Transfer interrupted. Tap resume.", R.string.ui_8a095c5d2bc7);
     IDS.put("Transferring", R.string.ui_73f75316f9cd);
+    IDS.put("Translated", R.string.ui_c86099d2bda2);
+    IDS.put("Translating OCR subtitles", R.string.ui_2a2aef7739ed);
+    IDS.put("Translating audio transcript", R.string.ui_26ca7431e51b);
     IDS.put("Translating subtitles", R.string.ui_7317cb083a2d);
+    IDS.put("Translating text subtitles", R.string.ui_62a607c364c3);
     IDS.put("Translations", R.string.ui_8ad8302d110b);
     IDS.put("Transmission has not confirmed the add yet. The torrent may still appear in Torrents; check there before trying again.", R.string.ui_533c8cf527e8);
     IDS.put("Transmission reports this torrent as stalled", R.string.ui_9a14b54f2d98);
@@ -607,6 +626,7 @@ final class L10n {
     IDS.put("Verify files?", R.string.ui_6f7d05c24127);
     IDS.put("Verifying", R.string.ui_536244f4cc64);
     IDS.put("View source", R.string.ui_31a7604a3c74);
+    IDS.put("Voice Transcribed", R.string.ui_f22eadf74236);
     IDS.put("Waiting", R.string.ui_33d30632848d);
     IDS.put("Waiting for activity", R.string.ui_91df8bb76aa2);
     IDS.put("Waiting for connection", R.string.ui_99c90cff2803);

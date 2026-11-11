@@ -13,6 +13,14 @@ public class MediaLanguagesTest {
         "English track 2", "English · Forced"), labels);
   }
 
+  @Test public void subtitleTracksHaveShortDescriptiveNames() {
+    assertEquals("English Text", MediaLanguages.trackName("eng", "text"));
+    assertEquals("English Images", MediaLanguages.trackName("en", "images"));
+    assertEquals("English Voice Transcribed", MediaLanguages.trackName("en", "speech"));
+    assertEquals("Chinese Translated", MediaLanguages.trackName("zh-Hans", "translated"));
+    assertEquals("Chinese Text", MediaLanguages.trackName("chi", null));
+  }
+
   @Test public void generatedLabelsRequireReadyTranslatedJobs() throws Exception {
     JSONObject info = new JSONObject("{\"state\":\"ready\",\"audio_tracks\":[{\"language\":\"eng\"},{\"language\":\"en\"}],\"subtitle_tracks\":[],\"prepared\":[{\"language\":\"zh-Hans\",\"generated\":true,\"state\":\"ready\"},{\"language\":\"fr\",\"generated\":true,\"state\":\"running\"},{\"language\":\"en\",\"generated\":false,\"state\":\"ready\"}]}");
     assertEquals(2, MediaLanguages.lines(info).size());

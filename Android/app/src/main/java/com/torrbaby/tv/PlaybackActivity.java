@@ -17,6 +17,8 @@ import org.json.*;
 
 @androidx.annotation.OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)
 public class PlaybackActivity extends Activity {
+  /** ID prefix of subtitle files the player adds beside the media's own tracks. */
+  private static final String SIDELOADED = "torrbaby-subtitle-";
   @Override protected void attachBaseContext(android.content.Context base) { super.attachBaseContext(L10n.wrap(base)); }
 
   private static final float[] SPEEDS = {.5f, .75f, 1, 1.25f, 1.5f, 1.75f, 2};
@@ -105,11 +107,15 @@ public class PlaybackActivity extends Activity {
               }
               for (int i = 0; i < tracks.length(); i++) {
                 JSONObject t = tracks.getJSONObject(i);
+                // Sidecar originals are text; generated tracks carry their own name.
+                String label = t.optString("name");
+                if (label.isEmpty()) label = MediaLanguages.trackName(t.optString("language"), "text");
                 MediaItem.SubtitleConfiguration.Builder b =
                     new MediaItem.SubtitleConfiguration.Builder(
                             Uri.parse(api.url(t.getString("path"))))
                         .setMimeType(MimeTypes.TEXT_VTT)
-                        .setLabel(MediaLanguages.name(t.optString("language")).isEmpty() ? "Subtitles" : MediaLanguages.name(t.optString("language")));
+                        .setId(SIDELOADED + i)
+                        .setLabel(label);
                 if (!t.isNull("language")) b.setLanguage(t.optString("language"));
                 subtitles.add(b.build());
               }
@@ -346,12 +352,18 @@ public class PlaybackActivity extends Activity {
               format.label != null
                   ? format.label
                   : language.isEmpty() ? "Track " + labels.size() : language;
-          if (type == C.TRACK_TYPE_TEXT && format.language != null && !format.language.equals("und")) {
-            name = MediaLanguages.name(format.language);
-            if ((format.selectionFlags & C.SELECTION_FLAG_FORCED) != 0) name += " · Forced";
-            if ((format.roleFlags & C.ROLE_FLAG_CAPTION) != 0) name += " · SDH";
-            if (format.label != null && format.label.toLowerCase(Locale.ROOT).contains("translat"))
-              name += " · Generated";
+          if (type == C.TRACK_TYPE_TEXT) {
+            if (format.id != null && format.id.contains(SIDELOADED) && format.label != null) {
+              name = format.label;
+            } else {
+              // Embedded tracks: say whether they are text or bitmap images.
+              String mime = format.sampleMimeType == null ? "" : format.sampleMimeType;
+              boolean images = mime.equals(MimeTypes.APPLICATION_PGS) || mime.equals(MimeTypes.APPLICATION_VOBSUB)
+                  || mime.equals(MimeTypes.APPLICATION_DVBSUBS);
+              name = MediaLanguages.trackName(format.language, images ? "images" : "text");
+              if ((format.selectionFlags & C.SELECTION_FLAG_FORCED) != 0) name += " · " + L10n.t("Forced");
+              if ((format.roleFlags & C.ROLE_FLAG_CAPTION) != 0) name += " · " + L10n.t("SDH");
+            }
           }
           if (type == C.TRACK_TYPE_AUDIO && format.channelCount > 0)
             name +=

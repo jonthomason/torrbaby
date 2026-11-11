@@ -12,12 +12,15 @@ public class PreparedSubtitlesTest {
       assertEquals("/v1/library/assets/asset-1/media-info", path);
       assertNull(body);
       return new JSONObject("{\"prepared\":["
-          + "{\"generated\":true,\"state\":\"ready\",\"language\":\"zh-Hans\",\"path\":\"/chinese.vtt\"},"
-          + "{\"generated\":true,\"state\":\"ready\",\"language\":\"en\",\"path\":\"/english.vtt\"}]}");
+          + "{\"generated\":true,\"state\":\"ready\",\"language\":\"zh-Hans\",\"kind\":\"translated\",\"path\":\"/chinese.vtt\"},"
+          + "{\"generated\":true,\"state\":\"ready\",\"language\":\"en\",\"kind\":\"speech\",\"path\":\"/english.vtt\"},"
+          + "{\"generated\":true,\"state\":\"ready\",\"language\":\"zh-Hans\",\"target\":\"zh-Hans\",\"path\":\"/legacy.vtt\"}]}");
     }, "asset-1", () -> false);
-    assertEquals(2, result.length());
+    assertEquals(3, result.length());
     assertEquals("zh-Hans", result.getJSONObject(0).getString("language"));
-    assertTrue(result.getJSONObject(0).getString("name").contains("Generated"));
+    assertEquals("Chinese Translated", result.getJSONObject(0).getString("name"));
+    assertEquals("English Voice Transcribed", result.getJSONObject(1).getString("name"));
+    assertEquals("older servers: kind inferred", "Chinese Translated", result.getJSONObject(2).getString("name"));
   }
   @Test public void excludesOriginalsUnfinishedAndDuplicatePaths() throws Exception {
     JSONArray result = PreparedSubtitles.ready((m,p,b) -> new JSONObject("{\"prepared\":["

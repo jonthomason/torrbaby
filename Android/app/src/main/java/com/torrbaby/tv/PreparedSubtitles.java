@@ -27,8 +27,11 @@ final class PreparedSubtitles {
       String path = job.optString("path");
       if (path.isEmpty() || !paths.add(path)) continue;
       String language = job.optString("language", job.optString("target", "und"));
+      // Older servers send no kind; their generated tracks were translations or OCR.
+      String kind = job.optString("kind",
+          !job.isNull("target") && !job.optString("target").isEmpty() ? "translated" : "images");
       result.put(new JSONObject().put("path", path).put("language", language)
-          .put("name", MediaLanguages.name(language) + " · Generated translation"));
+          .put("name", MediaLanguages.trackName(language, kind)));
     }
     return result;
   }

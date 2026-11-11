@@ -54,7 +54,7 @@ struct SubtitleQueueView: View {
                                     }.font(.caption).foregroundStyle(.secondary)
                                     if item.totalCues > 0 && item.state != "ready" {
                                         ProgressView(value: Double(item.completedCues), total: Double(item.totalCues))
-                                        Text("\(item.completedCues) / \(item.totalCues)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                                        Text(item.progressText).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                                     }
                                     if item.subtitlesState == "not_applicable" { Text("No supported subtitle source").font(.caption).foregroundStyle(.secondary) }
                                     if let error = item.error { Text(L10n.text(error)).font(.caption).foregroundStyle(.orange) }
@@ -74,18 +74,24 @@ struct SubtitleQueueView: View {
             } else { ProgressView("Loading processing queue…") }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if let item = store.status?.subtitlePreparation?.queue?.first(where: { $0.state == "running" }) {
+            // Several files process at once; show each of them.
+            let running = (store.status?.subtitlePreparation?.queue ?? []).filter { $0.state == "running" }
+            if !running.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     Label("Now processing", systemImage: "captions.bubble").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    Text(item.title).font(.headline).lineLimit(2)
-                    HStack {
-                        Text(LocalizedStringKey(item.stageLabel))
-                        Spacer()
-                        if item.totalCues > 0 { Text("\(item.completedCues) / \(item.totalCues)").monospacedDigit() }
-                    }.font(.caption).foregroundStyle(.secondary)
-                    if item.totalCues > 0 {
-                        ProgressView(value: Double(item.completedCues), total: Double(item.totalCues))
-                    } else { ProgressView().controlSize(.small) }
+                    ForEach(running) { item in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(item.title).font(.headline).lineLimit(2)
+                            HStack {
+                                Text(LocalizedStringKey(item.stageLabel))
+                                Spacer()
+                                if item.totalCues > 0 { Text(item.progressText).monospacedDigit() }
+                            }.font(.caption).foregroundStyle(.secondary)
+                            if item.totalCues > 0 {
+                                ProgressView(value: Double(item.completedCues), total: Double(item.totalCues))
+                            } else { ProgressView().controlSize(.small) }
+                        }
+                    }
                 }
                 .padding().frame(maxWidth: .infinity, alignment: .leading)
                 .background(Theme.panel)

@@ -656,6 +656,8 @@ extension Store {
         let base = "/v1/library/assets/\(asset.id)"
         var body: [String: Any] = startSession ? ["client_id": clientId] : [:]
         var ids: [String] = []
+        // Localized short track names ("English Voice Transcribed") by job ID.
+        var names: [String: String] = [:]
         progress("Preparing playback…")
         struct Track: Decodable {
             let track: Int; let codec: String; let language: String?; let extractionSupported: Bool
@@ -681,6 +683,9 @@ extension Store {
             // Include every ready language even when the device starts with subtitles Off.
             let ready: MediaTrackInfo = try await request("GET", base + "/media-info")
             ids = Array(Set(ready.prepared.filter { $0.state == "ready" }.map(\.id))).sorted()
+            for job in ready.prepared where job.state == "ready" {
+                names[job.id] = SubtitleTrackName.text(language: job.language, kind: job.kind)
+            }
             if ids.isEmpty {
                 let inventory: Inventory = try await request("GET", base + "/subtitles")
                 if let source = inventory.embeddedTracks.first(where: { $0.extractionSupported }) {
@@ -698,7 +703,7 @@ extension Store {
             notify("Subtitles unavailable", detail: error.localizedDescription)
         }
         if startSession { try requireStreamingConnection() }
-        let prepared: Job = try await request("POST", base + "/virtual-mp4", body: ["subtitle_jobs": ids])
+        let prepared: Job = try await request("POST", base + "/virtual-mp4", body: ["subtitle_jobs": ids, "subtitle_names": ids.map { names[$0] ?? "" }])
         if prepared.state != "direct" {
             body["virtual_job"] = try await wait(prepared, route: "/v1/virtual-jobs/").id
         }

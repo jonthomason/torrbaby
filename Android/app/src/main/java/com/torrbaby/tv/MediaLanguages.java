@@ -18,6 +18,20 @@ final class MediaLanguages {
     }
   }
 
+  /** Short subtitle track names: "English Text", "English Images", "English Voice
+   *  Transcribed", "Chinese Translated". {@code kind} is the server's track kind. */
+  static String trackName(String code, String kind) {
+    String tag = code == null ? "" : code.toLowerCase(Locale.ROOT).replace('_', '-');
+    String language = tag.equals("en") || tag.equals("eng") || tag.startsWith("en-") ? "English"
+        : tag.equals("zh") || tag.equals("zho") || tag.equals("chi") || tag.equals("cmn") || tag.startsWith("zh-")
+            ? "Chinese" : null;
+    String type = "images".equals(kind) ? "Images" : "speech".equals(kind) ? "Voice Transcribed"
+        : "translated".equals(kind) ? "Translated" : "Text";
+    if (language != null) return L10n.t(language + " " + type);
+    String other = name(code);
+    return (other.isEmpty() ? L10n.t("Subtitles") : other) + " " + L10n.t(type);
+  }
+
   static String name(String code) {
     if (code == null || code.isEmpty() || code.equals("und") || code.equals("null")) return "";
     String tag = code.toLowerCase(Locale.ROOT).replace('_', '-');

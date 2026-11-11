@@ -75,6 +75,10 @@
     <string name="ui_15dc18865567" formatted="false">Chinese</string>
     <string name="ui_78bba35bec31" formatted="false">Chinese (Simplified)</string>
     <string name="ui_db2dff441f0d" formatted="false">Chinese (Traditional)</string>
+    <string name="ui_da9d6066b08e" formatted="false">Chinese Images</string>
+    <string name="ui_0cd88f513ebe" formatted="false">Chinese Text</string>
+    <string name="ui_15101682201f" formatted="false">Chinese Translated</string>
+    <string name="ui_54ef86452c0f" formatted="false">Chinese Voice Transcribed</string>
     <string name="ui_f47537b34855" formatted="false">Choose a profile</string>
     <string name="ui_bf1604f52dd4" formatted="false">Choose a release</string>
     <string name="ui_9d6a2b12fd09" formatted="false">Choose a release, then add it.</string>
@@ -175,6 +179,10 @@
     <string name="ui_9c98222b05e5" formatted="false">Enable device notifications</string>
     <string name="ui_649df08a448e" formatted="false">English</string>
     <string name="ui_ec6f5bc52086" formatted="false">English (CC)</string>
+    <string name="ui_d22733e2d012" formatted="false">English Images</string>
+    <string name="ui_f83664ca0270" formatted="false">English Text</string>
+    <string name="ui_5193195201eb" formatted="false">English Translated</string>
+    <string name="ui_67dad522b027" formatted="false">English Voice Transcribed</string>
     <string name="ui_341df26b4074" formatted="false">Enter a magnet link beginning with magnet:?</string>
     <string name="ui_7e5fe97f0e96" formatted="false">Enter a name</string>
     <string name="ui_cd8763c98e0a" formatted="false">Enter a value</string>
@@ -189,6 +197,7 @@
     <string name="ui_b965ae66fcc4" formatted="false">Explore</string>
     <string name="ui_c3c5fb3f17e9" formatted="false">Extracting</string>
     <string name="ui_f5febee5e9e1" formatted="false">Extracting subtitles</string>
+    <string name="ui_de30de94a734" formatted="false">Extracting text subtitles</string>
     <string name="ui_3b7782ff05e2" formatted="false">Extras</string>
     <string name="ui_9fb4f1d17ef8" formatted="false">FILES</string>
     <string name="ui_09fef5d8d9a3" formatted="false">Failed</string>
@@ -226,6 +235,7 @@
     <string name="ui_114d8bdfc753" formatted="false">Ignore for organization</string>
     <string name="ui_d86fde95dbbf" formatted="false">Ignore organization</string>
     <string name="ui_e88dc41ad40e" formatted="false">Ignore organization?</string>
+    <string name="ui_09e871c98fef" formatted="false">Images</string>
     <string name="ui_8ed49e014b77" formatted="false">Import connection file…</string>
     <string name="ui_9ea8b1168411" formatted="false">In Junk · delete after seeding</string>
     <string name="ui_1590b4aa625e" formatted="false">In Junk · finishing seeding</string>
@@ -360,6 +370,7 @@
     <string name="ui_83a6fd7b7878" formatted="false">Please try again.</string>
     <string name="ui_3480a027386f" formatted="false">Prepare translations automatically</string>
     <string name="ui_96a9b7cdbe40" formatted="false">Preparing</string>
+    <string name="ui_2381f39df5a4" formatted="false">Preparing audio transcript</string>
     <string name="ui_f9b13bce28d6" formatted="false">Preparing download</string>
     <string name="ui_8be25e2451fb" formatted="false">Preparing next episode</string>
     <string name="ui_de58cdcf6ca3" formatted="false">Preparing playback…</string>
@@ -384,6 +395,7 @@
     <string name="ui_03e91053622d" formatted="false">REMAINING</string>
     <string name="ui_794f65e9d206" formatted="false">Ratio</string>
     <string name="ui_41f4b068f102" formatted="false">Reading image subtitles</string>
+    <string name="ui_3a421a191f8f" formatted="false">Reading image subtitles (OCR)</string>
     <string name="ui_20c7c5522fc2" formatted="false">Ready</string>
     <string name="ui_b10fbdb5d835" formatted="false">Ready to watch</string>
     <string name="ui_1bded3d08e57" formatted="false">Reannounce to trackers</string>
@@ -427,6 +439,7 @@
     <string name="ui_094386f681e2" formatted="false">Revoke access</string>
     <string name="ui_1ad552dc5275" formatted="false">Rolling credits</string>
     <string name="ui_73989d9c5926" formatted="false">Running</string>
+    <string name="ui_52086310ba80" formatted="false">SDH</string>
     <string name="ui_c24ea1cb444a" formatted="false">SEEDING</string>
     <string name="ui_0b25507fa566" formatted="false">SERVER ADDRESS</string>
     <string name="ui_ecc39dc53993" formatted="false">Sans serif</string>
@@ -518,6 +531,7 @@
     <string name="ui_09bb08ece119" formatted="false">TV Shows</string>
     <string name="ui_ac32c5b119ff" formatted="false">TV shows</string>
     <string name="ui_987f5ab80eb3" formatted="false">Target upload/download ratio</string>
+    <string name="ui_c3328c39b0e2" formatted="false">Text</string>
     <string name="ui_1c7a30e57131" formatted="false">Text color</string>
     <string name="ui_83e097038017" formatted="false">Text opacity</string>
     <string name="ui_17640422b43a" formatted="false">The connection to Transmission was interrupted. Please try again.</string>
@@ -559,10 +573,15 @@
     <string name="ui_b05aed6afa6a" formatted="false">Torrent details</string>
     <string name="ui_c0fdf7497ff3" formatted="false">Torrent removed</string>
     <string name="ui_3e8f36b12ffb" formatted="false">Torrents</string>
+    <string name="ui_44f08a6839a5" formatted="false">Transcribing audio</string>
     <string name="ui_cbb4cc49824b" formatted="false">Transfer</string>
     <string name="ui_8a095c5d2bc7" formatted="false">Transfer interrupted. Tap resume.</string>
     <string name="ui_73f75316f9cd" formatted="false">Transferring</string>
+    <string name="ui_c86099d2bda2" formatted="false">Translated</string>
+    <string name="ui_2a2aef7739ed" formatted="false">Translating OCR subtitles</string>
+    <string name="ui_26ca7431e51b" formatted="false">Translating audio transcript</string>
     <string name="ui_7317cb083a2d" formatted="false">Translating subtitles</string>
+    <string name="ui_62a607c364c3" formatted="false">Translating text subtitles</string>
     <string name="ui_8ad8302d110b" formatted="false">Translations</string>
     <string name="ui_533c8cf527e8" formatted="false">Transmission has not confirmed the add yet. The torrent may still appear in Torrents; check there before trying again.</string>
     <string name="ui_9a14b54f2d98" formatted="false">Transmission reports this torrent as stalled</string>
@@ -596,6 +615,7 @@
     <string name="ui_6f7d05c24127" formatted="false">Verify files?</string>
     <string name="ui_536244f4cc64" formatted="false">Verifying</string>
     <string name="ui_31a7604a3c74" formatted="false">View source</string>
+    <string name="ui_f22eadf74236" formatted="false">Voice Transcribed</string>
     <string name="ui_33d30632848d" formatted="false">Waiting</string>
     <string name="ui_91df8bb76aa2" formatted="false">Waiting for activity</string>
     <string name="ui_99c90cff2803" formatted="false">Waiting for connection</string>

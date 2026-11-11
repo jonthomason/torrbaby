@@ -127,15 +127,37 @@ struct Job: Codable, Identifiable {
 struct SubtitleQueueItem: Codable, Identifiable {
     let stage: String?
     let subtitlesState: String?
+    /// How the subtitle text was obtained: "text", "ocr" or "speech".
+    let method: String?
     var stageLabel: String {
         switch stage {
         case "inventory": return "Checking languages…"
         case "credits": return "Detecting credits"
         case "complete": return "All processing complete"
-        case "translation": return "Translating subtitles"
-        case "ocr": return "Reading image subtitles"
-        default: return "Extracting subtitles"
+        case "transcription": return "Transcribing audio"
+        case "ocr": return "Reading image subtitles (OCR)"
+        case "translation":
+            switch method {
+            case "ocr": return "Translating OCR subtitles"
+            case "speech": return "Translating audio transcript"
+            default: return "Translating text subtitles"
+            }
+        default:
+            switch method {
+            case "ocr": return "Reading image subtitles (OCR)"
+            case "speech": return "Preparing audio transcript"
+            default: return "Extracting text subtitles"
+            }
         }
+    }
+    /// Transcription reports seconds of audio; other stages report cues.
+    var progressText: String {
+        guard stage == "transcription" else { return "\(completedCues) / \(totalCues)" }
+        func clock(_ seconds: Int) -> String {
+            seconds >= 3600 ? String(format: "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
+                : String(format: "%d:%02d", seconds / 60, seconds % 60)
+        }
+        return "\(clock(completedCues)) / \(clock(totalCues))"
     }
     let id: String
     let assetId: String?
@@ -145,6 +167,21 @@ struct SubtitleQueueItem: Codable, Identifiable {
     let error: String?
     let completedCues: Int
     let totalCues: Int
+}
+/// Short subtitle track names: "English Text", "English Images", "English Voice
+/// Transcribed", "Chinese Translated". `kind` comes from the server.
+enum SubtitleTrackName {
+    static func key(language: String?, kind: String?) -> String? {
+        let code = (language ?? "").lowercased()
+        let name = code == "en" || code == "eng" || code.hasPrefix("en-") ? "English"
+            : code == "zh" || code == "zho" || code == "chi" || code.hasPrefix("zh-") ? "Chinese" : nil
+        guard let name else { return nil }
+        let kinds = ["images": "Images", "speech": "Voice Transcribed", "translated": "Translated"]
+        return "\(name) \(kinds[kind ?? ""] ?? "Text")"
+    }
+    static func text(language: String?, kind: String?) -> String? {
+        key(language: language, kind: kind).map { L10n.text($0) }
+    }
 }
 struct SubtitlePreparation: Codable {
     let queue: [SubtitleQueueItem]?
