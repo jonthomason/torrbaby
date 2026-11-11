@@ -477,8 +477,8 @@ struct NativePlayer: UIViewControllerRepresentable {
         // the credits, with or without the transport bar, and takes focus.
         let showing = !view.contextualActions.isEmpty
         if offerNext != showing {
-            view.contextualActions = offerNext
-                ? [UIAction(title: L10n.text("Next episode"), image: UIImage(systemName: "forward.end.fill")) { _ in advance() }] : []
+            // Words only: the prompt reads as a plain "Next Episode" button.
+            view.contextualActions = offerNext ? [UIAction(title: L10n.text("Next Episode")) { _ in advance() }] : []
         }
         #endif
     }
