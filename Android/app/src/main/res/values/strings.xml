@@ -6,6 +6,7 @@
     <string name="ui_216e67233653" formatted="false">%d to add</string>
     <string name="ui_660a76df86fd" formatted="false">%dh %dm left</string>
     <string name="ui_659748ef61cf" formatted="false">%dm left</string>
+    <string name="ui_8256cd5880d0" formatted="false">1 seed</string>
     <string name="ui_e9c9f7bc39bb" formatted="false">1h</string>
     <string name="ui_027795961131" formatted="false">24h</string>
     <string name="ui_8d61fd6a4ee0" formatted="false">6h</string>
@@ -328,6 +329,7 @@
     <string name="ui_f4f2ec4dc27b" formatted="false">No processing jobs</string>
     <string name="ui_6a52f1d4b635" formatted="false">No recent activity</string>
     <string name="ui_6fd4ab12ee28" formatted="false">No releases found</string>
+    <string name="ui_4c57e22bd419" formatted="false">No reported seeds</string>
     <string name="ui_74cd1304973c" formatted="false">No server found</string>
     <string name="ui_3e36b40ea99d" formatted="false">No subtitle jobs</string>
     <string name="ui_55b63277f6b3" formatted="false">No supported subtitle source</string>

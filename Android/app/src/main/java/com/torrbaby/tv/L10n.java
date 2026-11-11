@@ -17,6 +17,7 @@ final class L10n {
     IDS.put("%d to add", R.string.ui_216e67233653);
     IDS.put("%dh %dm left", R.string.ui_660a76df86fd);
     IDS.put("%dm left", R.string.ui_659748ef61cf);
+    IDS.put("1 seed", R.string.ui_8256cd5880d0);
     IDS.put("1h", R.string.ui_e9c9f7bc39bb);
     IDS.put("24h", R.string.ui_027795961131);
     IDS.put("6h", R.string.ui_8d61fd6a4ee0);
@@ -339,6 +340,7 @@ final class L10n {
     IDS.put("No processing jobs", R.string.ui_f4f2ec4dc27b);
     IDS.put("No recent activity", R.string.ui_6a52f1d4b635);
     IDS.put("No releases found", R.string.ui_6fd4ab12ee28);
+    IDS.put("No reported seeds", R.string.ui_4c57e22bd419);
     IDS.put("No server found", R.string.ui_74cd1304973c);
     IDS.put("No subtitle jobs", R.string.ui_3e36b40ea99d);
     IDS.put("No supported subtitle source", R.string.ui_55b63277f6b3);

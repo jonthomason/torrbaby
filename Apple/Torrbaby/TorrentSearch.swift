@@ -113,7 +113,7 @@ struct TorrentSearchItem: Decodable, Identifiable {
     }
     var availability: String {
         guard let seeders else { return "" }
-        return seeders == 0 ? "No reported seeds" : "\(seeders.formatted()) \(seeders == 1 ? "seed" : "seeds")"
+        return seeders == 0 ? L10n.text("No reported seeds") : seeders == 1 ? L10n.text("1 seed") : L10n.format("%@ seeds", seeders.formatted())
     }
     var size: String { sizeBytes.map { ByteCountFormatter.string(fromByteCount: Int64(clamping: $0), countStyle: .file) } ?? sizeLabel ?? "" }
 }

@@ -6,6 +6,7 @@
     <string name="ui_216e67233653" formatted="false">%d 集待添加</string>
     <string name="ui_660a76df86fd" formatted="false">剩余 %d 小时 %d 分钟</string>
     <string name="ui_659748ef61cf" formatted="false">剩余 %d 分钟</string>
+    <string name="ui_8256cd5880d0" formatted="false">1 个做种</string>
     <string name="ui_e9c9f7bc39bb" formatted="false">1 小时</string>
     <string name="ui_027795961131" formatted="false">24 小时</string>
     <string name="ui_8d61fd6a4ee0" formatted="false">6 小时</string>
@@ -328,6 +329,7 @@
     <string name="ui_f4f2ec4dc27b" formatted="false">没有待处理任务</string>
     <string name="ui_6a52f1d4b635" formatted="false">暂无近期活动</string>
     <string name="ui_6fd4ab12ee28" formatted="false">未找到资源</string>
+    <string name="ui_4c57e22bd419" formatted="false">暂无做种信息</string>
     <string name="ui_74cd1304973c" formatted="false">未找到服务器</string>
     <string name="ui_3e36b40ea99d" formatted="false">暂无字幕任务</string>
     <string name="ui_55b63277f6b3" formatted="false">没有支持的字幕来源</string>
