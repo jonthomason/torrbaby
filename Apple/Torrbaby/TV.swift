@@ -477,7 +477,9 @@ private struct TVMediaDetail: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
-            .fullScreenCover(item: $playback) { PlayerScreen(playback: $0, store: store).onExitCommand { playback = nil } }
+            // No exit handler of our own here: the system player takes Back first, hiding its
+            // controls when they are showing, and only then does Back close the player.
+            .fullScreenCover(item: $playback) { PlayerScreen(playback: $0, store: store) }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("TVFocusDetailPlay"))) { _ in heroFocused = true }
             .defaultFocus($heroFocused, true)
             .task(id: title?.id) {
