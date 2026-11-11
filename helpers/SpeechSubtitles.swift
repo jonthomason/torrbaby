@@ -11,7 +11,8 @@ import NaturalLanguage
 // model runs on device (the system installs the English model once).
 //
 // Arguments: media path or loopback URL, result path, progress path.
-// Exit 0 writes the result; exit 3 means the file has no decodable audio;
+// Exit 0 writes the result; exit 3 means the file has no decodable audio and
+// exit 4 that it has no speech (music, ambience);
 // any other failure exits 1 with a short reason on stderr.
 
 struct TextCue: Codable { let start_ms: Int; let end_ms: Int; let text: String }
@@ -209,7 +210,7 @@ func transcribe(input: URL, output: URL, progress: URL) async throws {
     }
     let words = try await collector.value.sorted { $0.start < $1.start }
     let result = cues(from: words)
-    guard !result.isEmpty else { throw TranscriptionFailure(message: "No speech was recognized", status: 1) }
+    guard !result.isEmpty else { throw TranscriptionFailure(message: "No speech was recognized", status: 4) }
     let confidences = words.compactMap(\.confidence)
     let recognizer = NLLanguageRecognizer()
     recognizer.processString(String(result.map(\.text).joined(separator: " ").prefix(30000)))

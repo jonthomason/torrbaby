@@ -9,7 +9,9 @@ use sha2::Digest;
 use std::{path::{Path, PathBuf}, process::Stdio, time::Duration};
 
 /// Bump to transcribe again after a helper or segmentation change.
-const VERSION: u64 = 1;
+/// 2: Matroska audio is copied to a local raw stream (AVFoundation cannot read
+/// audio from the loopback virtual MP4).
+const VERSION: u64 = 2;
 /// English speech measured 0.85 mean word confidence and ~45 words per minute
 /// of running time on feature films; Mandarin and Japanese audio forced through
 /// the English model measured 0.37–0.40 and under 5 words per minute.
@@ -75,16 +77,23 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
     }
     if s.virtual_media.preparing() { return Ok(Transcript::Deferred); }
     let _permit = GATE.acquire().await?;
-    // Matroska goes through the analysis index as a virtual MP4, like credits.
-    let mut server = None;
+    // AVFoundation cannot decode audio from Matroska, nor read audio samples
+    // over HTTP, so copy the chosen audio track's frames into a local raw
+    // stream. Cue times are then shifted by that track's first timestamp.
+    let mut temporary_audio = None;
+    let mut offset_ms = 0;
     let media = if crate::container::is_matroska(input) {
-        let job = s.virtual_media.prepare_analysis(id, input.to_path_buf())?;
-        if job["state"] == "failed" { anyhow::bail!("{}", job["error"].as_str().unwrap_or("Media index failed")); }
-        if job["state"] != "ready" { return Ok(Transcript::Deferred); }
-        let reader = s.virtual_media.analysis_reader(job["id"].as_str().context("Missing index")?, id, input).await?;
-        let (url, task) = crate::credits::serve(reader).await?;
-        server = Some(task);
-        url
+        let (source, directory, base) = (input.to_path_buf(), root.clone(), name.clone());
+        match tokio::task::spawn_blocking(move || extract_audio(&source, &directory, &base)).await?? {
+            Some((path, first_ms)) => { offset_ms = first_ms; temporary_audio = Some(path.clone()); path.to_str().context("Invalid audio path")?.to_owned() }
+            None => {
+                let reason = "No decodable audio track";
+                let temporary = root.join(format!("{name}.json.tmp"));
+                std::fs::write(&temporary, json!({"state":"rejected","reason":reason,"asset_id":id,"updated":now()}).to_string())?;
+                std::fs::rename(temporary, &record)?;
+                return Ok(Transcript::Rejected(reason.into()));
+            }
+        }
     } else { input.to_str().context("Invalid media path")?.to_owned() };
     let result_path = root.join(format!("{name}.result.tmp"));
     let progress = root.join(format!("{name}.progress"));
@@ -112,13 +121,14 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
             ensure!(started.elapsed() < Duration::from_secs(1800), "Speech transcription timed out");
         };
         let error = String::from_utf8_lossy(&errors.await??).trim().to_owned();
-        if status.code() == Some(3) { return Ok(Some(Err(error))); }
+        // 3: no decodable audio; 4: no speech at all (music, ambience).
+        if matches!(status.code(), Some(3 | 4)) { return Ok(Some(Err(error))); }
         ensure!(status.success(), "Speech transcription: {}", if error.is_empty() { "helper failed" } else { &error });
         let bytes = std::fs::read(&result_path)?;
         ensure!(bytes.len() <= 16_777_216, "Transcript too large");
         Ok(Some(Ok(serde_json::from_slice::<Value>(&bytes)?)))
     }.await;
-    if let Some(task) = server { task.abort(); }
+    if let Some(path) = &temporary_audio { let _ = std::fs::remove_file(path); }
     let _ = std::fs::remove_file(&result_path);
     let _ = std::fs::remove_file(&progress);
     let Some(outcome) = outcome? else { return Ok(Transcript::Deferred) };
@@ -142,7 +152,8 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
         tracing::info!(asset = id, %stats, "Speech transcription rejected");
         return Ok(Transcript::Rejected(reason));
     }
-    let cues: Vec<crate::subtitles::TimedCue> = serde_json::from_value(result["cues"].clone())?;
+    let mut cues: Vec<crate::subtitles::TimedCue> = serde_json::from_value(result["cues"].clone())?;
+    for cue in &mut cues { cue.start_ms += offset_ms; cue.end_ms += offset_ms; }
     ensure!(!cues.is_empty() && cues.iter().all(|c| c.end_ms > c.start_ms && !c.text.trim().is_empty() && c.text.len() <= 16_384),
         "Invalid speech transcript");
     let temporary = root.join(format!("{name}.en.srt.tmp"));
@@ -151,6 +162,77 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
     save(&json!({"state":"ready","asset_id":id,"stats":stats,"cues":cues.len(),"updated":now()}))?;
     tracing::info!(asset = id, %stats, cues = cues.len(), "Speech transcription finished");
     Ok(Transcript::Ready(output))
+}
+
+/// ADTS header fields from an AAC AudioSpecificConfig: (profile, sampling
+/// frequency index, channel configuration). HE-AAC signals its AAC-LC core.
+fn adts_config(config: &[u8]) -> Result<(u8, u8, u8)> {
+    ensure!(config.len() >= 2, "Invalid AAC configuration");
+    let bits = u32::from(config[0]) << 24 | u32::from(config[1]) << 16
+        | u32::from(*config.get(2).unwrap_or(&0)) << 8 | u32::from(*config.get(3).unwrap_or(&0));
+    let mut object = (bits >> 27) as u8;
+    let mut frequency = ((bits >> 23) & 0xF) as u8;
+    let channels = ((bits >> 19) & 0xF) as u8;
+    if object == 5 || object == 29 {
+        // Explicit SBR/PS signalling: the core sampling rate is the one above;
+        // the extension rate and core object type follow.
+        object = ((bits >> 10) & 0x1F) as u8;
+        if object == 0 { object = 2; }
+    }
+    ensure!((1..=4).contains(&object) && frequency < 13 && (1..=7).contains(&channels), "Unsupported AAC configuration");
+    frequency &= 0xF;
+    Ok((object - 1, frequency, channels))
+}
+fn adts_header((profile, frequency, channels): (u8, u8, u8), payload: usize) -> Result<[u8; 7]> {
+    let length = payload + 7;
+    ensure!(length < 8192, "AAC frame too large for ADTS");
+    Ok([0xFF, 0xF1, profile << 6 | frequency << 2 | channels >> 2, (channels & 3) << 6 | (length >> 11) as u8,
+        (length >> 3) as u8, ((length & 7) as u8) << 5 | 0x1F, 0xFC])
+}
+/// Copy one Matroska audio track (English when tagged, else the first
+/// decodable one) into a raw stream AVFoundation reads: AC-3/E-AC-3 frames as
+/// they are, AAC with ADTS headers. Returns the file and the track's first
+/// timestamp in milliseconds, or None when no track has a decodable codec.
+fn extract_audio(input: &Path, directory: &Path, name: &str) -> Result<Option<(PathBuf, u64)>> {
+    use matroska_demuxer::{Frame, MatroskaFile, TrackType};
+    use std::io::Write;
+    let file = std::fs::File::open(input)?;
+    ensure!(file.metadata()?.is_file(), "Expected a regular media file");
+    let mut mkv = MatroskaFile::open(std::io::BufReader::new(file)).context("Read Matroska container")?;
+    let scale = mkv.info().timestamp_scale().get();
+    let candidates: Vec<_> = mkv.tracks().iter().filter(|t| t.track_type() == TrackType::Audio
+        && matches!(t.codec_id(), "A_AAC" | "A_AC3" | "A_EAC3")
+        && crate::matroska::encodings_supported(t.content_encodings())).collect();
+    let english = |t: &&&matroska_demuxer::TrackEntry| {
+        let tag = t.language_bcp47().or(t.language()).unwrap_or("").to_ascii_lowercase();
+        tag == "en" || tag == "eng" || tag.starts_with("en-")
+    };
+    let Some(track) = candidates.iter().find(english).or(candidates.first()) else { return Ok(None) };
+    let number = track.track_number().get();
+    let encodings = track.content_encodings().map(|e| e.to_vec());
+    let (extension, adts) = match track.codec_id() {
+        "A_AAC" => {
+            let private = track.codec_private().context("Missing AAC configuration")?;
+            let config = crate::matroska::decode_private(encodings.as_deref(), private, 1024)?;
+            ("aac", Some(adts_config(&config)?))
+        }
+        "A_AC3" => ("ac3", None),
+        _ => ("ec3", None),
+    };
+    let path = directory.join(format!("{name}.audio.{extension}"));
+    let mut output = std::io::BufWriter::new(std::fs::File::create(&path)?);
+    let (mut frame, mut first, mut written) = (Frame::default(), None, 0usize);
+    while mkv.next_frame(&mut frame)? {
+        if frame.track != number { continue; }
+        let data = crate::matroska::decode_frame(encodings.as_deref(), &frame.data, 1 << 20)?;
+        first.get_or_insert(frame.timestamp.saturating_mul(scale) / 1_000_000);
+        if let Some(config) = adts { output.write_all(&adts_header(config, data.len())?)?; }
+        output.write_all(&data)?;
+        written += data.len();
+        ensure!(written < 8 << 30, "Audio track too large");
+    }
+    output.flush()?;
+    Ok(first.map(|first| (path, first)))
 }
 
 #[cfg(test)]
@@ -166,6 +248,18 @@ mod tests {
         assert!(verdict(&mandarin).is_err() && verdict(&japanese).is_err());
         // Confident but nearly silent (music video, ambience) is not a dialogue track.
         assert!(verdict(&json!({"confidence":0.9,"words":40,"duration_seconds":600.0})).is_err());
+    }
+    #[test]
+    fn aac_configuration_becomes_adts_headers() -> Result<()> {
+        // AAC-LC, 48 kHz (index 3), stereo: AudioSpecificConfig 0x11 0x90.
+        let config = adts_config(&[0x11, 0x90])?;
+        assert_eq!(config, (1, 3, 2));
+        let header = adts_header(config, 100)?;
+        assert_eq!(header, [0xFF, 0xF1, 0x4C, 0x80, 0x0D, 0x7F, 0xFC]);
+        // 5.1 AAC-LC at 48 kHz: 0x11 0xB0.
+        assert_eq!(adts_config(&[0x11, 0xB0])?, (1, 3, 6));
+        assert!(adts_config(&[0xF8, 0x00]).is_err(), "escape object types are not ADTS");
+        Ok(())
     }
     #[test]
     fn transcripts_are_srt_that_the_text_pipeline_reads_back() -> Result<()> {
