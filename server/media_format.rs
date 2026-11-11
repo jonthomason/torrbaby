@@ -9,7 +9,8 @@ use std::{io::Read, path::Path, process::{Command, Stdio}, time::{Duration, Inst
 
 /// Stored with the result; raise it to describe every file again.
 // Version 2 measures the picture inside the frame (baked-in black bars).
-const VERSION: u64 = 2;
+// Version 3 only accepts bars that are black in every pixel and equal on both sides.
+const VERSION: u64 = 3;
 
 fn helper() -> Option<std::path::PathBuf> {
     let path = std::env::current_exe().ok()?.with_file_name("torrbaby-ffprobe");
@@ -105,10 +106,11 @@ fn describe(report: &Value) -> Value {
 fn dark_edges(frame: &[u8], width: usize) -> Option<(usize, usize, usize, usize)> {
     let height = frame.len() / width;
     if height < 8 { return None; }
-    let row = |y: usize| frame[y * width..(y + 1) * width].iter().map(|v| *v as u64).sum::<u64>() / width as u64;
-    let column = |x: usize| (0..height).map(|y| frame[y * width + x] as u64).sum::<u64>() / height as u64;
+    // A baked-in bar is black in every pixel; a dark part of the picture almost never is.
+    let row = |y: usize| frame[y * width..(y + 1) * width].iter().copied().max().unwrap_or(0) as u64;
+    let column = |x: usize| (0..height).map(|y| frame[y * width + x]).max().unwrap_or(0) as u64;
     if frame.iter().map(|v| *v as u64).sum::<u64>() / (frame.len() as u64) < 28 { return None; }
-    const BLACK: u64 = 22;
+    const BLACK: u64 = 26;
     let top = (0..height / 2).take_while(|y| row(*y) < BLACK).count();
     let bottom = (0..height / 2).take_while(|y| row(height - 1 - *y) < BLACK).count();
     let left = (0..width / 2).take_while(|x| column(*x) < BLACK).count();
@@ -135,7 +137,10 @@ fn picture(path: &Path, duration: f64, width: u64, height: u64) -> Option<(u64, 
         samples += 1;
         edges = Some(match edges { None => found, Some(e) => (e.0.min(found.0), e.1.min(found.1), e.2.min(found.2), e.3.min(found.3)) });
     }
-    let (top, bottom, left, right) = edges.filter(|_| samples >= 2)?;
+    let (mut top, mut bottom, mut left, mut right) = edges.filter(|_| samples >= 3)?;
+    // Real bars are the same size on both sides; anything lopsided is picture.
+    if top.abs_diff(bottom) > 2 { top = 0; bottom = 0; }
+    if left.abs_diff(right) > 2 { left = 0; right = 0; }
     let tall = height - ((top + bottom) as u64 * height / rows as u64).min(height / 2);
     let wide = width - ((left + right) as u64 * width / SCALED as u64).min(width / 2);
     // Ignore a sliver: encodes often carry a pixel or two of dark edge.
