@@ -498,6 +498,9 @@ final class Store: ObservableObject {
     func refresh(polling: Bool = false) async {
         // Even if this request coalesces with one in flight, the next poll must reload.
         if !polling { fetchedLibrary = nil }
+        // A refresh after a user action must show that action: wait out a poll that
+        // started earlier rather than being dropped in its favour.
+        while !polling && refreshing && !Task.isCancelled { try? await Task.sleep(for: .milliseconds(50)) }
         guard configured, !refreshing else { return }
         refreshing = true
         defer { refreshing = false }
@@ -525,7 +528,7 @@ final class Store: ObservableObject {
                 if !current {
                     let receivedLibrary: MediaLibrary = try await request("GET", "/v1/library", timeout: 8)
                     guard identity == profileIdentity else { return }
-                    library = receivedLibrary
+                    library = withContinueWatchingChoices(receivedLibrary)
                     fetchedLibrary = revision.map { (identity, $0, Date()) }
                 }
                 if libraryError != nil { libraryError = nil }
@@ -577,14 +580,34 @@ final class Store: ObservableObject {
         } catch { connectionError = error.localizedDescription }
     }
     @Published var continueWatchingUndo: (id: String, profile: String)?
+    /// Choices made on this device that the server is still being told about. They are
+    /// applied to any library that arrives meanwhile, so the shelf changes at once and a
+    /// response fetched before the choice cannot put the title back.
+    private var continueWatchingChoices: [String: Bool] = [:]
+    private func withContinueWatchingChoices(_ received: MediaLibrary) -> MediaLibrary {
+        guard !continueWatchingChoices.isEmpty else { return received }
+        var result = received
+        for index in result.titles.indices {
+            if let hidden = continueWatchingChoices[result.titles[index].id] { result.titles[index].continueWatchingHidden = hidden }
+        }
+        return result
+    }
     func setContinueWatchingHidden(_ id: String, hidden: Bool) async {
         let identity=profileIdentity
+        let previous = library?.titles.first { $0.id == id }?.continueWatchingHidden
+        continueWatchingChoices[id] = hidden
+        if let current = library { library = withContinueWatchingChoices(current) }
         do {
             let _: Empty = try await request("POST", "/v1/library/continue-watching", body: ["title_id":id,"hidden":hidden])
-            guard identity == profileIdentity else { return }
+            guard identity == profileIdentity else { continueWatchingChoices[id] = nil; return }
             continueWatchingUndo = hidden ? (id,identity) : nil
             await refresh()
-        } catch { actionError = error.localizedDescription }
+            continueWatchingChoices[id] = nil
+        } catch {
+            continueWatchingChoices[id] = nil
+            if identity == profileIdentity, let index = library?.titles.firstIndex(where: { $0.id == id }) { library?.titles[index].continueWatchingHidden = previous }
+            actionError = error.localizedDescription
+        }
     }
     func notify(_ title: String, detail: String = "", torrentHash: String? = nil) {
         notices.append(AppNotice(title: title, detail: detail, torrentHash: torrentHash))

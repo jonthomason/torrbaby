@@ -118,7 +118,7 @@ extension LibraryAsset {
 struct LibraryDestination: Hashable { let id: String }
 
 struct MediaLibrary: Decodable {
-    let titles: [LibraryTitle]
+    var titles: [LibraryTitle]
     let lastScan: Double?
     let scanning: Bool
     let error: String?
@@ -181,7 +181,7 @@ struct LibraryTitle: Decodable, Identifiable {
     let backdrop: String?
     let addedAt: Double
     let assets: [LibraryAsset]
-    let continueWatchingHidden: Bool?
+    var continueWatchingHidden: Bool?
     var isContinuing: Bool { continueWatchingHidden != true && resume != nil }
     let cast: [LibraryCastMember]?
     var playable: [LibraryAsset] { assets.filter { $0.complete && $0.role != "extra" }.sorted { ($0.season ?? 0, $0.episode ?? 0, $0.name ?? "") < ($1.season ?? 0, $1.episode ?? 0, $1.name ?? "") } }
