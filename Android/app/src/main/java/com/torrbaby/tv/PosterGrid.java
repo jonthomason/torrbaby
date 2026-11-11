@@ -11,7 +11,14 @@ final class PosterGrid extends GridView {
   // A single row step scrolls into place first; the selection is committed when it lands.
   private int pending=-1,pendingOffset;
   private final Runnable land=this::commit;
-  PosterGrid(Context context) { super(context); }
+  PosterGrid(Context context) {
+    super(context);
+    // The focused poster grows past its cell. Grid cells clip by default, and while a row
+    // glides the grid draws cells from cached bitmaps on older TVs, which clips them too.
+    setClipChildren(false);
+    setScrollingCacheEnabled(false);
+    setAnimationCacheEnabled(false);
+  }
   private boolean confirm(int code) { return code==KeyEvent.KEYCODE_DPAD_CENTER || code==KeyEvent.KEYCODE_ENTER || code==KeyEvent.KEYCODE_NUMPAD_ENTER; }
 
   /** The position shown as focused, including a row step that is still gliding. */
