@@ -141,6 +141,17 @@ struct LibraryTitle: Decodable, Identifiable {
     let kind: String
     let title: String
     let year: String?
+    /// The year a finished series last aired, and whether it is still running, when known.
+    var endYear: String? = nil
+    var ongoing: Bool? = nil
+    /// A movie's year, or a series' run: "2018–2025", or "2018–" while it continues.
+    var yearLabel: String {
+        guard let year, !year.isEmpty else { return "" }
+        guard kind == "tv" else { return year }
+        if ongoing == true { return year + "–" }
+        if ongoing == false, let endYear, !endYear.isEmpty, endYear != year { return year + "–" + endYear }
+        return year
+    }
     let genres: [String]
     let summary: String
     let contentRating: String?
@@ -435,7 +446,7 @@ struct LibraryBrowser: View {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text(featured.title).font(.system(size: 38, weight: .bold))
                                     .lineLimit(3).minimumScaleFactor(0.7).multilineTextAlignment(.leading)
-                                Text(LocalizedStringKey(([featured.year ?? ""] + featured.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · "))).font(.subheadline)
+                                Text(verbatim: ([featured.yearLabel] + featured.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · ")).font(.subheadline)
                                 Label("Explore", systemImage: "play.fill").font(.headline)
                                     .padding(.horizontal, 16).padding(.vertical, 9)
                                     .foregroundStyle(Theme.onAccent).background(Theme.accent, in: RoundedRectangle(cornerRadius: Theme.radius))
@@ -543,7 +554,7 @@ struct LibraryBrowser: View {
                         }
                     }.font(.caption).foregroundStyle(Theme.muted).frame(maxWidth: .infinity)
                 } else {
-                    Text(([title.genres.first, title.year].compactMap { $0 }.filter { !$0.isEmpty }).joined(separator: " · "))
+                    Text(verbatim: title.yearLabel)
                         .font(.caption).foregroundStyle(Theme.muted).lineLimit(1).frame(maxWidth: .infinity)
                 }
             }.foregroundStyle(.primary)
@@ -610,7 +621,7 @@ struct LibraryDetail: View {
                         VStack(alignment: .leading, spacing: 14) {
                             Spacer(minLength: 160)
                             Text(title.title).font(.largeTitle.bold()).fixedSize(horizontal: false, vertical: true)
-                            Text(([title.year ?? "", title.contentRating ?? ""] + title.genres.prefix(3)).filter { !$0.isEmpty }.joined(separator: " · "))
+                            Text(([title.yearLabel, title.contentRating ?? ""] + title.genres.prefix(3)).filter { !$0.isEmpty }.joined(separator: " · "))
                                 .font(.subheadline).foregroundStyle(.white.opacity(0.8))
                             if let asset = store.preferredLibraryAsset(title) {
                                 HStack(spacing: 12) { playbackActions(asset, title: title) }

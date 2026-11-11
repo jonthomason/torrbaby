@@ -448,8 +448,9 @@ struct TorrentSearchView: View {
         ViewThatFits(in: .horizontal) {
             HStack { scopePicker; seasonPicker; episodePicker; sortPicker; Spacer(); batchButton(picks) }
             VStack(alignment: .leading, spacing: 6) {
-                HStack { scopePicker.labelsHidden(); seasonPicker.labelsHidden(); episodePicker.labelsHidden(); Spacer() }
-                HStack { sortPicker.labelsHidden(); Spacer(); batchButton(picks) }
+                HStack { scopePicker.labelsHidden(); seasonPicker.labelsHidden(); Spacer() }
+                HStack { episodePicker.labelsHidden(); sortPicker.labelsHidden(); Spacer() }
+                batchButton(picks)
             }
         }
         .confirmationDialog(L10n.format("Add %d episodes?", picks.count), isPresented: $confirmBatch, titleVisibility: .visible) {
@@ -534,12 +535,12 @@ struct TorrentSearchView: View {
             if item.sources.contains(where: { $0.provider == "1lou" }) {
                 TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true; focusNextSearch() }, ownership: ownership(item), artworkYear: artworkYear(item))
             } else if inline {
-                Button { selectedID = item.id } label: { TorrentSearchRow(item: item, ownership: ownership(item), artworkYear: artworkYear(item)) }
-                    .buttonStyle(.plain)
+                TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true; focusNextSearch() }, ownership: ownership(item), artworkYear: artworkYear(item))
+                    .contentShape(Rectangle()).onTapGesture { selectedID = item.id }
                     .listRowBackground(selectedID == item.id ? Theme.accent.opacity(0.13) : Color.clear)
                     .accessibilityAddTraits(selectedID == item.id ? .isSelected : [])
             } else {
-                NavigationLink { TorrentSearchDetail(item: item, onAdded: { prepareNextSearch = true }).id(item.id) } label: { TorrentSearchRow(item: item, ownership: ownership(item), artworkYear: artworkYear(item)) }
+                NavigationLink { TorrentSearchDetail(item: item, onAdded: { prepareNextSearch = true }).id(item.id) } label: { TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true; focusNextSearch() }, ownership: ownership(item), artworkYear: artworkYear(item)) }
             }
     }
     #if os(macOS)
@@ -694,6 +695,12 @@ private struct TorrentSearchRow: View {
     @State private var adding = false
     @State private var added = false
     @State private var addError: String?
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var rowSizeClass
+    private var compactRow: Bool { rowSizeClass == .compact }
+    #else
+    private let compactRow = false
+    #endif
     private var isBT: Bool { item.sources.contains { $0.provider == "1lou" } }
     private var displayedSize: String { item.size.isEmpty ? (fetchedSize ?? "") : item.size }
     private var metadata: String { [item.edition, item.quality].filter { !$0.isEmpty }.joined(separator: " · ") }
@@ -751,6 +758,22 @@ private struct TorrentSearchRow: View {
                 Button { showBTDetails=true } label: { Image(systemName:"info.circle") }
                     .buttonStyle(.borderless).accessibilityLabel("Torrent details")
             }
+            #if !os(tvOS)
+            // Add straight from the list; opening the details stays optional.
+            if onTrial == nil, !isBT, !item.magnet.isEmpty {
+                Spacer(minLength: 8)
+                if adding { ProgressView().controlSize(.small) }
+                else if added || ownership == "Already in your torrents" {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent).accessibilityLabel("Added")
+                } else {
+                    // Quieter than the page's primary buttons, since every row has one.
+                    Button { Task { await addMagnet() } } label: {
+                        if compactRow { Image(systemName: "plus").frame(width: 22, height: 22) }
+                        else { Label("Add torrent", systemImage: "plus").labelStyle(.titleAndIcon) }
+                    }.buttonStyle(MonoButtonStyle(compact: true)).fixedSize().accessibilityLabel("Add torrent")
+                }
+            }
+            #endif
         }.padding(.vertical, 2).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             .sheet(isPresented: $showBTDetails) {
                 NavigationStack { TorrentSearchDetail(item:item, loadBTDetails:true, knownSize:displayedSize)
@@ -767,6 +790,19 @@ private struct TorrentSearchRow: View {
                 catch is CancellationError { }
                 catch { fetchedSize = nil }
             }
+    }
+    private func addMagnet() async {
+        guard !adding, !added, !item.magnet.isEmpty else { return }
+        adding = true; addError = nil
+        defer { adding = false }
+        do {
+            struct Result: Decodable { let torrentDuplicate: TorrentIdentity? }
+            struct TorrentIdentity: Decodable { let name: String? }
+            let result: Result = try await store.request("POST", "/v1/torrents", body: ["magnet": item.magnet, "paused": false], timeout: 45)
+            added = true
+            store.notify(result.torrentDuplicate == nil ? "Torrent added" : "Already in your torrents", detail: item.name, torrentHash: item.infoHash)
+            onAdded()
+        } catch { addError = error.localizedDescription }
     }
     private func addBT(_ choice: SearchReleaseSizes.Choice) async {
         guard !adding, !added, let url=choice.url else { return }

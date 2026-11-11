@@ -3,6 +3,20 @@ use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+/// Whether a series is still running; null when the provider's status is not known.
+fn series_ongoing(entity: &Value) -> Value {
+    match entity["series_status"].as_str() {
+        None | Some("") => Value::Null,
+        Some("Ended") | Some("Canceled") => json!(false),
+        Some(_) => json!(true),
+    }
+}
+/// The year a finished series last aired; null while it continues or when unknown.
+fn series_end_year(entity: &Value) -> Value {
+    if series_ongoing(entity) != json!(false) { return Value::Null; }
+    entity["last_air_date"].as_str().and_then(|date| date.get(..4)).filter(|year| year.len() == 4 && year.chars().all(|c| c.is_ascii_digit())).map_or(Value::Null, |year| json!(year))
+}
+
 impl Database {
     pub fn documents(&self, table: &str) -> Result<Vec<Value>> {
         let sql = match table {
@@ -92,7 +106,7 @@ impl Database {
                 .unwrap_or(&fallback);
             let title=titles.entry(entity_id.to_owned()).or_insert_with(||json!({
                 "id":entity_id,"continue_watching_hidden":hidden.contains(entity_id),"kind":kind,"title":name,"original_title":entity["original_title"],
-                "year":entity["year"],"release_date":entity["release_date"],"genres":entity.get("genres").unwrap_or(&json!([])),
+                "year":entity["year"],"end_year":series_end_year(&entity),"ongoing":series_ongoing(&entity),"release_date":entity["release_date"],"genres":entity.get("genres").unwrap_or(&json!([])),
                 "summary":entity["summary"].as_str().unwrap_or(""),"content_rating":entity["content_rating"],"duration_minutes":entity["duration_minutes"],
                 "poster":entity["thumbnail"],"backdrop":entity["backdrop"],"logo":entity["logo"],"cast":entity["cast"],"provider":entity["provider"],"source_url":entity["source_url"],
                 "added_at":asset["added_at"],"status":asset["status"],"assets":[]
@@ -287,6 +301,20 @@ mod completion_tests {
 
 #[cfg(test)]
 mod continue_watching_tests {
+    #[test]
+    fn series_run_is_reported_only_when_the_status_is_known() {
+        use serde_json::json;
+        let ended=json!({"series_status":"Ended","last_air_date":"2025-05-18"});
+        assert_eq!(super::series_ongoing(&ended),json!(false));
+        assert_eq!(super::series_end_year(&ended),json!("2025"));
+        let running=json!({"series_status":"Returning Series","last_air_date":"2026-03-01"});
+        assert_eq!(super::series_ongoing(&running),json!(true));
+        assert!(super::series_end_year(&running).is_null());
+        let unknown=json!({"year":"2018"});
+        assert!(super::series_ongoing(&unknown).is_null());
+        assert!(super::series_end_year(&unknown).is_null());
+    }
+
     use super::*;
     #[test]
     fn hiding_preserves_progress_and_next_play_restores_only_that_profile() -> Result<()> {

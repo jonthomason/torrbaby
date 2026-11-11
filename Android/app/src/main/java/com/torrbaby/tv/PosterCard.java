@@ -84,9 +84,9 @@ final class PosterCard extends LinearLayout {
     progress.setVisibility(continuing?VISIBLE:GONE);
     if(item==null)return;
     subtitle.setVisibility(VISIBLE);
-    subtitle.setText((item.genres.isEmpty()?"":item.genres.get(0))+(item.genres.isEmpty()||item.year.isEmpty()?"":" · ")+item.year);
+    subtitle.setText(item.yearLabel());
     if(!continuing)return;
-    year.setText(item.year);year.setVisibility(item.year.isEmpty()?GONE:VISIBLE);
+    year.setText(item.yearLabel());year.setVisibility(item.year.isEmpty()?GONE:VISIBLE);
     Library.Asset resume=item.resume();if(resume==null)return;
     if(item.kind.equals("tv") && resume.hasSeason) {
       subtitle.setText(String.format(L10n.locale(),L10n.t("Season %d Ep %d"),resume.season,resume.episode));

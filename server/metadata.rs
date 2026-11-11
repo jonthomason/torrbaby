@@ -378,6 +378,13 @@ impl Metadata {
         Ok(cast_rows(&credits["cast"]))
     }
 
+    /// A series' production status and last air date, for entities saved before these were kept.
+    pub async fn series_run(&self, entity: &Value) -> Result<Value> {
+        let id=entity["provider_id"].as_str().context("Missing metadata ID")?.parse::<u64>()?;
+        let detail=self.request(&format!("tv/{id}"), &[("language","en-US")]).await?;
+        Ok(json!({"series_status":detail["status"].as_str().unwrap_or(""),"last_air_date":detail["last_air_date"].as_str().unwrap_or("")}))
+    }
+
     pub async fn enrich(&self, candidate: &Value) -> Result<Value> {
         if candidate["provider"] != "TMDB" {
             bail!("Choose a TMDB match for standalone metadata");
@@ -392,7 +399,8 @@ impl Metadata {
             .parse::<u64>()?;
         let key = format!("tmdb:{kind}:{id}");
         if let Some(entity) = self.cache.lock().await.get(&key) {
-            if entity["cast"].is_array() && crate::storage::now() - entity["fetched_at"].as_f64().unwrap_or(0.0) < 86400.0 {
+            if entity["cast"].is_array() && (kind != "tv" || entity["series_status"].is_string())
+                && crate::storage::now() - entity["fetched_at"].as_f64().unwrap_or(0.0) < 86400.0 {
                 return Ok(entity.clone());
             }
         }
@@ -424,6 +432,11 @@ impl Metadata {
             .unwrap_or("");
         entity["release_date"] = json!(date);
         entity["year"] = json!(date.get(..4).unwrap_or(""));
+        if kind == "tv" {
+            // Lets clients show a series' run: "2018–2025", or "2018–" while it continues.
+            entity["series_status"] = json!(detail["status"].as_str().unwrap_or(""));
+            entity["last_air_date"] = json!(detail["last_air_date"].as_str().unwrap_or(""));
+        }
         entity["summary"] = detail["overview"].clone();
         entity["cast"] = cast_rows(&detail[if kind=="tv" {"aggregate_credits"} else {"credits"}]["cast"]);
         entity["thumbnail"] = image(&detail["poster_path"], "w500");

@@ -280,7 +280,7 @@ private struct TVFeaturedHero: View {
             LinearGradient(colors: [.clear, .black.opacity(0.88)], startPoint: .center, endPoint: .bottom)
             VStack(alignment: .leading, spacing: 16) {
                 Text(title.title).font(.system(size: 48, weight: .bold)).lineLimit(2)
-                Text(([title.year ?? ""] + title.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · "))
+                Text(([title.yearLabel] + title.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.headline)
                 NavigationLink(value: LibraryDestination(id: title.id)) {
                     Label("Explore", systemImage: "play.fill").font(.headline)
@@ -321,7 +321,7 @@ private struct TVMediaDetail: View {
                         LinearGradient(colors: [.clear, .black.opacity(0.95)], startPoint: .top, endPoint: .bottom)
                         VStack(alignment: .leading, spacing: 22) {
                             Text(title.title).font(.system(size: 56, weight: .bold)).lineLimit(2)
-                            Text(LocalizedStringKey(([title.year ?? "", title.contentRating ?? ""] + title.genres.prefix(3)).filter { !$0.isEmpty }.joined(separator: " · ")))
+                            Text(LocalizedStringKey(([title.yearLabel, title.contentRating ?? ""] + title.genres.prefix(3)).filter { !$0.isEmpty }.joined(separator: " · ")))
                                 .font(.headline).foregroundStyle(.white.opacity(0.8))
                             if let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
                                 // TV shows keep the episode guide directly below the hero, so their
@@ -597,10 +597,10 @@ private struct TVPoster: View {
                         let minutes = Int(ceil(max(0, asset.duration - asset.position) / 60))
                         Text(minutes >= 60 ? L10n.format("%dh %dm left", minutes / 60, minutes % 60) : L10n.format("%dm left", minutes))
                     }
-                    if let year = title.year, !year.isEmpty { Text(year) }
+                    if !title.yearLabel.isEmpty { Text(title.yearLabel) }
                 }.font(.system(size: 21)).foregroundStyle(Theme.muted)
             } else {
-                Text(([title.genres.first, title.year].compactMap { $0 }.filter { !$0.isEmpty }).joined(separator: " · ")).font(.system(size: 21)).foregroundStyle(Theme.muted).lineLimit(1)
+                Text(title.yearLabel).font(.system(size: 21)).foregroundStyle(Theme.muted).lineLimit(1)
             }
         }.multilineTextAlignment(.center)
     }

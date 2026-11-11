@@ -2139,6 +2139,22 @@ async fn collect_metadata(s: &Service) -> Result<()> {
             Err(error)=>eprintln!("Cast metadata: {error}"),
         }
     }
+    // Series saved before their run was recorded pick it up here, one request each.
+    for entity in entities.iter().filter(|entity| entity["provider"]=="TMDB" && entity["kind"]=="tv" && !entity["series_status"].is_string()) {
+        match s.metadata.series_run(entity).await {
+            Ok(run) => {
+                let id=text(entity,"id")?;
+                let db=s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+                if let Some(row)=db.rows("SELECT document FROM library_entities WHERE id=?",[id])?.first() {
+                    let mut current:Value=serde_json::from_str(text(row,"document")?)?;
+                    current["series_status"]=run["series_status"].clone();
+                    current["last_air_date"]=run["last_air_date"].clone();
+                    db.connection.execute("UPDATE library_entities SET document=? WHERE id=?",[current.to_string(),id.to_string()])?;
+                }
+            }
+            Err(error)=>eprintln!("Series run metadata: {error}"),
+        }
+    }
     if let Ok(torrents) = crate::organizer::torrents(s).await {
         for torrent in torrents {
             let hash = text(&torrent, "hash_string")?;

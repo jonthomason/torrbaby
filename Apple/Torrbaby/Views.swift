@@ -301,7 +301,7 @@ struct RootView: View {
             NavigationStack(path: Binding(get: { location.path }, set: { navigate(Location(section: selection, path: $0)) })) {
                 Group {
                     if selection == .downloads { DownloadsView() }
-                    else if selection == .findTorrents { TorrentSearchView() }
+                    else if selection == .findTorrents { TorrentSearchView(initialQuery: UserDefaults.standard.string(forKey: "initialQuery") ?? "") }
                     else if selection == .subtitles { SubtitleQueueView() }
                     else if selection == .automation { AutomationView() }
                     else if selection == .settings { SettingsView(showConnect: $showConnect) }

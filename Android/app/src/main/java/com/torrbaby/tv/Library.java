@@ -70,13 +70,22 @@ public final class Library {
   }
 
   public static final class Title {
-    public final String id, kind, title, year, summary, rating, poster, backdrop;
+    public final String id, kind, title, year, endYear, summary, rating, poster, backdrop;
+    /** Whether a series is still running; null when the server does not know. */
+    public final Boolean ongoing;
     public final double added, minutes;
     public final List<String> genres = new ArrayList<>();
     public final List<Asset> assets = new ArrayList<>();
     public final JSONArray cast;
     public boolean continueWatchingHidden;
     public boolean isContinuing() { return !continueWatchingHidden && resume()!=null; }
+    /** A movie's year, or a series' run: "2018–2025", or "2018–" while it continues. */
+    public String yearLabel() {
+      if (year.isEmpty() || !kind.equals("tv")) return year;
+      if (Boolean.TRUE.equals(ongoing)) return year + "–";
+      if (Boolean.FALSE.equals(ongoing) && !endYear.isEmpty() && !endYear.equals(year)) return year + "–" + endYear;
+      return year;
+    }
 
     Title(JSONObject j) {
       continueWatchingHidden=j.optBoolean("continue_watching_hidden",false);
@@ -85,6 +94,8 @@ public final class Library {
       kind = string(j, "kind");
       title = string(j, "title");
       year = string(j, "year");
+      endYear = string(j, "end_year");
+      ongoing = j.isNull("ongoing") ? null : (Boolean) j.optBoolean("ongoing");
       summary = string(j, "summary");
       rating = string(j, "content_rating");
       poster = string(j, "poster");
@@ -164,7 +175,7 @@ public final class Library {
 
     public String metadata() {
       List<String> p = new ArrayList<>();
-      if (!year.isEmpty()) p.add(year);
+      if (!year.isEmpty()) p.add(yearLabel());
       if (!rating.isEmpty()) p.add(rating);
       if (kind.equals("tv")) {
         int seasons =
