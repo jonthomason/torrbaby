@@ -11,8 +11,9 @@ final class L10n {
   private static Context localized;
   private static final Map<String,Integer> IDS = new HashMap<>();
   static {
+    IDS.put("%d episodes found", R.string.ui_0290129bc977);
     IDS.put("%d min remaining", R.string.ui_b909e7d6e8c9);
-    IDS.put("%d torrents added", R.string.ui_143c5ba33118);
+    IDS.put("%d to add", R.string.ui_216e67233653);
     IDS.put("%dh %dm left", R.string.ui_660a76df86fd);
     IDS.put("%dm left", R.string.ui_659748ef61cf);
     IDS.put("1h", R.string.ui_e9c9f7bc39bb);
@@ -23,10 +24,9 @@ final class L10n {
     IDS.put("About", R.string.ui_6b21fb791ac0);
     IDS.put("Actor", R.string.ui_cbd19b5c397e);
     IDS.put("Add", R.string.ui_61cc55aa0453);
-    IDS.put("Add %d episodes?", R.string.ui_2e29f3ec4698);
     IDS.put("Add Torrent…", R.string.ui_d584a46acc6a);
     IDS.put("Add a torrent", R.string.ui_73d9c5ee15ad);
-    IDS.put("Add best of %d episodes", R.string.ui_0d59c5e974a7);
+    IDS.put("Add all", R.string.ui_0c29b8bb1848);
     IDS.put("Add magnet link", R.string.ui_d76863c63c2f);
     IDS.put("Add magnet link to server", R.string.ui_8985db712c53);
     IDS.put("Add media on your Torrbaby server, then refresh here.", R.string.ui_676f036428f3);
@@ -38,7 +38,6 @@ final class L10n {
     IDS.put("Adding download", R.string.ui_802e94122566);
     IDS.put("Adding download…", R.string.ui_9295ef6a9cf8);
     IDS.put("Adding…", R.string.ui_ffb2e628b0e9);
-    IDS.put("Adds the most-seeded release of each episode that isn’t already in your library or torrents.", R.string.ui_1f5b6db4283f);
     IDS.put("All", R.string.ui_6a72085653e4);
     IDS.put("All clear", R.string.ui_360e1182021a);
     IDS.put("All episodes", R.string.ui_10c927f29963);
@@ -49,10 +48,12 @@ final class L10n {
     IDS.put("All seasons", R.string.ui_5666605dbc6a);
     IDS.put("Alphabetical", R.string.ui_9d12608fc0bd);
     IDS.put("Already in your torrents", R.string.ui_f2de57952082);
+    IDS.put("Any resolution", R.string.ui_47efa5d4c257);
     IDS.put("Applies to torrents that use the server's default", R.string.ui_dcc38ee5a416);
     IDS.put("Ask trackers for peers", R.string.ui_ad4f3c956b19);
     IDS.put("Audio", R.string.ui_acdac205f5e2);
     IDS.put("Automatic", R.string.ui_ac9041e76816);
+    IDS.put("Automatic Episode Downloader", R.string.ui_0ddea6dade5e);
     IDS.put("Automatic processing paused", R.string.ui_dd3f305b9367);
     IDS.put("Automatic subtitles paused", R.string.ui_6f3eae86037f);
     IDS.put("Automation", R.string.ui_a15fde5173db);
@@ -93,6 +94,7 @@ final class L10n {
     IDS.put("Choose your server", R.string.ui_82be318f7bae);
     IDS.put("Clear", R.string.ui_719ea396ad92);
     IDS.put("Clear filters", R.string.ui_412226715c56);
+    IDS.put("Clear search", R.string.ui_67300d0fed7c);
     IDS.put("Clear selection", R.string.ui_247fd63183c7);
     IDS.put("Click to prioritize this title in the processing queue", R.string.ui_ba29ddeac7e6);
     IDS.put("Click to prioritize this title in the subtitle queue", R.string.ui_a5a18ce21516);
@@ -330,6 +332,7 @@ final class L10n {
     IDS.put("Not downloaded", R.string.ui_5fe04f57e34d);
     IDS.put("Not progressing", R.string.ui_0008c8375b5d);
     IDS.put("Not yet available", R.string.ui_5a28f15df569);
+    IDS.put("Nothing to add", R.string.ui_602f15feebf4);
     IDS.put("Notifications", R.string.ui_753a22b2eb61);
     IDS.put("Now processing", R.string.ui_8c9bc3ae4603);
     IDS.put("OK", R.string.ui_9ce3bd4224c8);
@@ -428,6 +431,7 @@ final class L10n {
     IDS.put("Retry", R.string.ui_9f5cd8a2e880);
     IDS.put("Retry artwork", R.string.ui_b053804a25ad);
     IDS.put("Retry organization", R.string.ui_c03d34373e3c);
+    IDS.put("Review %d episodes", R.string.ui_6da47df663c4);
     IDS.put("Review a new name", R.string.ui_5f1f46e2112f);
     IDS.put("Revoke access", R.string.ui_094386f681e2);
     IDS.put("Rolling credits", R.string.ui_1ad552dc5275);
@@ -454,6 +458,7 @@ final class L10n {
     IDS.put("Search torrents", R.string.ui_d499e5b1e322);
     IDS.put("Searching…", R.string.ui_1a6a5ba8c23d);
     IDS.put("Season", R.string.ui_62255f5671e8);
+    IDS.put("Season %d", R.string.ui_661f21d64059);
     IDS.put("Season %d Ep %d", R.string.ui_e5444912e049);
     IDS.put("Season %d Ep %d–%d", R.string.ui_7c18fa0f7817);
     IDS.put("Seasons %d–%d", R.string.ui_35f3392ee19c);

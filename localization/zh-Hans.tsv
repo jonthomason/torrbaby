@@ -642,10 +642,6 @@ Best match	最佳匹配
 Episode order	按集数排序
 Most seeds	做种最多
 In your library	已在媒体库中
-Add %d episodes?	添加 %d 集？
-Add best of %d episodes	添加 %d 集的最佳资源
-%d torrents added	已添加 %d 个种子
-Adds the most-seeded release of each episode that isn’t already in your library or torrents.	为每一集添加做种数最多的资源，已在媒体库或种子列表中的剧集会跳过。
 Transfer interrupted. Tap resume.	传输已中断，请点击继续。
 Download interrupted. Tap resume.	下载已中断，请点击继续。
 Download failed. Reconnect and try again.	下载失败，请重新连接后再试。
@@ -656,3 +652,12 @@ Transferring	传输中
 No more episodes available	没有更多可播放的剧集
 Clear	清除
 Extras	花絮
+Automatic Episode Downloader	自动剧集下载
+%d episodes found	找到 %d 集
+%d to add	%d 集待添加
+Any resolution	任意分辨率
+Review %d episodes	查看 %d 集
+Add all	全部添加
+Nothing to add	没有可添加的内容
+Clear search	清除搜索
+Season %d	第 %d 季

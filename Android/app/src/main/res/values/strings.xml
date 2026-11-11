@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="ui_0290129bc977" formatted="false">%d episodes found</string>
     <string name="ui_b909e7d6e8c9" formatted="false">%d min remaining</string>
-    <string name="ui_143c5ba33118" formatted="false">%d torrents added</string>
+    <string name="ui_216e67233653" formatted="false">%d to add</string>
     <string name="ui_660a76df86fd" formatted="false">%dh %dm left</string>
     <string name="ui_659748ef61cf" formatted="false">%dm left</string>
     <string name="ui_e9c9f7bc39bb" formatted="false">1h</string>
@@ -12,10 +13,9 @@
     <string name="ui_6b21fb791ac0" formatted="false">About</string>
     <string name="ui_cbd19b5c397e" formatted="false">Actor</string>
     <string name="ui_61cc55aa0453" formatted="false">Add</string>
-    <string name="ui_2e29f3ec4698" formatted="false">Add %d episodes?</string>
     <string name="ui_d584a46acc6a" formatted="false">Add Torrent…</string>
     <string name="ui_73d9c5ee15ad" formatted="false">Add a torrent</string>
-    <string name="ui_0d59c5e974a7" formatted="false">Add best of %d episodes</string>
+    <string name="ui_0c29b8bb1848" formatted="false">Add all</string>
     <string name="ui_d76863c63c2f" formatted="false">Add magnet link</string>
     <string name="ui_8985db712c53" formatted="false">Add magnet link to server</string>
     <string name="ui_676f036428f3" formatted="false">Add media on your Torrbaby server, then refresh here.</string>
@@ -27,7 +27,6 @@
     <string name="ui_802e94122566" formatted="false">Adding download</string>
     <string name="ui_9295ef6a9cf8" formatted="false">Adding download…</string>
     <string name="ui_ffb2e628b0e9" formatted="false">Adding…</string>
-    <string name="ui_1f5b6db4283f" formatted="false">Adds the most-seeded release of each episode that isn’t already in your library or torrents.</string>
     <string name="ui_6a72085653e4" formatted="false">All</string>
     <string name="ui_360e1182021a" formatted="false">All clear</string>
     <string name="ui_10c927f29963" formatted="false">All episodes</string>
@@ -38,10 +37,12 @@
     <string name="ui_5666605dbc6a" formatted="false">All seasons</string>
     <string name="ui_9d12608fc0bd" formatted="false">Alphabetical</string>
     <string name="ui_f2de57952082" formatted="false">Already in your torrents</string>
+    <string name="ui_47efa5d4c257" formatted="false">Any resolution</string>
     <string name="ui_dcc38ee5a416" formatted="false">Applies to torrents that use the server\'s default</string>
     <string name="ui_ad4f3c956b19" formatted="false">Ask trackers for peers</string>
     <string name="ui_acdac205f5e2" formatted="false">Audio</string>
     <string name="ui_ac9041e76816" formatted="false">Automatic</string>
+    <string name="ui_0ddea6dade5e" formatted="false">Automatic Episode Downloader</string>
     <string name="ui_dd3f305b9367" formatted="false">Automatic processing paused</string>
     <string name="ui_6f3eae86037f" formatted="false">Automatic subtitles paused</string>
     <string name="ui_a15fde5173db" formatted="false">Automation</string>
@@ -82,6 +83,7 @@
     <string name="ui_82be318f7bae" formatted="false">Choose your server</string>
     <string name="ui_719ea396ad92" formatted="false">Clear</string>
     <string name="ui_412226715c56" formatted="false">Clear filters</string>
+    <string name="ui_67300d0fed7c" formatted="false">Clear search</string>
     <string name="ui_247fd63183c7" formatted="false">Clear selection</string>
     <string name="ui_ba29ddeac7e6" formatted="false">Click to prioritize this title in the processing queue</string>
     <string name="ui_a5a18ce21516" formatted="false">Click to prioritize this title in the subtitle queue</string>
@@ -319,6 +321,7 @@
     <string name="ui_5fe04f57e34d" formatted="false">Not downloaded</string>
     <string name="ui_0008c8375b5d" formatted="false">Not progressing</string>
     <string name="ui_5a28f15df569" formatted="false">Not yet available</string>
+    <string name="ui_602f15feebf4" formatted="false">Nothing to add</string>
     <string name="ui_753a22b2eb61" formatted="false">Notifications</string>
     <string name="ui_8c9bc3ae4603" formatted="false">Now processing</string>
     <string name="ui_9ce3bd4224c8" formatted="false">OK</string>
@@ -417,6 +420,7 @@
     <string name="ui_9f5cd8a2e880" formatted="false">Retry</string>
     <string name="ui_b053804a25ad" formatted="false">Retry artwork</string>
     <string name="ui_c03d34373e3c" formatted="false">Retry organization</string>
+    <string name="ui_6da47df663c4" formatted="false">Review %d episodes</string>
     <string name="ui_5f1f46e2112f" formatted="false">Review a new name</string>
     <string name="ui_094386f681e2" formatted="false">Revoke access</string>
     <string name="ui_1ad552dc5275" formatted="false">Rolling credits</string>
@@ -443,6 +447,7 @@
     <string name="ui_d499e5b1e322" formatted="false">Search torrents</string>
     <string name="ui_1a6a5ba8c23d" formatted="false">Searching…</string>
     <string name="ui_62255f5671e8" formatted="false">Season</string>
+    <string name="ui_661f21d64059" formatted="false">Season %d</string>
     <string name="ui_e5444912e049" formatted="false">Season %d Ep %d</string>
     <string name="ui_7c18fa0f7817" formatted="false">Season %d Ep %d–%d</string>
     <string name="ui_35f3392ee19c" formatted="false">Seasons %d–%d</string>

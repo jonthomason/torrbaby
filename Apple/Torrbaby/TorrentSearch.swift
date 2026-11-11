@@ -154,8 +154,9 @@ struct TorrentSearchView: View {
     @State private var seasonFilter: Int?
     @State private var episodeFilter: Int?
     @AppStorage("torrentSearchSort") private var sortOrder = "match"
-    @State private var confirmBatch = false
-    @State private var batchAdding = false
+    @State private var downloaderSeason: Int?
+    @State private var searchedQuery = ""
+    @State private var showDownloader = false
     @State private var response: TorrentSearchResponse?
     @State private var error: String?
     @State private var searching = false
@@ -243,27 +244,63 @@ struct TorrentSearchView: View {
         }
         return nil
     }
-    /// The best-seeded single-episode release of each episode the user does not have yet.
-    /// A search can return several shows; the batch follows the best-matching one.
-    private var batchCandidates: [TorrentSearchItem] {
+    // MARK: Automatic Episode Downloader
+    /// Single-episode releases of the best-matching show (a search can return several shows).
+    private var downloaderCandidates: [TorrentSearchItem] {
         let episodes = resolutionItems.filter { $0.isSingleEpisode && !$0.magnet.isEmpty && ($0.seeders ?? 0) > 0 }
         guard let lead = episodes.first.map({ Self.titleKey($0.title) }) else { return [] }
         return episodes.filter { Self.titleKey($0.title) == lead }
     }
-    private var batchSeason: Int? {
-        if let seasonFilter { return seasonFilter }
-        let seasons = Set(batchCandidates.map { $0.hints.season ?? 1 })
-        return seasons.count == 1 ? seasons.first : nil
+    private var downloaderSeasons: [Int] { Array(Set(downloaderCandidates.map { $0.hints.season ?? 1 })).sorted() }
+    /// The season it works on: the one chosen in the panel, else the page's season filter,
+    /// else the latest season, which is usually the one still airing.
+    private var activeDownloaderSeason: Int? {
+        let seasons = downloaderSeasons
+        if let downloaderSeason, seasons.contains(downloaderSeason) { return downloaderSeason }
+        if let seasonFilter, seasons.contains(seasonFilter) { return seasonFilter }
+        return seasons.last
     }
-    private var batchPicks: [TorrentSearchItem] {
-        guard let season = batchSeason else { return [] }
-        var best: [Int: TorrentSearchItem] = [:]
-        for item in batchCandidates where (item.hints.season ?? 1) == season {
-            guard let episode = item.hints.episode, episodeFilter == nil || episode == episodeFilter, ownership(item) == nil else { continue }
+    /// One entry per episode found: its best-seeded release, and whether the user already has it.
+    private var downloaderPicks: [EpisodePick] {
+        guard let season = activeDownloaderSeason else { return [] }
+        var best: [Int: TorrentSearchItem] = [:], owned: [Int: String] = [:]
+        for item in downloaderCandidates where (item.hints.season ?? 1) == season {
+            guard let episode = item.hints.episode else { continue }
+            if let status = ownership(item), owned[episode] != "In your library" { owned[episode] = status }
             if (best[episode]?.seeders ?? 0) < (item.seeders ?? 0) { best[episode] = item }
         }
-        // An episode the library already has is skipped even when this particular release is new.
-        return best.keys.sorted().compactMap { best[$0] }
+        return best.keys.sorted().compactMap { number in best[number].map { EpisodePick(episode: number, item: $0, owned: owned[number]) } }
+    }
+    @ViewBuilder private var episodeDownloader: some View {
+        let picks = downloaderPicks
+        if let season = activeDownloaderSeason, let show = picks.first?.item.title {
+            let pending = picks.filter { $0.owned == nil }.count
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Automatic Episode Downloader", systemImage: "sparkles").font(.headline)
+                Text(verbatim: [show, L10n.format("%d episodes found", picks.count), L10n.format("%d to add", pending),
+                                resolution == "all" ? L10n.text("Any resolution") : resolution].joined(separator: " · "))
+                    .font(.caption).foregroundStyle(Theme.muted)
+                HStack(spacing: 10) {
+                    if downloaderSeasons.count > 1 {
+                        Menu {
+                            Picker("Season", selection: Binding(get: { season }, set: { downloaderSeason = $0 })) {
+                                ForEach(downloaderSeasons, id: \.self) { Text("Season \($0)").tag($0) }
+                            }
+                        } label: { Label("Season \(season)", systemImage: "chevron.up.chevron.down") }
+                            .buttonStyle(MonoButtonStyle(compact: true)).fixedSize()
+                    } else {
+                        Text("Season \(season)").font(.subheadline.weight(.semibold))
+                    }
+                    Button(L10n.format("Review %d episodes", picks.count)) { showDownloader = true }
+                        .buttonStyle(MonoButtonStyle(prominent: true, compact: true))
+                    Spacer(minLength: 0)
+                }
+            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+                .sheet(isPresented: $showDownloader) {
+                    LocalizedInterface { EpisodeDownloaderSheet(show: show, season: season, picks: picks) }.environmentObject(store)
+                }
+        }
     }
     private var selectedItem: TorrentSearchItem? { visibleItems.first { $0.id == selectedID } }
     var body: some View {
@@ -387,6 +424,18 @@ struct TorrentSearchView: View {
                 searchField
                     .focused($searchFocused)
                     .onSubmit(search).autocorrectionDisabled().textFieldStyle(.plain)
+                #if !os(tvOS)
+                if !query.isEmpty {
+                    // Clears the box and results, ready for the next search.
+                    Button {
+                        work?.cancel(); searching = false
+                        query = ""; response = nil; selectedID = nil; error = nil
+                        resetFilters()
+                        focusNextSearch()
+                    } label: { Image(systemName: "xmark.circle.fill").font(.title3).foregroundStyle(Theme.muted) }
+                        .buttonStyle(.plain).accessibilityLabel("Clear search")
+                }
+                #endif
                 Button(action: search) { Text(LocalizedStringKey(searching ? "Searching…" : "Search")) }
                     .buttonStyle(MonoButtonStyle(prominent: true))
                     .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || searching)
@@ -444,21 +493,14 @@ struct TorrentSearchView: View {
                     .onChange(of: resolution) { selectedID = visibleItems.first?.id }
     }
     @ViewBuilder private var refinements: some View {
-        let picks = batchPicks
         ViewThatFits(in: .horizontal) {
-            HStack { scopePicker; seasonPicker; episodePicker; sortPicker; Spacer(); batchButton(picks) }
+            HStack { scopePicker; seasonPicker; episodePicker; sortPicker; Spacer() }
             VStack(alignment: .leading, spacing: 6) {
                 HStack { scopePicker.labelsHidden(); seasonPicker.labelsHidden(); Spacer() }
                 HStack { episodePicker.labelsHidden(); sortPicker.labelsHidden(); Spacer() }
-                batchButton(picks)
             }
         }
-        .confirmationDialog(L10n.format("Add %d episodes?", picks.count), isPresented: $confirmBatch, titleVisibility: .visible) {
-            Button("Add") { Task { await addBatch(picks) } }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Adds the most-seeded release of each episode that isn’t already in your library or torrents.")
-        }
+        episodeDownloader
     }
     private var scopePicker: some View {
         Picker("Show", selection: $scopeFilter) {
@@ -492,26 +534,6 @@ struct TorrentSearchView: View {
             Text("Episode order").tag("episode")
             Text("Most seeds").tag("seeds")
         }.pickerStyle(.menu).fixedSize()
-    }
-    @ViewBuilder private func batchButton(_ picks: [TorrentSearchItem]) -> some View {
-        if picks.count > 1 {
-            if batchAdding { ProgressView().controlSize(.small) }
-            else { Button(L10n.format("Add best of %d episodes", picks.count)) { confirmBatch = true } }
-        }
-    }
-    private func addBatch(_ picks: [TorrentSearchItem]) async {
-        guard !batchAdding else { return }
-        batchAdding = true; error = nil
-        defer { batchAdding = false }
-        var added = 0
-        struct Added: Decodable {}
-        for item in picks {
-            do {
-                let _: Added = try await store.request("POST", "/v1/torrents", body: ["magnet": item.magnet, "paused": false], timeout: 45)
-                added += 1
-            } catch { self.error = error.localizedDescription; break }
-        }
-        if added > 0 { store.notify(L10n.format("%d torrents added", added), detail: picks.first?.title ?? "") }
     }
     @ViewBuilder private var searchStatus: some View {
                 if response != nil { Text("\(visibleItems.count) releases").font(.caption).foregroundStyle(.secondary) }
@@ -587,9 +609,16 @@ struct TorrentSearchView: View {
         }
         #endif
     }
+    /// Show, season, episode and sort describe one search's results, so a different search
+    /// starts without them. Sources and resolution are standing preferences and are kept.
+    private func resetFilters() {
+        scopeFilter = "all"; seasonFilter = nil; episodeFilter = nil; downloaderSeason = nil; sortOrder = "match"
+    }
     private func search() {
         searchFocused = false
         guard query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 else { return }
+        let wanted = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if wanted != searchedQuery { resetFilters(); searchedQuery = wanted }
         work?.cancel(); searching = true; error = nil
         var body: [String: Any] = ["query": query, "market": market, "sources": source == "all" ? [] : [source]]
         if let year { body["year"] = year }; if let season { body["season"] = season }; if let episode { body["episode"] = episode }
@@ -605,6 +634,86 @@ struct TorrentSearchView: View {
             }
             searching = false
         }
+    }
+}
+
+/// One episode in the Automatic Episode Downloader: its best-seeded release.
+struct EpisodePick: Identifiable {
+    let episode: Int
+    let item: TorrentSearchItem
+    let owned: String?
+    var id: Int { episode }
+}
+
+/// Lists what the downloader found, to add all at once or one at a time.
+private struct EpisodeDownloaderSheet: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    @Environment(\.dismiss) private var dismiss
+    let show: String
+    let season: Int
+    let picks: [EpisodePick]
+    @State private var adding: Set<Int> = []
+    @State private var added: Set<Int> = []
+    @State private var failures: [Int: String] = [:]
+    private var pending: [EpisodePick] { picks.filter { $0.owned == nil && !added.contains($0.episode) } }
+    var body: some View {
+        NavigationStack {
+            List {
+                SwiftUI.Section {
+                    ForEach(picks) { pick in row(pick) }
+                } header: {
+                    HStack {
+                        Text(verbatim: show + " · " + L10n.format("Season %d", season)).font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Button(LocalizedStringKey(pending.isEmpty ? "Nothing to add" : "Add all")) { Task { for pick in pending { await add(pick) } } }
+                            .buttonStyle(MonoButtonStyle(prominent: true, compact: true))
+                            .disabled(pending.isEmpty || !adding.isEmpty)
+                    }.textCase(nil).padding(.vertical, 6)
+                }
+            }
+            .canvasBackground()
+            .navigationTitle("Automatic Episode Downloader")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+        }
+        #if os(macOS)
+        .frame(minWidth: 620, minHeight: 480)
+        #endif
+    }
+    private func row(_ pick: EpisodePick) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(L10n.format("Season %d Ep %d", season, pick.episode)).font(.headline)
+                Text(verbatim: pick.item.name).font(.caption).foregroundStyle(Theme.muted).lineLimit(2)
+                Text(verbatim: [pick.item.size, pick.item.availability, pick.item.quality].filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.caption).monospacedDigit()
+                if let failure = failures[pick.episode] { Text(failure).font(.caption).foregroundStyle(.orange) }
+            }
+            Spacer(minLength: 8)
+            if let owned = pick.owned {
+                Label(LocalizedStringKey(owned), systemImage: "checkmark.circle.fill").font(.caption.weight(.semibold)).foregroundStyle(Theme.muted)
+            } else if added.contains(pick.episode) {
+                Label("Added", systemImage: "checkmark.circle.fill").font(.caption.weight(.semibold))
+            } else if adding.contains(pick.episode) {
+                ProgressView().controlSize(.small)
+            } else {
+                Button { Task { await add(pick) } } label: { Label("Add", systemImage: "plus").labelStyle(.titleAndIcon) }
+                    .buttonStyle(MonoButtonStyle(compact: true)).fixedSize()
+            }
+        }.padding(.vertical, 4)
+    }
+    private func add(_ pick: EpisodePick) async {
+        guard pick.owned == nil, !added.contains(pick.episode), !adding.contains(pick.episode) else { return }
+        adding.insert(pick.episode); failures[pick.episode] = nil
+        defer { adding.remove(pick.episode) }
+        do {
+            struct Result: Decodable {}
+            let _: Result = try await store.request("POST", "/v1/torrents", body: ["magnet": pick.item.magnet, "paused": false], timeout: 45)
+            added.insert(pick.episode)
+        } catch { failures[pick.episode] = error.localizedDescription }
     }
 }
 
