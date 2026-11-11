@@ -154,6 +154,7 @@ pub const FIELDS: &[&str] = &[
     "seed_idle_limit",
     "seed_idle_mode",
     "added_date",
+    "done_date",
     "activity_date",
     "peers_connected",
     "peers_sending_to_us",

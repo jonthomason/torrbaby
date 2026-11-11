@@ -125,11 +125,12 @@ impl Database {
                 "year":title_year(&entity,file),"end_year":series_end_year(&entity),"ongoing":series_ongoing(&entity),"release_date":entity["release_date"],"genres":entity.get("genres").unwrap_or(&json!([])),
                 "summary":entity["summary"].as_str().unwrap_or(""),"content_rating":entity["content_rating"],"duration_minutes":entity["duration_minutes"],
                 "poster":entity["thumbnail"],"backdrop":entity["backdrop"],"logo":entity["logo"],"cast":entity["cast"],"provider":entity["provider"],"source_url":entity["source_url"],
-                "added_at":asset["added_at"],"status":asset["status"],"assets":[]
+                "added_at":0.0,"status":asset["status"],"assets":[]
             }));
-            if asset["added_at"].as_f64().unwrap_or(0.0) > title["added_at"].as_f64().unwrap_or(0.0)
-            {
-                title["added_at"] = asset["added_at"].clone();
+            // A title is as recent as the latest of its files to become watchable.
+            let arrived = asset["ready_at"].as_f64().filter(|at| *at > 0.0).or(asset["added_at"].as_f64()).unwrap_or(0.0);
+            if arrived > title["added_at"].as_f64().unwrap_or(0.0) {
+                title["added_at"] = json!(arrived);
             }
             let media = format!(
                 "{}:{}",

@@ -11362,6 +11362,40 @@
           }
         }
       }
+    },
+    "Resume (%d min left)": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resume (%d min left)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "继续播放（剩余 %d 分钟）"
+          }
+        }
+      }
+    },
+    "Resume (%d hr %d min left)": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resume (%d hr %d min left)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "继续播放（剩余 %d 小时 %d 分钟）"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

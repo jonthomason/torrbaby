@@ -413,6 +413,8 @@
     <string name="ui_7d1e95ef4177" formatted="false">Rename torrent</string>
     <string name="ui_516aae52959d" formatted="false">Resolution</string>
     <string name="ui_b3bd0b5a7049" formatted="false">Resume</string>
+    <string name="ui_59a3c5eeef11" formatted="false">Resume (%d hr %d min left)</string>
+    <string name="ui_4bb3c04af786" formatted="false">Resume (%d min left)</string>
     <string name="ui_3fa8514e297a" formatted="false">Resume Season %d Ep %d</string>
     <string name="ui_2ca8dc78921f" formatted="false">Resume Season %d Ep %d (%d min remaining)</string>
     <string name="ui_b5ed1ec09384" formatted="false">Resume download</string>

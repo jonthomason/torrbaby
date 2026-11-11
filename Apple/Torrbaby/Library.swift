@@ -104,7 +104,11 @@ extension LibraryAsset {
     /// `brief` leaves out the time remaining, for buttons with little room.
     func playbackActionTitle(television: Bool, brief: Bool = false) -> String {
         let resume = position > 0 && !watched
-        guard television, let season, let episode else { return L10n.text(resume ? "Resume" : "Play") }
+        guard television, let season, let episode else {
+            guard resume, duration > position, !brief else { return L10n.text(resume ? "Resume" : "Play") }
+            let minutes = Int(ceil((duration - position) / 60))
+            return minutes >= 60 ? L10n.format("Resume (%d hr %d min left)", minutes / 60, minutes % 60) : L10n.format("Resume (%d min left)", minutes)
+        }
         guard resume else { return L10n.format("Start Season %d Ep %d", season, episode) }
         if duration > position && !brief { return L10n.format("Resume Season %d Ep %d (%d min remaining)", season, episode, Int(ceil((duration - position) / 60))) }
         return L10n.format("Resume Season %d Ep %d", season, episode)

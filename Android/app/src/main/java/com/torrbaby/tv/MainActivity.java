@@ -1410,8 +1410,13 @@ public class MainActivity extends Activity {
   private String playbackLabel(Library.Title title, Library.Asset asset) {
     if (asset == null) return "▶  Start";
     boolean resume = asset.position > 0 && !asset.watched;
-    if (!title.kind.equals("tv") || asset.episode <= 0) return L10n.t(resume ? "▶  Resume" : "▶  Play");
     int minutes = resume && asset.duration > asset.position ? (int) Math.ceil((asset.duration - asset.position) / 60) : 0;
+    if (!title.kind.equals("tv") || asset.episode <= 0) {
+      if (minutes <= 0) return L10n.t(resume ? "▶  Resume" : "▶  Play");
+      return "▶  " + (minutes >= 60
+          ? String.format(L10n.locale(), L10n.t("Resume (%d hr %d min left)"), minutes / 60, minutes % 60)
+          : String.format(L10n.locale(), L10n.t("Resume (%d min left)"), minutes));
+    }
     String key = !resume ? "Start Season %d Ep %d" : minutes > 0 ? "Resume Season %d Ep %d (%d min remaining)" : "Resume Season %d Ep %d";
     return "▶  " + String.format(L10n.locale(), L10n.t(key), asset.season, asset.episode, minutes);
   }

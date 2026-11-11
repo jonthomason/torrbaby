@@ -661,3 +661,5 @@ Add all	全部添加
 Nothing to add	没有可添加的内容
 Clear search	清除搜索
 Season %d	第 %d 季
+Resume (%d min left)	继续播放（剩余 %d 分钟）
+Resume (%d hr %d min left)	继续播放（剩余 %d 小时 %d 分钟）

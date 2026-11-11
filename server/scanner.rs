@@ -168,7 +168,7 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
                 tracked.insert(path.clone());
                 candidates.insert(path,json!({"torrent_hash":torrent["hash_string"],"torrent_present":true,"file_index":index,
                     "size":file["length"],"complete":package_complete && file["length"].as_u64().unwrap_or(0)>0 && file["bytes_completed"]==file["length"],
-                    "added_at":torrent["added_date"],"torrent_name":torrent["name"]}));
+                    "added_at":torrent["added_date"],"done_at":torrent["done_date"],"torrent_name":torrent["name"]}));
             }
         }
     }
@@ -291,6 +291,18 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
         }
         if let Some(previous) = previous {
             asset["added_at"] = previous["added_at"].clone();
+        }
+        // "Recently added" follows when a file became watchable, not when its torrent was
+        // queued. Files that were already in the library take their torrent's finish time.
+        let ready = |a: &Value| a["complete"] == true && a["available"] == true && a["library_ready"] == true;
+        if ready(&asset) && !asset["ready_at"].as_f64().is_some_and(|at| at > 0.0) {
+            let finished = info["done_at"].as_f64().filter(|at| *at > 0.0);
+            let known = previous.is_none_or(ready);
+            asset["ready_at"] = json!(match finished {
+                Some(at) if known => at.max(asset["added_at"].as_f64().unwrap_or(0.0)),
+                _ if previous.is_some_and(ready) => asset["added_at"].as_f64().unwrap_or_else(now),
+                _ => now(),
+            });
         }
         if asset["confirmed"] != true {
             if let Some((series, query, title)) = named_episode(&path) {
@@ -436,6 +448,36 @@ mod tests {
         fs::write(movies.join("Advert.MKV"),&matroska).unwrap();
         let rescanned = inventory(&config,assets,vec![]).assets;
         assert!(rescanned.iter().all(|a|a["container"] == "matroska"));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn recency_follows_when_a_file_became_watchable() {
+        let root = std::env::temp_dir().join(format!("torrbaby-ready-{}",uuid::Uuid::new_v4()));
+        let config: Config = serde_json::from_value(json!({
+            "listen_host":"127.0.0.1","listen_port":8765,"token_file":"unused","state_file":"unused",
+            "transmission_url":"http://127.0.0.1:9091","transmission_auth_file":null,
+            "source":root.join("Downloads"),"movies":root.join("Movies"),"tv":root.join("TV"),"poll_seconds":60
+        })).unwrap();
+        for directory in [&config.source,&config.movies,&config.tv] { fs::create_dir_all(directory).unwrap(); }
+        let torrent = |hash:&str,name:&str,done:u64,bytes:u64| json!({"hash_string":hash,"download_dir":config.movies,"name":name,
+            "added_date":1000,"done_date":done,"files":[{"name":name,"length":100,"bytes_completed":bytes}]});
+        let of = |assets:&[Value],hash:&str| assets.iter().find(|a|a["torrent_hash"]==hash).cloned().unwrap();
+        for name in ["Old.mkv","Slow.mkv"] { fs::write(Path::new(&config.movies).join(name),vec![0u8;100]).unwrap(); }
+        // Already in the library before this field existed: dated by the torrent's finish time.
+        let mut legacy = inventory(&config,vec![],vec![torrent("old","Old.mkv",5000,100)]).assets;
+        for asset in &mut legacy { asset.as_object_mut().unwrap().remove("ready_at"); }
+        let backfilled = inventory(&config,legacy,vec![torrent("old","Old.mkv",5000,100)]).assets;
+        assert_eq!(of(&backfilled,"old")["ready_at"],json!(5000.0));
+        // Queued long ago, finished just now: dated by the moment it became watchable.
+        let waiting = inventory(&config,vec![],vec![torrent("slow","Slow.mkv",0,50)]).assets;
+        assert!(of(&waiting,"slow")["ready_at"].is_null());
+        let before = now();
+        let finished = inventory(&config,waiting,vec![torrent("slow","Slow.mkv",0,100)]).assets;
+        let stamped = of(&finished,"slow")["ready_at"].as_f64().unwrap();
+        assert!(stamped >= before);
+        // Later scans keep the date.
+        let again = inventory(&config,finished,vec![torrent("slow","Slow.mkv",9_999_999_999,100)]).assets;
+        assert_eq!(of(&again,"slow")["ready_at"].as_f64().unwrap(),stamped);
         fs::remove_dir_all(root).unwrap();
     }
     #[test]

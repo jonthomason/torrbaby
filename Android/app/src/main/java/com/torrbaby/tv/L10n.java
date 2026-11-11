@@ -424,6 +424,8 @@ final class L10n {
     IDS.put("Rename torrent", R.string.ui_7d1e95ef4177);
     IDS.put("Resolution", R.string.ui_516aae52959d);
     IDS.put("Resume", R.string.ui_b3bd0b5a7049);
+    IDS.put("Resume (%d hr %d min left)", R.string.ui_59a3c5eeef11);
+    IDS.put("Resume (%d min left)", R.string.ui_4bb3c04af786);
     IDS.put("Resume Season %d Ep %d", R.string.ui_3fa8514e297a);
     IDS.put("Resume Season %d Ep %d (%d min remaining)", R.string.ui_2ca8dc78921f);
     IDS.put("Resume download", R.string.ui_b5ed1ec09384);

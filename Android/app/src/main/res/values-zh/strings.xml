@@ -413,6 +413,8 @@
     <string name="ui_7d1e95ef4177" formatted="false">重命名种子</string>
     <string name="ui_516aae52959d" formatted="false">分辨率</string>
     <string name="ui_b3bd0b5a7049" formatted="false">继续播放</string>
+    <string name="ui_59a3c5eeef11" formatted="false">继续播放（剩余 %d 小时 %d 分钟）</string>
+    <string name="ui_4bb3c04af786" formatted="false">继续播放（剩余 %d 分钟）</string>
     <string name="ui_3fa8514e297a" formatted="false">继续播放第 %d 季 第 %d 集</string>
     <string name="ui_2ca8dc78921f" formatted="false">继续播放第 %d 季 第 %d 集（剩余 %d 分钟）</string>
     <string name="ui_b5ed1ec09384" formatted="false">继续下载</string>
