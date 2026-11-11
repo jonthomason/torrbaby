@@ -166,6 +166,8 @@ impl Database {
                     })
                 })
                 .cloned()
+                // TMDB's special with this number is usually a different special.
+                .filter(|_| asset["season"] != 0)
                 .unwrap_or(json!({}));
             // Specials (season 0) are extras: listed with the bonus material, never in the
             // seasons or the next-episode flow. Release packs number specials differently
@@ -419,7 +421,7 @@ mod completion_tests {
         db.migrate_profiles(9)?;
         db.connection.execute("INSERT INTO organizer_state VALUES(1, ?)", ["{}"])?;
         db.connection.execute("INSERT INTO library_entities VALUES('show',?)",[r#"{"id":"show","kind":"tv","title":"Show",
-            "episodes":[{"season":0,"episode":22,"title":"Wrong TMDB Special"},{"season":1,"episode":1,"title":"Pilot"}]}"#])?;
+            "episodes":[{"season":0,"episode":22,"title":"Wrong TMDB Special"},{"season":0,"episode":2,"title":"Wrong","airdate":"2006-09-05","duration_minutes":3},{"season":1,"episode":1,"title":"Pilot"}]}"#])?;
         let assets = [("plan", "/Media/Show (2003) - S00E22 - The Plan (1080p BluRay x265 Celdra).mkv", Some(0), None),
             ("razor", "/Media/Show (2003) - S00E04-E05 - Razor (1080p BluRay x265 Celdra).mkv", Some(0), None),
             ("mini", "/Media/Show (2003) - S00E01 - The Lowdown.mkv", Some(0), Some("The Miniseries (Part 1)")),
@@ -438,6 +440,7 @@ mod completion_tests {
         // A special marked to watch first stays an episode of season 0, named from its file.
         assert_eq!((file("pilot-movie")["role"].clone(), file("pilot-movie")["season"].clone(), file("pilot-movie")["name"].clone()),
             (json!("main"), json!(0), json!("The Miniseries (2)")));
+        assert!(file("plan")["summary"] == "" && file("pilot-movie")["airdate"].is_null());
         for (id, name) in [("plan", "The Plan"), ("razor", "Razor"), ("mini", "The Miniseries (Part 1)")] {
             assert_eq!(file(id)["role"], "extra", "{id}");
             assert_eq!(file(id)["name"], name, "{id}");
