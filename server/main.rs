@@ -11,6 +11,7 @@ mod dolby;
 mod hls;
 mod lan;
 mod matroska;
+mod media_format;
 mod media_inventory;
 mod processing;
 mod media_packaging;

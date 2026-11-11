@@ -259,6 +259,18 @@ pub async fn serve(
                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             }
         }));
+        let formats = service.clone();
+        workers.push(tokio::spawn(async move {
+            loop {
+                // Brisk while files are waiting to be described, idle otherwise.
+                let pause = match crate::media_format::tick(&formats).await {
+                    Ok(0) => 60,
+                    Ok(_) => 1,
+                    Err(error) => { tracing::warn!(%error,"Media format pass failed"); 60 }
+                };
+                tokio::time::sleep(std::time::Duration::from_secs(pause)).await;
+            }
+        }));
         let background = service.clone();
         workers.push(tokio::spawn(async move {
             loop {

@@ -240,7 +240,13 @@ struct LibraryAsset: Decodable, Identifiable {
 }
 
 struct MediaTrackInfo: Decodable {
-    struct Track: Decodable { let language: String?; let codec: String?; let extractionSupported: Bool?; var sdh: Bool? = nil }
+    struct Track: Decodable {
+        let language: String?; let codec: String?; let extractionSupported: Bool?; var sdh: Bool? = nil
+        /// Audio only: the format's trade name ("Dolby Digital Plus") and speaker layout ("5.1", "stereo").
+        var format: String? = nil; var layout: String? = nil
+    }
+    struct Video: Decodable { let resolution: String?; let codec: String?; let hdr: String?; let bitRate: Double? }
+    var video: Video? = nil
     struct Prepared: Decodable { let id: String; let language: String?; let generated: Bool; let state: String; var kind: String? = nil; var sdh: Bool? = nil }
     let state: String
     let audioTracks: [Track]
@@ -268,7 +274,21 @@ struct MediaLanguagesView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let info, info.state == "ready" {
-                languageRow("Audio", icon: "speaker.wave.2", languages: info.audioTracks.map { name($0.language) }.filter { !$0.isEmpty })
+                if let video = info.video, !videoSummary(video).isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label("Video", systemImage: "film").font(.caption.weight(.semibold))
+                        Text(verbatim: videoSummary(video))
+                    }
+                }
+                let formats = audioSummaries(info.audioTracks)
+                if formats.isEmpty {
+                    languageRow("Audio", icon: "speaker.wave.2", languages: info.audioTracks.map { name($0.language) }.filter { !$0.isEmpty })
+                } else {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label("Audio", systemImage: "speaker.wave.2").font(.caption.weight(.semibold))
+                        ForEach(formats, id: \.self) { Text(verbatim: $0).fixedSize(horizontal: false, vertical: true) }
+                    }
+                }
                 VStack(alignment: .leading, spacing: 3) {
                     Label("Subtitles", systemImage: "captions.bubble").font(.caption.weight(.semibold))
                     let original = Array(Set(
@@ -292,6 +312,22 @@ struct MediaLanguagesView: View {
                 Label(LocalizedStringKey(info?.state == "failed" ? "Languages unavailable" : "Checking languages…"), systemImage: "captions.bubble")
             }
         }.font(.callout).foregroundStyle(.secondary)
+    }
+    /// "1080p · Dolby Vision · H.265 · 12.0 Mb/s"
+    private func videoSummary(_ video: MediaTrackInfo.Video) -> String {
+        let rate = video.bitRate.flatMap { $0 > 0 ? ($0 >= 1_000_000 ? String(format: "%.1f Mb/s", $0 / 1_000_000) : String(format: "%.0f kb/s", $0 / 1000)) : nil }
+        return [video.resolution, video.hdr, video.codec, rate].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+    /// One line per distinct track: "English · DTS-HD Master Audio 5.1". Empty until the server has read the formats.
+    private func audioSummaries(_ tracks: [MediaTrackInfo.Track]) -> [String] {
+        guard tracks.contains(where: { $0.format?.isEmpty == false }) else { return [] }
+        var seen = Set<String>()
+        return tracks.compactMap { track in
+            let layout: String? = switch track.layout { case "stereo": L10n.text("Stereo"); case "mono": L10n.text("Mono"); default: track.layout }
+            let format = [track.format, layout].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " ")
+            let line = [name(track.language), format].filter { !$0.isEmpty }.joined(separator: " · ")
+            return line.isEmpty || !seen.insert(line).inserted ? nil : line
+        }
     }
     private func languageRow(_ title: String, icon: String, languages: [String]) -> some View {
         VStack(alignment: .leading, spacing: 3) {

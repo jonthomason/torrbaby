@@ -70,6 +70,37 @@ final class MediaLanguages {
     return names.isEmpty() ? L10n.t("None") : String.join(" · ", names);
   }
 
+  /** "1080p · Dolby Vision · H.265 · 12.0 Mb/s" */
+  static String video(JSONObject video) {
+    if (video == null) return "";
+    List<String> parts = new ArrayList<>();
+    for (String key : new String[] {"resolution", "hdr", "codec"})
+      if (!video.isNull(key) && !video.optString(key).isEmpty()) parts.add(video.optString(key));
+    double rate = video.optDouble("bit_rate", 0);
+    if (rate >= 1_000_000) parts.add(String.format(Locale.US, "%.1f Mb/s", rate / 1_000_000));
+    else if (rate > 0) parts.add(String.format(Locale.US, "%.0f kb/s", rate / 1000));
+    return String.join(" · ", parts);
+  }
+
+  /** "English · DTS-HD Master Audio 5.1" per distinct track; empty until the server has read the formats. */
+  static String audioFormats(JSONArray tracks) {
+    java.util.LinkedHashSet<String> lines = new java.util.LinkedHashSet<>();
+    boolean described = false;
+    if (tracks != null) for (int i = 0; i < tracks.length(); i++) {
+      JSONObject track = tracks.optJSONObject(i);
+      if (track == null) continue;
+      String format = track.isNull("format") ? "" : track.optString("format");
+      String layout = track.isNull("layout") ? "" : track.optString("layout");
+      if (layout.equals("stereo")) layout = L10n.t("Stereo"); else if (layout.equals("mono")) layout = L10n.t("Mono");
+      if (!format.isEmpty()) described = true;
+      String language = name(track.optString("language", "und"));
+      String detail = (format + " " + layout).trim();
+      String line = language.isEmpty() ? detail : detail.isEmpty() ? language : language + " · " + detail;
+      if (!line.isEmpty()) lines.add(line);
+    }
+    return described ? String.join("  /  ", lines) : "";
+  }
+
   static List<String> lines(JSONObject info) {
     List<String> lines = new ArrayList<>();
     if (info == null || !info.optString("state").equals("ready")) {
@@ -77,7 +108,10 @@ final class MediaLanguages {
           ? L10n.t("Languages unavailable") : L10n.t("Checking languages…"));
       return lines;
     }
-    lines.add(L10n.t("Audio") + "  ·  " + tracks(info, "audio_tracks"));
+    String video = video(info.optJSONObject("video"));
+    if (!video.isEmpty()) lines.add(L10n.t("Video") + "  ·  " + video);
+    String formats = audioFormats(info.optJSONArray("audio_tracks"));
+    lines.add(L10n.t("Audio") + "  ·  " + (formats.isEmpty() ? tracks(info, "audio_tracks") : formats));
     String nativeLanguages = tracks(info, "subtitle_tracks");
     TreeSet<String> generated = new TreeSet<>();
     TreeSet<String> originals = new TreeSet<>();

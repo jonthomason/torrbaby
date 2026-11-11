@@ -54,6 +54,8 @@ codesign --force --options runtime --sign "$MAC_SIGNING_IDENTITY" "$APP/Contents
 cp "$ROOT/local-state/ffmpeg/ffmpeg" "$APP/Contents/MacOS/torrbaby-ffmpeg"
 cp "$ROOT/local-state/ffmpeg/COPYING.LGPLv2.1" "$APP/Contents/Resources/FFMPEG_LICENSE.txt"
 codesign --force --options runtime --sign "$MAC_SIGNING_IDENTITY" "$APP/Contents/MacOS/torrbaby-ffmpeg"
+cp "$ROOT/local-state/ffmpeg/ffprobe" "$APP/Contents/MacOS/torrbaby-ffprobe"
+codesign --force --options runtime --sign "$MAC_SIGNING_IDENTITY" "$APP/Contents/MacOS/torrbaby-ffprobe"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

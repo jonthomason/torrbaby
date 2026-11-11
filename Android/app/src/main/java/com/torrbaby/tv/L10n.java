@@ -638,6 +638,7 @@ final class L10n {
     IDS.put("Verify files", R.string.ui_d1f2c4d8c84b);
     IDS.put("Verify files?", R.string.ui_6f7d05c24127);
     IDS.put("Verifying", R.string.ui_536244f4cc64);
+    IDS.put("Video", R.string.ui_bc17c1f0179a);
     IDS.put("View source", R.string.ui_31a7604a3c74);
     IDS.put("Voice Transcribed", R.string.ui_f22eadf74236);
     IDS.put("Waiting", R.string.ui_33d30632848d);

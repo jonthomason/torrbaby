@@ -10,9 +10,10 @@ import org.json.*;
 /** Stream past probe details browsing never uses, without constructing their JSON tree. */
 final class CatalogJson {
   private static final Set<String> INFO = new HashSet<>(Arrays.asList(
-      "state", "audio_tracks", "subtitle_tracks", "prepared"));
+      "state", "audio_tracks", "subtitle_tracks", "prepared", "video"));
   private static final Set<String> TRACK = new HashSet<>(Arrays.asList(
-      "state", "language", "generated", "codec"));
+      "state", "language", "generated", "codec",
+      "format", "layout", "resolution", "hdr", "bit_rate"));
 
   static JSONObject parse(String raw) throws Exception {
     try (JsonReader reader = new JsonReader(new StringReader(raw))) {

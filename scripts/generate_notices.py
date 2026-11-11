@@ -23,5 +23,5 @@ for package in sorted(metadata['packages'], key=lambda p: (p['name'], p['version
         raise SystemExit(f"Review missing license text: {package['name']}")
     for path in dict.fromkeys(licenses):
         parts.append(f'\n--- {path.name} ---\n{path.read_text(errors="replace")}\n')
-parts.append(f"\n{'=' * 72}\nFFmpeg (bundled as the separate program torrbaby-ffmpeg)\nLicense: LGPL-2.1-or-later; built without GPL or non-free components.\nhttps://ffmpeg.org/\nThe exact source release and configure options are in scripts/build_ffmpeg.sh; the license text is FFMPEG_LICENSE.txt beside this file.\n")
+parts.append(f"\n{'=' * 72}\nFFmpeg (bundled as the separate programs torrbaby-ffmpeg and torrbaby-ffprobe)\nLicense: LGPL-2.1-or-later; built without GPL or non-free components.\nhttps://ffmpeg.org/\nThe exact source release and configure options are in scripts/build_ffmpeg.sh; the license text is FFMPEG_LICENSE.txt beside this file.\n")
 pathlib.Path(sys.argv[1]).write_text(''.join(parts))
