@@ -121,7 +121,7 @@ struct DownloadsView: View {
             defer { preparing = false }
             guard let item = await queue.preparePlayback(id) else { return }
             #if os(macOS)
-            openWindow(value: item)
+            MacPlaybackWindows.open(item, with: openWindow)
             #else
             playback = item
             #endif

@@ -126,7 +126,7 @@ struct TorrentDetail: View {
                 let link: PlaybackLink = try await store.request("POST", "/v1/torrents/\(t.id)/play", body: ["file_index": index, "client_id": store.clientId])
                 let selection = Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0, url: try store.endpoint(link.path), name: t.displayName)
                 #if os(macOS)
-                openWindow(value: selection)
+                MacPlaybackWindows.open(selection, with: openWindow)
                 #else
                 playback = selection
                 #endif

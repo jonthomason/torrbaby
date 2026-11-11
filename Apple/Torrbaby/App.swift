@@ -64,14 +64,20 @@ struct TorrbabyApp: App {
         }
         .menuBarExtraStyle(.menu)
         WindowGroup("Playback", for: Playback.self) { $playback in
-            if let playback {
+            // macOS can reopen a playback window from an earlier run; its stream is long gone,
+            // so such a window closes itself instead of showing a "couldn't play" error.
+            if let playback, MacPlaybackWindows.opened.contains(playback.id) {
                 PlayerScreen(playback: playback, store: store)
                     .preferredColorScheme(.dark)
+            } else {
+                StalePlaybackWindow()
             }
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 960, height: 540)
         .windowResizability(.contentMinSize)
+        // A playback window is not reopened at the next launch: its stream has ended, so it could only show an error.
+        .restorationBehavior(.disabled)
         #endif
     }
 }
@@ -336,6 +342,24 @@ private enum MacInstance {
         alert.informativeText = L10n.text("Check access to your Application Support folder and try again.")
         alert.runModal()
         exit(1)
+    }
+}
+#endif
+
+#if os(macOS)
+/// Playback windows opened during this run of the app.
+@MainActor enum MacPlaybackWindows {
+    static var opened = Set<Playback.ID>()
+    static func open(_ playback: Playback, with openWindow: OpenWindowAction) {
+        opened.insert(playback.id)
+        openWindow(value: playback)
+    }
+}
+private struct StalePlaybackWindow: View {
+    @Environment(\.dismissWindow) private var dismissWindow
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        Color.black.onAppear { dismiss() }
     }
 }
 #endif

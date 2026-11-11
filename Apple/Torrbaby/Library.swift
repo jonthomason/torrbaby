@@ -732,7 +732,11 @@ struct LibraryDetail: View {
                                 }
                             }
                         }.foregroundStyle(.white).padding(16).frame(minHeight: 380, alignment: .bottomLeading)
-                    }.clipShape(RoundedRectangle(cornerRadius: 12)).environment(\.colorScheme, .dark)
+                    }
+                    // On a wide window the backdrop keeps its 16:9 shape (up to a sensible height)
+                    // instead of being cropped to the height of the text over it.
+                    .modifier(WideHeroShape(wide: !stacksActions))
+                    .clipShape(RoundedRectangle(cornerRadius: 12)).environment(\.colorScheme, .dark)
                     // What the title is about comes first; the file's technical details follow.
                     if !title.summary.isEmpty {
                         Text(title.summary).font(.body).lineSpacing(5).frame(maxWidth: 900, alignment: .leading)
@@ -824,7 +828,7 @@ struct LibraryDetail: View {
                 if let id = downloads.readyDownload(assetID: asset.id, server: store.server),
                    let local = await downloads.preparePlayback(id) {
                     #if os(macOS)
-                    openWindow(value: local)
+                    MacPlaybackWindows.open(local, with: openWindow)
                     #else
                     playback = local
                     #endif
@@ -837,7 +841,7 @@ struct LibraryDetail: View {
                 let link = try await store.mediaPlaybackLink(asset: asset, titleID: titleID) { preparation = $0 }
                 let item = Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0, url: try store.endpoint(link.path), name: asset.season == nil ? title : title + " · " + (asset.name ?? ""), libraryAssetID: asset.id, libraryTitleID: titleID)
                 #if os(macOS)
-                openWindow(value: item)
+                MacPlaybackWindows.open(item, with: openWindow)
                 #else
                 playback = item
                 #endif
@@ -1032,6 +1036,12 @@ private struct TVFocusableRow: ViewModifier {
     }
 }
 #endif
+private struct WideHeroShape: ViewModifier {
+    let wide: Bool
+    func body(content: Content) -> some View {
+        if wide { content.aspectRatio(16.0 / 9.0, contentMode: .fit).frame(maxHeight: 640) } else { content }
+    }
+}
 struct LibraryFileManagement: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
