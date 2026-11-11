@@ -170,7 +170,8 @@ struct TVRootView: View {
                         Spacer()
                     }
                 }
-                HStack { Spacer(); TVLanguagePicker(onDown: path.isEmpty ? nil : { NotificationCenter.default.post(name: Notification.Name("TVFocusDetailPlay"), object: nil) }) }
+                HStack { Spacer(); TVLanguagePicker(onDown: path.isEmpty ? nil : { NotificationCenter.default.post(name: Notification.Name("TVFocusDetailPlay"), object: nil) },
+                                             onExit: path.isEmpty ? returnHome : { path.removeLast(); DispatchQueue.main.async { focusedTab = section } }) }
             }
             .frame(height: 56).padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 12)
             .focusSection()
@@ -269,11 +270,13 @@ private struct TVMonochromeButtonStyle: ButtonStyle {
 
 private struct TVLanguagePicker: View {
     var onDown: (() -> Void)? = nil
+    /// Back while the switch is focused over a pushed page: go back a page, never out of the app.
+    var onExit: (() -> Void)? = nil
     @ObservedObject private var language = InterfaceLanguage.shared
     var body: some View {
         if let onDown {
-            controls.onMoveCommand { direction in if direction == .down { onDown() } }
-        } else { controls }
+            controls.onMoveCommand { direction in if direction == .down { onDown() } }.onExitCommand(perform: onExit)
+        } else { controls.onExitCommand(perform: onExit) }
     }
     private var controls: some View {
         HStack(spacing: 2) {

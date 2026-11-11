@@ -1021,10 +1021,19 @@ private struct LibraryFileOperation: Decodable {
 }
 private struct LibraryFileOperations: Decodable { let operations: [LibraryFileOperation] }
 
+#if os(tvOS)
+private struct TVFocusableRow: ViewModifier {
+    @FocusState private var focused: Bool
+    func body(content: Content) -> some View {
+        content.background(.white.opacity(focused ? 0.14 : 0)).focusable().focusEffectDisabled().focused($focused)
+    }
+}
+#endif
 struct LibraryFileManagement: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let assetID: String
+    @Environment(\.dismiss) private var dismiss
     @State private var preview: LibraryFilePreview?
     @State private var operation: LibraryFileOperation?
     @State private var pendingAction: String?
@@ -1053,6 +1062,11 @@ struct LibraryFileManagement: View {
                                 Text(asset.label).font(.subheadline).lineLimit(3)
                                 Spacer(minLength: 0)
                             }.padding(16)
+                            #if os(tvOS)
+                            // Rows take focus so a long package scrolls down to its actions; otherwise
+                            // focus has nowhere to go but the language switch.
+                            .modifier(TVFocusableRow())
+                            #endif
                             if asset.id != preview.assets.last?.id { Divider().padding(.leading, 48) }
                         }
                     }.background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
@@ -1077,8 +1091,16 @@ struct LibraryFileManagement: View {
                 if error != nil || preview?.blockedReasons.isEmpty == false {
                     Button("Check again") { refreshID = UUID() }.disabled(submitting)
                 }
+                #if os(tvOS)
+                // Always something to focus: with nothing focusable (loading, or every action
+                // unavailable) the remote's Back button would leave the app instead of this page.
+                Button("Close") { dismiss() }.buttonStyle(MonoButtonStyle())
+                #endif
             }.padding(24).frame(maxWidth: 720, alignment: .leading).frame(maxWidth: .infinity)
         }.background(Theme.canvas).navigationTitle("Manage Files")
+        #if os(tvOS)
+        .onExitCommand { dismiss() }
+        #endif
         .confirmationDialog(pendingAction == "junk" ? "Move the entire package to Junk?" : "Permanently delete these files?",
                             isPresented: Binding(get: { pendingAction != nil }, set: { if !$0 { pendingAction = nil } }), titleVisibility: .visible) {
             let action = pendingAction ?? "delete"
