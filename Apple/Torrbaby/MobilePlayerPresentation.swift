@@ -106,6 +106,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
         var errorObservation: AnyCancellable?
         var preparationObservation: AnyCancellable?
         var completionObservation: AnyCancellable?
+        var closeObservation: AnyCancellable?
         var nextEpisodeObservation: AnyCancellable?
         weak var preparationSpinner: UIActivityIndicatorView?
         var backgroundObserver: NSObjectProtocol?
@@ -172,6 +173,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
                 alert.addAction(UIAlertAction(title: L10n.text("Close"), style: .default) { [weak self] _ in self?.close() })
                 controller.present(alert, animated: true)
             }
+            closeObservation = model.$closeRequested.filter { $0 }.sink { [weak self] _ in self?.close() }
             host.present(controller, animated: true)
         }
         func close(completion: (() -> Void)? = nil) {
@@ -188,7 +190,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
             if parent.playback?.id == playbackID { parent.playback = nil }
             model = nil; controller = nil; playbackID = nil; pictureInPicture = false
             errorObservation = nil
-            preparationObservation = nil; completionObservation = nil
+            preparationObservation = nil; completionObservation = nil; closeObservation = nil
             nextEpisodeObservation = nil
             preparationSpinner?.removeFromSuperview(); preparationSpinner = nil
             if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver); self.backgroundObserver = nil }

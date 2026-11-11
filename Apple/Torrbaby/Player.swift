@@ -34,6 +34,8 @@ final class PlaybackModel: ObservableObject {
     @Published var error: String?
     @Published var title: String
     @Published var endMessage: String?
+    /// A movie or special feature played to its end: nothing follows, so the player closes itself.
+    @Published var closeRequested = false
     @Published var preparingNext = false
     @Published var canAdvanceEpisode = false
     private var progressTicks = 0
@@ -161,7 +163,7 @@ final class PlaybackModel: ObservableObject {
                 let progressSaved = self.report(ended: true, reachedEnd: true)
                 self.player.pause()
                 #if os(tvOS)
-                await self.advanceTVEpisode()
+                await self.advanceTVEpisode(reachedEnd: reachedEnd)
                 #else
                 let queue = DownloadQueue.shared
                 let outgoing = self.playback
@@ -177,8 +179,10 @@ final class PlaybackModel: ObservableObject {
                             guard !self.finished, !Task.isCancelled, self.playback.id == outgoing.id else { return }
                             self.load(next)
                         } else if !self.finished {
-                            self.endMessage = episode ? queue.autoplayStopMessage(after: outgoing) : "Playback finished"
-                            self.player.replaceCurrentItem(with: nil)
+                            if episode {
+                                self.endMessage = queue.autoplayStopMessage(after: outgoing)
+                                self.player.replaceCurrentItem(with: nil)
+                            } else { self.closeRequested = true }
                         }
                         if progressSaved, let id = outgoing.localDownloadID { queue.finished(id) }
                     } catch is CancellationError {
@@ -186,15 +190,18 @@ final class PlaybackModel: ObservableObject {
                     } catch {
                         if !self.finished { self.error = "Couldn’t start the next episode. " + error.localizedDescription }
                     }
-                }
+                } else if reachedEnd { self.closeRequested = true }
                 #endif
         }
     }
     #if os(tvOS)
-    private func advanceTVEpisode() async {
+    private func advanceTVEpisode(reachedEnd: Bool) async {
         guard let titleID = playback.libraryTitleID, let assetID = playback.libraryAssetID,
               let title = store.library?.titles.first(where: { $0.id == titleID }), title.kind == "tv",
-              let current = title.assets.first(where: { $0.id == assetID }), current.episode != nil, current.role != "extra" else { return }
+              let current = title.assets.first(where: { $0.id == assetID }), current.episode != nil, current.role != "extra" else {
+            if reachedEnd { closeRequested = true }
+            return
+        }
         resumed = false
         guard let next = title.nextEpisode(after: assetID), next.complete else {
             endMessage = title.autoplayStopMessage(after: assetID)
@@ -457,6 +464,7 @@ struct PlayerScreen: View {
         .ignoresSafeArea()
         #endif
         .onChange(of: scenePhase) { _, _ in model.report() }
+        .onChange(of: model.closeRequested) { _, close in if close { dismiss() } }
         .onDisappear { model.stop() }
     }
 }

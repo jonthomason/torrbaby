@@ -208,7 +208,8 @@ public class PlaybackActivity extends Activity {
               finished = true;
               report(true);
               if (hasNextEpisode()) advanceNextEpisode();
-              else endDialog();
+              // Nothing follows: leave the player for the page it was started from.
+              else finish();
             }
           }
 
@@ -499,14 +500,6 @@ public class PlaybackActivity extends Activity {
     next.putStringArrayListExtra("queue_names", new ArrayList<>(names.subList(1, names.size())));
     startActivity(next);
     finish();
-  }
-
-  private void endDialog() {
-    new AlertDialog.Builder(this)
-        .setTitle(L10n.t("Finished watching"))
-        .setNegativeButton(L10n.t("Back to library"), (d, w) -> finish())
-        .setPositiveButton(L10n.t("Play again"), (d, w) -> restart(true))
-        .setOnCancelListener(d -> finish()).show();
   }
 
   private void restart(boolean beginning) {
