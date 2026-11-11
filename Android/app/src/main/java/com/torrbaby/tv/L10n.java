@@ -253,6 +253,7 @@ final class L10n {
     IDS.put("In Junk · delete after seeding", R.string.ui_9ea8b1168411);
     IDS.put("In Junk · finishing seeding", R.string.ui_1590b4aa625e);
     IDS.put("In your library", R.string.ui_00cc7207a45e);
+    IDS.put("Incompatible movie or TV show", R.string.ui_32c0f7a837e9);
     IDS.put("Individual torrent limits take precedence.", R.string.ui_fc2d046feac3);
     IDS.put("Initial or emoji", R.string.ui_8bfa1406b66d);
     IDS.put("Interface language", R.string.ui_9407e9ca65ce);

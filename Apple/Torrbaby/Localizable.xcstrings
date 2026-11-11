@@ -11804,6 +11804,40 @@
           }
         }
       }
+    },
+    "Incompatible movie or TV show": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Incompatible movie or TV show"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不兼容的电影或剧集"
+          }
+        }
+      }
+    },
+    "Its audio format (%@) can’t be played on Apple devices yet.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Its audio format (%@) can’t be played on Apple devices yet."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "其音频格式（%@）暂时无法在 Apple 设备上播放。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

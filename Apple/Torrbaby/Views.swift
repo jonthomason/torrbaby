@@ -380,9 +380,9 @@ struct RootView: View {
                 navigate(next)
             }.padding(.bottom, 12)
         }
-        .alert("Couldn’t complete that action", isPresented: Binding(get: { store.actionError != nil }, set: { if !$0 { store.actionError = nil } })) {
+        .alert(ActionAlert(store.actionError, fallbackTitle: "Couldn’t complete that action").title, isPresented: Binding(get: { store.actionError != nil }, set: { if !$0 { store.actionError = nil } })) {
             Button("OK") { store.actionError = nil }
-        } message: { Text(LocalizedStringKey(store.actionError ?? "")) }
+        } message: { Text(ActionAlert(store.actionError, fallbackTitle: "Couldn’t complete that action").message) }
         .task(id: phase) {
             if !store.configured { showConnect = true }
             #if !os(macOS)

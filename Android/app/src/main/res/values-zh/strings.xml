@@ -242,6 +242,7 @@
     <string name="ui_9ea8b1168411" formatted="false">已移入废弃区 · 做种后删除</string>
     <string name="ui_1590b4aa625e" formatted="false">已移入废弃区 · 完成做种中</string>
     <string name="ui_00cc7207a45e" formatted="false">已在媒体库中</string>
+    <string name="ui_32c0f7a837e9" formatted="false">不兼容的电影或剧集</string>
     <string name="ui_fc2d046feac3" formatted="false">单个种子的限制优先。</string>
     <string name="ui_8bfa1406b66d" formatted="false">首字母或表情符号</string>
     <string name="ui_9407e9ca65ce" formatted="false">界面语言</string>

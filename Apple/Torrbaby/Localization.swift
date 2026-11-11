@@ -170,3 +170,22 @@ struct MobileLibrarySearch: ViewModifier {
 private var interfaceCornerRadius: CGFloat {
     8
 }
+
+/// Wording for the shared action alert. A title whose audio Apple devices cannot decode gets
+/// its own title and a plain explanation instead of the server's internal message.
+struct ActionAlert {
+    let title: String
+    let message: String
+    init(_ error: String?, fallbackTitle: String) {
+        let prefix = "Remux codec not implemented yet: "
+        if let error, error.hasPrefix(prefix) {
+            let codec = String(error.dropFirst(prefix.count))
+            let names = ["A_DTS": "DTS", "A_TRUEHD": "Dolby TrueHD", "A_OPUS": "Opus", "A_FLAC": "FLAC", "A_VORBIS": "Vorbis"]
+            title = L10n.text("Incompatible movie or TV show")
+            message = L10n.format("Its audio format (%@) can’t be played on Apple devices yet.", names[codec] ?? codec.replacingOccurrences(of: "A_", with: ""))
+        } else {
+            title = L10n.text(fallbackTitle)
+            message = L10n.text(error ?? "")
+        }
+    }
+}

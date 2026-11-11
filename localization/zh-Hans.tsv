@@ -687,3 +687,5 @@ Extracting text subtitles	正在提取文本字幕
 Waiting for Wi-Fi	等待 Wi-Fi
 Allow downloads over cellular or hotspot	允许通过蜂窝网络或热点下载
 When off, downloads wait for Wi-Fi and never use cellular data, a Personal Hotspot or a Low Data Mode network.	关闭时，下载会等待 Wi-Fi，不会使用蜂窝数据、个人热点或低数据模式网络。
+Incompatible movie or TV show	不兼容的电影或剧集
+Its audio format (%@) can’t be played on Apple devices yet.	其音频格式（%@）暂时无法在 Apple 设备上播放。
