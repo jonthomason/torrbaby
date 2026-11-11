@@ -222,7 +222,7 @@ final class Store: ObservableObject {
     @Published var server: String = UserDefaults.standard.string(forKey: "server") ?? "" {
         didSet {
             if oldValue != server {
-                activeServer = nil
+                activeServer = nil; activeRouteTunnelled = false
                 status = nil
                 fallbackServer = savedFallback()
             }
@@ -235,6 +235,9 @@ final class Store: ObservableObject {
         }
     }
     @Published private(set) var activeServer: String?
+    /// The active route reached the home address through a tunnel (Tailscale
+    /// subnet routing), so the device is not actually on the home network.
+    @Published private(set) var activeRouteTunnelled = false
     private var connectionProbe: Task<DaemonStatus, Error>?
     // Marks that this device's fallback was saved under the LAN-first routing rules.
     // The Mac adopted them later than iOS, so it has its own marker for the one-time repair.
@@ -271,7 +274,7 @@ final class Store: ObservableObject {
         #endif
     }
     var usingFallback: Bool {
-        ServerRoutes.isFallback(primary: primaryAddress, active: activeServer)
+        ServerRoutes.isFallback(primary: primaryAddress, active: activeServer, tunnelled: activeRouteTunnelled)
     }
     var canStream: Bool { connected && !usingFallback }
     var connectionLabel: String { connected ? (usingFallback ? "Fallback" : "Connected") : "Offline" }
@@ -281,7 +284,7 @@ final class Store: ObservableObject {
         let value = ServerRoutes.normalized(address)
         if !value.isEmpty { _ = try ServerRoutes.endpoint(value, path: "/v1/status") }
         fallbackServer = value
-        activeServer = nil
+        activeServer = nil; activeRouteTunnelled = false
         status = nil
     }
     @Published var token: String = Credentials.read()
@@ -320,7 +323,7 @@ final class Store: ObservableObject {
                 if restored || (available && self.usingFallback) {
                     // A new network may make the primary route reachable again.
                     self.connectionError = URLError(.networkConnectionLost).localizedDescription
-                    self.activeServer = nil
+                    self.activeServer = nil; activeRouteTunnelled = false
                     await self.refresh()
                 }
             }
@@ -420,19 +423,24 @@ final class Store: ObservableObject {
             addresses = addresses.reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
         }
         let task = Task { @MainActor in
-            let (route, value): (String, DaemonStatus) = try await ServerRoutes.probe(addresses: addresses) { address in
+            let (route, probed): (String, (DaemonStatus, Bool)) = try await ServerRoutes.probe(addresses: addresses) { address in
                 let quick = retryPrimary && ServerRoutes.normalized(address) == ServerRoutes.normalized(primary)
-                return try await self.request("GET", "/v1/status", timeout: quick ? 2 : 4, address: address)
+                let observer = RouteObserver()
+                let value: DaemonStatus = try await self.request("GET", "/v1/status", timeout: quick ? 2 : 4, address: address, observer: observer)
+                return (value, observer.tunnelled)
             }
             guard self.server == identityServer, self.fallbackServer == fallback else { throw CancellationError() }
             self.activeServer = route
-            return value
+            // iOS can carry even home Wi-Fi traffic through Tailscale when subnet routes are
+            // on, so a tunnelled route only means "away" when no own interface is on that subnet.
+            self.activeRouteTunnelled = probed.1 && !ServerRoutes.sharesSubnet(route, interfaces: ServerRoutes.localInterfaces())
+            return probed.0
         }
         connectionProbe = task
         defer { connectionProbe = nil }
         return try await task.value
     }
-    func request<T: Decodable>(_ method: String, _ path: String, body: [String: Any]? = nil, timeout: TimeInterval? = nil, address: String? = nil) async throws -> T {
+    func request<T: Decodable>(_ method: String, _ path: String, body: [String: Any]? = nil, timeout: TimeInterval? = nil, address: String? = nil, observer: RouteObserver? = nil) async throws -> T {
         var request = URLRequest(url: try address.map { try ServerRoutes.endpoint($0, path: path) } ?? endpoint(path))
         if let timeout { request.timeoutInterval = timeout }
         request.httpMethod = method
@@ -443,7 +451,7 @@ final class Store: ObservableObject {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request, delegate: observer)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             throw APIError(message: payload?["error"] as? String ?? "The server could not complete the request.")
@@ -946,5 +954,20 @@ private extension View {
         #else
         self.textFieldStyle(.roundedBorder)
         #endif
+    }
+}
+
+/// Records which of this device's addresses a request left from.
+final class RouteObserver: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var local: String?
+    func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+        let address = metrics.transactionMetrics.last { $0.localAddress != nil }?.localAddress
+        lock.lock(); local = address; lock.unlock()
+    }
+    /// Left from a Tailscale address: the route goes through the tunnel.
+    var tunnelled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return local.map(ServerRoutes.isTailscaleIP) ?? false
     }
 }

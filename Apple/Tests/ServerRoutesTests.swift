@@ -51,6 +51,17 @@ import Foundation
             _ = try ServerRoutes.endpoint("http://user:secret@example.com", path: "/v1/status")
             fatalError("Embedded credentials accepted")
         } catch {}
+        assert(ServerRoutes.isTailscaleIP("100.101.5.9"))
+        assert(ServerRoutes.isTailscaleIP("fd7a:115c:a1e0::1"))
+        assert(!ServerRoutes.isTailscaleIP("192.168.1.23"))
+        assert(!ServerRoutes.isTailscaleIP("100.20.1.1"))
+        // The home address reached through a Tailscale subnet router is not home.
+        assert(ServerRoutes.isFallback(primary: primary, active: primary, tunnelled: true))
+        assert(!ServerRoutes.isFallback(primary: primary, active: primary, tunnelled: false))
+        let home: [(address: UInt32, mask: UInt32)] = [(0xC0A8_0117, 0xFFFF_FF00)] // 192.168.1.23/24
+        assert(ServerRoutes.sharesSubnet(primary, interfaces: home))
+        assert(!ServerRoutes.sharesSubnet(primary, interfaces: [(0x0A00_0005, 0xFF00_0000)]))
+        assert(!ServerRoutes.sharesSubnet(primary, interfaces: []))
         print("Route fallback, reuse, authorization, exhaustion and URL validation passed")
     }
 }
