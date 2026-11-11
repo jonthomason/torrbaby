@@ -12,6 +12,10 @@ pub struct Caption {
     pub id: String,
     pub language: String,
     pub text: String,
+    /// Short track name ("English Voice Transcribed"), stored as the QuickTime
+    /// track name. Empty for older jobs, whose identity must not change.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
 }
 pub enum Source {
     Indexed(Arc<crate::virtual_mkv::Reader>),
@@ -306,6 +310,9 @@ fn track(
     ensure!(scale > 0, "Invalid movie timescale");
     let mut result = atom(b"tkhd", &tk);
     result.extend(atom(b"mdia", &mdia));
+    if !c.name.is_empty() {
+        result.extend(atom(b"udta", &atom(b"name", c.name.as_bytes())));
+    }
     Ok(atom(b"trak", &result))
 }
 impl Reader {

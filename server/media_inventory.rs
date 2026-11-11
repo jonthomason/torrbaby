@@ -23,7 +23,8 @@ fn normalize_prepared(info:&mut Value) {
     let mut identified=Vec::new();
     if let Some(prepared)=info["prepared"].as_array_mut() {
         for job in prepared {
-            job["generated"]=json!(job["target"].as_str().is_some_and(|s|s!="auto") || job["extraction_method"]=="ocr");
+            job["generated"]=json!(generated(job));
+            job["kind"]=json!(crate::subtitle_jobs::kind(job["extraction_method"].as_str(),job["target"].as_str()));
             if job["state"]=="ready" && job["sidecar"].is_null() {
                 if let (Some(track),Some(source))=(job["track"].as_u64(),job["source"].as_str()) {
                     if source!="auto" {identified.push((track,source.to_owned()));}
@@ -183,12 +184,46 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
         planned.push((source_input.clone(),track,language,None));
         if language!=target || target=="auto" {planned.push((source_input,track,language,Some(target)));}
     }
+    let mut outcome=advance_jobs(s,asset,id,&planned)?;
+    if outcome.no_source {
+        // No usable English or Chinese subtitles: transcribe the English audio,
+        // then translate the transcript to Chinese like any English text track.
+        let report=|done:u64,total:u64|{
+            if let Ok(db)=s.db.lock() {
+                let detail=json!({"state":"running","stage":"transcription","completed_cues":done,"total_cues":total});
+                let _=db.connection.execute("UPDATE media_processing SET stage='transcription',detail=?,updated=? WHERE asset_id=? AND state='running'",rusqlite::params![detail.to_string(),now(),id]);
+            }
+        };
+        match crate::speech_subtitles::transcript(s,asset,&input,report).await? {
+            crate::speech_subtitles::Transcript::Ready(path) => {
+                let planned=vec![(path.clone(),1,"en",None),(path,1,"en",Some("zh-Hans"))];
+                outcome=advance_jobs(s,asset,id,&planned)?;
+            }
+            crate::speech_subtitles::Transcript::Rejected(reason) => {
+                outcome.progress["reason"]=json!(format!("{}; {reason}",outcome.progress["reason"].as_str().unwrap_or("No supported English or Chinese subtitle source")));
+            }
+            crate::speech_subtitles::Transcript::Deferred => {
+                outcome.complete=false;
+                outcome.progress=json!({"state":"queued","stage":"transcription","completed_cues":0,"total_cues":0});
+            }
+        }
+    }
+    let Outcome{prepared,jobs,complete,progress,..}=outcome;
+    info["prepared"]=json!(prepared);info["jobs"]=json!(jobs);
+    info["preparation_state"]=json!(if complete {"ready"}else if progress["state"]=="failed" {"failed"}else{"preparing"});
+    {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;save(&db,id,&revision,&info)?;}
+    Ok(progress)
+}
+
+struct Outcome { prepared:Vec<Value>, jobs:Vec<Value>, complete:bool, progress:Value, no_source:bool }
+/// Start or check the subtitle jobs for the planned sources, in order:
+/// extraction must finish before its translation starts.
+fn advance_jobs(s:&Service,asset:&Value,id:&str,planned:&[(std::path::PathBuf,u64,&'static str,Option<&'static str>)])->Result<Outcome> {
     let mut jobs=Vec::new();let mut prepared=Vec::new();let mut complete=true;
     let mut progress=json!({"state":"ready","stage":"subtitles","completed_cues":0,"total_cues":0});
     // Bitmap tracks found to hold no visible captions (placeholders) are no source.
     let mut empty_tracks=std::collections::HashSet::new();
-    // Sequential stages: extraction must finish before its translation starts.
-    for (path,track,language,target) in &planned {
+    for (path,track,language,target) in planned {
         if empty_tracks.contains(&(path.clone(),*track)) {continue;}
         let source=Some((*language).to_owned());let target=target.map(str::to_owned);
         let existing=s.subtitle_jobs.lookup(id,path,*track,&source,&target);
@@ -214,23 +249,27 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
         if !job["id"].is_null(){jobs.push(job["id"].clone());}
         if job["state"]=="ready" {
             let mut ready=job.clone();ready["language"]=ready["target"].as_str().or(ready["source"].as_str()).map(|v|json!(v)).unwrap_or(json!("und"));
-            ready["generated"]=json!(!ready["target"].is_null() || ready["extraction_method"]=="ocr");prepared.push(ready);
+            ready["generated"]=json!(generated(&ready));prepared.push(ready);
         } else if complete {
             progress=job;complete=false;
         }
     }
+    let mut no_source=false;
     if planned.is_empty() {
         // No supported source is explicit, never silently signed off as translated.
         progress["state"]=json!("not_applicable");
         progress["reason"]=json!("No supported English or Chinese subtitle source");
+        no_source=true;
     } else if planned.iter().all(|(path,track,..)| empty_tracks.contains(&(path.clone(),*track))) {
         progress["state"]=json!("not_applicable");
         progress["reason"]=json!("The English and Chinese subtitle tracks contain no visible captions");
+        no_source=true;
     }
-    info["prepared"]=json!(prepared);info["jobs"]=json!(jobs);
-    info["preparation_state"]=json!(if complete {"ready"}else if progress["state"]=="failed" {"failed"}else{"preparing"});
-    {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;save(&db,id,&revision,&info)?;}
-    Ok(progress)
+    Ok(Outcome{prepared,jobs,complete,progress,no_source})
+}
+/// Torrbaby made this track: a translation, OCR of images, or a transcript.
+fn generated(job:&Value)->bool {
+    job["target"].as_str().is_some_and(|s|s!="auto") || matches!(job["extraction_method"].as_str(),Some("ocr"|"speech"))
 }
 
 /// Compatibility endpoint: one row per file, backed by the same durable queue.

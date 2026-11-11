@@ -93,19 +93,24 @@ pub async fn process(s:&Service, asset:&Value)->Result<()> {
     }
     Ok(())
 }
-async fn scan(s:&Service,path:&Path,reader:Option<Arc<crate::virtual_captions::Reader>>,window:u32)->Result<Value> {
+/// Serve an indexed Matroska file as a virtual MP4 to a local analysis helper
+/// (AVFoundation cannot read Matroska). Ephemeral loopback-only capability: no
+/// media credentials in argv or files. Abort the task when the helper is done.
+pub(crate) async fn serve(reader:Arc<crate::virtual_captions::Reader>)->Result<(String,tokio::task::JoinHandle<()>)> {
     use axum::{Router,routing::any,http::{Method,HeaderMap},response::IntoResponse};
-    // Ephemeral loopback-only capability: no media credentials in argv or files.
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let key=uuid::Uuid::new_v4().to_string();
+    let url=format!("http://127.0.0.1:{}/{key}.mp4",listener.local_addr()?.port());
+    let route=format!("/{key}.mp4");
+    let router=Router::new().route(&route,any(move |method:Method,headers:HeaderMap| {let reader=reader.clone();async move {
+        match crate::api::virtual_response(reader,"credits",&method,&headers).await {Ok(r)=>r,Err(_)=>axum::http::StatusCode::BAD_REQUEST.into_response()}
+    }}));
+    Ok((url,tokio::spawn(async move {let _=axum::serve(listener,router).await;})))
+}
+async fn scan(s:&Service,path:&Path,reader:Option<Arc<crate::virtual_captions::Reader>>,window:u32)->Result<Value> {
     let mut task=None;
     let input=if let Some(reader)=reader {
-        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-        let key=uuid::Uuid::new_v4().to_string();
-        let url=format!("http://127.0.0.1:{}/{key}.mp4",listener.local_addr()?.port());
-        let route=format!("/{key}.mp4");
-        let router=Router::new().route(&route,any(move |method:Method,headers:HeaderMap| {let reader=reader.clone();async move {
-            match crate::api::virtual_response(reader,"credits",&method,&headers).await {Ok(r)=>r,Err(_)=>axum::http::StatusCode::BAD_REQUEST.into_response()}
-        }}));
-        task=Some(tokio::spawn(async move {let _=axum::serve(listener,router).await;}));url
+        let (url,server)=serve(reader).await?;task=Some(server);url
     } else {path.to_str().context("Invalid media path")?.to_owned()};
     let progress=std::env::temp_dir().join(format!("torrbaby-credits-{}.json",uuid::Uuid::new_v4()));
     let result=async {

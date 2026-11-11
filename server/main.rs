@@ -27,6 +27,7 @@ mod virtual_mkv;
 mod virtual_media;
 mod virtual_captions;
 mod scanner;
+mod speech_subtitles;
 mod storage;
 mod subtitle_jobs;
 mod subtitle_preferences;

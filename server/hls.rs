@@ -26,6 +26,8 @@ pub struct Caption {
     pub id: String,
     pub language: String,
     pub text: String,
+    /// Rendition name shown in the player's subtitle menu.
+    pub name: String,
 }
 pub struct Manager {
     root: PathBuf,
@@ -283,14 +285,12 @@ fn attach_captions(root: &Path, captions: &[Caption]) -> Result<()> {
                 duration.ceil() as u64
             ),
         )?;
-        let name = match c.language.as_str() {
-            "en" => "English",
-            "zh-Hans" => "简体中文",
-            _ => "Original",
-        };
+        // Names must be unique within the group; repeat a name only with a number.
+        let mut name: String = c.name.chars().filter(|ch| !ch.is_control() && *ch != '"').collect();
+        if name.trim().is_empty() { name = crate::subtitle_jobs::track_name(&c.language, "text"); }
+        if captions[..i].iter().any(|other| other.name == c.name) { name = format!("{name} {}", i + 1); }
         declarations += &format!(
-            "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subtitles\",NAME=\"{name} {}\",LANGUAGE=\"{}\",DEFAULT=NO,AUTOSELECT=YES,URI=\"subtitle-{i}.m3u8\"\n",
-            i + 1,
+            "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subtitles\",NAME=\"{name}\",LANGUAGE=\"{}\",DEFAULT=NO,AUTOSELECT=YES,URI=\"subtitle-{i}.m3u8\"\n",
             c.language
         );
     }

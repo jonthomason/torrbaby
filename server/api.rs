@@ -27,7 +27,7 @@ pub struct Service {
     started: Instant,
     preview: bool,
     torrents: Mutex<Option<(Instant, Vec<Value>)>>,
-    data_dir: PathBuf,
+    pub(crate) data_dir: PathBuf,
     http: reqwest::Client,
     scan_lock: tokio::sync::Mutex<()>,
     metadata: crate::metadata::Metadata,
@@ -670,7 +670,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
                 anyhow::ensure!(ids.len()<=8,"Too many subtitles");
                 for value in ids { let job=value.as_str().context("Invalid subtitle job")?;let status=s.subtitle_jobs.status(job)?;
                     anyhow::ensure!(status["asset_id"]==id && status["state"]=="ready","Subtitle does not belong to this title");
-                    captions.push(crate::virtual_captions::Caption {id:job.into(),language:status["target"].as_str().or(status["source"].as_str()).unwrap_or("und").into(),text:s.subtitle_jobs.artifact(job)?});
+                    captions.push(crate::virtual_captions::Caption {id:job.into(),language:status["target"].as_str().or(status["source"].as_str()).unwrap_or("und").into(),text:s.subtitle_jobs.artifact(job)?,name:caption_name(&body,captions.len(),&status)});
                 }
             }
             // By content: Matroska named .mp4 must not be streamed directly to AVFoundation.
@@ -712,6 +712,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
                     id: job_id.into(),
                     language,
                     text: s.subtitle_jobs.artifact(job_id)?,
+                    name: caption_name(&body, captions.len(), &status),
                 });
             }
             return s.hls.prepare(id, input, captions);
@@ -1713,6 +1714,15 @@ async fn file_response(
     Ok(response.body(body)?)
 }
 
+/// The track name for the `index`th requested subtitle job: the client's
+/// localized `subtitle_names` entry when it sent one, otherwise the server's
+/// English short name ("English Text", "Chinese Translated").
+fn caption_name(body: &Value, index: usize, status: &Value) -> String {
+    let supplied = body["subtitle_names"].get(index).and_then(Value::as_str)
+        .map(|n| n.trim().chars().filter(|c| !c.is_control() && *c != '"').take(64).collect::<String>())
+        .filter(|n| !n.is_empty());
+    supplied.unwrap_or_else(|| status["name"].as_str().unwrap_or("").to_owned())
+}
 pub(crate) async fn virtual_response(
     reader: Arc<crate::virtual_captions::Reader>,
     id: &str,

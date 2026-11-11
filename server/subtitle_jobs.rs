@@ -83,6 +83,21 @@ pub(crate) fn present<T>(result: std::io::Result<T>) -> std::io::Result<Option<T
         Err(error) => Err(error),
     }
 }
+/// What a prepared track is, for its short name: "text" (an original text
+/// track), "images" (read from bitmap subtitles), "speech" (transcribed from
+/// the audio) or "translated". Clients localize "English Text", "Chinese
+/// Translated" and so on from this and the track's language.
+pub(crate) fn kind(method: Option<&str>, target: Option<&str>) -> &'static str {
+    if target.is_some_and(|t| t != "auto") { return "translated"; }
+    match method { Some("ocr") => "images", Some("speech") => "speech", _ => "text" }
+}
+/// The English short name, used where the server names tracks itself (HLS
+/// renditions, virtual MP4 tracks) and the client did not supply one.
+pub(crate) fn track_name(language: &str, kind: &str) -> String {
+    let language = match language { "en" => "English", "zh-Hans" => "Chinese", _ => "Subtitles" };
+    let kind = match kind { "images" => "Images", "speech" => "Voice Transcribed", "translated" => "Translated", _ => "Text" };
+    format!("{language} {kind}")
+}
 fn valid(id: &str) -> bool {
     id.len() == 64
         && id
@@ -294,7 +309,7 @@ impl Manager {
         let ocr_progress=if job.state=="running" {fs::read(self.root.join(format!("{id}.ocr-progress"))).ok().and_then(|b|serde_json::from_slice::<Value>(&b).ok())} else {None};
         if let Some(p)=&ocr_progress {job.completed_cues=p["completed_cues"].as_u64().unwrap_or(0) as usize;job.total_cues=p["total_cues"].as_u64().unwrap_or(0) as usize;}
         Ok(
-            json!({"updated":job.updated,"extraction_method":job.extraction_method,"unreadable_cues":job.unreadable_cues,"stage":if ocr_progress.is_some(){"ocr"}else if job.target.is_some(){"translation"}else{"extraction"},"id":job.id,"asset_id":job.asset_id,"state":job.state,"error":job.error,
+            json!({"updated":job.updated,"extraction_method":job.extraction_method,"kind":kind(job.extraction_method.as_deref(),job.target.as_deref()),"name":track_name(job.target.as_deref().filter(|t|*t!="auto").or(job.source.as_deref()).unwrap_or("und"),kind(job.extraction_method.as_deref(),job.target.as_deref())),"unreadable_cues":job.unreadable_cues,"stage":if ocr_progress.is_some(){"ocr"}else if job.target.is_some(){"translation"}else{"extraction"},"id":job.id,"asset_id":job.asset_id,"state":job.state,"error":job.error,
             "sidecar":if job.input.extension().is_some_and(|e|e.eq_ignore_ascii_case("srt")) { job.input.file_name().and_then(|n|n.to_str()).map(|name|sha2::Sha256::digest(name.as_bytes()).iter().map(|b|format!("{b:02x}")).collect::<String>()) } else {None},
             "track":job.track,"source":job.source.as_deref().filter(|s|*s!="auto"),"target":job.target.as_deref().filter(|s|*s!="auto"),"completed_cues":job.completed_cues,"total_cues":job.total_cues,
             "path":if job.state=="ready" {Some(format!("/v1/subtitle-jobs/{id}.vtt"))} else {None}}),
@@ -523,7 +538,12 @@ impl Manager {
                 job.extraction_method=Some("ocr".into());self.save(&job)?;
                 let output=crate::ocr_subtitles::extract(&job.input,job.track,job.source.as_deref().unwrap_or("auto"),&self.root,&self.root.join(format!("{}.ocr-progress",job.id))).await?;
                 job.source=Some(output.language);job.unreadable_cues=output.unreadable_cues;output.cues
-            } else {job.extraction_method=Some("text".into());crate::native_subtitles::extract(&job.input,job.track).await?};
+            } else {
+                // Transcripts of a title's audio are text files the server wrote itself.
+                let speech=crate::speech_subtitles::is_transcript(self.root.parent().unwrap_or(&self.root),&job.input);
+                job.extraction_method=Some(if speech {"speech"} else {"text"}.into());
+                crate::native_subtitles::extract(&job.input,job.track).await?
+            };
             if job.source.as_deref()==Some("auto") {job.source=Some(crate::ocr_subtitles::detect_language(&cues).await?);}
             if job.target.as_deref()==Some("auto") {job.target=Some(if job.source.as_deref()==Some("en") {"zh-Hans"}else{"en"}.into());}
             self.save(&job)?;
@@ -633,6 +653,14 @@ impl Manager {
 #[cfg(test)]
 mod sidecar_job_tests {
     use super::*;
+    #[test]
+    fn prepared_tracks_have_short_descriptive_names() {
+        let cases=[(Some("text"),None,"en","English Text"),(Some("ocr"),None,"en","English Images"),
+            (Some("speech"),None,"en","English Voice Transcribed"),(Some("speech"),Some("zh-Hans"),"zh-Hans","Chinese Translated"),
+            (Some("ocr"),Some("en"),"en","English Translated"),(None,None,"zh-Hans","Chinese Text")];
+        for (method,target,language,name) in cases { assert_eq!(track_name(language,kind(method,target)),name); }
+        assert_eq!(kind(Some("text"),Some("auto")),"text","auto targets are unresolved, not translations");
+    }
     #[test]
     fn detected_language_reuses_legacy_auto_keyed_artifact() -> Result<()> {
         let root=std::env::temp_dir().join(format!("torrbaby-legacy-caption-{}",uuid::Uuid::new_v4()));
