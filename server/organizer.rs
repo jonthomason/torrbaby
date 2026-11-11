@@ -668,6 +668,11 @@ async fn auto_name(s: &Service, config: &Config, hash: &str) -> Result<()> {
                 else {
                     continue;
                 };
+                // Release packs number specials differently from TMDB, so a special's
+                // TMDB title would usually name another special. Leave its name alone.
+                if season == 0 {
+                    continue;
+                }
                 // Multi-episode files need an explicit mapping, not a guessed first episode.
                 let filename = path.file_stem().unwrap_or_default().to_string_lossy();
                 let markers = regex::Regex::new(
