@@ -1411,8 +1411,6 @@ public class MainActivity extends Activity {
   private void castPage(Library.Title title) {
     LinearLayout heading = Ui.row(this);
     Ui.pad(heading, 36, 18);
-    Ui.add(heading, Ui.button(this, L10n.t("Back"), this::onBackPressed), -2, 44);
-    Ui.gap(heading, 20);
     Ui.add(heading, Ui.title(this, "Cast · " + title.title, 26), -1, -2);
     Ui.add(content, heading, -1, -2);
     // Bound the data as well as the view count. ListView recycles its visible rows.
@@ -1539,18 +1537,8 @@ public class MainActivity extends Activity {
     Ui.add(body,episodes,-1,-2);
     detailEpisodes(episodes,t);
     if(t.kind.equals("tv"))episodeEntry(page, episodes, t);
+    // No on-screen Back: every remote has one.
     Ui.gap(body, 12);
-    Ui.add(
-        body,
-        Ui.button(
-            this,
-            L10n.t("Back to library"),
-            () -> {
-              detailId = "";
-              render();
-            }),
-        -2,
-        40);
   }
 
   /** Moving down from the hero or season selector lands on the next episode to watch. */

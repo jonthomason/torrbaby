@@ -334,14 +334,6 @@ struct RootView: View {
                     if !pageOwnsLanguageControl { languageControls }
                 }
                 .navigationDestination(for: String.self) { hash in TorrentDetail(hash: hash).navigationBarBackButtonHidden(ownsHistoryButtons).toolbar { historyControls; languageControls } }
-                .navigationDestination(for: LibraryShelfDestination.self) { route in
-                    LibraryBrowser(shelfIDs: route.ids).navigationTitle(route.name).navigationBarBackButtonHidden(ownsHistoryButtons).toolbar {
-                        historyControls
-                        #if os(iOS)
-                        languageControls
-                        #endif
-                    }
-                }
                 .navigationDestination(for: LibraryDestination.self) { route in LibraryDetail(titleID: route.id).navigationBarBackButtonHidden(ownsHistoryButtons).toolbar { historyControls; languageControls } }
                 .safeAreaInset(edge: .top) {
                     if store.offline {
@@ -352,7 +344,7 @@ struct RootView: View {
                                 Button("Downloads") { navigate(Location(section: .downloads)) }.font(.subheadline.weight(.semibold))
                             }
                             Button { Task { await store.refresh() } } label: { Image(systemName: "arrow.clockwise") }.accessibilityLabel("Try reconnecting")
-                        }.padding(12).background(.orange.opacity(0.12))
+                        }.padding(12).background(Color.orange.opacity(0.12)).background(Theme.canvas)  // opaque: content scrolls beneath it
                     }
                 }
             }

@@ -96,7 +96,6 @@ extension LibraryAsset {
 }
 
 struct LibraryDestination: Hashable { let id: String }
-struct LibraryShelfDestination: Hashable { let name: String; let ids: [String] }
 
 struct MediaLibrary: Decodable {
     let titles: [LibraryTitle]
@@ -349,7 +348,6 @@ struct LibraryBrowser: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     var kind: String? = nil
-    var shelfIDs: [String]? = nil
     var showDownloads: () -> Void = {}
     @State private var search = ""
     #if os(macOS)
@@ -359,7 +357,7 @@ struct LibraryBrowser: View {
     @State private var order = "Recently added"
     var titles: [LibraryTitle] {
         let result = store.library?.titles.filter { title in
-            (shelfIDs == nil || shelfIDs!.contains(title.id)) && (kind == nil || title.kind == kind) && (genre == "All genres" || title.genres.contains(genre)) &&
+            (kind == nil || title.kind == kind) && (genre == "All genres" || title.genres.contains(genre)) &&
             (search.isEmpty || title.title.localizedCaseInsensitiveContains(search) || title.genres.contains { $0.localizedCaseInsensitiveContains(search) })
         } ?? []
         return result.sorted {
@@ -369,28 +367,23 @@ struct LibraryBrowser: View {
         }
     }
     var genres: [String] { Array(Set((store.library?.titles ?? []).filter { kind == nil || $0.kind == kind }.flatMap(\.genres))).sorted() }
-    var browsing: Bool { shelfIDs == nil && kind == nil && search.isEmpty && genre == "All genres" }
-    private var homeShelves: [(name: String, items: [LibraryTitle], allItems: [LibraryTitle])] {
-        var result: [(name: String, items: [LibraryTitle], allItems: [LibraryTitle])] = []
-        var shown = Set<String>()
-        func append(_ name: String, _ candidates: [LibraryTitle]) {
-            let fresh = candidates.filter { !shown.contains($0.id) }
-            guard !fresh.isEmpty else { return }
-            result.append((name, fresh, candidates))
-            shown.formUnion(fresh.prefix(8).map(\.id))
-        }
+    var browsing: Bool { kind == nil && search.isEmpty && genre == "All genres" }
+    /// Home is the hero and its shelves, nothing else: no genre or sort controls.
+    private var isHome: Bool { kind == nil }
+    /// The same rows as the TV home page; a genre earns a row once it has seven titles.
+    private var homeShelves: [(name: String, items: [LibraryTitle])] {
+        var result: [(name: String, items: [LibraryTitle])] = []
+        func append(_ name: String, _ items: [LibraryTitle]) { if !items.isEmpty { result.append((name, items)) } }
         append("Continue watching", titles.filter { $0.isContinuing }.sorted { $0.continueWatchingAt > $1.continueWatchingAt })
         append("Recently added", titles)
         append("Movies", titles.filter { $0.kind == "movie" })
         append("TV Shows", titles.filter { $0.kind == "tv" })
-        let watched = titles.filter { $0.watched }.sorted { ($0.assets.map(\.lastPlayed).max() ?? 0) > ($1.assets.map(\.lastPlayed).max() ?? 0) }
-        if !watched.isEmpty { result.append(("Recently watched", watched, watched)) }
-        for genre in genres { append(genre, titles.filter { $0.genres.contains(genre) }) }
+        append("Recently watched", titles.filter { $0.watched }.sorted { ($0.assets.map(\.lastPlayed).max() ?? 0) > ($1.assets.map(\.lastPlayed).max() ?? 0) })
+        for genre in genres {
+            let matches = titles.filter { $0.genres.contains(genre) }
+            if matches.count >= 7 { append(genre, matches) }
+        }
         return result
-    }
-    private var remainingTitles: [LibraryTitle] {
-        let shown = Set(homeShelves.flatMap { $0.items.prefix(8).map(\.id) })
-        return titles.filter { !shown.contains($0.id) }
     }
     private var genreMenu: some View {
         Menu {
@@ -423,7 +416,7 @@ struct LibraryBrowser: View {
             }
         }.padding(.horizontal, 10).frame(height: 38).background(Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius))
         return ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) { field.frame(minWidth: 260); genreMenu; sortMenu }
+            if isHome { field } else { HStack(spacing: 10) { field.frame(minWidth: 260); genreMenu; sortMenu } }
             VStack(alignment: .leading, spacing: 8) { field; HStack(spacing: 10) { genreMenu; sortMenu; Spacer(minLength: 0) } }
         }.buttonStyle(MonoButtonStyle())
     }
@@ -456,7 +449,7 @@ struct LibraryBrowser: View {
                     }.buttonStyle(.plain)
                 }
                 #if !os(iOS)
-                if !titles.isEmpty { HStack(spacing: 10) { genreMenu; sortMenu; Spacer(minLength: 0) }.buttonStyle(MonoButtonStyle()).fixedSize(horizontal: false, vertical: true) }
+                if !isHome && !titles.isEmpty { HStack(spacing: 10) { genreMenu; sortMenu; Spacer(minLength: 0) }.buttonStyle(MonoButtonStyle()).fixedSize(horizontal: false, vertical: true) }
                 #endif
                 if !store.offline, let error = store.libraryError ?? store.library?.error { Text(L10n.text(error)).font(.callout).foregroundStyle(.orange) }
                 if titles.isEmpty {
@@ -475,14 +468,8 @@ struct LibraryBrowser: View {
                     } else {
                         ContentUnavailableView("Your library", systemImage: "film.stack", description: Text(LocalizedStringKey(search.isEmpty ? "No movies or shows yet." : "No titles match your search.")))
                     }
-                } else if browsing && order == "Recently added" {
-                    ForEach(homeShelves, id: \.name) { section in shelf(section.name, section.items, allItems: section.allItems) }
-                    if !remainingTitles.isEmpty {
-                        Text("More to explore").font(.title2.bold())
-                        LazyVGrid(columns: posterColumns, alignment: .leading, spacing: compactLibrary ? 16 : 28) {
-                            ForEach(remainingTitles) { title in poster(title) }
-                        }
-                    }
+                } else if browsing {
+                    ForEach(homeShelves, id: \.name) { section in shelf(section.name, section.items) }
                 } else {
                     LazyVGrid(columns: posterColumns, alignment: .leading, spacing: compactLibrary ? 16 : 28) {
                         ForEach(titles) { title in poster(title) }
@@ -510,17 +497,13 @@ struct LibraryBrowser: View {
         .searchable(text: $search, prompt: "Search movies and TV shows")
         #endif
     }
-    @ViewBuilder func shelf(_ name: String, _ items: [LibraryTitle], allItems: [LibraryTitle]? = nil) -> some View {
+    @ViewBuilder func shelf(_ name: String, _ items: [LibraryTitle]) -> some View {
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: compactLibrary ? 8 : 14) {
-                HStack {
-                    Text(L10n.text(name)).font(compactLibrary ? .headline : .title2.bold())
-                    Spacer()
-                    NavigationLink(value: LibraryShelfDestination(name: name, ids: (allItems ?? items).map(\.id))) { Text("See All").font(.subheadline.weight(.semibold)) }
-                }
+                Text(L10n.text(name)).font(compactLibrary ? .headline : .title2.bold())
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: compactLibrary ? 10 : 18) {
-                        ForEach(Array(items.prefix(8))) { title in
+                        ForEach(items) { title in
                             if compactLibrary {
                                 poster(title, continuing: name == "Continue watching").containerRelativeFrame(.horizontal, count: 3, spacing: 10)
                             } else { poster(title, continuing: name == "Continue watching").frame(width: 175) }
