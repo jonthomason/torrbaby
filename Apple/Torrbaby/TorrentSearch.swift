@@ -841,7 +841,7 @@ private struct TorrentSearchRow: View {
     #endif
     private var isBT: Bool { item.sources.contains { $0.provider == "1lou" } }
     private var displayedSize: String { item.size.isEmpty ? (fetchedSize ?? "") : item.size }
-    private var metadata: String { [item.edition, item.quality].filter { !$0.isEmpty }.joined(separator: " · ") }
+    private var metadata: String { [item.edition, item.quality, estimatedBitrate].filter { !$0.isEmpty }.joined(separator: " · ") }
     @State private var facts: SearchReleaseFacts?
     /// The picture's likely bitrate: the release's size over its running time, less a typical figure for its kind of audio.
     private var estimatedBitrate: String {
@@ -866,7 +866,7 @@ private struct TorrentSearchRow: View {
         }
         let video = max(total * 0.5, total - audio)
         guard (150_000...200_000_000).contains(video) else { return "" }
-        return video >= 9_950_000 ? String(format: "≈ %.0f Mb/s", video / 1_000_000) : video >= 1_000_000 ? String(format: "≈ %.1f Mb/s", video / 1_000_000) : String(format: "≈ %.0f kb/s", video / 1000)
+        return video >= 9_950_000 ? String(format: "≈\u{00A0}%.0f\u{00A0}Mb/s", video / 1_000_000) : video >= 1_000_000 ? String(format: "≈\u{00A0}%.1f\u{00A0}Mb/s", video / 1_000_000) : String(format: "≈\u{00A0}%.0f\u{00A0}kb/s", video / 1000)
     }
     private var tracks: String { [item.hints.audioLabel, item.languages].filter { !$0.isEmpty }.joined(separator: " · ") }
     var body: some View {
@@ -882,9 +882,6 @@ private struct TorrentSearchRow: View {
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                         if !displayedSize.isEmpty {
                             Text(verbatim: displayedSize).foregroundStyle(Theme.accent)
-                        }
-                        if !estimatedBitrate.isEmpty {
-                            Text(verbatim: estimatedBitrate).foregroundStyle(Theme.accent)
                         }
                         if item.seeders != nil {
                             Text(item.availability).foregroundStyle(item.seeders == 0 ? Color.orange : Theme.accent)

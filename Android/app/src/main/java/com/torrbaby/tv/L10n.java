@@ -309,6 +309,7 @@ final class L10n {
     IDS.put("Monospace", R.string.ui_216fcddff2f9);
     IDS.put("More", R.string.ui_4bab2d8fe13f);
     IDS.put("More to explore", R.string.ui_f49ac09d3a35);
+    IDS.put("More…", R.string.ui_4ac8baf107e9);
     IDS.put("Most seeds", R.string.ui_da76cfbbf86f);
     IDS.put("Move the entire package to Junk?", R.string.ui_f1f9e40dfd55);
     IDS.put("Move this package to Junk?", R.string.ui_960728c07953);

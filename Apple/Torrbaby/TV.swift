@@ -318,6 +318,7 @@ private struct TVMediaDetail: View {
     @State private var didAutoPlay = false
     @FocusState private var heroFocused: Bool
     @FocusState private var moreFocused: Bool
+    @FocusState private var summaryFocused: Bool
     @FocusState private var episodeFocus: String?
     @FocusState private var seasonFocus: Int?
     @State private var season: Int?
@@ -357,16 +358,19 @@ private struct TVMediaDetail: View {
                         .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(heroFocused || moreFocused ? 0.65 : 0), lineWidth: 2))
                         .scaleEffect(heroFocused || moreFocused ? 1.006 : 1)
                     VStack(alignment: .leading, spacing: 38) {
+                        if !title.summary.isEmpty {
+                            // A stop on the way down, so the description can be read; a show's opens in full while focused.
+                            Text(title.summary).font(.system(size: 27)).lineSpacing(7)
+                                .lineLimit(title.kind == "tv" && !summaryFocused ? 3 : nil)
+                                .frame(maxWidth: 1300, alignment: .leading)
+                                .padding(.horizontal, 18).padding(.vertical, 14)
+                                .background(.white.opacity(summaryFocused ? 0.1 : 0), in: RoundedRectangle(cornerRadius: 14))
+                                .padding(.horizontal, -18).padding(.vertical, -14)
+                                .focusable().focusEffectDisabled().focused($summaryFocused)
+                                .animation(.easeOut(duration: 0.15), value: summaryFocused)
+                        }
                         if let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
                             MediaLanguagesView(info: asset.mediaInfo)
-                        }
-                        if !title.summary.isEmpty {
-                            if title.kind == "tv" {
-                                Text(title.summary).font(.system(size: 27)).lineSpacing(7).lineLimit(3).frame(maxWidth: 1300, alignment: .leading)
-                            } else {
-                                Text(title.summary).font(.system(size: 27)).lineSpacing(7).frame(maxWidth: 1300, alignment: .leading)
-                                    .focusable().focusEffectDisabled()
-                            }
                         }
                         if title.kind != "tv", let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
                             VStack(alignment: .leading, spacing: 8) {
@@ -389,7 +393,8 @@ private struct TVMediaDetail: View {
                         let tabs = title.kind == "tv" && !extras.isEmpty ? seasons + [LibraryTitle.extrasTab] : seasons
                         let chosen = season.flatMap { tabs.contains($0) ? $0 : nil }
                         let selectedSeason = chosen ?? title.resume?.season ?? title.playable.first(where: { !$0.watched && ($0.season ?? 0) > 0 })?.season ?? seasons.first(where: { $0 > 0 }) ?? seasons.first
-                        if title.kind == "tv" && tabs.count > 1 {
+                        // Shown even for a single season, so every show's page has the same shape.
+                        if title.kind == "tv" && !tabs.isEmpty {
                             ScrollView(.horizontal) {
                                 HStack(spacing: 25) {
                                     ForEach(tabs, id: \.self) { number in
@@ -497,7 +502,7 @@ private struct TVMoreActions: View {
     @State private var showFiles = false
     var body: some View {
         Button { showMenu = true } label: {
-            Label("More", systemImage: "ellipsis").font(.headline)
+            Text("More…").font(.headline)
         }.buttonStyle(TVMonochromeButtonStyle())
         .confirmationDialog(title.title, isPresented: $showMenu, titleVisibility: .visible) {
             if title.cast?.isEmpty == false { Button("Cast") { showCast = true } }
