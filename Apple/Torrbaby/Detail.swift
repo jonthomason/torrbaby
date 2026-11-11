@@ -25,7 +25,6 @@ struct TorrentDetail: View {
                                 Text("\(bytes(t.size)) · \(t.files.count) files").font(.caption).foregroundStyle(Theme.muted)
                             }
                         }
-                        MetadataCard(torrent: t)
                         if t.error != 0 { Label(t.errorString, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange) }
                         Card {
                             VStack(alignment: .leading, spacing: 16) {
@@ -45,6 +44,8 @@ struct TorrentDetail: View {
                             HStack(spacing: 12) { actions(t) }
                             VStack(alignment: .leading, spacing: 12) { actions(t) }
                         }.disabled(store.busy || !store.connected)
+                        // Progress and controls come first; what the library made of it follows.
+                        MetadataCard(torrent: t)
                         TransferHistoryView(compact: false, torrentHash: t.id, uploadOnly: t.completed)
                         if let job = store.status?.jobs[hash] {
                             Card {
@@ -105,6 +106,11 @@ struct TorrentDetail: View {
         Button { store.action(t, t.status == 0 ? "start" : "stop") } label: {
             Label(LocalizedStringKey(t.status == 0 ? "Resume" : "Pause"), systemImage: t.status == 0 ? "play.fill" : "pause.fill")
         }.buttonStyle(MonoButtonStyle(prominent: true)).foregroundStyle(Theme.onAccent)
+        // Jumps the queue: starts now, ahead of other downloads. Also in the row's long-press menu.
+        if !t.completed {
+            Button { store.action(t, "prioritize") } label: { Label("Download first", systemImage: "arrow.up.to.line") }
+                .buttonStyle(MonoButtonStyle()).disabled(store.busy || !store.connected)
+        }
         Menu {
             Button("Verify downloaded data") { store.action(t, "verify") }
             Button("Reannounce to trackers") { store.action(t, "reannounce") }
