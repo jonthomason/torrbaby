@@ -153,8 +153,17 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
     let input=crate::api::media_file(s,id,0).await?;
     let revision=crate::subtitle_jobs::revision(&input)?;
     let mut info={let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;cached(&db,id)?};
+    // A sidecar renamed since the scan (e.g. by the organizer alongside its video)
+    // makes the cached inventory stale: rescan rather than fail to find the track.
+    let sidecars_moved = if info["state"]=="ready" {
+        let listed:Vec<String>=info["subtitle_tracks"].as_array().into_iter().flatten()
+            .filter(|t|t["sidecar"]==true).filter_map(|t|t["id"].as_str().map(str::to_owned)).collect();
+        let media=input.clone();
+        !listed.is_empty() && tokio::task::spawn_blocking(move ||crate::subtitles::discover(&media)
+            .map(|found|listed.iter().any(|id|!found.iter().any(|t|&t.id==id))).unwrap_or(true)).await?
+    } else {false};
     // Version 4: sidecars in legacy encodings are labelled and advert-only files dropped.
-    if info["state"]!="ready" || info["language_inventory_version"].as_u64().is_none_or(|v|v<INVENTORY_VERSION) {
+    if sidecars_moved || info["state"]!="ready" || info["language_inventory_version"].as_u64().is_none_or(|v|v<INVENTORY_VERSION) {
         let inventory=crate::native_subtitles::tracks(&input).await?;
         let sidecar_input=input.clone();
         let sidecars=tokio::task::spawn_blocking(move ||crate::subtitles::discover(&sidecar_input)).await??;
