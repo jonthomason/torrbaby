@@ -110,6 +110,25 @@ fn torrent_copy(path: &Path, source: &Path, incomplete: Option<&Path>, names: &H
     (0..parts.len()).any(|start| names.contains(&parts[start..].iter().collect::<PathBuf>()))
 }
 
+/// Whether a subtitle file belonging to this video (same folder, same name, as
+/// `subtitles::discover` pairs them) is still downloading.
+fn awaiting_sidecar(video: &Path, files: &[Value]) -> bool {
+    let Some(stem) = video.file_stem().and_then(|s| s.to_str()) else { return false };
+    files.iter().any(|file| {
+        let Some(other) = file["name"].as_str().map(Path::new) else { return false };
+        other.parent() == video.parent()
+            && other.extension().is_some_and(|e| e.eq_ignore_ascii_case("srt"))
+            && other.file_stem().and_then(|s| s.to_str()).is_some_and(|s| s == stem || s.starts_with(&format!("{stem}.")))
+            && file["bytes_completed"] != file["length"]
+    })
+}
+/// Where a file can be read for preparation: its library path once complete, or
+/// its finished copy in a package that is still downloading.
+pub fn work_path(asset: &Value) -> Option<PathBuf> {
+    if asset["complete"] == true { asset["path"].as_str().map(PathBuf::from) }
+    else { asset["early_path"].as_str().map(PathBuf::from) }
+}
+
 fn package_complete(files: &[Value]) -> bool {
     !files.is_empty() && files.iter().all(|file| {
         file["length"].as_u64().is_some_and(|length|
@@ -166,8 +185,16 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
                 torrent_names.insert(PathBuf::from(name));
                 if !path.is_file() { unfinished_names.insert(PathBuf::from(name)); }
                 tracked.insert(path.clone());
+                // A finished file of a package still downloading can be prepared where
+                // it sits, unless one of its own subtitle files has yet to arrive.
+                let finished = file["length"].as_u64().unwrap_or(0)>0 && file["bytes_completed"]==file["length"];
+                let early = (!package_complete && finished && !awaiting_sidecar(Path::new(name), files)).then(|| {
+                    [Some(Path::new(root)), incomplete].into_iter().flatten().map(|base| base.join(name))
+                        .find(|at| fs::symlink_metadata(at).is_ok_and(|m| m.is_file() && Some(m.len()) == file["length"].as_u64()))
+                }).flatten();
                 candidates.insert(path,json!({"torrent_hash":torrent["hash_string"],"torrent_present":true,"file_index":index,
-                    "size":file["length"],"complete":package_complete && file["length"].as_u64().unwrap_or(0)>0 && file["bytes_completed"]==file["length"],
+                    "early_path":early,
+                    "size":file["length"],"complete":package_complete && finished,
                     "added_at":torrent["added_date"],"done_at":torrent["done_date"],"torrent_name":torrent["name"]}));
             }
         }
@@ -564,6 +591,24 @@ mod tests {
         assert!(!downloading.assets.iter().any(|a|a["path"].as_str().unwrap().contains("/Incomplete/")));
         let tracked = downloading.assets.iter().find(|a|a["file_index"]==0).unwrap().clone();
         assert_eq!((tracked["available"].clone(),tracked["complete"].clone()),(json!(false),json!(false)));
+        // The finished file can be prepared where it sits, once its own subtitles are down.
+        assert!(tracked["early_path"].is_null(), "unknown without the incomplete directory");
+        let early = |files: Value| {
+            let mut torrent = torrent.clone(); torrent["files"] = files;
+            let found = inventory_with(&config,vec![],vec![torrent],Some(&source.join("Incomplete")));
+            found.assets.iter().find(|a|a["file_index"]==0).unwrap().clone()
+        };
+        let other = json!({"name":"007.Set/other.mp4","length":100,"bytes_completed":0});
+        let ready = early(json!([{"name":name,"length":100,"bytes_completed":100},other]));
+        assert_eq!(work_path(&ready), Some(incomplete.clone()));
+        assert_eq!((ready["available"].clone(),ready["complete"].clone()),(json!(false),json!(false)));
+        let subtitle = |file: &str, done: u64| json!({"name":format!("007.Set/11.Moonraker.1979/{file}"),"length":10,"bytes_completed":done});
+        let waiting = early(json!([{"name":name,"length":100,"bytes_completed":100},other,subtitle("007.James.Bond.Moonraker.1979.en.srt",3)]));
+        assert_eq!(work_path(&waiting), None, "its subtitle file is still downloading");
+        let arrived = early(json!([{"name":name,"length":100,"bytes_completed":100},other,subtitle("007.James.Bond.Moonraker.1979.en.srt",10),subtitle("Another.Film.srt",0)]));
+        assert_eq!(work_path(&arrived), Some(incomplete.clone()), "another video's subtitles do not hold it back");
+        let partial = early(json!([{"name":name,"length":100,"bytes_completed":60},other]));
+        assert_eq!(work_path(&partial), None);
         // Records left by earlier builds: an automatic match and an explicit one.
         let stale = json!({"id":"asset-stale","path":incomplete,"status":"review","available":true,"complete":false,"role":"main"});
         let chosen = json!({"id":"asset-chosen","path":incomplete,"status":"matched","confirmed":true,"entity_id":"tmdb:movie:698","available":true,"complete":false,"role":"main"});

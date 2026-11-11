@@ -13,7 +13,7 @@ pub fn cached_with(db: &Database, id: &str, jobs: Option<&crate::subtitle_jobs::
         "SELECT revision,document FROM media_inventory WHERE asset_id=?", [id], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
     if let Some((revision, text)) = row {
         let asset = db.asset(id)?;
-        if asset["path"].as_str().and_then(|p| crate::subtitle_jobs::revision(Path::new(p)).ok()).as_deref() == Some(&revision) {
+        if crate::scanner::work_path(&asset).and_then(|p| crate::subtitle_jobs::revision(&p).ok()).as_deref() == Some(&revision) {
             let mut info:Value=serde_json::from_str(&text)?;
             if let (Some(jobs),Some(prepared))=(jobs,info["prepared"].as_array_mut()) {
                 for job in prepared.iter_mut().filter(|j|j["state"]=="ready" && j["target"].is_null() && j["sdh"].is_null()) {
@@ -224,7 +224,7 @@ pub async fn list_waiting(s:&Service)->Result<usize> {
     let mut done=0;
     for (id,revision) in waiting {
         if let Ok(mut listed)=LISTED.lock() {listed.insert(format!("{id}:{revision}"));}
-        let Ok(input)=crate::api::media_file(s,&id,0).await else{continue};
+        let Ok(input)=crate::api::processing_file(s,&id).await else{continue};
         if crate::subtitle_jobs::revision(&input).ok().as_deref()!=Some(revision.as_str()) {continue;}
         let mut info=match read_tracks(&input).await {
             Ok(info)=>info,
@@ -242,7 +242,7 @@ pub async fn list_waiting(s:&Service)->Result<usize> {
 /// scheduling; artifact jobs are implementation details, never queue membership.
 pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
     let id=asset["id"].as_str().context("Missing asset ID")?;
-    let input=crate::api::media_file(s,id,0).await?;
+    let input=crate::api::processing_file(s,id).await?;
     let revision=crate::subtitle_jobs::revision(&input)?;
     let mut info={let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;cached(&db,id)?};
     // A sidecar renamed since the scan (e.g. by the organizer alongside its video)

@@ -1360,6 +1360,18 @@ pub(crate) fn checked_path(root: &std::path::Path, relative: &str) -> Result<Pat
     Ok(path)
 }
 
+/// The file to prepare for an asset: as `media_file`, or the finished copy of a
+/// file whose package is still downloading. Never used to serve playback.
+pub(crate) async fn processing_file(s: &Service, id: &str) -> Result<PathBuf> {
+    let asset = s.db.lock().map_err(|_| anyhow::anyhow!("Database lock failed"))?.asset(id)?;
+    if asset["complete"] == true { return media_file(s, id, 0).await; }
+    let path = crate::scanner::work_path(&asset).context("Download is not complete")?;
+    let config = s.effective_config()?;
+    let relative = path.strip_prefix(&config.source).ok().and_then(|r| r.to_str()).context("Media is outside managed roots")?;
+    let path = checked_path(std::path::Path::new(&config.source), relative)?;
+    anyhow::ensure!(path.metadata().is_ok_and(|m| m.is_file() && Some(m.len()) == asset["size"].as_u64()), "Media is unavailable or changed");
+    Ok(path)
+}
 pub(crate) async fn media_file(s: &Service, hash: &str, index: u64) -> Result<PathBuf> {
     {
         let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;

@@ -12,7 +12,7 @@ pub fn cached(db:&Database,id:&str)->Result<Value> {
     let asset=db.asset(id)?;
     let row:Option<(String,String)>=db.connection.query_row("SELECT revision,document FROM credits_analysis WHERE asset_id=? AND version=?",rusqlite::params![id,VERSION],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     if let Some((revision,text))=row {
-        if asset["path"].as_str().and_then(|p|crate::subtitle_jobs::revision(Path::new(p)).ok()).as_deref()==Some(&revision) {return Ok(explain(serde_json::from_str(&text)?));}
+        if crate::scanner::work_path(&asset).and_then(|p|crate::subtitle_jobs::revision(&p).ok()).as_deref()==Some(&revision) {return Ok(explain(serde_json::from_str(&text)?));}
     }
     Ok(json!({"state":"pending","segments":[]}))
 }
@@ -64,7 +64,7 @@ pub async fn process(s:&Service, asset:&Value)->Result<()> {
             }
         }
         // Resolve through the same complete-file/access checks as playback.
-        let input=crate::api::media_file(s,id,0).await?;
+        let input=crate::api::processing_file(s,id).await?;
         let mut reader=None;
         // By content: Matroska named .mp4 must be indexed, not handed to AVFoundation.
         if crate::container::is_matroska(&input) {

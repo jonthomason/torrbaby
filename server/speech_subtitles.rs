@@ -34,8 +34,14 @@ pub enum Transcript {
 pub fn directory(data: &Path) -> PathBuf { data.join("transcripts") }
 pub fn is_transcript(data: &Path, path: &Path) -> bool { path.parent() == Some(directory(data).as_path()) }
 
-fn key(asset: &str, revision: &str) -> String {
-    sha2::Sha256::digest(format!("{VERSION}\0{asset}\0{revision}").as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+/// Named for the file's identity that survives a move or rename (device, inode,
+/// size, modification time), so filing a title does not transcribe it again.
+/// Records made before this used the full revision and keep their names.
+fn key(data: &Path, asset: &str, revision: &str) -> String {
+    let name = |revision: &str| -> String { sha2::Sha256::digest(format!("{VERSION}\0{asset}\0{revision}").as_bytes()).iter().map(|b| format!("{b:02x}")).collect() };
+    let legacy = name(revision);
+    if directory(data).join(format!("{legacy}.json")).is_file() { return legacy; }
+    name(&revision.split(':').take(5).collect::<Vec<_>>().join(":"))
 }
 
 /// Whether transcription already reached a verdict (transcript or rejection)
@@ -50,7 +56,7 @@ pub fn transcribed_assets(data: &Path) -> std::collections::HashSet<String> {
         .filter_map(|record| record["asset_id"].as_str().map(str::to_owned)).collect()
 }
 pub(crate) fn record(data: &Path, asset: &str, revision: &str) -> PathBuf {
-    directory(data).join(format!("{}.json", key(asset, revision)))
+    directory(data).join(format!("{}.json", key(data, asset, revision)))
 }
 
 /// Accept a helper result as English speech, or say why not.
@@ -76,7 +82,7 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
     let revision = crate::subtitle_jobs::revision(input)?;
     let root = directory(&s.data_dir);
     std::fs::create_dir_all(&root)?;
-    let name = key(id, &revision);
+    let name = key(&s.data_dir, id, &revision);
     let output = root.join(format!("{name}.en.srt"));
     let record = root.join(format!("{name}.json"));
     if let Ok(bytes) = std::fs::read(&record) {

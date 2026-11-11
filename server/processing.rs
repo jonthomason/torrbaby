@@ -6,6 +6,22 @@ use serde_json::{Value, json};
 use std::path::Path;
 const VERSION:i64=1;
 
+/// dev:inode:size:mtime:mtime_ns — what a move or rename leaves unchanged.
+fn same_file(a:&str,b:&str)->bool {
+    let content=|r:&str|r.split(':').take(5).map(str::to_owned).collect::<Vec<_>>();
+    a!=b && content(a).len()==5 && content(a)==content(b)
+}
+/// Finished work follows a file that was only moved or renamed (a package leaving
+/// the incomplete folder, the organizer filing it). True when it was carried over.
+fn carry_over(db:&Database,id:&str,revision:&str)->Result<bool> {
+    use rusqlite::OptionalExtension;
+    let prior:Option<String>=db.connection.query_row("SELECT revision FROM media_processing WHERE asset_id=?",[id],|r|r.get(0)).optional()?;
+    if !prior.as_deref().is_some_and(|prior|same_file(prior,revision)) {return Ok(false);}
+    for table in ["media_processing","media_inventory","credits_analysis"] {
+        db.connection.execute(&format!("UPDATE {table} SET revision=?1 WHERE asset_id=?2 AND revision=?3"),rusqlite::params![revision,id,prior])?;
+    }
+    Ok(true)
+}
 fn enroll(db:&Database,id:&str,revision:&str)->Result<()> {
     db.connection.execute("INSERT INTO media_processing(asset_id,revision,version,state,stage,inventory_state,subtitles_state,credits_state,updated) VALUES(?,?,?,'queued','inventory','pending','pending','pending',?) ON CONFLICT(asset_id) DO UPDATE SET revision=excluded.revision,version=excluded.version,state='queued',stage='inventory',inventory_state='pending',subtitles_state='pending',credits_state='pending',detail='{}',error=NULL,retry_after=0,attempts=0,completed_at=NULL,updated=excluded.updated WHERE media_processing.revision!=excluded.revision OR media_processing.version!=excluded.version",rusqlite::params![id,revision,VERSION,now()])?;
     Ok(())
@@ -83,6 +99,13 @@ pub fn rescan(db:&Database,body:&Value)->Result<Value> {
 }
 fn assets(db:&Database)->Result<Vec<Value>> {
     let mut assets=crate::media_inventory::queue_assets(db)?;
+    // Finished files of a package still downloading are prepared where they sit.
+    for a in &mut assets {
+        if a["complete"]==true {continue;}
+        if let Some(path)=crate::scanner::work_path(a) {
+            a["path"]=json!(path.to_string_lossy());a["available"]=json!(true);a["complete"]=json!(true);a["early"]=json!(true);
+        }
+    }
     assets.retain(|a|a["available"]==true && a["complete"]==true);
     crate::media_inventory::order_assets(&mut assets,&crate::media_inventory::priorities(db)?);
     Ok(assets)
@@ -135,6 +158,14 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
                 let Some(path)=a["path"].as_str() else{continue};
                 // Missing/unreadable files remain visible as failures, not vanished work.
                 let revision=crate::subtitle_jobs::revision(Path::new(path));
+                // An early file that has just moved keeps its work until the next scan finds it.
+                if revision.is_err() && a["early"]==true {continue;}
+                if let Ok(revision)=&revision {
+                    if carry_over(&db,id,revision)? {
+                        let moved=s.subtitle_jobs.relocate(id,Path::new(path));
+                        tracing::info!(asset=id,jobs=moved,"Processing followed a moved file");
+                    }
+                }
                 enroll(&db,id,revision.as_deref().unwrap_or("unavailable"))?;
                 if let Err(error)=revision {fail(&db,id,"unavailable",&error.to_string())?;}
             }
@@ -230,6 +261,7 @@ async fn warm_playback_index(s:&Service)->Result<()> {
         let Ok(revision)=crate::subtitle_jobs::revision(path) else{continue};
         let key=format!("{id}:{revision}");
         if WARMED.lock().is_ok_and(|w|w.0.contains(&key)) || !crate::container::is_matroska(path) {continue;}
+        if asset["early"]==true {continue;}
         let Ok(input)=crate::api::media_file(s,id,0).await else{continue};
         if s.virtual_media.indexed(id,&input) {continue;}
         if let Ok(mut warmed)=WARMED.lock() {warmed.0.insert(key);}
@@ -253,7 +285,11 @@ async fn process_file(s:&Service,mut asset:Value)->Result<()> {
     if let Err(error)=result {
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
         let message=error.to_string();
-        if transient(&message) {
+        if !Path::new(&path).exists() {
+            // Moved mid-stage (its package finished, or it was filed): pick it up at its new path.
+            db.connection.execute("UPDATE media_processing SET state='queued',retry_after=?,updated=? WHERE asset_id=?",rusqlite::params![now()+15.0,now(),id])?;
+            tracing::info!(asset=id,"Processing paused while its file moves");
+        } else if transient(&message) {
             // Another helper replaced the shared Vision models mid-job. The next
             // attempt re-warms them under the helpers' lock; it is not a failure.
             db.connection.execute("UPDATE media_processing SET state='queued',retry_after=?,attempts=attempts+1,error=?,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![now()+60.0,message,now(),id,revision])?;
@@ -353,6 +389,25 @@ mod tests {
         db.connection.execute("UPDATE media_processing SET inventory_state='ready',subtitles_state='ready',credits_state='ready' WHERE asset_id='episode'",[])?;
         assert!(sign_off(&db,"episode","r1")?);
         assert!(!db.rows("SELECT resolved_at FROM processing_failures",[])?[0]["resolved_at"].is_null());
+        Ok(())
+    }
+    #[test]
+    fn finished_work_follows_a_moved_file_but_not_a_changed_one()->Result<()> {
+        let db=database()?;
+        enroll(&db,"a","1:2:300:400:5:600:7")?;
+        db.connection.execute("UPDATE media_processing SET state='ready',stage='complete',inventory_state='ready',subtitles_state='ready',credits_state='ready'",[])?;
+        db.connection.execute("INSERT INTO media_inventory VALUES('a','1:2:300:400:5:600:7','{}',0)",[])?;
+        // Renamed: only the change time differs.
+        assert!(carry_over(&db,"a","1:2:300:400:5:999:9")?);
+        enroll(&db,"a","1:2:300:400:5:999:9")?;
+        let row=db.rows("SELECT state,revision FROM media_processing",[])?;
+        assert_eq!((row[0]["state"].as_str(),row[0]["revision"].as_str()),(Some("ready"),Some("1:2:300:400:5:999:9")));
+        assert_eq!(db.rows("SELECT revision FROM media_inventory",[])?[0]["revision"],"1:2:300:400:5:999:9");
+        // Rewritten: a new size starts over.
+        assert!(!carry_over(&db,"a","1:2:301:400:5:999:9")?);
+        enroll(&db,"a","1:2:301:400:5:999:9")?;
+        assert_eq!(db.rows("SELECT state FROM media_processing",[])?[0]["state"],"queued");
+        assert!(!carry_over(&db,"new","1:2:301:400:5:999:9")?);
         Ok(())
     }
     #[test]

@@ -311,7 +311,20 @@ impl Manager {
         for id in ids {
             let Ok(mut job) = self.read(&id) else { continue };
             if job.asset_id != asset || job.input == current || job.input.exists() { continue; }
-            if job.input.extension() != current.extension() || content(&job.revision) != content(&now) || content(&now).len() != 3 { continue; }
+            if job.input.extension() != current.extension() {
+                // A subtitle file's job: the one file beside the video with the same
+                // extension, size and modification time is that file, whatever its new name.
+                let twins: Vec<(PathBuf, String)> = current.parent().and_then(|dir| fs::read_dir(dir).ok()).into_iter().flatten().flatten()
+                    .map(|entry| entry.path()).filter(|path| path.extension() == job.input.extension())
+                    .filter_map(|path| revision(&path).ok().map(|r| (path, r)))
+                    .filter(|(_, r)| content(r).len() == 3 && content(r) == content(&job.revision)).take(2).collect();
+                let [(path, found)] = twins.as_slice() else { continue };
+                job.input = path.clone();
+                job.revision = found.clone();
+                if self.save(&job).is_ok() { moved += 1; }
+                continue;
+            }
+            if content(&job.revision) != content(&now) || content(&now).len() != 3 { continue; }
             job.input = current.to_owned();
             job.revision = now.clone();
             if self.save(&job).is_ok() { moved += 1; }

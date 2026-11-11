@@ -181,7 +181,7 @@ pub async fn tick(s: &Service) -> Result<usize> {
     let pending: Vec<(String, String, String)> = {
         let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
         let mut statement = db.connection.prepare(
-            "SELECT m.asset_id,m.revision,json_extract(a.document,'$.path') FROM media_inventory m JOIN library_assets a ON a.id=m.asset_id \
+            "SELECT m.asset_id,m.revision,CASE WHEN json_extract(a.document,'$.complete') THEN json_extract(a.document,'$.path') ELSE COALESCE(json_extract(a.document,'$.early_path'),json_extract(a.document,'$.path')) END FROM media_inventory m JOIN library_assets a ON a.id=m.asset_id \
              WHERE json_extract(m.document,'$.state')='ready' AND COALESCE(json_extract(m.document,'$.format_version'),0)<?1 ORDER BY RANDOM() LIMIT 12")?;
         let rows = statement.query_map([VERSION as i64], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?.unwrap_or_default())))?;
         rows.collect::<rusqlite::Result<_>>()?
