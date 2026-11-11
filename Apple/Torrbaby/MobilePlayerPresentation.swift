@@ -16,6 +16,9 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
     }
     final class PlayerController: KeyboardPlayerController, UIGestureRecognizerDelegate {
         var disappeared: (() -> Void)?
+        /// Called when the player's size changes (rotation, Split View).
+        var sizeChanged: (() -> Void)?
+        private var lastSize = CGSize.zero
         var advanceEpisode: (() -> Void)?
         var nextEpisodeAvailable = false { didSet { updateNextButton() } }
         var inPictureInPicture = false { didSet { updateNextButton() } }
@@ -60,6 +63,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
         override func viewDidLayoutSubviews() {
             super.viewDidLayoutSubviews()
             view.bringSubviewToFront(nextButton)
+            if view.bounds.size != lastSize { lastSize = view.bounds.size; sizeChanged?() }
         }
         @objc private func showNextButton() {
             interactionDeadline = Date().addingTimeInterval(6)
@@ -179,13 +183,16 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
             // bars on all four sides; zoom it to fill when that trims only those bars. Each new
             // episode is measured again, and a double tap still switches back.
             fillObservation = model.$title.sink { [weak self] _ in DispatchQueue.main.async { self?.fitPictureToScreen() } }
+            controller.sizeChanged = { [weak self] in self?.fitPictureToScreen() }
             host.present(controller, animated: true)
         }
         private func fitPictureToScreen() {
             guard let controller, let model, UIDevice.current.userInterfaceIdiom == .phone else { return }
-            let screen = UIScreen.main.bounds.size
-            let aspect = Double(max(screen.width, screen.height) / max(1, min(screen.width, screen.height)))
-            controller.videoGravity = model.video?.fills(screenAspect: aspect) == true ? .resizeAspectFill : .resizeAspect
+            // The player's own shape right now: held upright, filling would cut most of the picture away.
+            let size = controller.view.bounds.size
+            let fill = size.height > 0 && model.video?.fills(screenAspect: Double(size.width / size.height)) == true
+            let gravity: AVLayerVideoGravity = fill ? .resizeAspectFill : .resizeAspect
+            if controller.videoGravity != gravity { controller.videoGravity = gravity }
         }
         func close(completion: (() -> Void)? = nil) {
             let view = controller
