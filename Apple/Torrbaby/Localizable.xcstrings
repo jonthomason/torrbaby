@@ -11753,6 +11753,57 @@
           }
         }
       }
+    },
+    "Waiting for Wi-Fi": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for Wi-Fi"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待 Wi-Fi"
+          }
+        }
+      }
+    },
+    "Allow downloads over cellular or hotspot": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow downloads over cellular or hotspot"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许通过蜂窝网络或热点下载"
+          }
+        }
+      }
+    },
+    "When off, downloads wait for Wi-Fi and never use cellular data, a Personal Hotspot or a Low Data Mode network.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When off, downloads wait for Wi-Fi and never use cellular data, a Personal Hotspot or a Low Data Mode network."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭时，下载会等待 Wi-Fi，不会使用蜂窝数据、个人热点或低数据模式网络。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

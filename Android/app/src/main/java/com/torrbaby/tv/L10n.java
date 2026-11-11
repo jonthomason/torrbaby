@@ -47,6 +47,7 @@ final class L10n {
     IDS.put("All releases", R.string.ui_ef3238d2ee68);
     IDS.put("All resolutions", R.string.ui_f1f67dc07e63);
     IDS.put("All seasons", R.string.ui_5666605dbc6a);
+    IDS.put("Allow downloads over cellular or hotspot", R.string.ui_0deb0259dcd9);
     IDS.put("Alphabetical", R.string.ui_9d12608fc0bd);
     IDS.put("Already in your torrents", R.string.ui_f2de57952082);
     IDS.put("Any resolution", R.string.ui_47efa5d4c257);
@@ -629,6 +630,7 @@ final class L10n {
     IDS.put("View source", R.string.ui_31a7604a3c74);
     IDS.put("Voice Transcribed", R.string.ui_f22eadf74236);
     IDS.put("Waiting", R.string.ui_33d30632848d);
+    IDS.put("Waiting for Wi-Fi", R.string.ui_819ba5c9dca6);
     IDS.put("Waiting for activity", R.string.ui_91df8bb76aa2);
     IDS.put("Waiting for connection", R.string.ui_99c90cff2803);
     IDS.put("Waiting for peers", R.string.ui_0736f273254e);
@@ -637,6 +639,7 @@ final class L10n {
     IDS.put("Watch your downloaded movies and episodes.", R.string.ui_e304f9d1f888);
     IDS.put("Watched", R.string.ui_de9a3242d1b8);
     IDS.put("Welcome home", R.string.ui_7ab362f0a437);
+    IDS.put("When off, downloads wait for Wi-Fi and never use cellular data, a Personal Hotspot or a Low Data Mode network.", R.string.ui_046725d9aae7);
     IDS.put("Who's watching?", R.string.ui_abec97b96eea);
     IDS.put("Wi-Fi only", R.string.ui_119cbce6316b);
     IDS.put("World", R.string.ui_70c07ec18ef8);

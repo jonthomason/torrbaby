@@ -684,3 +684,6 @@ Translating text subtitles	正在翻译文本字幕
 Preparing audio transcript	正在准备音频转写
 Extracting text subtitles	正在提取文本字幕
 %d of %d downloaded	已下载 %d/%d
+Waiting for Wi-Fi	等待 Wi-Fi
+Allow downloads over cellular or hotspot	允许通过蜂窝网络或热点下载
+When off, downloads wait for Wi-Fi and never use cellular data, a Personal Hotspot or a Low Data Mode network.	关闭时，下载会等待 Wi-Fi，不会使用蜂窝数据、个人热点或低数据模式网络。

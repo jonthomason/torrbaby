@@ -19,10 +19,10 @@ struct DownloadsView: View {
         List {
             SwiftUI.Section {
                 HStack {
-                    Label(LocalizedStringKey(queue.policy.useAvailableSpace ? "\(bytes(queue.used)) used · Available space" : "\(bytes(queue.used)) used · \(bytes(queue.policy.limitBytes)) limit"), systemImage: "internaldrive")
+                    Label(queue.policy.useAvailableSpace ? L10n.format("%@ used · Available space", bytes(queue.used)) : L10n.format("%@ used · %@ limit", bytes(queue.used), bytes(queue.policy.limitBytes)), systemImage: "internaldrive")
                         .font(.subheadline.monospacedDigit()).foregroundStyle(Theme.muted)
                     Spacer()
-                    Button { settings = true } label: { Image(systemName: "slider.horizontal.3") }.help("Download storage")
+                    Button { settings = true } label: { Image(systemName: "slider.horizontal.3") }.help("Download storage").accessibilityLabel("Download storage")
                 }
                 if let error = queue.error {
                     HStack { Text(L10n.text(error)).foregroundStyle(.orange); Spacer(); Button { queue.error = nil } label: { Image(systemName: "xmark.circle") } }
@@ -51,7 +51,7 @@ struct DownloadsView: View {
                                 Text("\(bytes(queue.received[item.id] ?? item.received)) / \(bytes(item.size))")
                                     .font(.caption.monospacedDigit()).foregroundStyle(Theme.muted)
                                 Text(L10n.text(!store.connected && [.queued, .transferring].contains(item.state)
-                                              ? "Waiting for connection" : (item.error ?? item.state.rawValue.capitalized)))
+                                              ? "Waiting for connection" : (item.error ?? queue.stateLabel(item))))
                                     .font(.caption).foregroundStyle(Theme.muted)
                             }
                         }
@@ -159,16 +159,22 @@ struct DownloadSettingsView: View {
     @State private var limit = 20.0
     @State private var reserve = 0.0
     @State private var useAvailableSpace = true
-    @State private var wifiOnly = true
+    @State private var allowMetered = false
     @State private var deleteAfter = true
     var body: some View {
         NavigationStack {
             Form {
-                Toggle("Use available space", isOn: $useAvailableSpace)
-                if !useAvailableSpace { TextField("Download limit (GB)", value: $limit, format: .number) }
-                TextField("Keep free (GB)", value: $reserve, format: .number)
-                Toggle("Wi-Fi only", isOn: $wifiOnly)
-                Toggle("Delete after playback", isOn: $deleteAfter)
+                SwiftUI.Section {
+                    Toggle("Use available space", isOn: $useAvailableSpace)
+                    if !useAvailableSpace { LabeledContent("Download limit (GB)") { TextField("Download limit (GB)", value: $limit, format: .number).labelsHidden().multilineTextAlignment(.trailing) } }
+                    LabeledContent("Keep free (GB)") { TextField("Keep free (GB)", value: $reserve, format: .number).labelsHidden().multilineTextAlignment(.trailing) }
+                    Toggle("Delete after playback", isOn: $deleteAfter)
+                }
+                SwiftUI.Section {
+                    Toggle("Allow downloads over cellular or hotspot", isOn: $allowMetered)
+                } footer: {
+                    Text("When off, downloads wait for Wi-Fi and never use cellular data, a Personal Hotspot or a Low Data Mode network.")
+                }
             }.formStyle(.grouped).canvasBackground().navigationTitle("Download storage")
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -178,7 +184,7 @@ struct DownloadSettingsView: View {
                             policy.useAvailableSpace = useAvailableSpace
                             policy.limitBytes = Int64(limit * 1_000_000_000)
                             policy.freeSpaceBytes = Int64(reserve * 1_000_000_000)
-                            policy.wifiOnly = wifiOnly; policy.deleteAfterPlayback = deleteAfter
+                            policy.wifiOnly = !allowMetered; policy.deleteAfterPlayback = deleteAfter
                             queue.setPolicy(policy); dismiss()
                         }.disabled(!limit.isFinite || !reserve.isFinite || limit < 0 || reserve < 0 || limit > 100_000 || reserve > 100_000)
                     }
@@ -187,10 +193,10 @@ struct DownloadSettingsView: View {
             useAvailableSpace = queue.policy.useAvailableSpace
             limit = Double(queue.policy.limitBytes) / 1_000_000_000
             reserve = Double(queue.policy.freeSpaceBytes) / 1_000_000_000
-            wifiOnly = queue.policy.wifiOnly; deleteAfter = queue.policy.deleteAfterPlayback
+            allowMetered = !queue.policy.wifiOnly; deleteAfter = queue.policy.deleteAfterPlayback
         }
         #if os(macOS)
-        .frame(width: 460, height: 300)
+        .frame(width: 460, height: 400)
         #endif
     }
 }
@@ -226,7 +232,7 @@ struct DownloadAssetControl: View {
                 } else {
                     let got = queue.received[item.id] ?? item.received
                     let moving = item.state == .transferring || item.state == .queued
-                    DownloadProgressPanel(state: item.state == .transferring ? "Downloading" : item.state.rawValue.capitalized,
+                    DownloadProgressPanel(state: queue.stateLabel(item),
                                           fraction: item.size > 0 ? Double(got) / Double(item.size) : 0,
                                           detail: "\(bytes(got)) / \(bytes(item.size))", error: item.error, moving: moving) {
                         if moving { queue.pause(item.id) } else { queue.resume(item.id) }
@@ -309,7 +315,7 @@ struct EpisodeDownloadProgress: View {
             VStack(alignment: .leading, spacing: 4) {
                 TorrentProgressGauge(value: item.size > 0 ? Double(got) / Double(item.size) : 0)
                 HStack {
-                    Text(LocalizedStringKey(item.state == .transferring ? "Downloading" : item.state.rawValue.capitalized))
+                    Text(LocalizedStringKey(queue.stateLabel(item)))
                     Spacer(minLength: 4)
                     Text("\(bytes(got)) / \(bytes(item.size))").monospacedDigit()
                 }.font(.caption2).foregroundStyle(Theme.muted)
@@ -346,7 +352,7 @@ struct DownloadSeasonControl: View {
                 sum + (item.state == .ready ? 1 : item.size > 0 ? Double(queue.received[item.id] ?? item.received) / Double(item.size) : 0)
             }
             let moving = adding || unfinished.contains { $0.state == .transferring || $0.state == .queued }
-            DownloadProgressPanel(state: moving ? "Downloading" : unfinished.contains { $0.state == .failed } ? "Failed" : "Paused",
+            DownloadProgressPanel(state: moving ? (queue.waitingForWiFi ? "Waiting for Wi-Fi" : "Downloading") : unfinished.contains { $0.state == .failed } ? "Failed" : "Paused",
                                   fraction: total > 0 ? progress / Double(total) : 0,
                                   detail: L10n.format("%d of %d downloaded", items.count - unfinished.count, total),
                                   error: unfinished.compactMap(\.error).first, moving: moving) {

@@ -36,6 +36,7 @@
     <string name="ui_ef3238d2ee68" formatted="false">All releases</string>
     <string name="ui_f1f67dc07e63" formatted="false">All resolutions</string>
     <string name="ui_5666605dbc6a" formatted="false">All seasons</string>
+    <string name="ui_0deb0259dcd9" formatted="false">Allow downloads over cellular or hotspot</string>
     <string name="ui_9d12608fc0bd" formatted="false">Alphabetical</string>
     <string name="ui_f2de57952082" formatted="false">Already in your torrents</string>
     <string name="ui_47efa5d4c257" formatted="false">Any resolution</string>
@@ -618,6 +619,7 @@
     <string name="ui_31a7604a3c74" formatted="false">View source</string>
     <string name="ui_f22eadf74236" formatted="false">Voice Transcribed</string>
     <string name="ui_33d30632848d" formatted="false">Waiting</string>
+    <string name="ui_819ba5c9dca6" formatted="false">Waiting for Wi-Fi</string>
     <string name="ui_91df8bb76aa2" formatted="false">Waiting for activity</string>
     <string name="ui_99c90cff2803" formatted="false">Waiting for connection</string>
     <string name="ui_0736f273254e" formatted="false">Waiting for peers</string>
@@ -626,6 +628,7 @@
     <string name="ui_e304f9d1f888" formatted="false">Watch your downloaded movies and episodes.</string>
     <string name="ui_de9a3242d1b8" formatted="false">Watched</string>
     <string name="ui_7ab362f0a437" formatted="false">Welcome home</string>
+    <string name="ui_046725d9aae7" formatted="false">When off, downloads wait for Wi-Fi and never use cellular data, a Personal Hotspot or a Low Data Mode network.</string>
     <string name="ui_abec97b96eea" formatted="false">Who\'s watching?</string>
     <string name="ui_119cbce6316b" formatted="false">Wi-Fi only</string>
     <string name="ui_70c07ec18ef8" formatted="false">World</string>

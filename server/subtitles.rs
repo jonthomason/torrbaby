@@ -161,7 +161,12 @@ pub fn parse_srt(input: &str) -> Result<Vec<TimedCue>> {
         }
         ensure!(cues.len() < 100_000, "Too many subtitle cues");
         let timing_index = if block[0].contains("-->") { 0 } else { 1 };
-        ensure!(block.len() > timing_index + 1, "Subtitle cue has no text");
+        // Disc rips often carry timed cues with no text (they clear the screen):
+        // skip them rather than rejecting the whole track.
+        if block.len() <= timing_index + 1 {
+            block.clear();
+            continue;
+        }
         if timing_index == 1 {
             ensure!(
                 block[0].trim().bytes().all(|c| c.is_ascii_digit()),
@@ -194,7 +199,10 @@ pub fn parse_srt(input: &str) -> Result<Vec<TimedCue>> {
         // Flatten common formatting before translation. Unknown markup remains
         // literal text and is escaped when writing WebVTT, never executed as markup.
         let text = plain_text(&raw);
-        ensure!(!text.trim().is_empty(), "Empty subtitle text");
+        if text.trim().is_empty() {
+            block.clear();
+            continue;
+        }
         // Damaged exporters can append a repeated tail, including a truncated clock.
         // Ignore exact duplicates before enforcing chronological order.
         if !seen.insert((start_ms, end_ms, text.clone())) {
@@ -590,6 +598,8 @@ mod sidecar_tests {
 
     #[test]
     fn duplicated_damaged_tail_does_not_discard_valid_subtitles() {
+        let cues = parse_srt("1\n00:00:01,000 --> 00:00:02,000\nHello\n\n2\n00:00:03,000 --> 00:00:04,000\n\n3\n00:00:05,000 --> 00:00:06,000\n<i></i>\n\n4\n00:00:07,000 --> 00:00:08,000\nBye\n").unwrap();
+        assert_eq!(cues.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["Hello", "Bye"], "empty cues are skipped");
         let cues = parse_srt("1\n02:09:07,965 --> 02:09:11,423\nGrowls\n\n2\n02:09:47,442 --> 02:09:48,932\nBeeping\n\n9:07,965 --> 02:09:11,423\nGrowls\n\n3\n02:09:47,442 --> 02:09:48,932\nBeeping\n").unwrap();
         assert_eq!(cues.len(), 2);
     }

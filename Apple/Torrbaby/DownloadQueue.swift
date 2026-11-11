@@ -4,6 +4,7 @@ import CryptoKit
 import ImageIO
 import UniformTypeIdentifiers
 import SwiftUI
+import Network
 #if os(iOS)
 import UIKit
 #endif
@@ -29,6 +30,16 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     private var backgroundEventsFinished = false
     private var syncingProgress = false
     private var lastUsageRefresh = Date.distantPast
+    /// Cellular, a Personal Hotspot or a Low Data Mode network. Assumed until the first path
+    /// report, so nothing starts before the connection is known to be unmetered.
+    @Published private(set) var metered = true
+    private let pathMonitor = NWPathMonitor()
+    /// Transfers wait for an unmetered connection unless the device setting allows otherwise.
+    var waitingForWiFi: Bool { policy.wifiOnly && metered }
+    func stateLabel(_ item: DownloadStorage.Item) -> String {
+        if waitingForWiFi && (item.state == .queued || item.state == .transferring) { return "Waiting for Wi-Fi" }
+        return item.state == .transferring ? "Downloading" : item.state.rawValue.capitalized
+    }
 
     init(root requestedRoot: URL? = nil, configuration: URLSessionConfiguration? = nil) {
         let root = requestedRoot ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -42,6 +53,18 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         config.sessionSendsLaunchEvents = true
         config.httpMaximumConnectionsPerHost = 1
         session = URLSession(configuration: config, delegate: self, delegateQueue: .main)
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            // A VPN tunnel reports the cost of the connection underneath it.
+            var metered = path.isExpensive || path.isConstrained || path.usesInterfaceType(.cellular)
+            #if DEBUG
+            if UserDefaults.standard.bool(forKey: "simulateMeteredNetwork") { metered = true }
+            #endif
+            DispatchQueue.main.async {
+                guard let self, self.metered != metered else { return }
+                self.metered = metered; self.connectionChanged()
+            }
+        }
+        pathMonitor.start(queue: .global(qos: .utility))
         Task {
             let existing = await session.allTasks
             for task in existing {
@@ -62,7 +85,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         guard restored else { return }
         for (id, task) in tasks {
             guard items.first(where: { $0.id == id })?.state == .transferring else { continue }
-            if store?.connected == true {
+            if store?.connected == true && !waitingForWiFi {
                 if let base = try? store?.endpoint("/").absoluteString,
                    let url = (task.currentRequest ?? task.originalRequest)?.url?.absoluteString,
                    !url.hasPrefix(base) {
@@ -143,7 +166,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         } catch { /* Artwork is optional; the media transfer continues independently. */ }
     }
     private func pump() {
-        guard restored, tasks.isEmpty, let store, store.connected, let storage else { return }
+        guard restored, tasks.isEmpty, !waitingForWiFi, let store, store.connected, let storage else { return }
         guard let item = items.first(where: { $0.state == .queued && $0.server == store.server }) else { return }
         do {
             try storage.markTransferring(item.id)
@@ -153,6 +176,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             request.setValue(item.revision, forHTTPHeaderField: "If-Match")
             request.allowsCellularAccess = !policy.wifiOnly
             request.allowsExpensiveNetworkAccess = !policy.wifiOnly
+            request.allowsConstrainedNetworkAccess = !policy.wifiOnly
             request.timeoutInterval = 120
             let context = Data(SHA256.hash(data: Data("\(store.activeServer ?? store.server)|\(store.token)|\(policy.wifiOnly)".utf8)))
             let task: URLSessionDownloadTask
