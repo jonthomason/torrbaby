@@ -46,7 +46,7 @@ pub fn rescan(db:&Database,body:&Value)->Result<Value> {
             ("failed",_) if row["state"]=="failed" => "UPDATE media_processing SET state='queued',retry_after=0,updated=? WHERE asset_id=?",
             ("no_credits",Some("credits")) if none_found => "UPDATE media_processing SET credits_state='pending',stage='credits',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=?",
             ("all",Some("credits")) => "UPDATE media_processing SET credits_state='pending',stage='credits',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=?",
-            ("failed",_)|("no_credits",Some("credits"))|("all",Some("credits")) => continue,
+            ("failed",_)|("no_credits",Some("credits")) => continue,
             _ => anyhow::bail!("Use scope failed, or stage credits with scope no_credits or all"),
         };
         changed+=db.connection.execute(sql,rusqlite::params![now(),id])?;

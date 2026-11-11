@@ -32,6 +32,9 @@ struct Job {
     extraction_method: Option<String>,
     #[serde(default)]
     unreadable_cues: usize,
+    /// "fleet" when the text came from the external translation lane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    translated_by: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -188,13 +191,39 @@ impl Manager {
         }
         Ok(accepted)
     }
+/// Replace the text of a finished translation in place (re-translating older
+    /// on-device output). Timings and cue count come from the existing artifact and
+    /// must match exactly; nothing is queued or reprocessed.
+    fn replace_translation(&self, mut job:Job, incoming:&Value) -> Result<String> {
+        ensure!(job.state=="ready" && job.target.is_some(),"Only finished translations can be replaced");
+        ensure!(revision(&job.input)?==job.revision,"Media changed since export");
+        let current=self.artifact(&job.id)?;
+        let mut cues=crate::subtitles::parse_srt(current.strip_prefix("WEBVTT\n\n").unwrap_or(&current))?;
+        let translated=incoming["cues"].as_array().context("Missing cues")?;
+        ensure!(translated.len()==cues.len(),"Expected {} cues, received {}",cues.len(),translated.len());
+        for (i,(cue,value)) in cues.iter_mut().zip(translated).enumerate() {
+            ensure!(value["i"].as_u64()==Some(i as u64),"Cue {i} is out of order");
+            let text=value["text"].as_str().context("Missing cue text")?.trim();
+            ensure!(!text.is_empty() && text.len()<=16_384 && !text.contains('\0'),"Cue {i} text is invalid");
+            cue.text=text.to_owned();
+        }
+        let output=crate::subtitles::webvtt(&cues);
+        ensure!(output.len()<=16_777_216,"Subtitle output too large");
+        let temporary=self.root.join(format!("{}.vtt.tmp",job.id));
+        fs::write(&temporary,output)?;
+        fs::rename(temporary,self.root.join(format!("{}.vtt",job.id)))?;
+        job.translated_by=Some("fleet".into());job.updated=crate::storage::now();
+        self.save(&job)?;
+        Ok(job.asset_id)
+    }
     fn accept_external(&self, id:&str, path:&Path) -> Result<String> {
         let mut job=self.read(id)?;
+        let incoming:Value=serde_json::from_slice(&fs::read(path)?)?;
+        if incoming["replace"]==true {return self.replace_translation(job,&incoming);}
         ensure!(job.state=="external","Job is not awaiting external translation");
         ensure!(revision(&job.input)?==job.revision,"Media changed since export");
         let bytes=fs::read(self.root.join(format!("{id}.external.json")))?;
         let original:Progress=serde_json::from_slice(&bytes)?;
-        let incoming:Value=serde_json::from_slice(&fs::read(path)?)?;
         let translated=incoming["cues"].as_array().context("Missing cues")?;
         ensure!(translated.len()==original.cues.len(),"Expected {} cues, received {}",original.cues.len(),translated.len());
         let mut cues=original.cues;
@@ -210,7 +239,7 @@ impl Manager {
         fs::write(&temporary,checkpoint)?;
         fs::rename(temporary,self.root.join(format!("{id}.progress")))?;
         // Re-admission resumes from the complete checkpoint and validates timing.
-        job.state="interrupted".into();job.updated=crate::storage::now();
+        job.state="interrupted".into();job.updated=crate::storage::now();job.translated_by=Some("fleet".into());
         self.save(&job)?;
         if let Ok(mut imported)=self.imported.lock() {imported.insert(job.id.clone());}
         Ok(job.asset_id)
@@ -393,6 +422,8 @@ impl Manager {
                 updated: crate::storage::now(),
                 error: None,
                 completed_cues: 0, total_cues: 0, extraction_method: None, unreadable_cues: 0,
+                // Re-admitting the same job (e.g. after an external import) keeps its provenance.
+                translated_by: self.read(&id).ok().and_then(|previous| previous.translated_by),
             };
             self.save(&job)?;
             pending.insert(id.clone());
@@ -594,7 +625,7 @@ mod sidecar_job_tests {
         let root=std::env::temp_dir().join(format!("torrbaby-legacy-caption-{}",uuid::Uuid::new_v4()));
         fs::create_dir_all(&root)?;let input=root.join("movie.mkv");fs::write(&input,b"fixture")?;
         let manager=Manager::new(&root)?;let id="a".repeat(64);
-        let job=Job{id:id.clone(),asset_id:"movie".into(),input:input.clone(),revision:revision(&input)?,track:3,source:Some("en".into()),target:Some("zh-Hans".into()),state:"ready".into(),updated:0.0,error:None,completed_cues:1,total_cues:1,extraction_method:Some("ocr".into()),unreadable_cues:0};
+        let job=Job{id:id.clone(),asset_id:"movie".into(),input:input.clone(),revision:revision(&input)?,track:3,source:Some("en".into()),target:Some("zh-Hans".into()),state:"ready".into(),updated:0.0,error:None,completed_cues:1,total_cues:1,extraction_method:Some("ocr".into()),unreadable_cues:0,translated_by:None};
         manager.save(&job)?;fs::write(manager.root.join(format!("{id}.vtt")),"WEBVTT\n\n1\n00:00:01.000 --> 00:00:02.000\n你好\n")?;
         assert_eq!(manager.lookup("movie",&input,3,&Some("en".into()),&Some("zh-Hans".into())).unwrap()["id"],id);
         assert!(manager.lookup("other",&input,3,&Some("en".into()),&Some("zh-Hans".into())).is_none());
@@ -665,6 +696,16 @@ mod sidecar_job_tests {
         assert_eq!(manager.status(&id)?["state"],"ready");
         let vtt=manager.artifact(&id)?;
         assert!(vtt.contains("00:00:04.000 --> 00:00:06.500") && vtt.contains("再见。") && !vtt.contains("Goodbye"));
+        assert_eq!(manager.read(&id)?.translated_by.as_deref(),Some("fleet"));
+        // A finished translation can be replaced in place; timings stay the server's.
+        fs::write(fleet.join("inbox").join(format!("{id}.json")),json!({"replace":true,"cues":[{"i":0,"text":"你好！"}]}).to_string())?;
+        assert!(manager.import_external()?.is_empty(),"wrong cue count is rejected");
+        assert!(manager.artifact(&id)?.contains("再见。"));
+        fs::write(fleet.join("inbox").join(format!("{id}.json")),json!({"replace":true,"cues":[{"i":0,"text":"你好！"},{"i":1,"text":"回头见。"}]}).to_string())?;
+        assert_eq!(manager.import_external()?,vec!["test".to_owned()]);
+        let vtt=manager.artifact(&id)?;
+        assert!(vtt.contains("00:00:04.000 --> 00:00:06.500") && vtt.contains("回头见。") && !vtt.contains("再见。"));
+        assert_eq!(manager.status(&id)?["state"],"ready");
         fs::remove_dir_all(root)?;Ok(())
     }
     #[tokio::test]
