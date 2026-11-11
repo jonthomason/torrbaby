@@ -35,6 +35,9 @@ struct Job {
 // preparation, and old indexes leave through normal cache reclamation.
 const PREPARATION_VERSION: u32 = 5;
 const LAYOUT_VERSION: u32 = 3;
+/// Disk budget for virtual-media indexes. Layout changes make every MKV rebuild
+/// once while older indexes still serve existing jobs, so leave ample headroom.
+const INDEX_BUDGET: u64 = 8 * 1024 * 1024 * 1024;
 fn playback_refusal(j: &Job) -> Option<String> {
     // Same wording as the remux failure these titles reported before.
     j.missing_audio.as_ref().map(|codec| format!("Remux codec not implemented yet: {codec}"))
@@ -316,6 +319,14 @@ impl Manager {
         if let Ok(j) = self.job(&id) {
             let retry_storage=j.error.as_deref()==Some("Virtual media index storage limit reached")
                 || j.error.as_deref()==Some("Playback cache is busy. Please try again shortly.");
+            if j.state == "ready" {
+                // Mark a reused index as recently used before anyone reclaims space:
+                // otherwise a concurrent build can evict it between this check and
+                // the caller opening its reader.
+                if let Ok(directory)=fs::File::open(self.index_path(&j)?) {
+                    let _=directory.set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now()));
+                }
+            }
             if (j.state == "ready" && self.index_path(&j)?.exists()) || (j.state == "failed" && j.preparation_version >= PREPARATION_VERSION && !retry_storage) || pending.contains(&id) {
                 // A playback request for a background build now counts as playback.
                 if !background && pending.contains(&id) {
@@ -380,12 +391,12 @@ impl Manager {
         Ok(entries)
     }
     pub fn can_preindex(&self) -> bool {
-        self.index_usage().is_ok_and(|entries|entries.iter().map(|(_,n,_)|*n).sum::<u64>() + 256*1024*1024 <= 2*1024*1024*1024)
+        self.index_usage().is_ok_and(|entries|entries.iter().map(|(_,n,_)|*n).sum::<u64>() + 256*1024*1024 <= INDEX_BUDGET)
     }
     fn reclaim_indexes(&self) -> Result<()> {
         let mut entries=self.index_usage()?;
         let mut used=entries.iter().map(|(_,n,_)|*n).sum::<u64>();
-        if used + 256*1024*1024 <= 2*1024*1024*1024 {return Ok(());}
+        if used + 256*1024*1024 <= INDEX_BUDGET {return Ok(());}
         let mut protected=HashSet::new();
         {
             let pending=self.pending.lock().map_err(|_|anyhow::anyhow!("Playback queue unavailable"))?;
@@ -397,13 +408,13 @@ impl Manager {
         }
         entries.sort_by_key(|(_,_,modified)|*modified);
         for (path,size,modified) in entries {
-            if used + 256*1024*1024 <= 2*1024*1024*1024 {break;}
+            if used + 256*1024*1024 <= INDEX_BUDGET {break;}
             // Recent readers may still be in flight after leaving the small RAM cache.
             if protected.contains(&path) || modified.elapsed().unwrap_or_default().as_secs()<3600 {continue;}
             fs::remove_dir_all(&path)?;
             used=used.saturating_sub(size);
         }
-        ensure!(used+256*1024*1024<=2*1024*1024*1024,"Playback cache is busy. Please try again shortly.");
+        ensure!(used+256*1024*1024<=INDEX_BUDGET,"Playback cache is busy. Please try again shortly.");
         Ok(())
     }
     fn build(&self, id: &str) -> Result<()> {
@@ -468,7 +479,7 @@ mod cache_tests {
         let manager=Manager::new(&root)?;
         let base=manager.root.join(format!("base-{}","a".repeat(64)));
         fs::create_dir(&base)?;
-        fs::File::create(base.join("metadata.bin"))?.set_len(2*1024*1024*1024)?;
+        fs::File::create(base.join("metadata.bin"))?.set_len(INDEX_BUDGET)?;
         assert!(!manager.can_preindex());
         assert!(manager.reclaim_indexes().is_err());
         assert!(base.exists());
