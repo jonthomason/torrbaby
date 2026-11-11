@@ -224,21 +224,13 @@ struct DownloadAssetControl: View {
                         Button("Delete download", role: .destructive) { queue.remove(item.id) }
                     }
                 } else {
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack {
-                            Text(LocalizedStringKey(item.state == .transferring ? "Downloading" : item.state.rawValue.capitalized))
-                            Spacer(minLength: 4)
-                            Button {
-                                if item.state == .transferring || item.state == .queued { queue.pause(item.id) }
-                                else { queue.resume(item.id) }
-                            } label: { Image(systemName: item.state == .transferring || item.state == .queued ? "pause.fill" : "arrow.down") }
-                                .accessibilityLabel(item.state == .transferring || item.state == .queued ? "Pause download" : "Resume download")
-                        }.font(.caption)
-                        TorrentProgressGauge(value: item.size > 0 ? Double(queue.received[item.id] ?? item.received) / Double(item.size) : 0)
-                        Text("\(bytes(queue.received[item.id] ?? item.received)) / \(bytes(item.size))")
-                            .font(.caption2.monospacedDigit()).foregroundStyle(Theme.muted)
-                        if let error = item.error { Text(L10n.text(error)).font(.caption2).foregroundStyle(.orange).lineLimit(2) }
-                    }.frame(minWidth: 130, maxWidth: 280)
+                    let got = queue.received[item.id] ?? item.received
+                    let moving = item.state == .transferring || item.state == .queued
+                    DownloadProgressPanel(state: item.state == .transferring ? "Downloading" : item.state.rawValue.capitalized,
+                                          fraction: item.size > 0 ? Double(got) / Double(item.size) : 0,
+                                          detail: "\(bytes(got)) / \(bytes(item.size))", error: item.error, moving: moving) {
+                        if moving { queue.pause(item.id) } else { queue.resume(item.id) }
+                    }
                 }
             } else {
                 Button {
@@ -278,6 +270,55 @@ struct DownloadAssetControl: View {
 
 }
 
+/// Download progress in the Play/Download row: state, pause or resume, a bar and a detail line.
+struct DownloadProgressPanel: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @Environment(\.libraryActionFullWidth) private var fullWidth
+    let state: String
+    let fraction: Double
+    let detail: String
+    var error: String?
+    let moving: Bool
+    let toggle: () -> Void
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(LocalizedStringKey(state))
+                Spacer(minLength: 4)
+                Button(action: toggle) { Image(systemName: moving ? "pause.fill" : "arrow.down").frame(width: 28, height: 22).contentShape(Rectangle()) }
+                    .buttonStyle(.plain).accessibilityLabel(moving ? "Pause download" : "Resume download")
+            }.font(.caption.weight(.semibold))
+            TorrentProgressGauge(value: fraction)
+            Text(detail).font(.caption2.monospacedDigit()).foregroundStyle(Theme.muted)
+            if let error { Text(L10n.text(error)).font(.caption2).foregroundStyle(.orange).lineLimit(2) }
+        }.padding(.horizontal, 14).padding(.vertical, 8)
+            .frame(minWidth: 180, maxWidth: fullWidth ? .infinity : 300)
+            .background(Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius))
+    }
+}
+
+/// An episode's own download bar in its row; nothing once it has finished.
+struct EpisodeDownloadProgress: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    @ObservedObject private var queue = DownloadQueue.shared
+    let asset: LibraryAsset
+    var body: some View {
+        if let item = queue.items.first(where: { $0.assetID == asset.id && $0.server == store.server && $0.state != .removed && $0.state != .removing }), item.state != .ready {
+            let got = queue.received[item.id] ?? item.received
+            VStack(alignment: .leading, spacing: 4) {
+                TorrentProgressGauge(value: item.size > 0 ? Double(got) / Double(item.size) : 0)
+                HStack {
+                    Text(LocalizedStringKey(item.state == .transferring ? "Downloading" : item.state.rawValue.capitalized))
+                    Spacer(minLength: 4)
+                    Text("\(bytes(got)) / \(bytes(item.size))").monospacedDigit()
+                }.font(.caption2).foregroundStyle(Theme.muted)
+                if let error = item.error { Text(L10n.text(error)).font(.caption2).foregroundStyle(.orange).lineLimit(2) }
+            }.frame(maxWidth: 420)
+        }
+    }
+}
+
 struct DownloadSeasonControl: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
@@ -285,12 +326,44 @@ struct DownloadSeasonControl: View {
     let title: LibraryTitle
     let season: Int
     @State private var adding = false
+    @Environment(\.libraryActionFullWidth) private var fullWidth
     private var pending: [LibraryAsset] {
         title.playable.filter { asset in
             asset.season == season && !queue.items.contains { $0.server == store.server && $0.assetID == asset.id && $0.state != .removed && $0.state != .removing && $0.state != .failed }
         }
     }
+    /// This device's downloads for the season, finished ones included.
+    private var items: [DownloadStorage.Item] {
+        queue.items.filter { $0.server == store.server && $0.titleID == title.id && $0.season == season && $0.state != .removed && $0.state != .removing }
+    }
     var body: some View {
+        let items = items
+        let unfinished = items.filter { $0.state != .ready }
+        if adding || !unfinished.isEmpty {
+            // One bar for the whole season: each episode counts equally, so it stays steady while episodes are still being queued.
+            let total = items.count + (adding ? pending.count : 0)
+            let progress = items.reduce(0.0) { sum, item in
+                sum + (item.state == .ready ? 1 : item.size > 0 ? Double(queue.received[item.id] ?? item.received) / Double(item.size) : 0)
+            }
+            let moving = adding || unfinished.contains { $0.state == .transferring || $0.state == .queued }
+            DownloadProgressPanel(state: moving ? "Downloading" : unfinished.contains { $0.state == .failed } ? "Failed" : "Paused",
+                                  fraction: total > 0 ? progress / Double(total) : 0,
+                                  detail: L10n.format("%d of %d downloaded", items.count - unfinished.count, total),
+                                  error: unfinished.compactMap(\.error).first, moving: moving) {
+                for item in unfinished {
+                    if moving { if item.state == .transferring || item.state == .queued { queue.pause(item.id) } }
+                    else { queue.resume(item.id) }
+                }
+            }
+        } else if pending.isEmpty && !items.isEmpty {
+            HStack(spacing: 10) {
+                Label("Downloaded", systemImage: "checkmark.circle.fill").font(.headline)
+                Text(bytes(items.reduce(0) { $0 + $1.size })).font(.caption).foregroundStyle(Theme.muted)
+            }.padding(.horizontal, 20).frame(minHeight: 48).frame(maxWidth: fullWidth ? .infinity : nil)
+                .background(Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius))
+        } else { button }
+    }
+    private var button: some View {
         Button {
             let assets=pending
             adding=true

@@ -11736,6 +11736,23 @@
           }
         }
       }
+    },
+    "%d of %d downloaded": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d of %d downloaded"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已下载 %d/%d"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

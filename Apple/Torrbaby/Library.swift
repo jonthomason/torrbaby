@@ -712,6 +712,9 @@ struct LibraryDetail: View {
                         Text(asset.name ?? title.title).font(.headline)
                         if !asset.summary.isEmpty { Text(asset.summary).font(.caption).lineLimit(2).foregroundStyle(Theme.muted) }
                         if asset.duration > 0 && !asset.watched { ProgressView(value: min(1, asset.position / asset.duration)) }
+                        #if !os(tvOS)
+                        EpisodeDownloadProgress(asset: asset)
+                        #endif
                         if store.offlineLibrary && !store.isDownloaded(asset) { Text("Not downloaded").font(.caption).foregroundStyle(Theme.muted) }
                         else if !asset.complete { Text("Downloading").font(.caption).foregroundStyle(Theme.muted) }
                     }

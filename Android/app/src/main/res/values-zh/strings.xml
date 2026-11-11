@@ -2,6 +2,7 @@
 <resources>
     <string name="ui_0290129bc977" formatted="false">找到 %d 集</string>
     <string name="ui_b909e7d6e8c9" formatted="false">剩余 %d 分钟</string>
+    <string name="ui_24d1fa07b247" formatted="false">已下载 %d/%d</string>
     <string name="ui_216e67233653" formatted="false">%d 集待添加</string>
     <string name="ui_660a76df86fd" formatted="false">剩余 %d 小时 %d 分钟</string>
     <string name="ui_659748ef61cf" formatted="false">剩余 %d 分钟</string>

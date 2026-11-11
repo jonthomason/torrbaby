@@ -2,6 +2,7 @@
 <resources>
     <string name="ui_0290129bc977" formatted="false">%d episodes found</string>
     <string name="ui_b909e7d6e8c9" formatted="false">%d min remaining</string>
+    <string name="ui_24d1fa07b247" formatted="false">%d of %d downloaded</string>
     <string name="ui_216e67233653" formatted="false">%d to add</string>
     <string name="ui_660a76df86fd" formatted="false">%dh %dm left</string>
     <string name="ui_659748ef61cf" formatted="false">%dm left</string>

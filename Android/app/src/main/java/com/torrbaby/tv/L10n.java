@@ -13,6 +13,7 @@ final class L10n {
   static {
     IDS.put("%d episodes found", R.string.ui_0290129bc977);
     IDS.put("%d min remaining", R.string.ui_b909e7d6e8c9);
+    IDS.put("%d of %d downloaded", R.string.ui_24d1fa07b247);
     IDS.put("%d to add", R.string.ui_216e67233653);
     IDS.put("%dh %dm left", R.string.ui_660a76df86fd);
     IDS.put("%dm left", R.string.ui_659748ef61cf);
