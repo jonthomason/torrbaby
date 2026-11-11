@@ -2289,7 +2289,10 @@ async fn collect_metadata(s: &Service) -> Result<()> {
                     .count()
                     == 1;
                 if same_title || single_video {
-                    save_match(s, text(&asset, "id")?, record["selected"].clone(), record["confirmed"] == true)?;
+                    // One asset that vanished or failed must not abort matching for the rest.
+                    if let Err(error) = save_match(s, text(&asset, "id")?, record["selected"].clone(), record["confirmed"] == true) {
+                        eprintln!("Metadata match skipped: {error}");
+                    }
                     continue;
                 }
             }
@@ -2333,7 +2336,9 @@ async fn collect_metadata(s: &Service) -> Result<()> {
         match result {
             Ok(result) => {
                 if result["selected"].is_object() {
-                    save_match(s, id, result["selected"].clone(), false)?;
+                    if let Err(error) = save_match(s, id, result["selected"].clone(), false) {
+                        eprintln!("Metadata match skipped: {error}");
+                    }
                 } else {
                     let db =
                         s.db.lock()
