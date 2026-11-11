@@ -228,7 +228,14 @@ struct RootView: View {
             Text(verbatim: "torrbaby").font(.system(size: 18, weight: .bold, design: .rounded))
                 .lineLimit(1).minimumScaleFactor(0.8)
         }
-        .frame(maxWidth: .infinity, alignment: mobileSidebar ? .center : .leading)
+        .frame(maxWidth: .infinity, alignment: mobileSidebar && !brandInBar ? .center : .leading)
+    }
+    private var brandInBar: Bool {
+        #if os(iOS)
+        sizeClass == .regular
+        #else
+        false
+        #endif
     }
     /// The same menu on every platform: the current page is a white row with black text.
     private func menuSection(_ title: LocalizedStringKey, sections: [Section], rowHeight: CGFloat) -> some View {
@@ -255,7 +262,8 @@ struct RootView: View {
     var body: some View {
         NavigationSplitView(preferredCompactColumn: $preferredColumn) {
             VStack(alignment: .leading, spacing: sidebarSpacing) {
-                sidebarBrand.padding(.horizontal, mobileSidebar ? 20 : 24).padding(.vertical, 12)
+                // On iPad the wordmark shares the bar row with the sidebar button instead.
+                if !brandInBar { sidebarBrand.padding(.horizontal, mobileSidebar ? 20 : 24).padding(.vertical, 12) }
                 GeometryReader { geometry in
                     let rowHeight = mobileSidebar ? min(52, max(40, (geometry.size.height - 120) / 11)) : 34
                     ScrollView {
@@ -282,7 +290,11 @@ struct RootView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if sizeClass == .compact { LanguageToolbar() }
-
+                else if #available(iOS 26, *) {
+                    ToolbarItem(placement: .topBarLeading) { sidebarBrand.fixedSize() }.sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .topBarLeading) { sidebarBrand.fixedSize() }
+                }
             }
             #endif
         } detail: {
