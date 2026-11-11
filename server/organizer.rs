@@ -428,7 +428,10 @@ pub async fn tick(s: &Service) -> Result<()> {
 /// Release adverts named .mkv/.mp4 are not videos (the scanner tags them "not_media")
 /// and never will be identified, so they do not hold the pack back.
 fn identified(hash: &str, files: &[Value], assets: &[Value]) -> bool {
+    // A real but tiny video beside far larger ones (a promo clip) is incidental too.
+    let largest = files.iter().filter(|f|f["name"].as_str().is_some_and(|n|video(Path::new(n)))).filter_map(|f|f["length"].as_u64()).max().unwrap_or(0);
     files.iter().enumerate().filter(|(_,f)|f["name"].as_str().is_some_and(|n|video(Path::new(n))))
+        .filter(|(_,f)|f["length"].as_u64().is_none_or(|length|length.saturating_mul(20)>=largest))
         .all(|(index,_)|assets.iter().any(|a|a["torrent_hash"]==hash && a["file_index"]==index
             && (a["role"]=="extra" || a["container"]=="not_media" || (a["status"]=="matched" && a["entity_id"].is_string()))))
 }
@@ -445,7 +448,10 @@ mod identification_tests {
         assert!(identified("h", &files, &[episode.clone(), advert]));
         // A real video nobody could identify still waits for review.
         assert!(!identified("h", &files, &[episode.clone(), unknown]));
-        assert!(!identified("h", &files, &[episode]));
+        assert!(!identified("h", &files, &[episode.clone()]));
+        // A genuine video advert is far smaller than the episodes and does not block either.
+        let sized = vec![json!({"name":"Show/Show.S01E01.mkv","length":900_000_000u64}), json!({"name":"Show/promo.mp4","length":8_000_000u64})];
+        assert!(identified("h", &sized, &[episode]));
     }
 }
 

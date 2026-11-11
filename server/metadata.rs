@@ -94,7 +94,7 @@ fn search_candidates(data: &Value, kind: &str) -> Vec<Value> {
         json!({"provider":"TMDB","provider_id":id,"kind":kind,"title":hit.get("title").or(hit.get("name")),
             "original_title":hit.get("original_title").or(hit.get("original_name")),"year":date.get(..4).unwrap_or(""),
             "genres":[],"content_rating":null,"duration_minutes":null,"summary":hit["overview"],"thumbnail":image(&hit["poster_path"],"w500"),
-            "logo":null,"source_url":format!("https://www.themoviedb.org/{kind}/{id}"),"episodes":[]})
+            "logo":null,"source_url":format!("https://www.themoviedb.org/{kind}/{id}"),"episodes":[],"votes":hit["vote_count"].as_u64().unwrap_or(0)})
     }).collect()
 }
 
@@ -486,8 +486,18 @@ impl Metadata {
                 return Ok(json!({"query":query,"year":year,"kind":kind,"candidates":candidates,"exact":exact,
                     "matched_query":attempt,"matched_year":attempt_year,"attempts":tried}));
             }
-            // Several exact matches are ambiguous; a shorter query cannot resolve that.
+            // Several titles share the name. When one is far better known than the rest
+            // (Heroes 2006 against an obscure 2020 namesake), it is the one meant.
             if exact.len() > 1 {
+                let mut ranked = exact.clone();
+                ranked.sort_by_key(|c| std::cmp::Reverse(c["votes"].as_u64().unwrap_or(0)));
+                let (first, second) = (ranked[0]["votes"].as_u64().unwrap_or(0), ranked[1]["votes"].as_u64().unwrap_or(0));
+                if first >= 100 && first >= second.saturating_mul(10) {
+                    let exact = ranked[0].clone();
+                    return Ok(json!({"query":query,"year":year,"kind":kind,"candidates":candidates,"exact":exact,
+                        "matched_query":attempt,"matched_year":attempt_year,"attempts":tried}));
+                }
+                // Otherwise it stays ambiguous; a shorter query cannot resolve that.
                 break;
             }
         }

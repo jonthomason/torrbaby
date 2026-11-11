@@ -183,9 +183,13 @@ struct ActionAlert {
             let names = ["A_DTS": "DTS", "A_TRUEHD": "Dolby TrueHD", "A_OPUS": "Opus", "A_FLAC": "FLAC", "A_VORBIS": "Vorbis"]
             title = L10n.text("Incompatible movie or TV show")
             message = L10n.format("Its audio format (%@) can’t be played on Apple devices yet.", names[codec] ?? codec.replacingOccurrences(of: "A_", with: ""))
+        } else if let error, !error.isEmpty {
+            // The reason is the headline; a generic "couldn't do that" above it says nothing.
+            title = L10n.text(error)
+            message = ""
         } else {
             title = L10n.text(fallbackTitle)
-            message = L10n.text(error ?? "")
+            message = ""
         }
     }
 }
