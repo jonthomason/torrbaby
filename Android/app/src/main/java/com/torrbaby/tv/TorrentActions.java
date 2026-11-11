@@ -40,6 +40,7 @@ final class TorrentActions {
       error("The server did not supply this torrent's identity.");
       return;
     }
+    boolean first = item.optInt("bandwidth_priority") > 0;
     String[] labels = {
       item.optInt("status") == 0 ? "Start" : "Pause",
       "Files and details",
@@ -49,7 +50,8 @@ final class TorrentActions {
       "Retry organization",
       "Ignore organization",
       "Remove torrent…",
-      "Download first"
+      // Reads as a state once chosen; choosing it again returns to an ordinary download.
+      first ? "Stop downloading first" : "Download first"
     };
     new AlertDialog.Builder(activity)
         .setTitle(item.optString("name"))
@@ -92,7 +94,7 @@ final class TorrentActions {
                   break;
                 case 8:
                   // Jumps the queue: starts now even when every download slot is taken.
-                  send("POST", path + "prioritize", new JSONObject());
+                  send("POST", path + (first ? "unprioritize" : "prioritize"), new JSONObject());
                   break;
                 case 6:
                   confirm(
