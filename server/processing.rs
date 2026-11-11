@@ -38,6 +38,19 @@ fn not_video(db:&Database,id:&str,revision:&str)->Result<()> {
 pub(crate) fn reopen_outdated(db:&Database)->Result<usize> {
     Ok(db.connection.execute("UPDATE media_processing SET credits_state='pending',stage='credits',state=CASE WHEN state IN ('ready','failed') THEN 'queued' ELSE state END,retry_after=0,attempts=0,completed_at=NULL,error=NULL,updated=? WHERE credits_state IN ('ready','failed','incomplete') AND state!='running' AND asset_id IN (SELECT asset_id FROM credits_analysis WHERE version<?)",rusqlite::params![now(),crate::credits::VERSION])?)
 }
+/// Files settled with no subtitle source before speech transcription existed
+/// (or before it reached a verdict) reopen their subtitle stage once; the
+/// transcript record then keeps them settled.
+pub(crate) fn reopen_untranscribed(db:&Database,data:&Path)->Result<usize> {
+    let rows=db.rows("SELECT asset_id,revision FROM media_processing WHERE subtitles_state='not_applicable' AND inventory_state='ready' AND state!='running'",[])?;
+    let mut reopened=0;
+    for row in rows {
+        let (Some(id),Some(revision))=(row["asset_id"].as_str(),row["revision"].as_str()) else{continue};
+        if crate::speech_subtitles::decided(data,id,revision) {continue;}
+        reopened+=db.connection.execute("UPDATE media_processing SET subtitles_state='pending',stage='subtitles',state=CASE WHEN state IN ('ready','failed') THEN 'queued' ELSE state END,retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![now(),id,revision])?;
+    }
+    Ok(reopened)
+}
 /// Operator rescans. `scope`: "failed" re-queues every failed file now (any
 /// stage); with `stage` "credits", "no_credits" reopens credits wherever none were
 /// found and "all" reopens credits everywhere. `asset_ids` limits any scope.
@@ -130,6 +143,7 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
                 not_video(&db,id,&revision)?;
             }
             reopen_outdated(&db)?;
+            reopen_untranscribed(&db,&s.data_dir)?;
             if let Ok(mut e)=ENROLLED.lock() {*e=Some((revision,now()));}
         }
         if migrating {
@@ -339,6 +353,25 @@ mod tests {
         let version:i64=db.connection.query_row("SELECT version FROM credits_analysis WHERE asset_id='current'",[],|r|r.get(0))?;
         assert_eq!(version,0,"cached result must not short-circuit the rescan");
         assert!(rescan(&db,&json!({"scope":"bogus"})).is_err());
+        Ok(())
+    }
+    #[test]
+    fn files_without_subtitles_reopen_once_for_transcription()->Result<()> {
+        let db=database()?;
+        let data=std::env::temp_dir().join(format!("torrbaby-transcribe-{}",uuid::Uuid::new_v4()));
+        for id in ["silent","advert","subtitled"] {enroll(&db,id,"r1")?;}
+        db.connection.execute("UPDATE media_processing SET state='ready',stage='complete',inventory_state='ready',subtitles_state='not_applicable',credits_state='ready',completed_at=1",[])?;
+        db.connection.execute("UPDATE media_processing SET inventory_state='not_applicable' WHERE asset_id='advert'",[])?;
+        db.connection.execute("UPDATE media_processing SET subtitles_state='ready' WHERE asset_id='subtitled'",[])?;
+        assert_eq!(reopen_untranscribed(&db,&data)?,1);
+        let row=db.rows("SELECT state,subtitles_state,credits_state FROM media_processing WHERE asset_id='silent'",[])?.remove(0);
+        assert_eq!((row["state"].as_str(),row["subtitles_state"].as_str(),row["credits_state"].as_str()),(Some("queued"),Some("pending"),Some("ready")));
+        // Once transcription reaches a verdict the file stays settled.
+        db.connection.execute("UPDATE media_processing SET state='ready',subtitles_state='not_applicable' WHERE asset_id='silent'",[])?;
+        std::fs::create_dir_all(crate::speech_subtitles::directory(&data))?;
+        std::fs::write(crate::speech_subtitles::record(&data,"silent","r1"),r#"{"state":"rejected"}"#)?;
+        assert_eq!(reopen_untranscribed(&db,&data)?,0);
+        std::fs::remove_dir_all(data)?;
         Ok(())
     }
     #[test]

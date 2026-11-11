@@ -35,6 +35,13 @@ fn key(asset: &str, revision: &str) -> String {
     sha2::Sha256::digest(format!("{VERSION}\0{asset}\0{revision}").as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Whether transcription already reached a verdict (transcript or rejection)
+/// for this file revision.
+pub fn decided(data: &Path, asset: &str, revision: &str) -> bool { record(data, asset, revision).is_file() }
+pub(crate) fn record(data: &Path, asset: &str, revision: &str) -> PathBuf {
+    directory(data).join(format!("{}.json", key(asset, revision)))
+}
+
 /// Accept a helper result as English speech, or say why not.
 fn verdict(result: &Value) -> Result<(), String> {
     let confidence = result["confidence"].as_f64().unwrap_or(0.0);
