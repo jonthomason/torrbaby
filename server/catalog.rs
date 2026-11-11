@@ -249,12 +249,16 @@ impl Database {
                 .and_then(|p| p.parent());
             let mut parents = std::collections::BTreeSet::new();
             if let Some(hash) = extra["torrent_hash"].as_str() {
-                for main in assets.iter().filter(|a| {
+                // Matched files decide the parent; a stray unmatched file in the package
+                // (a featurette outside its folder) must not leave every extra orphaned.
+                let mains: Vec<_> = assets.iter().filter(|a| {
                     a["available"] == true && a["role"] != "extra" && a["torrent_hash"] == hash
-                }) {
-                    if let Some(id) = main["entity_id"].as_str().or(main["id"].as_str()) {
-                        parents.insert(id.to_owned());
-                    }
+                }).collect();
+                let matched: Vec<_> = mains.iter().filter_map(|m| m["entity_id"].as_str()).collect();
+                if matched.is_empty() {
+                    parents.extend(mains.iter().filter_map(|m| m["id"].as_str()).map(str::to_owned));
+                } else {
+                    parents.extend(matched.into_iter().map(str::to_owned));
                 }
             }
             if parents.is_empty() {
@@ -385,6 +389,25 @@ mod completion_tests {
         // Series still gather every download under one title.
         assert_eq!(files("show").map(|f| f.len()), Some(2));
         assert_eq!(titles.len(), 3);
+        Ok(())
+    }
+
+    #[test]
+    fn a_stray_unmatched_file_does_not_orphan_extras() -> Result<()> {
+        let db = Database { connection: rusqlite::Connection::open_in_memory()? };
+        db.connection.execute_batch(include_str!("schema.sql"))?;
+        for (id, doc) in [("e1", json!({"id":"e1","available":true,"role":"main","entity_id":"show","torrent_hash":"h","path":"/M/Show/S01/Show - S01E01.mkv"})),
+            ("oracle", json!({"id":"oracle","available":true,"role":"main","status":"review","torrent_hash":"h","path":"/M/Show/S01/The Oracle.mkv"})),
+            ("bonus", json!({"id":"bonus","available":true,"role":"extra","torrent_hash":"h","path":"/M/Show/S01/Featurettes/Bonus.mkv"})),
+            ("lone", json!({"id":"lone","available":true,"role":"main","status":"review","torrent_hash":"k","path":"/M/Other/clip.mkv"})),
+            ("lone-extra", json!({"id":"lone-extra","available":true,"role":"extra","torrent_hash":"k","path":"/M/Other/Extras/x.mkv"}))] {
+            db.connection.execute("INSERT INTO library_assets VALUES(?,?)", rusqlite::params![id, doc.to_string()])?;
+        }
+        db.link_extras()?;
+        let parent = |id: &str| -> Result<Value> { Ok(db.asset(id)?["parent_title_id"].clone()) };
+        assert_eq!(parent("bonus")?, "show");
+        // With nothing matched, the unmatched file still anchors its extras.
+        assert_eq!(parent("lone-extra")?, "lone");
         Ok(())
     }
 
