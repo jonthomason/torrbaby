@@ -3,6 +3,22 @@ use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+/// A title's (start) year, never blank when any source knows it: the provider's
+/// year, its release/first-air date, the earliest episode air date, then a year
+/// in the file or folder name.
+fn title_year(entity: &Value, file: &std::path::Path) -> Value {
+    let four = |text: &str| text.get(..4).filter(|y| y.len() == 4 && y.chars().all(|c| c.is_ascii_digit())).map(str::to_owned);
+    let known = entity["year"].as_str().and_then(four)
+        .or_else(|| entity["release_date"].as_str().and_then(four))
+        .or_else(|| entity["first_air_date"].as_str().and_then(four))
+        .or_else(|| entity["episodes"].as_array().and_then(|episodes| episodes.iter()
+            .filter_map(|e| e["airdate"].as_str().and_then(four)).min()))
+        .or_else(|| file.ancestors().filter_map(|p| p.file_name()?.to_str()).take(3).find_map(|name| {
+            static YEAR: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"(?:^|[^0-9])((?:19|20)[0-9]{2})(?:[^0-9]|$)").expect("valid regex"));
+            YEAR.captures(name).map(|c| c[1].to_owned())
+        }));
+    known.map_or(Value::Null, |year| json!(year))
+}
 /// Whether a series is still running; null when the provider's status is not known.
 fn series_ongoing(entity: &Value) -> Value {
     match entity["series_status"].as_str() {
@@ -106,7 +122,7 @@ impl Database {
                 .unwrap_or(&fallback);
             let title=titles.entry(entity_id.to_owned()).or_insert_with(||json!({
                 "id":entity_id,"continue_watching_hidden":hidden.contains(entity_id),"kind":kind,"title":name,"original_title":entity["original_title"],
-                "year":entity["year"],"end_year":series_end_year(&entity),"ongoing":series_ongoing(&entity),"release_date":entity["release_date"],"genres":entity.get("genres").unwrap_or(&json!([])),
+                "year":title_year(&entity,file),"end_year":series_end_year(&entity),"ongoing":series_ongoing(&entity),"release_date":entity["release_date"],"genres":entity.get("genres").unwrap_or(&json!([])),
                 "summary":entity["summary"].as_str().unwrap_or(""),"content_rating":entity["content_rating"],"duration_minutes":entity["duration_minutes"],
                 "poster":entity["thumbnail"],"backdrop":entity["backdrop"],"logo":entity["logo"],"cast":entity["cast"],"provider":entity["provider"],"source_url":entity["source_url"],
                 "added_at":asset["added_at"],"status":asset["status"],"assets":[]
@@ -311,6 +327,12 @@ mod continue_watching_tests {
         assert_eq!(super::series_ongoing(&running),json!(true));
         assert!(super::series_end_year(&running).is_null());
         let unknown=json!({"year":"2018"});
+        let path=std::path::Path::new("/Media/TV/Show (2014)/Season 1/Show - S01E01.mkv");
+        assert_eq!(super::title_year(&json!({"year":"2018"}),path),json!("2018"));
+        assert_eq!(super::title_year(&json!({"year":"","release_date":"2016-05-01"}),path),json!("2016"));
+        assert_eq!(super::title_year(&json!({"episodes":[{"airdate":"2012-01-08"},{"airdate":"2011-10-02"}]}),path),json!("2011"));
+        assert_eq!(super::title_year(&json!({}),path),json!("2014"));
+        assert!(super::title_year(&json!({}),std::path::Path::new("/Media/Movies/Untitled/clip.mkv")).is_null());
         assert!(super::series_ongoing(&unknown).is_null());
         assert!(super::series_end_year(&unknown).is_null());
     }
