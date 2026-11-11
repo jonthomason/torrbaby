@@ -648,7 +648,12 @@ struct LibraryBrowser: View {
                     Text(verbatim: title.yearLabel)
                         .font(.caption).foregroundStyle(Theme.muted).lineLimit(1).frame(maxWidth: .infinity)
                 }
-            }.foregroundStyle(.primary)
+            }
+            // Take the card's natural height: otherwise a shelf row shorter than a card with
+            // a two-line caption (an episode's "Season 1 Ep 2" plus time left) shrinks that
+            // card's poster, leaving it smaller and out of line with its neighbours.
+            .fixedSize(horizontal: false, vertical: true)
+            .foregroundStyle(.primary)
         }.buttonStyle(.plain).accessibilityLabel(title.title)
             .contextMenu { ContinueWatchingAction(title: title) }
     }
