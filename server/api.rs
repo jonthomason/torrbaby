@@ -678,12 +678,16 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
     if method == Method::POST {
         if let Some(id) = path.strip_prefix("/v1/library/assets/").and_then(|p| p.strip_suffix("/virtual-mp4")) {
             let input = media_file(s, id, 0).await?;
+            // Subtitles made before the file was moved into the library follow it.
+            s.subtitle_jobs.relocate(id, &input);
             let mut captions=Vec::new();
             if let Some(ids)=body.get("subtitle_jobs") {
                 let ids=ids.as_array().context("Invalid subtitle jobs")?;
                 anyhow::ensure!(ids.len()<=8,"Too many subtitles");
                 for value in ids { let job=value.as_str().context("Invalid subtitle job")?;let status=s.subtitle_jobs.status(job)?;
-                    anyhow::ensure!(status["asset_id"]==id && status["state"]=="ready","Subtitle does not belong to this title");
+                    anyhow::ensure!(status["asset_id"]==id,"Subtitle does not belong to this title");
+                    // A subtitle that is no longer usable is left out; it must not stop the title from playing.
+                    if status["state"]!="ready" { continue; }
                     captions.push(crate::virtual_captions::Caption {id:job.into(),language:status["target"].as_str().or(status["source"].as_str()).unwrap_or("und").into(),text:s.subtitle_jobs.artifact(job)?,name:caption_name(&body,captions.len(),&status),sdh:caption_sdh(s,id,&status)});
                 }
             }
@@ -820,6 +824,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
                 s.db.lock()
                     .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
             db.asset(id)?;
+            if let Some(path)=db.asset(id).ok().and_then(|a|a["path"].as_str().map(PathBuf::from)) { s.subtitle_jobs.relocate(id,&path); }
             return crate::media_inventory::cached_with(&db, id, Some(s.subtitle_jobs.as_ref()));
         }
     }

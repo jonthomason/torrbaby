@@ -278,13 +278,27 @@ struct TorrentSearchView: View {
     /// One entry per episode found: its best-seeded release, and whether the user already has it.
     private var downloaderPicks: [EpisodePick] {
         guard let season = activeDownloaderSeason else { return [] }
-        var best: [Int: TorrentSearchItem] = [:], owned: [Int: String] = [:]
+        var options: [Int: [TorrentSearchItem]] = [:], owned: [Int: String] = [:]
         for item in downloaderCandidates where (item.hints.season ?? 1) == season {
             guard let episode = item.hints.episode else { continue }
             if let status = ownership(item), owned[episode] != "In your library" { owned[episode] = status }
-            if (best[episode]?.seeders ?? 0) < (item.seeders ?? 0) { best[episode] = item }
+            options[episode, default: []].append(item)
         }
-        return best.keys.sorted().compactMap { number in best[number].map { EpisodePick(episode: number, item: $0, owned: owned[number]) } }
+        for episode in options.keys { options[episode]?.sort { ($0.seeders ?? 0) > ($1.seeders ?? 0) } }
+        // The best-seeded release leads, unless it is far larger than the season's usual
+        // episode and a well-seeded release of ordinary size exists: one oversized remux
+        // should not stand out from the rest of the season.
+        let leaders = options.values.compactMap { $0.first?.sizeBytes }.sorted()
+        let usual = leaders.isEmpty ? 0 : Double(leaders[leaders.count / 2])
+        return options.keys.sorted().compactMap { number in
+            guard let all = options[number], var choice = all.first else { return nil }
+            if usual > 0, let size = choice.sizeBytes, Double(size) > usual * 2,
+               let ordinary = all.first(where: { item in
+                   guard let bytes = item.sizeBytes else { return false }
+                   return (usual * 0.5...usual * 1.6).contains(Double(bytes)) && (item.seeders ?? 0) * 4 >= (choice.seeders ?? 0)
+               }) { choice = ordinary }
+            return EpisodePick(episode: number, item: choice, owned: owned[number], alternatives: all)
+        }
     }
     @ViewBuilder private var episodeDownloader: some View {
         let picks = downloaderPicks
@@ -657,6 +671,8 @@ struct EpisodePick: Identifiable {
     let episode: Int
     let item: TorrentSearchItem
     let owned: String?
+    /// Every release found for this episode, best seeded first; `item` is the suggested one.
+    var alternatives: [TorrentSearchItem] = []
     var id: Int { episode }
 }
 
@@ -671,6 +687,12 @@ private struct EpisodeDownloaderSheet: View {
     @State private var adding: Set<Int> = []
     @State private var added: Set<Int> = []
     @State private var failures: [Int: String] = [:]
+    /// Releases the user chose in place of the suggested ones, by episode.
+    @State private var chosen: [Int: TorrentSearchItem] = [:]
+    private func release(_ pick: EpisodePick) -> TorrentSearchItem { chosen[pick.episode] ?? pick.item }
+    private func summary(_ item: TorrentSearchItem) -> String {
+        [item.size, item.availability, item.quality, item.hints.audioLabel].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
     private var pending: [EpisodePick] { picks.filter { $0.owned == nil && !added.contains($0.episode) } }
     var body: some View {
         NavigationStack {
@@ -702,9 +724,20 @@ private struct EpisodeDownloaderSheet: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(L10n.format("Season %d Ep %d", season, pick.episode)).font(.headline)
-                Text(verbatim: pick.item.name).font(.caption).foregroundStyle(Theme.muted).lineLimit(2)
-                Text(verbatim: [pick.item.size, pick.item.availability, pick.item.quality].filter { !$0.isEmpty }.joined(separator: " · "))
-                    .font(.caption).monospacedDigit()
+                Text(verbatim: release(pick).name).font(.caption).foregroundStyle(Theme.muted).lineLimit(2)
+                Text(verbatim: summary(release(pick))).font(.caption).monospacedDigit()
+                if pick.owned == nil, !added.contains(pick.episode), pick.alternatives.count > 1 {
+                    // Another release for this episode: the suggestion is only the best seeded of ordinary size.
+                    Menu {
+                        ForEach(pick.alternatives) { option in
+                            Button { chosen[pick.episode] = option } label: {
+                                if option.id == release(pick).id { Label(summary(option), systemImage: "checkmark") } else { Text(verbatim: summary(option)) }
+                            }
+                        }
+                    } label: {
+                        Label(L10n.format("Choose another (%d)", pick.alternatives.count), systemImage: "arrow.left.arrow.right").font(.caption.weight(.semibold))
+                    }.fixedSize()
+                }
                 if let failure = failures[pick.episode] { Text(failure).font(.caption).foregroundStyle(.orange) }
             }
             Spacer(minLength: 8)
@@ -726,7 +759,7 @@ private struct EpisodeDownloaderSheet: View {
         defer { adding.remove(pick.episode) }
         do {
             struct Result: Decodable {}
-            let _: Result = try await store.request("POST", "/v1/torrents", body: ["magnet": pick.item.magnet, "paused": false], timeout: 45)
+            let _: Result = try await store.request("POST", "/v1/torrents", body: ["magnet": release(pick).magnet, "paused": false], timeout: 45)
             added.insert(pick.episode)
         } catch { failures[pick.episode] = error.localizedDescription }
     }

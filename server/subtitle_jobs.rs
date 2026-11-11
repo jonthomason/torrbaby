@@ -298,6 +298,26 @@ impl Manager {
         }
         Ok(())
     }
+    /// Keep finished subtitle work when the library moves or renames a file. A job
+    /// made for the file at its old path would read as stale; when that path is gone
+    /// and the file now at `current` has the same size and modification time, it is
+    /// the same file, so the job follows it instead of being redone.
+    pub fn relocate(&self, asset: &str, current: &Path) -> usize {
+        let Ok(now) = revision(current) else { return 0 };
+        // dev:inode:size:mtime:mtime_ns:ctime:ctime_ns — a move keeps size and mtime.
+        let content = |r: &str| r.split(':').skip(2).take(3).map(str::to_owned).collect::<Vec<_>>();
+        let ids: Vec<String> = self.index.lock().ok().and_then(|index| index.get(asset).cloned()).unwrap_or_default();
+        let mut moved = 0;
+        for id in ids {
+            let Ok(mut job) = self.read(&id) else { continue };
+            if job.asset_id != asset || job.input == current || job.input.exists() { continue; }
+            if job.input.extension() != current.extension() || content(&job.revision) != content(&now) || content(&now).len() != 3 { continue; }
+            job.input = current.to_owned();
+            job.revision = now.clone();
+            if self.save(&job).is_ok() { moved += 1; }
+        }
+        moved
+    }
     pub fn status(&self, id: &str) -> Result<Value> {
         let mut job = self.read(id)?;
         if revision(&job.input).ok().as_deref() != Some(&job.revision) {

@@ -87,6 +87,7 @@
     <string name="ui_bf1604f52dd4" formatted="false">Choose a release</string>
     <string name="ui_9d6a2b12fd09" formatted="false">Choose a release, then add it.</string>
     <string name="ui_0acf0708ca28" formatted="false">Choose a user before starting playback.</string>
+    <string name="ui_2c052719b7f2" formatted="false">Choose another (%d)</string>
     <string name="ui_0772fa16aa51" formatted="false">Choose the right title</string>
     <string name="ui_82be318f7bae" formatted="false">Choose your server</string>
     <string name="ui_719ea396ad92" formatted="false">Clear</string>

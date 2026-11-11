@@ -12059,6 +12059,23 @@
           }
         }
       }
+    },
+    "Choose another (%d)": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose another (%d)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "换一个资源（%d）"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
