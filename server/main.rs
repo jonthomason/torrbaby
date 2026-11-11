@@ -1,6 +1,7 @@
 //! Native server and CLI. Production cutover follows API and data parity checks.
 mod trials;
 mod api;
+mod audio_transcode;
 mod catalog;
 mod config;
 mod container;
@@ -270,7 +271,9 @@ async fn main() -> Result<()> {
         }
         Command::OcrSubtitles { input, track, output } => { ocr_subtitles::decode(&input, track, &output)?; }
         Command::IndexMatroska { input, output } => {
-            println!("{}", virtual_mkv::build(&input, &output)?);
+            // With the converter beside this binary, audio Apple devices cannot decode is converted as the server would.
+            let sidecars = audio_transcode::ensure(&output.with_extension("data"), "index-matroska", &input, &subtitle_jobs::revision(&input)?);
+            println!("{}", virtual_mkv::build(&input, &output, &sidecars)?);
         }
         Command::ServeIndexedMatroska { input, index, port } => {
             virtual_mkv::serve(&input, &index, port).await?;

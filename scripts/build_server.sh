@@ -49,6 +49,11 @@ codesign --force --options runtime --identifier "$VISION_IDENTIFIER" --sign "$MA
 swiftc -parse-as-library -O -target "$(uname -m)-apple-macos26.0" \
     "$ROOT/helpers/SpeechSubtitles.swift" -o "$APP/Contents/MacOS/torrbaby-speech-subtitles"
 codesign --force --options runtime --sign "$MAC_SIGNING_IDENTITY" "$APP/Contents/MacOS/torrbaby-speech-subtitles"
+# Audio-only ffmpeg (LGPL build) that converts DTS and other tracks Apple devices cannot decode.
+"$ROOT/scripts/build_ffmpeg.sh"
+cp "$ROOT/local-state/ffmpeg/ffmpeg" "$APP/Contents/MacOS/torrbaby-ffmpeg"
+cp "$ROOT/local-state/ffmpeg/COPYING.LGPLv2.1" "$APP/Contents/Resources/FFMPEG_LICENSE.txt"
+codesign --force --options runtime --sign "$MAC_SIGNING_IDENTITY" "$APP/Contents/MacOS/torrbaby-ffmpeg"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

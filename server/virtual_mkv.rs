@@ -11,6 +11,16 @@ use std::{
 pub(crate) struct Recording {
     pub pending: Option<(u64, Vec<u8>)>,
     pub extents: Vec<[u64; 3]>,
+    /// Set with `pending` when the packet comes from a converted audio copy.
+    pub pending_side: Option<usize>,
+    /// [virtual offset, which copy, offset in the copy, length]
+    pub side_extents: Vec<[u64; 4]>,
+}
+/// A converted audio copy the index reads packets from.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SideFile {
+    pub path: std::path::PathBuf,
+    pub bytes: u64,
 }
 #[derive(Serialize, Deserialize)]
 pub struct Index {
@@ -25,15 +35,28 @@ pub struct Index {
     pub omitted_audio: Vec<String>,
     #[serde(default)]
     pub audio_tracks: Option<u64>,
+    /// Converted audio copies (formats Apple devices cannot decode) and the
+    /// packets served from them. Absent in indexes built without any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub side_files: Vec<SideFile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub side_extents: Vec<[u64; 4]>,
 }
-pub fn build(input: &Path, output: &Path) -> Result<serde_json::Value> {
+/// Small marker beside the index, so a missing audio copy is noticed without parsing the index.
+pub fn side_files(directory: &Path) -> Vec<(std::path::PathBuf, u64)> {
+    fs::read(directory.join("sidecars.json")).ok()
+        .and_then(|bytes| serde_json::from_slice::<Vec<SideFile>>(&bytes).ok())
+        .map(|files| files.into_iter().map(|f| (f.path, f.bytes)).collect())
+        .unwrap_or_default()
+}
+pub fn build(input: &Path, output: &Path, sidecars: &[crate::audio_transcode::Sidecar]) -> Result<serde_json::Value> {
     let revision = crate::subtitle_jobs::revision(input)?;
     fs::create_dir(output).context("Index destination must be new")?;
     let result = (|| -> Result<serde_json::Value> {
         let mapping = Arc::new(Mutex::new(Recording::default()));
         let metadata = output.join("metadata.mp4");
         let before = std::time::Instant::now();
-        let remuxed = crate::remux::run_internal(input, &metadata, 34_359_738_368, Some(mapping.clone()))?;
+        let remuxed = crate::remux::run_internal(input, &metadata, 34_359_738_368, Some(mapping.clone()), sidecars)?;
         let mut record = mapping
             .lock()
             .map_err(|_| anyhow::anyhow!("Mapping unavailable"))?;
@@ -53,6 +76,20 @@ pub fn build(input: &Path, output: &Path) -> Result<serde_json::Value> {
             );
             previous = at + length;
         }
+        let side_files = sidecars.iter()
+            .map(|s| Ok(SideFile { path: s.path.clone(), bytes: s.path.metadata()?.len() }))
+            .collect::<Result<Vec<_>>>()?;
+        let mut previous = 0;
+        for [at, which, source, length] in &record.side_extents {
+            ensure!(
+                *length > 0
+                    && *at >= previous
+                    && at.checked_add(*length).is_some_and(|v| v <= output_size)
+                    && side_files.get(*which as usize).is_some_and(|f| source.checked_add(*length).is_some_and(|v| v <= f.bytes)),
+                "Invalid converted audio extent"
+            );
+            previous = at + length;
+        }
         ensure!(
             revision == crate::subtitle_jobs::revision(input)?,
             "Source changed during indexing"
@@ -65,11 +102,11 @@ pub fn build(input: &Path, output: &Path) -> Result<serde_json::Value> {
         let mut metadata_extents = Vec::new();
         let mut cursor = 0;
         let mut packed_offset = 0;
-        for &[start, _, len] in record
-            .extents
-            .iter()
-            .chain(std::iter::once(&[output_size, 0, 0]))
-        {
+        let mut spans: Vec<[u64; 2]> = record.extents.iter().map(|e| [e[0], e[2]])
+            .chain(record.side_extents.iter().map(|e| [e[0], e[3]])).collect();
+        spans.sort_unstable();
+        spans.push([output_size, 0]);
+        for [start, len] in spans {
             if start > cursor {
                 let n = start - cursor;
                 ensure!(packed_offset + n <= 128 * 1024 * 1024, "Metadata too large");
@@ -93,7 +130,10 @@ pub fn build(input: &Path, output: &Path) -> Result<serde_json::Value> {
             metadata_extents,
             omitted_audio: serde_json::from_value(remuxed["omitted_audio"].clone())?,
             audio_tracks: remuxed["audio_tracks"].as_u64(),
+            side_files: side_files.clone(),
+            side_extents: std::mem::take(&mut record.side_extents),
         };
+        if !side_files.is_empty() { fs::write(output.join("sidecars.json"), serde_json::to_vec(&side_files)?)?; }
         let json = serde_json::to_vec(&index)?;
         ensure!(json.len() <= 128 * 1024 * 1024, "Index too large");
         fs::write(output.join("index.json"), &json)?;
@@ -116,6 +156,7 @@ pub fn build(input: &Path, output: &Path) -> Result<serde_json::Value> {
 pub struct Reader {
     source: fs::File,
     metadata: fs::File,
+    sides: Vec<fs::File>,
     index: Index,
     position: u64,
 }
@@ -148,6 +189,22 @@ impl Reader {
             );
             spans.push((at, len));
         }
+        let mut sides = Vec::new();
+        for side in &index.side_files {
+            let file = fs::File::open(&side.path).context("Converted audio is missing")?;
+            ensure!(file.metadata()?.len() == side.bytes, "Converted audio changed; rebuild index");
+            sides.push(file);
+        }
+        let mut side_end = 0;
+        for &[at, which, offset, len] in &index.side_extents {
+            ensure!(
+                len > 0 && at >= side_end
+                    && index.side_files.get(which as usize).is_some_and(|f| offset.checked_add(len).is_some_and(|v| v <= f.bytes)),
+                "Invalid converted audio extent"
+            );
+            side_end = at.checked_add(len).context("Converted audio extent overflow")?;
+            spans.push((at, len));
+        }
         spans.sort_unstable();
         let mut covered = 0u64;
         for (at, len) in spans {
@@ -175,6 +232,7 @@ impl Reader {
         Ok(Self {
             source: original,
             metadata,
+            sides,
             index,
             position: 0,
         })
@@ -210,6 +268,14 @@ impl Reader {
                     source + at - start,
                     (start + len - at).min(output.len() as u64) as usize,
                 ),
+                _ if self.index.side_extents.get(self.index.side_extents.partition_point(|e| e[0] + e[3] <= at)).is_some_and(|e| e[0] <= at) => {
+                    let [start, which, offset, len] = self.index.side_extents[self.index.side_extents.partition_point(|e| e[0] + e[3] <= at)];
+                    (
+                        &self.sides[which as usize],
+                        offset + at - start,
+                        (start + len - at).min(output.len() as u64) as usize,
+                    )
+                }
                 _ => {
                     let j = self
                         .index

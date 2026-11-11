@@ -27,7 +27,10 @@ impl Write for LimitedFile {
             if let Some((source, expected)) = record.pending.take() {
                 if bytes != expected { return Err(std::io::Error::other("Muxer changed a media packet")); }
                 let at = self.file.stream_position()?;
-                record.extents.push([at, source, bytes.len() as u64]);
+                match record.pending_side.take() {
+                    Some(which) => record.side_extents.push([at, which as u64, source, bytes.len() as u64]),
+                    None => record.extents.push([at, source, bytes.len() as u64]),
+                }
                 self.file.seek(SeekFrom::Current(bytes.len() as i64))?;
                 return Ok(bytes.len());
             }
@@ -258,10 +261,22 @@ fn write_mapped<M: oxideav_core::Muxer + ?Sized>(
     packet: &Packet,
     source_offset: u64,
 ) -> Result<()> {
+    write_mapped_from(mux, mapping, packet, source_offset, None)
+}
+
+/// `side` names the converted audio copy the packet's bytes live in, rather than the original file.
+fn write_mapped_from<M: oxideav_core::Muxer + ?Sized>(
+    mux: &mut M,
+    mapping: &Mapping,
+    packet: &Packet,
+    source_offset: u64,
+    side: Option<usize>,
+) -> Result<()> {
     if let Some(mapping) = mapping {
         let mut record = mapping.lock().map_err(|_| anyhow::anyhow!("Mapping lock failed"))?;
         ensure!(record.pending.is_none(), "Unconsumed media packet");
         record.pending = Some((source_offset, packet.data.clone()));
+        record.pending_side = side;
     }
     mux.write_packet(packet)?;
     if let Some(mapping) = mapping {
@@ -271,12 +286,51 @@ fn write_mapped<M: oxideav_core::Muxer + ?Sized>(
 }
 
 pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Value> {
-    run_internal(input, output, max_bytes, None)
+    run_internal(input, output, max_bytes, None, &[])
+}
+
+/// Converted copies are keyed apart from Matroska track numbers, so the
+/// original track's own packets are still skipped.
+const SIDE_KEY: u64 = 1 << 40;
+struct SideSource {
+    key: u64,
+    frames: crate::audio_transcode::Frames,
+}
+
+/// Write converted audio frames that start at or before `until_ns` (all of them when None).
+fn write_side_audio<M: oxideav_core::Muxer + ?Sized>(
+    mux: &mut M,
+    mapping: &Mapping,
+    tracks: &mut BTreeMap<u64, Track>,
+    sides: &mut [SideSource],
+    until_ns: Option<u64>,
+) -> Result<()> {
+    use crate::audio_transcode::{FRAME_SAMPLES, SAMPLE_RATE};
+    for (which, side) in sides.iter_mut().enumerate() {
+        let t = tracks.get_mut(&side.key).context("Missing converted audio track")?;
+        loop {
+            let ns = t.count as u128 * FRAME_SAMPLES as u128 * 1_000_000_000 / SAMPLE_RATE as u128;
+            if until_ns.is_some_and(|limit| ns > limit as u128) { break; }
+            let Some((offset, data)) = side.frames.next()? else { break };
+            ensure!(t.count < 2_000_000, "Too many samples");
+            let (config, _, _) = crate::dolby::configuration("eac3", &data)?;
+            ensure!(config == t.stream.params.extradata, "Converted audio configuration changed midstream");
+            let mut packet = Packet::new(t.stream.index, t.stream.time_base, data);
+            packet.pts = Some((t.count * FRAME_SAMPLES).try_into()?);
+            packet.dts = packet.pts;
+            packet.duration = Some(FRAME_SAMPLES as i64);
+            packet.flags.keyframe = true;
+            write_mapped_from(mux, mapping, &packet, offset, Some(which))?;
+            t.count += 1;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
-    mapping: Option<std::sync::Arc<std::sync::Mutex<crate::virtual_mkv::Recording>>>) -> Result<serde_json::Value> {
-    match remux_pass(input, output, max_bytes, mapping.clone(), &BTreeMap::new()) {
+    mapping: Option<std::sync::Arc<std::sync::Mutex<crate::virtual_mkv::Recording>>>,
+    sidecars: &[crate::audio_transcode::Sidecar]) -> Result<serde_json::Value> {
+    match remux_pass(input, output, max_bytes, mapping.clone(), &BTreeMap::new(), sidecars) {
         Err(error) => {
             let Some(clock) = error.downcast_ref::<MeasuredVideoClock>() else { return Err(error) };
             // The failed pass removed its own output; start the mapping afresh.
@@ -285,7 +339,7 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
                     crate::virtual_mkv::Recording::default();
             }
             let clocks = BTreeMap::from([(clock.track, clock.period_ns)]);
-            let mut result = remux_pass(input, output, max_bytes, mapping, &clocks)?;
+            let mut result = remux_pass(input, output, max_bytes, mapping, &clocks, sidecars)?;
             result["measured_video_period_ns"] = serde_json::json!(clocks.values().next());
             Ok(result)
         }
@@ -294,7 +348,7 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
 }
 
 fn remux_pass(input: &Path, output: &Path, max_bytes: u64, mapping: Mapping,
-    measured_clocks: &BTreeMap<u64, u64>) -> Result<serde_json::Value> {
+    measured_clocks: &BTreeMap<u64, u64>, sidecars: &[crate::audio_transcode::Sidecar]) -> Result<serde_json::Value> {
     ensure!(
         (1_048_576..=34_359_738_368).contains(&max_bytes),
         "Remux budget must be 1 MiB to 32 GiB"
@@ -313,6 +367,7 @@ fn remux_pass(input: &Path, output: &Path, max_bytes: u64, mapping: Mapping,
     // whole title. Callers decide whether a title left with no audio track is
     // acceptable (video-only analysis) or not (playback).
     let mut omitted_audio = Vec::new();
+    let mut sides: Vec<SideSource> = Vec::new();
     for t in mkv
         .tracks()
         .iter()
@@ -321,7 +376,50 @@ fn remux_pass(input: &Path, output: &Path, max_bytes: u64, mapping: Mapping,
         if t.track_type() == TrackType::Audio
             && !matches!(t.codec_id(), "A_AAC" | "A_AC3" | "A_EAC3")
         {
-            omitted_audio.push(t.codec_id().to_owned());
+            let number = t.track_number().get();
+            let Some(sidecar) = sidecars.iter().find(|s| s.track == number) else {
+                omitted_audio.push(t.codec_id().to_owned());
+                continue;
+            };
+            // A Dolby Digital Plus copy stands in for a track Apple devices cannot decode.
+            ensure!(tracks.len() < 8, "Too many media tracks");
+            let (_, first) = crate::audio_transcode::Frames::open(&sidecar.path)?.next()?.context("Empty converted audio")?;
+            let (config, rate, channels) = crate::dolby::configuration("eac3", &first)?;
+            ensure!(rate == crate::audio_transcode::SAMPLE_RATE, "Unexpected converted audio sample rate");
+            let mut params = CodecParameters::audio(CodecId::new("eac3"));
+            params.extradata = config;
+            params.sample_rate = Some(rate);
+            params.channels = Some(channels);
+            let stream = StreamInfo {
+                index: tracks.len() as u32,
+                time_base: TimeBase::new(1, rate as i64),
+                duration: None,
+                start_time: Some(0),
+                params,
+            };
+            tracks.insert(SIDE_KEY | number, Track {
+                stream,
+                duration_ns: 0,
+                video: false,
+                count: 0,
+                pts: Vec::new(),
+                audio_samples: crate::audio_transcode::FRAME_SAMPLES,
+                // The copy is written on the file's own timeline, starting at zero.
+                origin_ns: Some(0),
+                codec_delay_ns: 0,
+                labels: TrackLabels {
+                    language: normalized_language(t.language_bcp47().or(t.language()).unwrap_or("und"))?,
+                    name: t.name().map(str::to_owned),
+                    audio: true,
+                    enabled: t.flag_enabled(),
+                },
+                default_track: t.flag_default(),
+                held: None,
+                nal_kinds: Vec::new(),
+                nal_length: 0,
+                visual_boxes: Vec::new(),
+            });
+            sides.push(SideSource { key: SIDE_KEY | number, frames: crate::audio_transcode::Frames::open(&sidecar.path)? });
             continue;
         }
         ensure!(tracks.len() < 8, "Too many media tracks");
@@ -541,6 +639,9 @@ fn remux_pass(input: &Path, output: &Path, max_bytes: u64, mapping: Mapping,
             };
             let ns = ns.checked_add(u64::try_from(lace_offset)?)
                 .context("Laced timestamp overflow")?;
+            // Keep converted audio interleaved with the packets around it.
+            if !sides.is_empty() { write_side_audio(&mut *mux, &mapping, &mut tracks, &mut sides, Some(ns))?; }
+            let t = tracks.get_mut(&frame.track).context("Missing media track")?;
             let origin = *t.origin_ns.get_or_insert(ns);
             let start = origin as i128 - t.codec_delay_ns as i128;
             let mut packet = Packet::new(
@@ -598,6 +699,7 @@ fn remux_pass(input: &Path, output: &Path, max_bytes: u64, mapping: Mapping,
             }
             t.count += 1;
         }
+        write_side_audio(&mut *mux, &mapping, &mut tracks, &mut sides, None)?;
         let mut slots = BTreeMap::new();
         let mut access = BTreeMap::new();
         for (&number, t) in tracks.iter_mut() {
@@ -668,7 +770,7 @@ fn remux_pass(input: &Path, output: &Path, max_bytes: u64, mapping: Mapping,
         repair_presentation_durations(output, &durations, &visual, &labels, max_bytes)?;
         Ok(
             serde_json::json!({"tracks":streams.len(),"bytes":output.metadata()?.len(),"development_only":true,
-                "audio_tracks":tracks.values().filter(|t|!t.video).count(),"omitted_audio":omitted_audio,
+                "audio_tracks":tracks.values().filter(|t|!t.video).count(),"omitted_audio":omitted_audio,"converted_audio":sides.len(),
                 "partial_sync_samples":partial_sync_samples,"demoted_keyframes":demoted_keyframes}),
         )
     })();
@@ -1323,6 +1425,43 @@ mod timing_tests {
         let result = result.unwrap();
         assert_eq!((result["audio_tracks"].as_u64(), result["omitted_audio"].clone()), (Some(0), serde_json::json!(["A_DTS"])));
         assert_eq!(track_durations(&mp4.unwrap()).len(), 1);
+    }
+
+    /// One silent mono Dolby Digital Plus frame (32 kb/s, 48 kHz) from the bundled converter.
+    const SILENT_EAC3: &str = "0b77003f3287c00000075001ff3abe7cf9f3e7cf9f3e7cf9f3e7cf9f3e7cf9f3e7c00000dad6b5ad6b5ad6b5ad6a400001b5ad6b5ad6b5ad6b5ad48000036b5ad6b5ad6b5ad6b5a9000006d6b5ad6b5ad6b5ad6b5200000dad6b5ad6b5ad6b5ad6a400001b5ad6b5ad6b5ad6b5ad48000000000000000000000000000000c921";
+
+    #[test]
+    fn converted_audio_replaces_a_track_apple_cannot_decode() {
+        use std::io::Read;
+        let dir = std::env::temp_dir().join(format!("torrbaby-remux-side-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let input = dir.join("in.mkv");
+        std::fs::write(&input, matroska(&Fixture { video_pts_ms: video_ms(0..48), aac_ms: None, dts: true, hevc_nals: None })).unwrap();
+        let frame: Vec<u8> = (0..SILENT_EAC3.len() / 2).map(|i| u8::from_str_radix(&SILENT_EAC3[i * 2..i * 2 + 2], 16).unwrap()).collect();
+        let copy = dir.join("track-3.eac3");
+        std::fs::write(&copy, frame.repeat(60)).unwrap();
+        let sidecars = [crate::audio_transcode::Sidecar { track: 3, path: copy.clone() }];
+        // A plain remux carries the copy as the title's audio track…
+        let plain = dir.join("plain.mp4");
+        let result = run_internal(&input, &plain, 16 * 1024 * 1024, None, &sidecars).unwrap();
+        assert_eq!((result["audio_tracks"].as_u64(), result["converted_audio"].as_u64(), result["omitted_audio"].clone()),
+            (Some(1), Some(1), serde_json::json!([])));
+        let expected = std::fs::read(&plain).unwrap();
+        let durations = track_durations(&expected);
+        assert_eq!(durations.len(), 2);
+        // …and the index serves the same bytes from the original file and the copy.
+        let index = dir.join("index");
+        crate::virtual_mkv::build(&input, &index, &sidecars).unwrap();
+        let mut reader = crate::virtual_mkv::Reader::open(&input, &index).unwrap();
+        assert_eq!(reader.missing_audio(), None);
+        let mut served = Vec::new();
+        reader.read_to_end(&mut served).unwrap();
+        assert!(served == expected, "virtual bytes differ from the remuxed file");
+        assert_eq!(crate::virtual_mkv::side_files(&index), vec![(copy.clone(), 60 * 128)]);
+        // Without its copy the index refuses to open rather than serving holes.
+        std::fs::remove_file(&copy).unwrap();
+        assert!(crate::virtual_mkv::Reader::open(&input, &index).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// Presentation times of a constant clock, quantized to 1 ms Matroska ticks.

@@ -75,6 +75,7 @@ impl Manager {
                 fs::remove_dir_all(item.path())?;
             }
         }
+        crate::audio_transcode::sweep(data);
         Ok(Arc::new(Self {
             root,
             pending: Mutex::new(HashSet::new()),
@@ -113,6 +114,7 @@ impl Manager {
                 .lock()
                 .is_ok_and(|r| r.values().all(|v| Arc::strong_count(v) == 1))
     }
+    fn data(&self) -> &Path { self.root.parent().unwrap_or(&self.root) }
     fn job(&self, id: &str) -> Result<Job> {
         ensure!(valid(id), "Invalid virtual media ID");
         Ok(serde_json::from_slice(&fs::read(
@@ -178,6 +180,8 @@ impl Manager {
                 .remove(&id);
             fs::remove_file(self.root.join(format!("{id}.json")))?;
         }
+        // Converted audio copies belong to the title and leave with it.
+        crate::audio_transcode::purge_assets(self.data(), assets);
         Ok(())
     }
     pub fn status(&self, id: &str) -> Result<Value> {
@@ -331,7 +335,28 @@ impl Manager {
                     let _=directory.set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now()));
                 }
             }
-            if (j.state == "ready" && self.index_path(&j)?.exists()) || (j.state == "failed" && j.preparation_version >= PREPARATION_VERSION && !retry_storage) || pending.contains(&id) {
+            // A ready index is rebuilt when a converted audio copy can now give it
+            // sound (it was built before conversion existed), or when the copy it
+            // was built with has gone.
+            let mut rebuild = false;
+            if j.state == "ready" && !pending.contains(&id) && is_mkv(&j.input) {
+                let base = self.index_path(&j)?;
+                if base.exists() {
+                    let silent = j.missing_audio.is_some()
+                        && crate::audio_transcode::wanted(self.data(), &j.asset, &j.revision)
+                        && crate::virtual_mkv::Reader::open(&j.input, &base).map(|r| r.missing_audio().is_some()).unwrap_or(true);
+                    let lost = !crate::audio_transcode::intact(&crate::virtual_mkv::side_files(&base));
+                    if silent || lost {
+                        ensure!(base.is_dir() && !base.is_symlink(), "Unsafe index path");
+                        fs::remove_dir_all(&base)?;
+                    }
+                    // Another job may already have rebuilt the shared index with sound.
+                    rebuild = silent || lost || j.missing_audio.is_some() && crate::audio_transcode::wanted(self.data(), &j.asset, &j.revision);
+                }
+            }
+            if rebuild {
+                if let Ok(mut readers) = self.readers.lock() { readers.remove(&id); }
+            } else if (j.state == "ready" && self.index_path(&j)?.exists()) || (j.state == "failed" && j.preparation_version >= PREPARATION_VERSION && !retry_storage) || pending.contains(&id) {
                 // A playback request for a background build now counts as playback.
                 if !background && pending.contains(&id) {
                     if let Ok(mut set)=self.background.lock() {set.remove(&id);}
@@ -431,7 +456,14 @@ impl Manager {
             if is_mkv(&job.input) { self.reclaim_indexes()?; }
             let temporary = final_path.with_extension("building");
             if is_mkv(&job.input) {
-                crate::virtual_mkv::build(&job.input, &temporary)?;
+                // Converts audio Apple devices cannot decode on first use; later builds reuse the copy.
+                let sidecars = crate::audio_transcode::ensure(self.data(), &job.asset, &job.input, &job.revision);
+                if let Err(error) = crate::virtual_mkv::build(&job.input, &temporary, &sidecars) {
+                    if sidecars.is_empty() { return Err(error); }
+                    // The copy could not be used: keep the title indexed without it.
+                    crate::audio_transcode::fail(self.data(), &job.asset, &job.input, &job.revision, &error.to_string());
+                    crate::virtual_mkv::build(&job.input, &temporary, &[])?;
+                }
             } else {
                 fs::create_dir(&temporary)?;
             }
