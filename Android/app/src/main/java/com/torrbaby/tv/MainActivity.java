@@ -427,10 +427,15 @@ public class MainActivity extends Activity {
       b.setNextFocusUpId(b.getId());
       if (entry != null) {
         b.setNextFocusDownId(entry.getId());
-        View target=entry;
         b.setOnKeyListener((v,key,event)->{
-          if(key==KeyEvent.KEYCODE_DPAD_DOWN) { if(event.getAction()==KeyEvent.ACTION_DOWN)target.requestFocus();return true; }
-          return false;
+          if(key!=KeyEvent.KEYCODE_DPAD_DOWN)return false;
+          if(event.getAction()==KeyEvent.ACTION_DOWN) {
+            // Resolved at press time: a refresh can rebuild the page under an open top bar.
+            View target=content.findViewWithTag("hero");
+            if(target==null || !target.isAttachedToWindow())target=firstFocusable(content);
+            if(target!=null)target.requestFocus();
+          }
+          return true;
         });
       }
       if (("nav:" + section).equals(b.getTag()) && entry != null)
@@ -1350,6 +1355,7 @@ public class MainActivity extends Activity {
                   content.removeAllViews();
                   if(newDetail!=null) {
                     details(newDetail);
+                    wireNavigation();
                     content.getChildAt(0).post(() -> content.getChildAt(0).scrollTo(0,scrollY));
                   } else { detailId=""; render(); }
                   View restore = tag == null ? null : root.findViewWithTag(tag);
@@ -1562,15 +1568,25 @@ public class MainActivity extends Activity {
     if (entry.getId() == View.NO_ID) entry.setId(View.generateViewId());
     View seasons = page.findViewWithTag("seasons");
     boolean selector = seasons instanceof LinearLayout && ((View) seasons.getParent()).getVisibility() == View.VISIBLE;
+    View hero = page.findViewWithTag("hero");
+    if (hero != null && hero.getId() == View.NO_ID) hero.setId(View.generateViewId());
+    // The first row leads back up to where the list was entered from.
+    View firstRow = firstFocusable(episodes);
+    View above = hero;
     if (selector) {
       LinearLayout row = (LinearLayout) seasons;
       for (int i = 0; i < row.getChildCount(); i++)
-        if (row.getChildAt(i) instanceof Button) row.getChildAt(i).setNextFocusDownId(entry.getId());
-      // From the hero, arrive on the season being shown rather than the nearest tab.
+        if (row.getChildAt(i) instanceof Button) {
+          row.getChildAt(i).setNextFocusDownId(entry.getId());
+          if (hero != null) row.getChildAt(i).setNextFocusUpId(hero.getId());
+        }
+      // From the hero or the episodes, arrive on the season being shown rather than the nearest tab.
       entry = row.findViewWithTag("season:" + season);
       if (entry == null) return;
       if (entry.getId() == View.NO_ID) entry.setId(View.generateViewId());
+      above = entry;
     }
+    if (firstRow != null && firstRow != episodes && above != null) firstRow.setNextFocusUpId(above.getId());
     for (String tag : new String[] {"hero", "more"}) {
       View button = page.findViewWithTag(tag);
       if (button != null) button.setNextFocusDownId(entry.getId());
