@@ -169,8 +169,9 @@ impl Database {
                 .unwrap_or(json!({}));
             // Specials (season 0) are extras: listed with the bonus material, never in the
             // seasons or the next-episode flow. Release packs number specials differently
-            // from TMDB, so they keep the name from their file.
-            if kind == "tv" && asset["season"] == 0 {
+            // from TMDB, so they keep the name from their file. A special marked by hand as
+            // `watch_first` (a pilot miniseries) stays an episode of season 0, before season 1.
+            if kind == "tv" && asset["season"] == 0 && asset["watch_first"] != true {
                 title["assets"].as_array_mut().context("Invalid title assets")?.push(json!({
                     "id":id,"media_info":crate::media_inventory::cached(self,id)?,"role":"extra","name":extra_name(asset),"season":null,"episode":null,
                     "summary":"","thumbnail":null,"complete":asset["complete"],"size":asset["size"],"position":progress["position"].as_f64().unwrap_or(0.0),
@@ -180,7 +181,7 @@ impl Database {
                 continue;
             }
             title["assets"].as_array_mut().context("Invalid title assets")?.push(json!({
-                "id":id,"media_info":crate::media_inventory::cached(self,id)?,"role":"main","name":episode["title"].as_str().unwrap_or(if kind=="movie"{name}else{&fallback}),
+                "id":id,"media_info":crate::media_inventory::cached(self,id)?,"role":"main","name":if asset["season"] == 0 { extra_name(asset) } else { episode["title"].as_str().unwrap_or(if kind=="movie"{name}else{&fallback}).to_owned() },
                 "season":asset["season"],"episode":asset["episode"],"summary":episode["summary"].as_str().unwrap_or(""),
                 "airdate":episode["airdate"],"thumbnail":episode["thumbnail"],"duration_minutes":episode.get("duration_minutes").unwrap_or(&entity["duration_minutes"]),
                 "complete":asset["complete"],"size":asset["size"],"position":progress["position"].as_f64().unwrap_or(0.0),
@@ -422,10 +423,11 @@ mod completion_tests {
         let assets = [("plan", "/Media/Show (2003) - S00E22 - The Plan (1080p BluRay x265 Celdra).mkv", Some(0), None),
             ("razor", "/Media/Show (2003) - S00E04-E05 - Razor (1080p BluRay x265 Celdra).mkv", Some(0), None),
             ("mini", "/Media/Show (2003) - S00E01 - The Lowdown.mkv", Some(0), Some("The Miniseries (Part 1)")),
+            ("pilot-movie", "/Media/Show (2003) - S00E02 - The Miniseries (2).mkv", Some(0), None),
             ("pilot", "/Media/Show (2003) - S01E01 - Pilot.mkv", Some(1), None)];
         for (id, path, season, display) in assets {
             let episode = if id == "plan" { 22 } else { 1 };
-            let asset = json!({"id":id,"available":true,"complete":true,"path":path,"entity_id":"show","display_name":display,
+            let asset = json!({"id":id,"available":true,"complete":true,"path":path,"entity_id":"show","display_name":display,"watch_first":id == "pilot-movie",
                 "status":"matched","library_ready":true,"torrent_hash":"hash","added_at":1.0,"season":season,"episode":episode});
             db.connection.execute("INSERT INTO library_assets VALUES(?,?)", rusqlite::params![id, asset.to_string()])?;
         }
@@ -433,6 +435,9 @@ mod completion_tests {
         let files = catalog["titles"][0]["assets"].as_array().unwrap().clone();
         let file = |id: &str| files.iter().find(|a| a["id"] == id).unwrap().clone();
         assert_eq!((file("pilot")["role"].clone(), file("pilot")["name"].clone()), (json!("main"), json!("Pilot")));
+        // A special marked to watch first stays an episode of season 0, named from its file.
+        assert_eq!((file("pilot-movie")["role"].clone(), file("pilot-movie")["season"].clone(), file("pilot-movie")["name"].clone()),
+            (json!("main"), json!(0), json!("The Miniseries (2)")));
         for (id, name) in [("plan", "The Plan"), ("razor", "Razor"), ("mini", "The Miniseries (Part 1)")] {
             assert_eq!(file(id)["role"], "extra", "{id}");
             assert_eq!(file(id)["name"], name, "{id}");

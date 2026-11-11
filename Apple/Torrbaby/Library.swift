@@ -149,7 +149,9 @@ struct EpisodeNumber: Codable, Hashable {
         guard season >= 0, season < Int.max, episode >= 0, episode < Int.max else { return nil }
         let adjacent = EpisodeNumber(season: season, episode: episode + 1)
         if known.contains(adjacent) { return adjacent }
-        guard allowSeasonChange, season > 0,
+        // Season 0 holds only specials the server marks to watch first (a pilot
+        // miniseries), so it leads into season 1 like any other season.
+        guard allowSeasonChange,
               !known.contains(where: { $0.season == season && $0.episode > episode }) else { return nil }
         let nextSeason = EpisodeNumber(season: season + 1, episode: 1)
         return known.contains(nextSeason) ? nextSeason : nil

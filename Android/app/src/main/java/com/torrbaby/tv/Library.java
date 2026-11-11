@@ -163,7 +163,9 @@ public final class Library {
         if (a.season == current.season && a.episode > current.episode) laterInSeason = true;
         if (a.season == current.season && a.episode == current.episode + 1 && a.complete) return a;
       }
-      if (!laterInSeason && current.season > 0)
+      // Season 0 holds only specials the server marks to watch first (a pilot miniseries),
+      // so it leads into season 1 like any other season.
+      if (!laterInSeason && current.season >= 0)
         for (Asset a : playable()) if (a.season == current.season + 1 && a.episode == 1) return a;
       return null;
     }
