@@ -574,6 +574,14 @@ struct LibraryDetail: View {
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
+    /// iPhone stacks Play and Download as full-width buttons; wider layouts keep them on one row.
+    private var stacksActions: Bool {
+        #if os(iOS)
+        sizeClass == .compact
+        #else
+        false
+        #endif
+    }
     private var contentPadding: CGFloat {
         #if os(iOS)
         sizeClass == .compact ? 12 : 24
@@ -608,7 +616,7 @@ struct LibraryDetail: View {
                     }
                 } else { Text("Not downloaded") }
             } icon: { Image(systemName: store.canPlay(asset) ? "play.fill" : "wifi.slash") }
-                .font(.headline).frame(minWidth: title.kind == "tv" ? 120 : nil, alignment: .leading).frame(minHeight: 44)
+                .font(.headline).frame(minWidth: title.kind == "tv" && !stacksActions ? 120 : nil, alignment: .leading).frame(minHeight: 44)
         }.libraryActionStyle(prominent: true).disabled(loading)
         #if !os(tvOS)
         if title.kind == "tv" {
@@ -630,7 +638,12 @@ struct LibraryDetail: View {
                             Text(([title.yearLabel, title.contentRating ?? ""] + title.genres.prefix(3)).filter { !$0.isEmpty }.joined(separator: " · "))
                                 .font(.subheadline).foregroundStyle(.white.opacity(0.8))
                             if let asset = store.preferredLibraryAsset(title) {
-                                HStack(spacing: 12) { playbackActions(asset, title: title) }
+                                if stacksActions {
+                                    VStack(alignment: .leading, spacing: 10) { playbackActions(asset, title: title) }
+                                        .environment(\.libraryActionFullWidth, true)
+                                } else {
+                                    HStack(spacing: 12) { playbackActions(asset, title: title) }
+                                }
                             }
                         }.foregroundStyle(.white).padding(16).frame(minHeight: 380, alignment: .bottomLeading)
                     }.clipShape(RoundedRectangle(cornerRadius: 12)).environment(\.colorScheme, .dark)
@@ -759,16 +772,28 @@ struct WatchedBadge: View {
     }
 }
 
+private struct LibraryActionFullWidthKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+    /// On iPhone the main Play and Download actions each fill the row.
+    var libraryActionFullWidth: Bool {
+        get { self[LibraryActionFullWidthKey.self] }
+        set { self[LibraryActionFullWidthKey.self] = newValue }
+    }
+}
+
 // Shared geometry for every library detail action on Mac, iPhone and iPad.
 private struct LibraryActionButtonStyle: ButtonStyle {
     var prominent = false
     /// Secondary actions and season tabs are quieter than the main Play/Download row.
     var compact = false
     @Environment(\.isEnabled) private var enabled
+    @Environment(\.libraryActionFullWidth) private var fullWidth
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(compact ? .subheadline.weight(.semibold) : .headline)
+            .lineLimit(fullWidth && !compact ? 1 : nil).minimumScaleFactor(fullWidth && !compact ? 0.8 : 1)
             .padding(.horizontal, compact ? 14 : 20)
+            .frame(maxWidth: fullWidth && !compact ? .infinity : nil)
             .frame(minHeight: compact ? 36 : 48)
             .foregroundStyle(prominent ? Theme.onAccent : Color.white)
             .background(prominent ? Theme.accent : Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius))
