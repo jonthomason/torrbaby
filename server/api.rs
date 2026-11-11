@@ -592,7 +592,9 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
         db.require_profile(profile)?;
         if hidden {
-            anyhow::ensure!(db.documents("entities")?.iter().any(|v|v["id"]==id),"Title not found");
+            // A second download of a movie is listed as <movie>:copy:<torrent>; it shares the movie's record.
+            let known=id.split_once(":copy:").map_or(id,|(movie,_)|movie);
+            anyhow::ensure!(db.documents("entities")?.iter().any(|v|v["id"]==known),"Title not found");
             db.connection.execute("INSERT INTO profile_hidden_titles(profile_id,title_id,hidden_at) VALUES(?,?,?) ON CONFLICT(profile_id,title_id) DO UPDATE SET hidden_at=excluded.hidden_at",rusqlite::params![profile,id,crate::storage::now()])?;
         } else { db.connection.execute("DELETE FROM profile_hidden_titles WHERE profile_id=? AND title_id=?",[profile,id])?; }
         return Ok(json!({"hidden":hidden}));
@@ -1844,6 +1846,8 @@ async fn artwork(s: &Service, id: &str, variant: &str) -> Result<Value> {
     if !["poster", "backdrop", "logo", "episode"].contains(&variant) {
         bail!("Unknown artwork variant");
     }
+    // A second download of a movie (<movie>:copy:<torrent>) uses the movie's artwork.
+    let id = id.split_once(":copy:").map_or(id, |(movie, _)| movie);
     let url = {
         let db =
             s.db.lock()
