@@ -286,7 +286,8 @@ struct MediaLanguagesView: View {
                 } else {
                     VStack(alignment: .leading, spacing: 3) {
                         Label("Audio", systemImage: "speaker.wave.2").font(.caption.weight(.semibold))
-                        ForEach(formats, id: \.self) { Text(verbatim: $0).fixedSize(horizontal: false, vertical: true) }
+                        // One line: several tracks sit side by side.
+                        Text(verbatim: formats.joined(separator: "  /  ")).fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 VStack(alignment: .leading, spacing: 3) {
