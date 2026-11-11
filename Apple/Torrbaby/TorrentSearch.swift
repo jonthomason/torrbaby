@@ -50,7 +50,15 @@ struct TorrentSearchItem: Decodable, Identifiable {
     let matchNotes: [String]
     var sourceKey: String { sources.map { "\($0.provider):\($0.id)" }.joined(separator: ",") }
     var id: String { infoHash.isEmpty ? sourceKey : infoHash }
+    /// Parsed once per release name: several regular expressions, read many times per redraw.
+    private static let titles = NSCache<NSString, NSString>()
     var title: String {
+        if let known = Self.titles.object(forKey: name as NSString) { return known as String }
+        let parsed = parsedTitle
+        Self.titles.setObject(parsed as NSString, forKey: name as NSString)
+        return parsed
+    }
+    private var parsedTitle: String {
         if name.hasPrefix("[BT下载]["), let end = name.dropFirst(7).firstIndex(of: "]") {
             return String(name[name.index(name.startIndex, offsetBy: 7)..<end])
         }
@@ -163,12 +171,15 @@ struct TorrentSearchView: View {
     #endif
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
-    @State private var query: String
+    /// The text being typed. Held outside this view's observed state: typing must not
+    /// re-evaluate the whole results page (filters, ownership checks, every row) per keystroke.
+    @State private var draft: SearchDraft
+    private var query: String { draft.text }
     @State private var year: Int?
     @State private var season: Int?
     @State private var episode: Int?
     init(initialQuery: String = "", year: Int? = nil, season: Int? = nil, episode: Int? = nil) {
-        _query = State(initialValue: initialQuery); _year = State(initialValue: year)
+        _draft = State(initialValue: SearchDraft(initialQuery)); _year = State(initialValue: year)
         _season = State(initialValue: season); _episode = State(initialValue: episode)
     }
     @AppStorage("torrentSearchMarket") private var market = "world"
@@ -195,7 +206,6 @@ struct TorrentSearchView: View {
     @FocusState private var searchFocused: Bool
     @State private var prepareNextSearch = false
     #if !os(tvOS)
-    @State private var querySelection: TextSelection?
     #endif
     private var resolutionItems: [TorrentSearchItem] {
         (response?.items ?? []).filter { resolution == "all" || $0.hints.resolution?.lowercased() == resolution }
@@ -234,8 +244,12 @@ struct TorrentSearchView: View {
         default: return items
         }
     }
+    private static let titleKeys = NSCache<NSString, NSString>()
     private static func titleKey(_ value: String) -> String {
-        value.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
+        if let known = titleKeys.object(forKey: value as NSString) { return known as String }
+        let key = value.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
+        titleKeys.setObject(key as NSString, forKey: value as NSString)
+        return key
     }
     /// A release without a year borrows the one its same-titled neighbours agree on, so
     /// artwork lookup is not defeated by an ambiguous bare title.
@@ -395,12 +409,6 @@ struct TorrentSearchView: View {
         }
         .navigationTitle("Find")
         .onAppear { if prepareNextSearch { focusNextSearch() } }
-        .onChange(of: query) { _, _ in
-            if prepareNextSearch {
-                year = nil; season = nil; episode = nil
-                prepareNextSearch = false
-            }
-        }
         .onDisappear { work?.cancel(); searching = false }
         .task { if !query.isEmpty && response == nil { search() } }
         #if os(macOS)
@@ -464,27 +472,17 @@ struct TorrentSearchView: View {
                     work?.cancel(); searching = false; response = nil; selectedID = nil; error = nil; source = "all"
                     if query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 { search() }
                 }
-              HStack(spacing: 12) {
-                Image(systemName: "magnifyingglass").foregroundStyle(Theme.accent)
-                searchField
-                    .focused($searchFocused)
-                    .onSubmit(search).autocorrectionDisabled().textFieldStyle(.plain)
-                #if !os(tvOS)
-                if !query.isEmpty {
-                    // Clears the box and results, ready for the next search.
-                    Button {
-                        work?.cancel(); searching = false
-                        query = ""; response = nil; selectedID = nil; error = nil
-                        resetFilters()
-                        focusNextSearch()
-                    } label: { Image(systemName: "xmark.circle.fill").font(.title3).foregroundStyle(Theme.muted) }
-                        .buttonStyle(.plain).accessibilityLabel("Clear search")
-                }
-                #endif
-                Button(action: search) { Text(LocalizedStringKey(searching ? "Searching…" : "Search")) }
-                    .buttonStyle(MonoButtonStyle(prominent: true))
-                    .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || searching)
-              }.padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+              SearchBox(draft: draft, searching: searching, focused: $searchFocused, search: search,
+                        edited: {
+                            if prepareNextSearch { year = nil; season = nil; episode = nil; prepareNextSearch = false }
+                        },
+                        clear: {
+                            // Clears the box and results, ready for the next search.
+                            work?.cancel(); searching = false
+                            draft.text = ""; response = nil; selectedID = nil; error = nil
+                            resetFilters()
+                            focusNextSearch()
+                        })
             }
             ViewThatFits(in: .horizontal) {
                 HStack { sourcePicker; resolutionPicker; Spacer(); searchStatus }
@@ -637,20 +635,13 @@ struct TorrentSearchView: View {
         } catch {self.error = error.localizedDescription}
     }
     #endif
-    @ViewBuilder private var searchField: some View {
-        #if os(tvOS)
-        TextField("Movie, show, or release", text: $query)
-        #else
-        TextField("Movie, show, or release", text: $query, selection: $querySelection)
-        #endif
-    }
     private func focusNextSearch() {
         #if !os(tvOS)
         Task { @MainActor in
             // Allow the phone's detail navigation to finish before opening its keyboard.
             await Task.yield()
             searchFocused = true
-            querySelection = TextSelection(range: query.startIndex..<query.endIndex)
+            draft.selection = TextSelection(range: draft.text.startIndex..<draft.text.endIndex)
         }
         #endif
     }
@@ -794,6 +785,47 @@ private struct EpisodeDownloaderSheet: View {
     }
 }
 
+/// The search text and its selection, observed only by the search box.
+final class SearchDraft: ObservableObject {
+    @Published var text: String
+    #if !os(tvOS)
+    @Published var selection: TextSelection?
+    #endif
+    init(_ text: String) { self.text = text }
+}
+/// The search field with its clear and Search buttons. It alone redraws while typing.
+private struct SearchBox: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @ObservedObject var draft: SearchDraft
+    let searching: Bool
+    var focused: FocusState<Bool>.Binding
+    let search: () -> Void
+    let edited: () -> Void
+    let clear: () -> Void
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "magnifyingglass").foregroundStyle(Theme.accent)
+            field.focused(focused).onSubmit(search).autocorrectionDisabled().textFieldStyle(.plain)
+                .onChange(of: draft.text) { _, _ in edited() }
+            #if !os(tvOS)
+            if !draft.text.isEmpty {
+                Button(action: clear) { Image(systemName: "xmark.circle.fill").font(.title3).foregroundStyle(Theme.muted) }
+                    .buttonStyle(.plain).accessibilityLabel("Clear search")
+            }
+            #endif
+            Button(action: search) { Text(LocalizedStringKey(searching ? "Searching…" : "Search")) }
+                .buttonStyle(MonoButtonStyle(prominent: true))
+                .disabled(draft.text.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || searching)
+        }.padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+    }
+    @ViewBuilder private var field: some View {
+        #if os(tvOS)
+        TextField("Movie, show, or release", text: $draft.text)
+        #else
+        TextField("Movie, show, or release", text: $draft.text, selection: $draft.selection)
+        #endif
+    }
+}
 private extension View {
     /// On iPhone and iPad a menu picker is bare text; give it the bordered pop-up look it has on the Mac.
     @ViewBuilder func searchFilterControl() -> some View {
