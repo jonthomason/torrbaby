@@ -37,19 +37,35 @@ struct LibraryCast: View {
         }
         truncated = rows.count > 150; entries = Array(rows.prefix(150))
     }
+    // tvOS text is about twice the size, so the count column needs twice the room.
+    // A centred table: full-width columns put the name and its role too far apart to read across.
+    private var tableWidth: CGFloat {
+        #if os(tvOS)
+        1100
+        #else
+        640
+        #endif
+    }
+    private var episodesWidth: CGFloat {
+        #if os(tvOS)
+        170
+        #else
+        76
+        #endif
+    }
     var body: some View {
         List {
             HStack {
                 Text("Actor").frame(maxWidth: .infinity, alignment: .leading)
                 Text("Character").frame(maxWidth: .infinity, alignment: .leading)
-                if television { Text("Episodes").frame(width: 76, alignment: .trailing) }
-            }.font(.caption).foregroundStyle(Theme.muted)
+                if television { Text("Episodes").lineLimit(1).fixedSize().frame(width: episodesWidth, alignment: .trailing) }
+            }.font(.caption).foregroundStyle(Theme.muted).frame(maxWidth: tableWidth).frame(maxWidth: .infinity)
             ForEach(entries) { person in
                 HStack(alignment: .top, spacing: 16) {
                     Text(person.name).frame(maxWidth: .infinity, alignment: .leading)
                     Text(person.character).foregroundStyle(Theme.muted).frame(maxWidth: .infinity, alignment: .leading)
-                    if television { Text(LocalizedStringKey(person.episodes.map(String.init) ?? "")).monospacedDigit().frame(width: 76, alignment: .trailing) }
-                }.padding(.vertical, 8)
+                    if television { Text(LocalizedStringKey(person.episodes.map(String.init) ?? "")).monospacedDigit().frame(width: episodesWidth, alignment: .trailing) }
+                }.padding(.vertical, 8).frame(maxWidth: tableWidth).frame(maxWidth: .infinity)
                 #if os(tvOS)
                 .focusable()
                 #endif
