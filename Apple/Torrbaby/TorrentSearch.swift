@@ -525,7 +525,7 @@ struct TorrentSearchView: View {
                 #if os(tvOS)
                 .pickerStyle(.segmented)
                 #else
-                .pickerStyle(.menu).fixedSize()
+                .pickerStyle(.menu).fixedSize().searchFilterControl()
                 #endif
     }
     private var resolutionPicker: some View {
@@ -534,7 +534,7 @@ struct TorrentSearchView: View {
                     Text(verbatim:"2160p").tag("2160p")
                     Text(verbatim:"1080p").tag("1080p")
                     Text(verbatim:"720p").tag("720p")
-                }.pickerStyle(.menu).fixedSize()
+                }.pickerStyle(.menu).fixedSize().searchFilterControl()
                     .onChange(of: resolution) { selectedID = visibleItems.first?.id }
     }
     @ViewBuilder private var refinements: some View {
@@ -552,7 +552,7 @@ struct TorrentSearchView: View {
             Text("All releases").tag("all")
             Text("Complete seasons").tag("seasons")
             Text("Single episodes").tag("episodes")
-        }.pickerStyle(.menu).fixedSize()
+        }.pickerStyle(.menu).fixedSize().searchFilterControl()
             .onChange(of: scopeFilter) { selectedID = visibleItems.first?.id }
     }
     @ViewBuilder private var seasonPicker: some View {
@@ -560,7 +560,7 @@ struct TorrentSearchView: View {
             Picker("Season", selection: $seasonFilter) {
                 Text("All seasons").tag(Int?.none)
                 ForEach(availableSeasons, id: \.self) { Text("Season \($0)").tag(Int?.some($0)) }
-            }.pickerStyle(.menu).fixedSize()
+            }.pickerStyle(.menu).fixedSize().searchFilterControl()
                 .onChange(of: seasonFilter) { episodeFilter = nil; selectedID = visibleItems.first?.id }
         }
     }
@@ -569,7 +569,7 @@ struct TorrentSearchView: View {
             Picker("Episode", selection: $episodeFilter) {
                 Text("All episodes").tag(Int?.none)
                 ForEach(availableEpisodes, id: \.self) { Text("Episode \($0)").tag(Int?.some($0)) }
-            }.pickerStyle(.menu).fixedSize()
+            }.pickerStyle(.menu).fixedSize().searchFilterControl()
                 .onChange(of: episodeFilter) { selectedID = visibleItems.first?.id }
         }
     }
@@ -578,7 +578,7 @@ struct TorrentSearchView: View {
             Text("Best match").tag("match")
             Text("Episode order").tag("episode")
             Text("Most seeds").tag("seeds")
-        }.pickerStyle(.menu).fixedSize()
+        }.pickerStyle(.menu).fixedSize().searchFilterControl()
     }
     @ViewBuilder private var searchStatus: some View {
                 if response != nil { Text("\(visibleItems.count) releases").font(.caption).foregroundStyle(.secondary) }
@@ -791,6 +791,19 @@ private struct EpisodeDownloaderSheet: View {
             let _: Result = try await store.request("POST", "/v1/torrents", body: ["magnet": release(pick).magnet, "paused": false], timeout: 45)
             added.insert(pick.episode)
         } catch { failures[pick.episode] = error.localizedDescription }
+    }
+}
+
+private extension View {
+    /// On iPhone and iPad a menu picker is bare text; give it the bordered pop-up look it has on the Mac.
+    @ViewBuilder func searchFilterControl() -> some View {
+        #if os(iOS)
+        self.tint(.white).padding(.horizontal, 4).frame(minHeight: 34)
+            .background(Theme.control, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.12), lineWidth: 1))
+        #else
+        self
+        #endif
     }
 }
 
