@@ -375,7 +375,7 @@ struct DownloadSeasonControl: View {
             adding=true
             Task { for asset in assets { await queue.enqueue(asset, title: title) }; adding=false }
         } label: {
-            Label(LocalizedStringKey(adding ? "Queuing…" : season == 0 ? "Download Specials" : "Download Season \(season)"), systemImage: "arrow.down.circle")
+            Label(adding ? L10n.text("Queuing…") : season == 0 ? L10n.text("Download Specials") : L10n.format("Download Season %lld", season), systemImage: "arrow.down.circle")
         }.libraryActionStyle().disabled(adding || pending.isEmpty || !store.connected)
     }
 }
