@@ -626,7 +626,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
     if method == Method::POST && path == "/v1/search/torrents/artwork" {
         // Artwork is optional; a slow/unavailable metadata provider must not affect search.
         return Ok(tokio::time::timeout(std::time::Duration::from_secs(18),
-            s.metadata.search_artwork(text(&body, "name")?)).await
+            s.metadata.search_artwork(text(&body, "name")?, body["season"].as_u64())).await
             .ok().and_then(Result::ok).unwrap_or_else(|| json!({"data":null})));
     }
     if method == Method::POST && path == "/v1/search/torrents/resolve" {

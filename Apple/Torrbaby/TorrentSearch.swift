@@ -732,12 +732,21 @@ private struct EpisodeDownloaderSheet: View {
     }
 }
 
+/// A title's running time from the metadata lookup that also finds its poster.
+struct SearchReleaseFacts {
+    var runtimeMinutes: Double?
+    var episodeMinutes: Double?
+    var seasonEpisodes: Int?
+}
 private struct SearchReleaseArtwork: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let name: String
     let identity: String
+    var season: Int? = nil
+    var onFacts: (SearchReleaseFacts) -> Void = { _ in }
     @State private var data: Data?
+    private static var facts: [String: SearchReleaseFacts] = [:]
     private static let cache = NSCache<NSString, NSData>()
     private static var inFlight: [String: Task<Data?, Never>] = [:]
     var body: some View {
@@ -757,14 +766,19 @@ private struct SearchReleaseArtwork: View {
             .task(id: store.server + identity) {
                 data = nil
                 let key = store.server + identity
+                if let known = Self.facts[key] { onFacts(known) }
                 if let cached = Self.cache.object(forKey: key as NSString) { data = cached as Data; return }
                 let request: Task<Data?, Never>
                 if let existing=Self.inFlight[key] {request=existing} else {
                     request=Task { @MainActor in
-                        struct Artwork: Decodable { let data: String? }
+                        struct Artwork: Decodable { let data: String?; let runtimeMinutes: Double?; let episodeMinutes: Double?; let seasonEpisodes: Int? }
                         defer {Self.inFlight[key]=nil}
                         do {
-                            let artwork: Artwork = try await store.request("POST", "/v1/search/torrents/artwork", body: ["name": name], timeout: 20)
+                            var body: [String: Any] = ["name": name]
+                            if let season { body["season"] = season }
+                            let artwork: Artwork = try await store.request("POST", "/v1/search/torrents/artwork", body: body, timeout: 20)
+                            if Self.facts.count > 400 { Self.facts.removeAll() }
+                            Self.facts[key] = SearchReleaseFacts(runtimeMinutes: artwork.runtimeMinutes, episodeMinutes: artwork.episodeMinutes, seasonEpisodes: artwork.seasonEpisodes)
                             guard let encoded=artwork.data,let decoded=Data(base64Encoded:encoded) else {return nil}
                             Self.cache.totalCostLimit=8*1024*1024
                             Self.cache.setObject(decoded as NSData,forKey:key as NSString,cost:decoded.count)
@@ -774,7 +788,7 @@ private struct SearchReleaseArtwork: View {
                     Self.inFlight[key]=request
                 }
                 let loaded=await request.value
-                if !Task.isCancelled {data=loaded}
+                if !Task.isCancelled {data=loaded; if let known = Self.facts[key] { onFacts(known) }}
             }
     }
 }
@@ -828,19 +842,49 @@ private struct TorrentSearchRow: View {
     private var isBT: Bool { item.sources.contains { $0.provider == "1lou" } }
     private var displayedSize: String { item.size.isEmpty ? (fetchedSize ?? "") : item.size }
     private var metadata: String { [item.edition, item.quality].filter { !$0.isEmpty }.joined(separator: " · ") }
+    @State private var facts: SearchReleaseFacts?
+    /// The picture's likely bitrate: the release's size over its running time, less a typical figure for its kind of audio.
+    private var estimatedBitrate: String {
+        guard let bytes = item.sizeBytes, bytes > 0, let facts else { return "" }
+        let hints = item.hints
+        var minutes: Double?
+        if hints.season != nil || hints.episodeCount != nil {
+            guard let each = facts.episodeMinutes, hints.seasonEnd == nil || hints.seasonEnd == hints.season else { return "" }
+            if let first = hints.episode { minutes = each * Double(max(1, (hints.episodeEnd ?? first) - first + 1)) }
+            else if let count = hints.episodeCount ?? facts.seasonEpisodes { minutes = each * Double(count) }
+        } else { minutes = facts.runtimeMinutes }
+        guard let minutes, minutes > 0 else { return "" }
+        let total = Double(bytes) * 8 / (minutes * 60)
+        let audio: Double = switch hints.audioKind {
+        case "lossless_atmos", "dtsx": 4_500_000
+        case "lossless": hints.audioChannels == "7.1" ? 4_500_000 : hints.audioChannels == "2.0" ? 1_000_000 : 3_500_000
+        case "atmos": 770_000
+        case "surround": 640_000
+        case "stereo": 160_000
+        case "mono": 100_000
+        default: 400_000
+        }
+        let video = max(total * 0.5, total - audio)
+        guard (150_000...200_000_000).contains(video) else { return "" }
+        return video >= 9_950_000 ? String(format: "≈ %.0f Mb/s", video / 1_000_000) : video >= 1_000_000 ? String(format: "≈ %.1f Mb/s", video / 1_000_000) : String(format: "≈ %.0f kb/s", video / 1000)
+    }
     private var tracks: String { [item.hints.audioLabel, item.languages].filter { !$0.isEmpty }.joined(separator: " · ") }
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             let episodic = item.hints.season != nil || item.hints.episodeCount != nil
             // A year borrowed from same-titled results is sent as a plain "Title Year S01" name.
             SearchReleaseArtwork(name: item.hints.year == nil && artworkYear != nil ? "\(item.title) \(artworkYear!)\(episodic ? " S01" : "")" : item.name,
-                identity: "\(item.title.lowercased()):\((item.hints.year ?? artworkYear).map(String.init) ?? ""):\(episodic ? "tv" : "movie")")
+                identity: "\(item.title.lowercased()):\((item.hints.year ?? artworkYear).map(String.init) ?? ""):\(episodic ? "tv:\(item.hints.season ?? 0)" : "movie")",
+                season: item.hints.season, onFacts: { facts = $0 })
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title).font(.title3.bold()).foregroundStyle(.primary).lineLimit(2)
                 if !displayedSize.isEmpty || item.seeders != nil {
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                         if !displayedSize.isEmpty {
                             Text(verbatim: displayedSize).foregroundStyle(Theme.accent)
+                        }
+                        if !estimatedBitrate.isEmpty {
+                            Text(verbatim: estimatedBitrate).foregroundStyle(Theme.accent)
                         }
                         if item.seeders != nil {
                             Text(item.availability).foregroundStyle(item.seeders == 0 ? Color.orange : Theme.accent)

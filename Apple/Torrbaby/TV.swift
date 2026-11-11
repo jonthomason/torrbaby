@@ -564,16 +564,27 @@ private struct TVShelf: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let name: String
     let titles: [LibraryTitle]
+    @FocusState private var focusedID: String?
+    /// The poster last focused here; its long-press menu takes focus away before an item is removed.
+    @State private var lastFocused: String?
     var body: some View {
         if !titles.isEmpty {
             VStack(alignment: .leading, spacing: 24) {
                 Text(L10n.text(name)).font(.title2.bold())
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: 24) {
-                        ForEach(titles) { TVPoster(title: $0, continuing: name == "Continue watching").frame(width: 220) }
+                        ForEach(titles) { TVPoster(title: $0, continuing: name == "Continue watching", focus: $focusedID).frame(width: 220) }
                     }.padding(20)
                 }.scrollClipDisabled().scrollIndicators(.hidden)
             }.focusSection()
+            .onChange(of: focusedID) { _, id in if let id { lastFocused = id } }
+            .onChange(of: titles.map(\.id)) { old, new in
+                // When the focused poster leaves the shelf, focus its right-hand neighbour, or the left one at the end.
+                guard let removed = lastFocused, !new.contains(removed), let index = old.firstIndex(of: removed) else { return }
+                let next = old[(index + 1)...].first(where: new.contains) ?? old[..<index].last(where: new.contains)
+                lastFocused = next
+                DispatchQueue.main.async { focusedID = next }
+            }
         }
     }
 }
@@ -594,14 +605,10 @@ private struct TVPoster: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let title: LibraryTitle
     var continuing = false
+    var focus: FocusState<String?>.Binding? = nil
     var body: some View {
         VStack(alignment: .center, spacing: 10) {
-            NavigationLink(value: LibraryDestination(id: title.id)) {
-                LibraryArtwork(id: title.id).frame(width: 220, height: 330)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .overlay { if title.poster?.isEmpty != false { Text(title.title).font(.system(size: 25, weight: .semibold)).multilineTextAlignment(.center).padding() } }
-                    .overlay(alignment: .topTrailing) { if title.watched { WatchedBadge() } }
-            }.accessibilityLabel(title.title).buttonStyle(TVPosterButtonStyle()).contextMenu { ContinueWatchingAction(title: title) }
+            if let focus { link.focused(focus, equals: title.id) } else { link }
             if continuing, let asset = title.resume {
                 ZStack(alignment: .leading) {
                     Rectangle().fill(.white.opacity(0.22))
@@ -621,6 +628,14 @@ private struct TVPoster: View {
                 Text(title.yearLabel).font(.system(size: 21)).foregroundStyle(Theme.muted).lineLimit(1)
             }
         }.multilineTextAlignment(.center)
+    }
+    private var link: some View {
+        NavigationLink(value: LibraryDestination(id: title.id)) {
+            LibraryArtwork(id: title.id).frame(width: 220, height: 330)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .overlay { if title.poster?.isEmpty != false { Text(title.title).font(.system(size: 25, weight: .semibold)).multilineTextAlignment(.center).padding() } }
+                .overlay(alignment: .topTrailing) { if title.watched { WatchedBadge() } }
+        }.accessibilityLabel(title.title).buttonStyle(TVPosterButtonStyle()).contextMenu { ContinueWatchingAction(title: title) }
     }
 }
 

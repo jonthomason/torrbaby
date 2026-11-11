@@ -325,7 +325,10 @@ impl Metadata {
         Ok(())
     }
     /// Small posters for visible search rows. Never enrich or mutate the library.
-    pub async fn search_artwork(&self, name: &str) -> Result<Value> {
+    /// Poster for a release name, plus its running time so a result's size can be
+    /// read as a bitrate: the film's runtime, or for `season` the number of
+    /// episodes and their average length.
+    pub async fn search_artwork(&self, name: &str, season: Option<u64>) -> Result<Value> {
         use base64::Engine;
         if !self.configured() { return Ok(json!({"data":null})); }
         anyhow::ensure!(name.len() <= 4096, "Release name too long");
@@ -336,7 +339,8 @@ impl Metadata {
             || PACK.is_match(name) {
             return Ok(json!({"data":null}));
         }
-        let key = format!("{kind}:{}:{year}", normalized(&query));
+        let season = season.filter(|_| kind == "tv");
+        let key = format!("{kind}:{}:{year}:{}", normalized(&query), season.map(|s| s.to_string()).unwrap_or_default());
         // Serializes lookups and coalesces duplicate releases of the same title.
         // This separate lock does not delay torrent searches or library requests.
         let mut cache = self.search_artwork.lock().await;
@@ -397,6 +401,25 @@ impl Metadata {
                     result = json!({"data":encoded,
                         "provider":"TMDB","provider_id":exact[0]["id"],"size":size,
                         "confidence":if year.is_empty() {"exact_unique_title"} else {"exact_title_year"}});
+                }
+            }
+        }
+        // Running time is optional: a failed lookup only leaves the estimate out.
+        if data["total_pages"].as_u64().unwrap_or(1) <= 1 && exact.len() == 1 {
+            if let Some(id) = exact[0]["id"].as_u64() {
+                if kind == "movie" {
+                    if let Ok(detail) = self.request(&format!("movie/{id}"), &[("language", "en-US")]).await {
+                        if let Some(minutes) = detail["runtime"].as_f64().filter(|m| *m > 0.0) { result["runtime_minutes"] = json!(minutes); }
+                    }
+                } else if let Some(season) = season {
+                    if let Ok(detail) = self.request(&format!("tv/{id}/season/{season}"), &[("language", "en-US")]).await {
+                        let episodes = array(&detail["episodes"]);
+                        let lengths: Vec<f64> = episodes.iter().filter_map(|e| e["runtime"].as_f64()).filter(|m| *m > 0.0).collect();
+                        if !lengths.is_empty() {
+                            result["episode_minutes"] = json!(lengths.iter().sum::<f64>() / lengths.len() as f64);
+                            result["season_episodes"] = json!(episodes.len());
+                        }
+                    }
                 }
             }
         }
