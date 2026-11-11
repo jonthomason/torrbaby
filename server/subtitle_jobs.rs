@@ -504,6 +504,9 @@ impl Manager {
     }
     async fn run(self: Arc<Self>, mut job: Job) {
         let asset=job.asset_id.clone();
+        let checkpoint_path=self.root.join(format!("{}.progress",job.id));
+        let saved_before=|path:&Path|fs::read(path).ok().and_then(|b|serde_json::from_slice::<Progress>(&b).ok()).map_or(0,|p|p.completed);
+        let started_at=saved_before(&checkpoint_path);
         let result = async {
             // Finishing an imported translation is cheap; it does not wait for a slot.
             let bypass=self.imported.lock().map(|mut i|i.remove(&job.id)).unwrap_or(false);
@@ -635,6 +638,13 @@ impl Manager {
             Some(Ok(Err(error))) => {
                 job.state = "failed".into();
                 job.error = Some(error.to_string());
+            }
+            Some(Err(_)) if saved_before(&checkpoint_path) > started_at => {
+                // A long translation that is still advancing is not a failure:
+                // its checkpoint is saved, and the next admission resumes it.
+                job.state = "interrupted".into();
+                job.error = None;
+                tracing::info!(job=%job.id,"Subtitle work reached its time slice; resuming from checkpoint");
             }
             Some(Err(_)) => {
                 job.state = "failed".into();

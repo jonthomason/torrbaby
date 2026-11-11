@@ -112,7 +112,7 @@ mod tests {
 }
 
 /// MP4 configuration for a standalone six-block E-AC-3 independent substream.
-/// Reject dependent/JOC/extended layouts until their full signalling is supported.
+/// Dolby Atmos JOC is signalled; dependent/extended layouts are rejected.
 /// This is intentionally not a decoder: all original packet bytes are retained.
 pub fn configuration(codec: &str, packet: &[u8]) -> Result<(Vec<u8>, u32, u16)> {
     if codec == "ac3" {
@@ -227,10 +227,17 @@ pub fn configuration(codec: &str, packet: &[u8]) -> Result<(Vec<u8>, u32, u16)> 
     } else {
         0
     };
-    ensure!(
-        b.read(1)? == 0,
-        "E-AC-3 additional/JOC signalling needs additional support"
-    );
+    // Additional bitstream info carries Dolby Atmos JOC signalling (ETSI TS
+    // 103 420): flag_ec3_extension_type_a, then complexity_index_type_a. The
+    // core channels decode without it; dec3 repeats it so players see Atmos.
+    let joc = if b.read(1)? != 0 {
+        let bytes = b.read(6)? + 1;
+        // The flag is the least significant bit of the first byte (as in FFmpeg).
+        b.read(7)?;
+        if bytes >= 2 && b.read(1)? != 0 { Some(b.read(8)? as u8) } else { None }
+    } else {
+        None
+    };
     let rate = [48000, 44100, 32000][fscod as usize];
     let kbps = (packet.len() as u64 * 8 * rate as u64).div_ceil(1536 * 1000);
     ensure!(kbps < 8192, "E-AC-3 bitrate exceeds MP4 field");
@@ -240,8 +247,13 @@ pub fn configuration(codec: &str, packet: &[u8]) -> Result<(Vec<u8>, u32, u16)> 
     let fields = (fscod << 22) | (bsid << 17) | (bsmod << 12) | (acmod << 9) | (lfe << 8);
     let bits = fields.to_be_bytes();
     let rate_bits = ((kbps as u16) << 3).to_be_bytes();
+    let mut config = vec![rate_bits[0], rate_bits[1], bits[1], bits[2], bits[3]];
+    // reserved:7, flag_ec3_extension_type_a:1, complexity_index_type_a:8.
+    if let Some(complexity) = joc {
+        config.extend([1, complexity]);
+    }
     Ok((
-        vec![rate_bits[0], rate_bits[1], bits[1], bits[2], bits[3]],
+        config,
         rate,
         [2, 1, 2, 3, 3, 4, 4, 5][acmod as usize] + lfe as u16,
     ))
