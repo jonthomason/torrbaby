@@ -425,10 +425,28 @@ pub async fn tick(s: &Service) -> Result<()> {
 /// Every video in the torrent is identified through its own record, keyed by torrent
 /// hash and file index. Untracked records for the same files (such as copies seen in
 /// Transmission's incomplete directory while downloading) neither satisfy nor block this.
+/// Release adverts named .mkv/.mp4 are not videos (the scanner tags them "not_media")
+/// and never will be identified, so they do not hold the pack back.
 fn identified(hash: &str, files: &[Value], assets: &[Value]) -> bool {
     files.iter().enumerate().filter(|(_,f)|f["name"].as_str().is_some_and(|n|video(Path::new(n))))
         .all(|(index,_)|assets.iter().any(|a|a["torrent_hash"]==hash && a["file_index"]==index
-            && (a["role"]=="extra" || (a["status"]=="matched" && a["entity_id"].is_string()))))
+            && (a["role"]=="extra" || a["container"]=="not_media" || (a["status"]=="matched" && a["entity_id"].is_string()))))
+}
+
+#[cfg(test)]
+mod identification_tests {
+    use super::*;
+    #[test]
+    fn release_adverts_do_not_block_an_identified_pack() {
+        let files = vec![json!({"name":"Show/Show.S01E01.mkv"}), json!({"name":"Show/visit www.example.invalid.MKV"}), json!({"name":"Show/notes.DOC"})];
+        let episode = json!({"torrent_hash":"h","file_index":0,"status":"matched","entity_id":"tv"});
+        let advert = json!({"torrent_hash":"h","file_index":1,"status":"no_match","container":"not_media"});
+        let unknown = json!({"torrent_hash":"h","file_index":1,"status":"no_match","container":"matroska"});
+        assert!(identified("h", &files, &[episode.clone(), advert]));
+        // A real video nobody could identify still waits for review.
+        assert!(!identified("h", &files, &[episode.clone(), unknown]));
+        assert!(!identified("h", &files, &[episode]));
+    }
 }
 
 async fn advance(
