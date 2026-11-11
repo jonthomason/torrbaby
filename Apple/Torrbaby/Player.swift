@@ -38,6 +38,12 @@ final class PlaybackModel: ObservableObject {
     @Published var closeRequested = false
     @Published var preparingNext = false
     @Published var canAdvanceEpisode = false
+    /// The on-screen Next Episode prompt, bottom right: shown from the start of
+    /// the closing credits until the end, whether or not the controls are up.
+    @Published var offerNextEpisode = false
+    /// The closing credits Diamond detected for the current file, if any.
+    private var credits: EpisodeCredits?
+    private var creditsTask: Task<Void, Never>?
     private var progressTicks = 0
     private var nextEpisodeTask: Task<Void, Never>?
     private var subtitleController: SubtitlePlaybackController?
@@ -94,6 +100,17 @@ final class PlaybackModel: ObservableObject {
         subtitleController?.stop(); subtitleController = nil
         playback = next; title = next.name; error = nil; endMessage = nil
         sequence = 0; starting = false; resumed = false
+        credits = nil; offerNextEpisode = false
+        creditsTask?.cancel()
+        if let assetID = next.libraryAssetID, store.connected {
+            let playbackID = next.id
+            creditsTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                let analysis: CreditsDetection? = try? await self.store.request("GET", "/v1/library/assets/\(assetID)/credits", timeout: 10)
+                guard !Task.isCancelled, self.playback.id == playbackID, let analysis else { return }
+                self.credits = analysis.closingCredits
+            }
+        }
         let url = playback.url
         let title = playback.name
         // Also cover restored Mac playback windows and connection loss between
@@ -140,7 +157,9 @@ final class PlaybackModel: ObservableObject {
         let position = player.currentTime().seconds
         // Runs every second: only look the next episode up near the end, and only publish a change.
         var available = false
-        if !finished && !preparingNext && resumed && duration.isFinite && duration > 0 && position.isFinite && position >= duration * 0.9 {
+        var prompt = false
+        if !finished && !preparingNext && resumed && duration.isFinite && duration > 0 && position.isFinite
+            && position >= EpisodeCredits.offerStart(credits, duration: duration) {
             #if os(tvOS)
             if let titleID = playback.libraryTitleID, let assetID = playback.libraryAssetID,
                let title = store.library?.titles.first(where: { $0.id == titleID }) {
@@ -149,8 +168,10 @@ final class PlaybackModel: ObservableObject {
             #else
             available = DownloadQueue.shared.hasNextEpisode(after: playback)
             #endif
+            prompt = available && EpisodeCredits.prompting(credits, position: position, duration: duration)
         }
         if canAdvanceEpisode != available { canAdvanceEpisode = available }
+        if offerNextEpisode != prompt { offerNextEpisode = prompt }
     }
     /// The current file's picture measurements, for fitting it to the screen.
     var video: MediaTrackInfo.Video? {
@@ -163,6 +184,7 @@ final class PlaybackModel: ObservableObject {
         nextEpisodeTask = Task { @MainActor [weak self] in
             guard let self, !self.finished, !self.preparingNext, self.resumed, self.playback.id == playbackID else { return }
             self.canAdvanceEpisode = false
+            self.offerNextEpisode = false
                 // Choosing Next Episode during credits is an explicit completion,
                 // including when paused. Use the same watched event as natural EOF.
                 let progressSaved = self.report(ended: true, reachedEnd: true)
@@ -262,6 +284,7 @@ final class PlaybackModel: ObservableObject {
         guard !finished else { return }
         if let profileObserver { NotificationCenter.default.removeObserver(profileObserver); self.profileObserver = nil }
         nextEpisodeTask?.cancel(); nextEpisodeTask = nil
+        creditsTask?.cancel(); creditsTask = nil
         subtitleController?.stop(); subtitleController = nil
         player.pause()
         let saved = report(ended: true)
@@ -277,6 +300,37 @@ final class PlaybackModel: ObservableObject {
         speedObservation = nil
         observation = nil
         if let endObserver { NotificationCenter.default.removeObserver(endObserver); self.endObserver = nil }
+    }
+}
+
+/// Diamond's credits analysis for one file (GET /v1/library/assets/{id}/credits).
+struct CreditsDetection: Decodable {
+    struct Segment: Decodable { let start: Double; let end: Double }
+    let state: String
+    let segments: [Segment]?
+    let duration: Double?
+    /// The closing credits: the last detected segment in the second half of the file.
+    var closingCredits: EpisodeCredits? {
+        guard state == "ready" else { return nil }
+        return (segments ?? []).filter { $0.end > $0.start && $0.start > 0 }.max { $0.start < $1.start }
+            .map { EpisodeCredits(start: $0.start, end: $0.end) }
+    }
+}
+
+/// When to offer the next episode: at the start of the closing credits, or at
+/// 90% when none were detected.
+struct EpisodeCredits: Equatable {
+    let start: Double
+    let end: Double
+    /// Credits detected in the first half are not closing credits.
+    private func valid(_ duration: Double) -> Bool { start >= duration * 0.5 && start < duration }
+    static func offerStart(_ credits: EpisodeCredits?, duration: Double) -> Double {
+        if let credits, credits.valid(duration) { return credits.start }
+        return duration * 0.9
+    }
+    /// Once offered, the prompt stays up until the file ends.
+    static func prompting(_ credits: EpisodeCredits?, position: Double, duration: Double) -> Bool {
+        position >= offerStart(credits, duration: duration)
     }
 }
 
@@ -403,6 +457,7 @@ struct NativePlayer: UIViewControllerRepresentable {
     let player: AVPlayer
     let close: () -> Void
     var canAdvance = false
+    var offerNext = false
     var advance: () -> Void = {}
     func makeUIViewController(context: Context) -> KeyboardPlayerController {
         let view = KeyboardPlayerController()
@@ -418,6 +473,13 @@ struct NativePlayer: UIViewControllerRepresentable {
         #if os(tvOS)
         view.transportBarCustomMenuItems = canAdvance
             ? [UIAction(title: L10n.text("Next episode"), image: UIImage(systemName: "forward.end.fill")) { _ in advance() }] : []
+        // The system's contextual action button appears over the video during
+        // the credits, with or without the transport bar, and takes focus.
+        let showing = !view.contextualActions.isEmpty
+        if offerNext != showing {
+            view.contextualActions = offerNext
+                ? [UIAction(title: L10n.text("Next episode"), image: UIImage(systemName: "forward.end.fill")) { _ in advance() }] : []
+        }
         #endif
     }
 }
@@ -453,10 +515,24 @@ struct PlayerScreen: View {
                 #if os(macOS)
                 NativePlayer(title: model.title, player: model.player, close: { dismiss() }, canAdvance: model.canAdvanceEpisode, advance: { model.advanceToNextEpisode() })
                 #else
-                NativePlayer(player: model.player, close: { dismiss() }, canAdvance: model.canAdvanceEpisode, advance: { model.advanceToNextEpisode() })
+                NativePlayer(player: model.player, close: { dismiss() }, canAdvance: model.canAdvanceEpisode, offerNext: model.offerNextEpisode, advance: { model.advanceToNextEpisode() })
                 #endif
             }
         }
+        #if os(macOS)
+        .overlay(alignment: .bottomTrailing) {
+            if model.offerNextEpisode && !model.preparingNext && model.error == nil && model.endMessage == nil {
+                Button { model.advanceToNextEpisode() } label: {
+                    Label("Next episode", systemImage: "forward.end.fill").font(.headline).padding(.horizontal, 6).padding(.vertical, 4)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.white).foregroundStyle(.black)
+                .padding(.trailing, 32).padding(.bottom, 96)
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: model.offerNextEpisode)
+        #endif
         .background(.black)
         #if !os(tvOS)
         .presentationBackground(.black)

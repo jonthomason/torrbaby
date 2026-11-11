@@ -22,6 +22,8 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
         var advanceEpisode: (() -> Void)?
         var nextEpisodeAvailable = false { didSet { updateNextButton() } }
         var inPictureInPicture = false { didSet { updateNextButton() } }
+        /// During the closing credits the button shows without a tap.
+        var creditsPrompt = false { didSet { updateNextButton() } }
         private let nextButton = UIButton(type: .system)
         private var interactionDeadline = Date.distantPast
         private var hideNextButton: Task<Void, Never>?
@@ -76,7 +78,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
         }
         private func updateNextButton() {
             nextButton.isHidden = !nextEpisodeAvailable || inPictureInPicture
-                || Date() >= interactionDeadline
+                || (Date() >= interactionDeadline && !creditsPrompt)
         }
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                                shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
@@ -104,6 +106,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
         weak var window: UIWindow?
         var controller: PlayerController?
         var model: PlaybackModel?
+        private var creditsObservation: AnyCancellable?
         var playbackID: UUID?
         var pictureInPicture = false
         var restoring = false
@@ -144,6 +147,9 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
             controller.advanceEpisode = { [weak model] in model?.advanceToNextEpisode() }
             nextEpisodeObservation = model.$canAdvanceEpisode.removeDuplicates().sink { [weak controller] available in
                 controller?.nextEpisodeAvailable = available
+            }
+            creditsObservation = model.$offerNextEpisode.removeDuplicates().sink { [weak controller] prompt in
+                controller?.creditsPrompt = prompt
             }
             Self.active = self
             backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification,
@@ -209,7 +215,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
             model = nil; controller = nil; playbackID = nil; pictureInPicture = false
             errorObservation = nil
             preparationObservation = nil; completionObservation = nil; closeObservation = nil; fillObservation = nil
-            nextEpisodeObservation = nil
+            nextEpisodeObservation = nil; creditsObservation = nil
             preparationSpinner?.removeFromSuperview(); preparationSpinner = nil
             if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver); self.backgroundObserver = nil }
             if Self.active === self { Self.active = nil }

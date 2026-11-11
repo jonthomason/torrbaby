@@ -35,6 +35,8 @@ public class PlaybackActivity extends Activity {
   private PlayerView view;
   private Button nextEpisodeButton;
   private boolean controlsVisible, advancingEpisode;
+  /** Start of the closing credits (ms) that Diamond detected, or -1. */
+  private volatile long creditsStart = -1;
   private int progressTicks;
   private MediaSession mediaSession;
   private final ExecutorService io = Executors.newSingleThreadExecutor();
@@ -123,6 +125,12 @@ public class PlaybackActivity extends Activity {
               }
             } catch (Exception ignored) {
               /* Embedded tracks remain available on older servers. */
+            }
+            try {
+              creditsStart = EpisodeAdvance.closingCredits(
+                  api.request("GET", "/v1/library/assets/" + Api.part(id) + "/credits", null));
+            } catch (Exception ignored) {
+              /* Without detected credits the offer starts at 90%. */
             }
             if (cancelled) return;
             JSONObject play =
@@ -476,11 +484,15 @@ public class PlaybackActivity extends Activity {
 
   private void updateNextEpisodeButton() {
     if (nextEpisodeButton == null || player == null) return;
-    boolean show = controlsVisible && !advancingEpisode
-        && EpisodeAdvance.offer(player.getCurrentPosition(), player.getDuration(), hasNextEpisode());
+    // From the closing credits until the end, whether or not the controls are up.
+    boolean show = !advancingEpisode
+        && EpisodeAdvance.offer(player.getCurrentPosition(), player.getDuration(), hasNextEpisode(), creditsStart);
+    boolean appearing = show && nextEpisodeButton.getVisibility() != View.VISIBLE;
     if (!show && nextEpisodeButton.hasFocus())
       view.findViewById(androidx.media3.ui.R.id.exo_play_pause).requestFocus();
     nextEpisodeButton.setVisibility(show ? View.VISIBLE : View.GONE);
+    // With the controls hidden, OK on the remote chooses it.
+    if (appearing && !controlsVisible) nextEpisodeButton.requestFocus();
   }
 
   private void advanceNextEpisode() {
@@ -525,6 +537,11 @@ public class PlaybackActivity extends Activity {
     if (view != null && player != null) {
       int key = e.getKeyCode();
       if (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
+        if (nextEpisodeButton != null && nextEpisodeButton.getVisibility() == View.VISIBLE
+            && nextEpisodeButton.hasFocus() && !view.isControllerFullyVisible()) {
+          if (e.getAction() == KeyEvent.ACTION_UP) advanceNextEpisode();
+          return true;
+        }
         if (!view.isControllerFullyVisible()) {
           view.showController();
           return true;
