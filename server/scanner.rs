@@ -62,6 +62,32 @@ pub fn video(path: &Path) -> bool {
         })
         .unwrap_or(false)
 }
+/// Record the sniffed container of a complete file. Packs ship adverts named
+/// .mkv/.mp4, which `video()` admits by extension; a "not_media" tag hides them
+/// from the library and processing. Incomplete files are never judged (their head
+/// may not be written yet), and an unchanged file is not read again.
+fn tag_container(asset: &mut Value, path: &Path, metadata: Option<&fs::Metadata>) {
+    let key = metadata.filter(|_| asset["complete"] == true)
+        .map(|m| format!("{}:{}:{}:{}", m.ino(), m.len(), m.mtime(), m.mtime_nsec()));
+    if key.is_some() && asset["container_key"].as_str() == key.as_deref() && asset["container"].is_string() {
+        return;
+    }
+    let sniffed = key.and_then(|key| crate::container::sniff(path).ok().map(|c| (c, key)));
+    let Some(object) = asset.as_object_mut() else { return; };
+    match sniffed {
+        Some((container, key)) => {
+            if container == crate::container::Container::NotMedia {
+                tracing::info!(path=%path.display(), "Ignoring a file whose content is not video");
+            }
+            object.insert("container".into(), json!(container.name()));
+            object.insert("container_key".into(), json!(key));
+        }
+        None => {
+            object.remove("container");
+            object.remove("container_key");
+        }
+    }
+}
 pub struct Inventory {
     pub assets: Vec<Value>,
     pub errors: Vec<String>,
@@ -227,6 +253,7 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
         asset["inode"] = json!(inode);
         asset["available"] = json!(metadata.is_some());
         if metadata.is_none() { asset["complete"] = json!(false); }
+        tag_container(&mut asset, &path, metadata.as_ref());
         asset["seen_at"] = json!(now());
         if info["torrent_present"] != true || asset["size"].as_u64().unwrap_or(0) == 0 {
             asset["size"] = json!(metadata.as_ref().map(|m|m.len()).unwrap_or(0));
@@ -335,6 +362,36 @@ mod tests {
         assert!(missing.iter().all(|a|a["complete"] == false));
         let rpc_unavailable = inventory(&config,missing,vec![]).assets;
         assert!(rpc_unavailable.iter().all(|a|a["complete"] == false));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn complete_files_are_tagged_by_content_and_adverts_are_not_media() {
+        let root = std::env::temp_dir().join(format!("torrbaby-sniff-{}",uuid::Uuid::new_v4()));
+        let config: Config = serde_json::from_value(json!({
+            "listen_host":"127.0.0.1","listen_port":8765,"token_file":"unused","state_file":"unused",
+            "transmission_url":"http://127.0.0.1:9091","transmission_auth_file":null,
+            "source":root.join("Downloads"),"movies":root.join("Movies"),"tv":root.join("TV"),"poll_seconds":60
+        })).unwrap();
+        for directory in [&config.source,&config.movies,&config.tv] { fs::create_dir_all(directory).unwrap(); }
+        let movies = Path::new(&config.movies);
+        let mut matroska = vec![0x1A,0x45,0xDF,0xA3,0xA3,0x42,0x86,0x81,0x01];
+        matroska.resize(1024,0x5A);
+        fs::write(movies.join("Dr.No.1962.mp4"),&matroska).unwrap();
+        // A real Matroska file whose body is damaged is still media and still fails visibly.
+        let mut damaged = matroska.clone();
+        damaged[600..].fill(0xFF);
+        fs::write(movies.join("Damaged.1999.mkv"),&damaged).unwrap();
+        fs::write(movies.join("Advert.MKV"),b"\x10\x00\x00\x00q4l\x0f\xbb\x7c\xd5\x01 www.example.invalid advert").unwrap();
+        let assets = inventory(&config,vec![],vec![]).assets;
+        let tag = |name:&str| assets.iter().find(|a|a["path"].as_str().unwrap().ends_with(name)).unwrap()["container"].clone();
+        assert_eq!(tag("Dr.No.1962.mp4"),"matroska");
+        assert_eq!(tag("Damaged.1999.mkv"),"matroska");
+        assert_eq!(tag("Advert.MKV"),"not_media");
+        assert!(assets.iter().all(|a|a["available"] == true && a["container_key"].is_string()));
+        // Unchanged files keep their tag; a replaced file is judged again.
+        fs::write(movies.join("Advert.MKV"),&matroska).unwrap();
+        let rescanned = inventory(&config,assets,vec![]).assets;
+        assert!(rescanned.iter().all(|a|a["container"] == "matroska"));
         fs::remove_dir_all(root).unwrap();
     }
     #[test]

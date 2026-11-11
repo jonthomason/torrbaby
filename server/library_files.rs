@@ -522,7 +522,8 @@ impl crate::storage::Database {
         Ok(self.connection.query_row("SELECT EXISTS(SELECT 1 FROM library_operations WHERE package_id=?)",[hash],|r|r.get(0))?)
     }
     pub fn visible_assets(&self) -> Result<Vec<Value>> {
-        self.documents("assets")?.into_iter().filter_map(|a| match self.hidden_asset(&a) {
+        // Non-video files with video extensions (release adverts) are not titles or work.
+        self.documents("assets")?.into_iter().filter(|a| !crate::container::tagged_not_media(a)).filter_map(|a| match self.hidden_asset(&a) {
             Ok(false) => Some(Ok(a)), Ok(true) => None, Err(e) => Some(Err(e))
         }).collect()
     }

@@ -298,11 +298,7 @@ impl Manager {
     ) -> Result<String> {
         use sha2::{Digest, Sha256};
         ensure!(
-            input
-                .extension()
-                .is_some_and(|s| ["mkv", "mp4", "m4v", "mov"]
-                    .iter()
-                    .any(|e| s.eq_ignore_ascii_case(e))),
+            crate::container::virtual_mp4_source(&input),
             "This container needs another playback path"
         );
         let revision = crate::subtitle_jobs::revision(&input)?;
@@ -468,9 +464,9 @@ impl Manager {
     }
 }
 
+/// By content, not extension: a Matroska file named .mp4 still needs the index.
 fn is_mkv(path: &Path) -> bool {
-    path.extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("mkv"))
+    crate::container::is_matroska(path)
 }
 
 #[cfg(test)]
@@ -499,7 +495,7 @@ mod cache_tests {
         let root=std::env::temp_dir().join(format!("torrbaby-layout-{}",uuid::Uuid::new_v4()));
         let manager=Manager::new(&root)?;
         let input=root.join("title.mkv");
-        fs::write(&input,b"source")?;
+        fs::write(&input,b"\x00\x00\x00\x10ftypisom\x00\x00\x02\x00source")?; // sniffed as MP4
         let revision=crate::subtitle_jobs::revision(&input)?;
         let id="c".repeat(64);
         fs::write(root.join("virtual-media-v1").join(format!("{id}.json")),serde_json::to_vec(&json!({
@@ -521,7 +517,7 @@ mod cache_tests {
         let root=std::env::temp_dir().join(format!("torrbaby-video-only-{}",uuid::Uuid::new_v4()));
         let manager=Manager::new(&root)?;
         let input=root.join("title.mkv");
-        fs::write(&input,b"source")?;
+        fs::write(&input,b"\x00\x00\x00\x10ftypisom\x00\x00\x02\x00source")?; // sniffed as MP4
         let revision=crate::subtitle_jobs::revision(&input)?;
         // Jobs saved by earlier releases have no missing_audio field.
         let id="b".repeat(64);
@@ -545,7 +541,7 @@ mod cache_tests {
         let root=std::env::temp_dir().join(format!("torrbaby-retry-{}",uuid::Uuid::new_v4()));
         let manager=Manager::new(&root)?;
         let input=root.join("title.mp4");
-        fs::write(&input,b"source")?;
+        fs::write(&input,b"\x00\x00\x00\x10ftypisom\x00\x00\x02\x00source")?; // sniffed as MP4
         let runtime=tokio::runtime::Builder::new_current_thread().enable_all().build()?;
         runtime.block_on(async {
             let id=manager.prepare_job("asset-1",input.clone(),Vec::new(),false)?;

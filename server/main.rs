@@ -3,6 +3,7 @@ mod trials;
 mod api;
 mod catalog;
 mod config;
+mod container;
 mod credit_series;
 mod credits;
 mod dolby;
@@ -112,6 +113,9 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         frames: usize,
     },
+    /// Report each file's container as detected from its content, not its extension.
+    #[command(hide = true)]
+    SniffContainer { inputs: Vec<PathBuf> },
     /// List embedded Matroska subtitle tracks, or extract one as WebVTT.
     MatroskaSubtitles {
         #[arg(long)]
@@ -267,6 +271,12 @@ async fn main() -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&matroska::inspect(&input, frames)?)?
             );
+        }
+        Command::SniffContainer { inputs } => {
+            for input in inputs {
+                let container = container::sniff(&input).map(|c| c.name().to_owned());
+                println!("{}\t{}", container.unwrap_or_else(|e| format!("error: {e}")), input.display());
+            }
         }
         Command::MatroskaSubtitles {
             input,

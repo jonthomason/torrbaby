@@ -54,7 +54,7 @@ pub async fn process(s:&Service, asset:&Value)->Result<()> {
         let Some(id)=asset["id"].as_str() else {continue};
         let Some(path)=asset["path"].as_str() else {continue};
         let path=Path::new(path);
-        if !path.extension().and_then(|e|e.to_str()).is_some_and(|e|["mp4","m4v","mov","mkv"].contains(&e.to_lowercase().as_str())) {continue;}
+        if !crate::container::virtual_mp4_source(path) {continue;}
         let Ok(revision)=crate::subtitle_jobs::revision(path) else {continue};
         {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
             let prior:Option<(String,i64,String,f64)>=db.connection.query_row("SELECT revision,version,document,updated FROM credits_analysis WHERE asset_id=?",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
@@ -66,7 +66,8 @@ pub async fn process(s:&Service, asset:&Value)->Result<()> {
         // Resolve through the same complete-file/access checks as playback.
         let input=crate::api::media_file(s,id,0).await?;
         let mut reader=None;
-        if path.extension().is_some_and(|e|e.eq_ignore_ascii_case("mkv")) {
+        // By content: Matroska named .mp4 must be indexed, not handed to AVFoundation.
+        if crate::container::is_matroska(&input) {
             let job=s.virtual_media.prepare_analysis(id,input.clone())?;
             if job["state"]!="ready" {
                 if job["state"]=="failed" {

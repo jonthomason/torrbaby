@@ -4,14 +4,19 @@ use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use std::{path::Path, process::Stdio, sync::LazyLock, time::Duration};
 use tokio::io::AsyncReadExt;
+// By content: release packs ship Matroska named .mp4, which AVFoundation refuses.
 fn matroska(path: &Path) -> bool {
-    path.extension()
-        .is_some_and(|s| s.eq_ignore_ascii_case("mkv") || s.eq_ignore_ascii_case("webm"))
+    crate::container::is_matroska(path)
+}
+fn not_media(path: &Path) -> Result<()> {
+    ensure!(!crate::container::not_media(path), "Not a video file");
+    Ok(())
 }
 pub async fn tracks(path: &Path) -> Result<Value> {
     if matroska(path) {
         return crate::matroska::tracks_worker(path).await;
     }
+    not_media(path)?;
     let value: Value = serde_json::from_slice(&run(path, None).await?)?;
     let tracks = value["tracks"]
         .as_array()
@@ -35,6 +40,7 @@ pub async fn extract(path: &Path, track: u64) -> Result<Vec<TimedCue>> {
     if matroska(path) {
         return crate::matroska::extract_worker(path, track).await;
     }
+    not_media(path)?;
     let mut cues: Vec<TimedCue> = serde_json::from_slice(&run(path, Some(track)).await?)?;
     ensure!(
         !cues.is_empty()

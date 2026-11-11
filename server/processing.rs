@@ -24,6 +24,15 @@ fn fail(db:&Database,id:&str,revision:&str,error:&str)->Result<()> {
     db.connection.execute("INSERT INTO processing_failures(asset_id,revision,stage,error,first_seen,last_seen) SELECT asset_id,revision,stage,?,?,? FROM media_processing WHERE asset_id=? AND revision=? ON CONFLICT(asset_id,revision,stage,error) DO UPDATE SET occurrences=occurrences+1,last_seen=excluded.last_seen,resolved_at=NULL",rusqlite::params![error,now(),now(),id,revision])?;
     db.connection.execute("UPDATE media_processing SET state='failed',error=?,retry_after=?,updated=?,attempts=attempts+1 WHERE asset_id=? AND revision=?",rusqlite::params![error,now()+3600.0,now(),id,revision])?;Ok(())
 }
+/// A file with a video extension whose content is no video container (release-group
+/// adverts) is not processing work. Record why, and retire its earlier failures
+/// so it leaves the failed list. Real videos with a damaged body still fail.
+fn not_video(db:&Database,id:&str,revision:&str)->Result<()> {
+    db.connection.execute("UPDATE media_processing SET state='ready',stage='complete',inventory_state='not_applicable',subtitles_state='not_applicable',credits_state='not_applicable',detail=?,error=NULL,retry_after=0,completed_at=?,updated=? WHERE asset_id=? AND revision=? AND (state!='ready' OR inventory_state!='not_applicable')",
+        rusqlite::params![json!({"state":"not_applicable","reason":"Not a video file"}).to_string(),now(),now(),id,revision])?;
+    db.connection.execute("UPDATE processing_failures SET resolved_at=? WHERE asset_id=? AND resolved_at IS NULL",rusqlite::params![now(),id])?;
+    Ok(())
+}
 /// Reopen the credits stage of files analysed by an older credits method, even if
 /// they were signed off: a method upgrade should reach the whole library.
 pub(crate) fn reopen_outdated(db:&Database)->Result<usize> {
@@ -113,6 +122,13 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
                 enroll(&db,id,revision.as_deref().unwrap_or("unavailable"))?;
                 if let Err(error)=revision {fail(&db,id,"unavailable",&error.to_string())?;}
             }
+            // The scanner hides non-video files from the library; settle their records.
+            for a in db.documents("assets")?.iter().filter(|a|crate::container::tagged_not_media(a) && a["available"]==true) {
+                let (Some(id),Some(path))=(a["id"].as_str(),a["path"].as_str()) else{continue};
+                let Ok(revision)=crate::subtitle_jobs::revision(Path::new(path)) else{continue};
+                enroll(&db,id,&revision)?;
+                not_video(&db,id,&revision)?;
+            }
             reopen_outdated(&db)?;
             if let Ok(mut e)=ENROLLED.lock() {*e=Some((revision,now()));}
         }
@@ -194,8 +210,15 @@ async fn process_file(s:&Service,mut asset:Value)->Result<()> {
 async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()> {
     let id=asset["id"].as_str().context("Missing asset ID")?;
     let path=Path::new(asset["path"].as_str().context("Missing asset path")?);
-    let supported=path.extension().and_then(|e|e.to_str()).is_some_and(|e|["mkv","webm","mp4","m4v","mov"].contains(&e.to_lowercase().as_str()));
-    anyhow::ensure!(supported,"Unsupported media container for processing");
+    // By content, not extension: Matroska named .mp4 goes through the Matroska
+    // readers, and adverts named .mkv/.mp4 are not processing work at all.
+    use crate::container::Container;
+    let container=crate::container::sniff(path).context("Torrbaby Server cannot read this media file")?;
+    if container==Container::NotMedia {
+        let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+        return not_video(&db,id,revision);
+    }
+    anyhow::ensure!(matches!(container,Container::Matroska|Container::Mp4),"Unsupported media container for processing");
     let mut external=false;
     if !finished(prior["subtitles_state"].as_str().unwrap_or("")) {
         let progress=crate::media_inventory::process(s,asset).await?;
@@ -272,6 +295,26 @@ mod tests {
         db.connection.execute("UPDATE media_processing SET inventory_state='ready',subtitles_state='ready',credits_state='ready' WHERE asset_id='episode'",[])?;
         assert!(sign_off(&db,"episode","r1")?);
         assert!(!db.rows("SELECT resolved_at FROM processing_failures",[])?[0]["resolved_at"].is_null());
+        Ok(())
+    }
+    #[test]
+    fn non_video_files_settle_as_not_applicable_and_leave_the_queue()->Result<()> {
+        let db=database()?;
+        for (id,container) in [("advert","not_media"),("movie","matroska")] {
+            db.connection.execute("INSERT INTO library_assets VALUES(?,?)",rusqlite::params![id,json!({"id":id,"path":format!("/fixture/{id}.mkv"),"available":true,"complete":true,"container":container}).to_string()])?;
+            enroll(&db,id,"r1")?;
+            fail(&db,id,"r1","Native text subtitle extraction failed")?;
+        }
+        not_video(&db,"advert","r1")?;
+        let row=db.rows("SELECT * FROM media_processing WHERE asset_id='advert'",[])?.remove(0);
+        assert_eq!((row["state"].as_str(),row["inventory_state"].as_str(),row["credits_state"].as_str()),(Some("ready"),Some("not_applicable"),Some("not_applicable")));
+        assert_eq!(serde_json::from_str::<Value>(row["detail"].as_str().unwrap())?["reason"],"Not a video file");
+        // Only the advert's failure is retired; the real (damaged) video still fails visibly.
+        let open=db.rows("SELECT asset_id FROM processing_failures WHERE resolved_at IS NULL",[])?;
+        assert_eq!(open.len(),1);assert_eq!(open[0]["asset_id"],"movie");
+        let queue=summary(&db)?;
+        assert_eq!(queue["failed"],1);
+        assert!(queue["queue"].as_array().unwrap().iter().all(|a|a["asset_id"]=="movie"));
         Ok(())
     }
     #[test]

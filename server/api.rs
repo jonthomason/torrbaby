@@ -673,7 +673,8 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
                     captions.push(crate::virtual_captions::Caption {id:job.into(),language:status["target"].as_str().or(status["source"].as_str()).unwrap_or("und").into(),text:s.subtitle_jobs.artifact(job)?});
                 }
             }
-            if captions.is_empty() && !input.extension().is_some_and(|e|e.eq_ignore_ascii_case("mkv")) {
+            // By content: Matroska named .mp4 must not be streamed directly to AVFoundation.
+            if captions.is_empty() && !crate::container::is_matroska(&input) {
                 return Ok(json!({"state":"direct", "id":""}));
             }
             return s.virtual_media.prepare(id, input, captions);
@@ -1618,6 +1619,9 @@ fn file_revision(metadata: &std::fs::Metadata) -> String {
 }
 
 fn media_type(path: &std::path::Path) -> &'static str {
+    if let Some(sniffed) = crate::container::media_type(path) {
+        return sniffed;
+    }
     match path
         .extension()
         .and_then(|s| s.to_str())

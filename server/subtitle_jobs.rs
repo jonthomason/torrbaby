@@ -492,7 +492,7 @@ impl Manager {
                     .filter(|j|j["state"]=="ready")
                     .and_then(|j|self.artifact(j["id"].as_str()?).ok().map(|text|(j,text)))
             }else{None};
-            let bitmap=if original.is_none() && job.input.extension().is_some_and(|e|e.eq_ignore_ascii_case("mkv") || e.eq_ignore_ascii_case("webm")) {
+            let bitmap=if original.is_none() && crate::container::is_matroska(&job.input) {
                 let tracks=crate::native_subtitles::tracks(&job.input).await?;
                 let selected=tracks["tracks"].as_array().and_then(|t|t.iter().find(|t|t["track"]==job.track)).context("Subtitle track missing")?;
                 if selected["codec"]=="S_VOBSUB" || selected["codec"]=="S_HDMV/PGS" {
