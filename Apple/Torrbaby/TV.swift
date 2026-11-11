@@ -174,6 +174,8 @@ struct TVRootView: View {
             }
             .frame(height: 56).padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 12)
             .focusSection()
+            // Moving up into the bar lands on the current section's tab, wherever focus came from.
+            .defaultFocus($focusedTab, section, priority: .userInitiated)
         }
         .background(Color.black.ignoresSafeArea())
         .tint(.white)
