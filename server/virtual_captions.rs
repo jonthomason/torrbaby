@@ -16,7 +16,14 @@ pub struct Caption {
     /// track name. Empty for older jobs, whose identity must not change.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
+    /// SDH: marked with Apple's accessibility characteristics, which the system
+    /// player shows as "SDH" (it ignores track names). Omitted when false so
+    /// existing job identities stay the same.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sdh: bool,
 }
+/// Media characteristics that mark a subtitle track as SDH for AVFoundation.
+pub const SDH_CHARACTERISTICS: [&str; 2] = ["public.accessibility.transcribes-spoken-dialog", "public.accessibility.describes-music-and-sound"];
 pub enum Source {
     Indexed(Arc<crate::virtual_mkv::Reader>),
     File(File, String),
@@ -310,9 +317,10 @@ fn track(
     ensure!(scale > 0, "Invalid movie timescale");
     let mut result = atom(b"tkhd", &tk);
     result.extend(atom(b"mdia", &mdia));
-    if !c.name.is_empty() {
-        result.extend(atom(b"udta", &atom(b"name", c.name.as_bytes())));
-    }
+    let mut udta = Vec::new();
+    if !c.name.is_empty() { udta.extend(atom(b"name", c.name.as_bytes())); }
+    if c.sdh { for characteristic in SDH_CHARACTERISTICS { udta.extend(atom(b"tagc", characteristic.as_bytes())); } }
+    if !udta.is_empty() { result.extend(atom(b"udta", &udta)); }
     Ok(atom(b"trak", &result))
 }
 impl Reader {

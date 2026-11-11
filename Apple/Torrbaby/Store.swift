@@ -684,7 +684,7 @@ extension Store {
             let ready: MediaTrackInfo = try await request("GET", base + "/media-info")
             ids = Array(Set(ready.prepared.filter { $0.state == "ready" }.map(\.id))).sorted()
             for job in ready.prepared where job.state == "ready" {
-                names[job.id] = SubtitleTrackName.text(language: job.language, kind: job.kind)
+                names[job.id] = SubtitleTrackName.text(language: job.language, kind: job.kind, sdh: job.sdh == true)
             }
             if ids.isEmpty {
                 let inventory: Inventory = try await request("GET", base + "/subtitles")

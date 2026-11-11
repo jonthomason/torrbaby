@@ -13,10 +13,22 @@ final class PreparedSubtitles {
   }
 
   static JSONArray ready(Requests api, String asset, BooleanSupplier cancelled) throws Exception {
+    return ready(api, asset, cancelled, null);
+  }
+
+  /** As above; also collects the file's own SDH subtitle track numbers into {@code sdh}. */
+  static JSONArray ready(Requests api, String asset, BooleanSupplier cancelled, Set<Integer> sdh)
+      throws Exception {
     check(cancelled);
     JSONObject info = api.request("GET", "/v1/library/assets/" + Api.part(asset) + "/media-info", null);
     check(cancelled);
     JSONArray result = new JSONArray();
+    JSONArray own = info.optJSONArray("subtitle_tracks");
+    if (sdh != null && own != null) for (int i = 0; i < own.length(); i++) {
+      JSONObject track = own.optJSONObject(i);
+      if (track != null && track.optBoolean("sdh") && !track.optBoolean("sidecar") && track.has("track"))
+        sdh.add(track.optInt("track"));
+    }
     JSONArray prepared = info.optJSONArray("prepared");
     Set<String> paths = new HashSet<>();
     if (prepared == null) return result;
@@ -31,7 +43,7 @@ final class PreparedSubtitles {
       String kind = job.optString("kind",
           !job.isNull("target") && !job.optString("target").isEmpty() ? "translated" : "images");
       result.put(new JSONObject().put("path", path).put("language", language)
-          .put("name", MediaLanguages.trackName(language, kind)));
+          .put("name", MediaLanguages.trackName(language, kind, job.optBoolean("sdh"))));
     }
     return result;
   }

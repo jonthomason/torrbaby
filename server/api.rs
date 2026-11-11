@@ -670,7 +670,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
                 anyhow::ensure!(ids.len()<=8,"Too many subtitles");
                 for value in ids { let job=value.as_str().context("Invalid subtitle job")?;let status=s.subtitle_jobs.status(job)?;
                     anyhow::ensure!(status["asset_id"]==id && status["state"]=="ready","Subtitle does not belong to this title");
-                    captions.push(crate::virtual_captions::Caption {id:job.into(),language:status["target"].as_str().or(status["source"].as_str()).unwrap_or("und").into(),text:s.subtitle_jobs.artifact(job)?,name:caption_name(&body,captions.len(),&status)});
+                    captions.push(crate::virtual_captions::Caption {id:job.into(),language:status["target"].as_str().or(status["source"].as_str()).unwrap_or("und").into(),text:s.subtitle_jobs.artifact(job)?,name:caption_name(&body,captions.len(),&status),sdh:caption_sdh(s,id,&status)});
                 }
             }
             // By content: Matroska named .mp4 must not be streamed directly to AVFoundation.
@@ -713,6 +713,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
                     language,
                     text: s.subtitle_jobs.artifact(job_id)?,
                     name: caption_name(&body, captions.len(), &status),
+                    sdh: caption_sdh(s, id, &status),
                 });
             }
             return s.hls.prepare(id, input, captions);
@@ -805,7 +806,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
                 s.db.lock()
                     .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
             db.asset(id)?;
-            return crate::media_inventory::cached(&db, id);
+            return crate::media_inventory::cached_with(&db, id, Some(s.subtitle_jobs.as_ref()));
         }
     }
     if method == Method::POST && path == "/v1/playback/offline" {
@@ -1717,6 +1718,12 @@ async fn file_response(
 /// The track name for the `index`th requested subtitle job: the client's
 /// localized `subtitle_names` entry when it sent one, otherwise the server's
 /// English short name ("English Text", "Chinese Translated").
+/// SDH by its text (the job) or by its source track's flag or name (inventory).
+fn caption_sdh(s: &Service, asset: &str, status: &Value) -> bool {
+    status["sdh"] == true || s.db.lock().ok().and_then(|db| crate::media_inventory::cached(&db, asset).ok()).is_some_and(|info| {
+        info["prepared"].as_array().is_some_and(|p| p.iter().any(|j| j["id"] == status["id"] && j["sdh"] == true))
+    })
+}
 fn caption_name(body: &Value, index: usize, status: &Value) -> String {
     let supplied = body["subtitle_names"].get(index).and_then(Value::as_str)
         .map(|n| n.trim().chars().filter(|c| !c.is_control() && *c != '"').take(64).collect::<String>())

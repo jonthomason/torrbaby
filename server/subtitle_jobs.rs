@@ -35,6 +35,10 @@ struct Job {
     /// "fleet" when the text came from the external translation lane.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     translated_by: Option<String>,
+    /// Whether the extracted text reads as SDH (sound descriptions, speaker
+    /// labels); decided once from the finished track.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sdh: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -93,9 +97,12 @@ pub(crate) fn kind(method: Option<&str>, target: Option<&str>) -> &'static str {
 }
 /// The English short name, used where the server names tracks itself (HLS
 /// renditions, virtual MP4 tracks) and the client did not supply one.
-pub(crate) fn track_name(language: &str, kind: &str) -> String {
+pub(crate) fn track_name(language: &str, kind: &str, sdh: bool) -> String {
     let language = match language { "en" => "English", "zh-Hans" => "Chinese", _ => "Subtitles" };
-    let kind = match kind { "images" => "Images", "speech" => "Voice Transcribed", "translated" => "Translated", _ => "Text" };
+    let kind = match kind {
+        "images" | "text" if sdh => "SDH",
+        "images" => "Images", "speech" => "Voice Transcribed", "translated" => "Translated", _ => "Text",
+    };
     format!("{language} {kind}")
 }
 fn valid(id: &str) -> bool {
@@ -306,10 +313,20 @@ impl Manager {
         {
             job.state = "interrupted".into();
         }
+        if job.state == "ready" && job.target.is_none() && job.sdh.is_none() {
+            if let Ok(text) = fs::read_to_string(self.root.join(format!("{id}.vtt"))) {
+                if let Ok(cues) = crate::subtitles::parse_srt(text.strip_prefix("WEBVTT\n\n").unwrap_or(&text)) {
+                    job.sdh = Some(crate::subtitles::describes_sounds(cues.iter().map(|c| c.text.as_str())));
+                    let idle = self.pending.lock().is_ok_and(|p| !p.contains(id));
+                    if idle { let _ = self.save(&job); }
+                }
+            }
+        }
+        let sdh = job.target.is_none() && job.sdh == Some(true);
         let ocr_progress=if job.state=="running" {fs::read(self.root.join(format!("{id}.ocr-progress"))).ok().and_then(|b|serde_json::from_slice::<Value>(&b).ok())} else {None};
         if let Some(p)=&ocr_progress {job.completed_cues=p["completed_cues"].as_u64().unwrap_or(0) as usize;job.total_cues=p["total_cues"].as_u64().unwrap_or(0) as usize;}
         Ok(
-            json!({"updated":job.updated,"extraction_method":job.extraction_method,"kind":kind(job.extraction_method.as_deref(),job.target.as_deref()),"name":track_name(job.target.as_deref().filter(|t|*t!="auto").or(job.source.as_deref()).unwrap_or("und"),kind(job.extraction_method.as_deref(),job.target.as_deref())),"unreadable_cues":job.unreadable_cues,"stage":if ocr_progress.is_some(){"ocr"}else if job.target.is_some(){"translation"}else{"extraction"},"id":job.id,"asset_id":job.asset_id,"state":job.state,"error":job.error,
+            json!({"updated":job.updated,"extraction_method":job.extraction_method,"kind":kind(job.extraction_method.as_deref(),job.target.as_deref()),"name":track_name(job.target.as_deref().filter(|t|*t!="auto").or(job.source.as_deref()).unwrap_or("und"),kind(job.extraction_method.as_deref(),job.target.as_deref()),sdh),"sdh":sdh,"unreadable_cues":job.unreadable_cues,"stage":if ocr_progress.is_some(){"ocr"}else if job.target.is_some(){"translation"}else{"extraction"},"id":job.id,"asset_id":job.asset_id,"state":job.state,"error":job.error,
             "sidecar":if job.input.extension().is_some_and(|e|e.eq_ignore_ascii_case("srt")) { job.input.file_name().and_then(|n|n.to_str()).map(|name|sha2::Sha256::digest(name.as_bytes()).iter().map(|b|format!("{b:02x}")).collect::<String>()) } else {None},
             "track":job.track,"source":job.source.as_deref().filter(|s|*s!="auto"),"target":job.target.as_deref().filter(|s|*s!="auto"),"completed_cues":job.completed_cues,"total_cues":job.total_cues,
             "path":if job.state=="ready" {Some(format!("/v1/subtitle-jobs/{id}.vtt"))} else {None}}),
@@ -450,6 +467,7 @@ impl Manager {
                 completed_cues: 0, total_cues: 0, extraction_method: None, unreadable_cues: 0,
                 // Re-admitting the same job (e.g. after an external import) keeps its provenance.
                 translated_by: self.read(&id).ok().and_then(|previous| previous.translated_by),
+                sdh: None,
             };
             self.save(&job)?;
             pending.insert(id.clone());
@@ -668,7 +686,10 @@ mod sidecar_job_tests {
         let cases=[(Some("text"),None,"en","English Text"),(Some("ocr"),None,"en","English Images"),
             (Some("speech"),None,"en","English Voice Transcribed"),(Some("speech"),Some("zh-Hans"),"zh-Hans","Chinese Translated"),
             (Some("ocr"),Some("en"),"en","English Translated"),(None,None,"zh-Hans","Chinese Text")];
-        for (method,target,language,name) in cases { assert_eq!(track_name(language,kind(method,target)),name); }
+        for (method,target,language,name) in cases { assert_eq!(track_name(language,kind(method,target),false),name); }
+        assert_eq!(track_name("en",kind(Some("ocr"),None),true),"English SDH");
+        assert_eq!(track_name("en",kind(None,None),true),"English SDH");
+        assert_eq!(track_name("zh-Hans",kind(Some("speech"),Some("zh-Hans")),true),"Chinese Translated","translations are not SDH");
         assert_eq!(kind(Some("text"),Some("auto")),"text","auto targets are unresolved, not translations");
     }
     #[test]
@@ -676,7 +697,7 @@ mod sidecar_job_tests {
         let root=std::env::temp_dir().join(format!("torrbaby-legacy-caption-{}",uuid::Uuid::new_v4()));
         fs::create_dir_all(&root)?;let input=root.join("movie.mkv");fs::write(&input,b"fixture")?;
         let manager=Manager::new(&root)?;let id="a".repeat(64);
-        let job=Job{id:id.clone(),asset_id:"movie".into(),input:input.clone(),revision:revision(&input)?,track:3,source:Some("en".into()),target:Some("zh-Hans".into()),state:"ready".into(),updated:0.0,error:None,completed_cues:1,total_cues:1,extraction_method:Some("ocr".into()),unreadable_cues:0,translated_by:None};
+        let job=Job{id:id.clone(),asset_id:"movie".into(),input:input.clone(),revision:revision(&input)?,track:3,source:Some("en".into()),target:Some("zh-Hans".into()),state:"ready".into(),updated:0.0,error:None,completed_cues:1,total_cues:1,extraction_method:Some("ocr".into()),unreadable_cues:0,translated_by:None,sdh:None};
         manager.save(&job)?;fs::write(manager.root.join(format!("{id}.vtt")),"WEBVTT\n\n1\n00:00:01.000 --> 00:00:02.000\n你好\n")?;
         assert_eq!(manager.lookup("movie",&input,3,&Some("en".into()),&Some("zh-Hans".into())).unwrap()["id"],id);
         assert!(manager.lookup("other",&input,3,&Some("en".into()),&Some("zh-Hans".into())).is_none());

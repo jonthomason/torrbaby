@@ -240,8 +240,8 @@ struct LibraryAsset: Decodable, Identifiable {
 }
 
 struct MediaTrackInfo: Decodable {
-    struct Track: Decodable { let language: String?; let codec: String?; let extractionSupported: Bool? }
-    struct Prepared: Decodable { let id: String; let language: String?; let generated: Bool; let state: String; var kind: String? = nil }
+    struct Track: Decodable { let language: String?; let codec: String?; let extractionSupported: Bool?; var sdh: Bool? = nil }
+    struct Prepared: Decodable { let id: String; let language: String?; let generated: Bool; let state: String; var kind: String? = nil; var sdh: Bool? = nil }
     let state: String
     let audioTracks: [Track]
     let subtitleTracks: [Track]
@@ -259,6 +259,12 @@ struct MediaLanguagesView: View {
         if normalized.lowercased() == "zh-hant" { return L10n.text("Chinese (Traditional)") }
         return L10n.locale.localizedString(forIdentifier: normalized) ?? code
     }
+    /// A track in the file: its language, plus SDH when it has sound descriptions.
+    private func originalName(_ code: String?, sdh: Bool) -> String {
+        let language = name(code)
+        guard sdh, !language.isEmpty else { return language }
+        return SubtitleTrackName.text(language: code, kind: "text", sdh: true) ?? "\(language) \(L10n.text("SDH"))"
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let info, info.state == "ready" {
@@ -266,15 +272,15 @@ struct MediaLanguagesView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Label("Subtitles", systemImage: "captions.bubble").font(.caption.weight(.semibold))
                     let original = Array(Set(
-                        info.subtitleTracks.filter { $0.extractionSupported != false }.map { name($0.language) }
-                        + info.prepared.filter { !$0.generated && $0.state == "ready" }.map { name($0.language) }
+                        info.subtitleTracks.filter { $0.extractionSupported != false }.map { originalName($0.language, sdh: $0.sdh == true) }
+                        + info.prepared.filter { !$0.generated && $0.state == "ready" }.map { originalName($0.language, sdh: $0.sdh == true) }
                     )).filter { !$0.isEmpty }.sorted()
                     let generated = info.prepared.filter { $0.generated && $0.state == "ready" && !name($0.language).isEmpty }
                     HStack(spacing: 6) {
                         if !original.isEmpty { Text(original.joined(separator: " · ")) }
                         ForEach(Array(generated.enumerated()), id: \.element.id) { index, track in
                             if !original.isEmpty || index > 0 { Text("·") }
-                            Text(SubtitleTrackName.text(language: track.language, kind: track.kind) ?? name(track.language))
+                            Text(SubtitleTrackName.text(language: track.language, kind: track.kind, sdh: track.sdh == true) ?? name(track.language))
                             Image("TorrbabyLogo").resizable().frame(width: 18, height: 18)
                                 .clipShape(RoundedRectangle(cornerRadius: 3))
                                 .accessibilityLabel("Generated subtitles")

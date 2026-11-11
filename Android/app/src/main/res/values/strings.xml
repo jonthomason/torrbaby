@@ -78,6 +78,7 @@
     <string name="ui_78bba35bec31" formatted="false">Chinese (Simplified)</string>
     <string name="ui_db2dff441f0d" formatted="false">Chinese (Traditional)</string>
     <string name="ui_da9d6066b08e" formatted="false">Chinese Images</string>
+    <string name="ui_fbae2c9313c9" formatted="false">Chinese SDH</string>
     <string name="ui_0cd88f513ebe" formatted="false">Chinese Text</string>
     <string name="ui_15101682201f" formatted="false">Chinese Translated</string>
     <string name="ui_54ef86452c0f" formatted="false">Chinese Voice Transcribed</string>
@@ -182,6 +183,7 @@
     <string name="ui_649df08a448e" formatted="false">English</string>
     <string name="ui_ec6f5bc52086" formatted="false">English (CC)</string>
     <string name="ui_d22733e2d012" formatted="false">English Images</string>
+    <string name="ui_c1c1c0e9cca2" formatted="false">English SDH</string>
     <string name="ui_f83664ca0270" formatted="false">English Text</string>
     <string name="ui_5193195201eb" formatted="false">English Translated</string>
     <string name="ui_67dad522b027" formatted="false">English Voice Transcribed</string>

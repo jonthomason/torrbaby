@@ -117,6 +117,32 @@ pub struct TimedCue {
     pub text: String,
 }
 
+/// Whether cue text reads as SDH/closed captions: sound descriptions such as
+/// "[door slams]" or "(GRUNTS)", or speaker labels such as "JERRY:". Most rips
+/// drop the disc's SDH label, so the text is the only evidence. Measured on the
+/// library: labelled SDH tracks mark 12-27% of cues, ordinary subtitles about 0%
+/// (an occasional "NARRATOR:" stays under 1%).
+pub fn describes_sounds<'a>(texts: impl IntoIterator<Item = &'a str>) -> bool {
+    static SOUND: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"\[[^\]\n]{2,40}\]|(?m:^\s*-?\s*\([^)\n]{2,40}\))").expect("valid regex")
+    });
+    static SPEAKER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?m)^\s*-?\s*[A-Z][A-Z0-9 .'\-]{1,24}:(\s|$)").expect("valid regex")
+    });
+    let (mut cues, mut hits, mut shouting) = (0usize, 0usize, 0usize);
+    let mut speakers = 0usize;
+    for text in texts {
+        cues += 1;
+        let letters = text.chars().filter(|c| c.is_alphabetic());
+        let (upper, all) = letters.fold((0, 0), |(u, a), c| (u + c.is_uppercase() as usize, a + 1));
+        if all >= 4 && upper * 10 >= all * 9 { shouting += 1; }
+        if SOUND.is_match(text) { hits += 1; } else if SPEAKER.is_match(text) { speakers += 1; }
+    }
+    // All-caps subtitles ("NO, WAIT: ...") can look like speaker labels.
+    if shouting * 2 < cues { hits += speakers; }
+    hits >= 10 && hits * 1000 >= cues * 15
+}
+
 pub fn plain_text(raw: &str) -> String {
     static FORMATTING: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(r"(?i)</?(?:i|b|u|font)(?:\s[^>]*)?>").expect("valid regex")
@@ -544,6 +570,24 @@ pub fn read_sidecar(media: &Path, id: &str) -> Result<String> {
 #[cfg(test)]
 mod sidecar_tests {
     use super::*;
+    #[test]
+    fn sdh_is_recognized_from_sound_descriptions_and_speaker_labels() {
+        let plain: Vec<String> = (0..200).map(|i| format!("Line {i} of dialogue.")).collect();
+        assert!(!describes_sounds(plain.iter().map(String::as_str)));
+        let mut sdh = plain.clone();
+        for i in (0..200).step_by(10) { sdh[i] = "[door slams]".into(); }
+        assert!(describes_sounds(sdh.iter().map(String::as_str)));
+        let mut labels = plain.clone();
+        for i in (0..200).step_by(10) { labels[i] = "JERRY: Hello.".into(); }
+        assert!(describes_sounds(labels.iter().map(String::as_str)));
+        // A narrator now and then is not SDH.
+        let mut narrator = plain.clone();
+        narrator[5] = "NARRATOR: Long ago.".into();
+        assert!(!describes_sounds(narrator.iter().map(String::as_str)));
+        // All-caps subtitles: colons are dialogue, not speaker labels.
+        let shouting: Vec<String> = (0..200).map(|i| if i % 5 == 0 { "WAIT: STOP!".into() } else { format!("I SAID LINE {i}.") }).collect();
+        assert!(!describes_sounds(shouting.iter().map(String::as_str)));
+    }
     fn scratch() -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("torrbaby-sidecar-encoding-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();

@@ -168,19 +168,21 @@ struct SubtitleQueueItem: Codable, Identifiable {
     let completedCues: Int
     let totalCues: Int
 }
-/// Short subtitle track names: "English Text", "English Images", "English Voice
-/// Transcribed", "Chinese Translated". `kind` comes from the server.
+/// Short subtitle track names: "English Text", "English Images", "English SDH",
+/// "English Voice Transcribed", "Chinese Translated". `kind` and `sdh` come from
+/// the server; SDH applies to original text or image tracks, not to translations.
 enum SubtitleTrackName {
-    static func key(language: String?, kind: String?) -> String? {
+    static func key(language: String?, kind: String?, sdh: Bool = false) -> String? {
         let code = (language ?? "").lowercased()
         let name = code == "en" || code == "eng" || code.hasPrefix("en-") ? "English"
             : code == "zh" || code == "zho" || code == "chi" || code.hasPrefix("zh-") ? "Chinese" : nil
         guard let name else { return nil }
+        if sdh && ["text", "images", nil].contains(kind) { return "\(name) SDH" }
         let kinds = ["images": "Images", "speech": "Voice Transcribed", "translated": "Translated"]
         return "\(name) \(kinds[kind ?? ""] ?? "Text")"
     }
-    static func text(language: String?, kind: String?) -> String? {
-        key(language: language, kind: kind).map { L10n.text($0) }
+    static func text(language: String?, kind: String?, sdh: Bool = false) -> String? {
+        key(language: language, kind: kind, sdh: sdh).map { L10n.text($0) }
     }
 }
 struct SubtitlePreparation: Codable {

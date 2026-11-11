@@ -11838,6 +11838,40 @@
           }
         }
       }
+    },
+    "English SDH": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "English SDH"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "英文听障字幕"
+          }
+        }
+      }
+    },
+    "Chinese SDH": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chinese SDH"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "中文听障字幕"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

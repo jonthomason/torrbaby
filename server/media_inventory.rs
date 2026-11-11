@@ -5,13 +5,21 @@ use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 use std::path::Path;
 
-pub fn cached(db: &Database, id: &str) -> Result<Value> {
+pub fn cached(db: &Database, id: &str) -> Result<Value> { cached_with(db, id, None) }
+/// As `cached`, also asking the subtitle jobs whether finished text reads as SDH
+/// (the stored snapshot predates that check for most files).
+pub fn cached_with(db: &Database, id: &str, jobs: Option<&crate::subtitle_jobs::Manager>) -> Result<Value> {
     let row: Option<(String,String)> = db.connection.query_row(
         "SELECT revision,document FROM media_inventory WHERE asset_id=?", [id], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
     if let Some((revision, text)) = row {
         let asset = db.asset(id)?;
         if asset["path"].as_str().and_then(|p| crate::subtitle_jobs::revision(Path::new(p)).ok()).as_deref() == Some(&revision) {
-            let mut info=serde_json::from_str(&text)?;
+            let mut info:Value=serde_json::from_str(&text)?;
+            if let (Some(jobs),Some(prepared))=(jobs,info["prepared"].as_array_mut()) {
+                for job in prepared.iter_mut().filter(|j|j["state"]=="ready" && j["target"].is_null() && j["sdh"].is_null()) {
+                    if let Some(sdh)=job["id"].as_str().and_then(|id|jobs.status(id).ok()).and_then(|s|s["sdh"].as_bool()) {job["sdh"]=json!(sdh);}
+                }
+            }
             normalize_prepared(&mut info);
             return Ok(info);
         }
@@ -32,6 +40,34 @@ fn normalize_prepared(info:&mut Value) {
             }
         }
     }
+    // SDH: the container flag or track name says so, or the extracted text reads
+    // as SDH. Generated tracks from a labelled source share its label.
+    let sources:Vec<(u64,Option<String>,bool)>=info["subtitle_tracks"].as_array().map(|tracks|tracks.iter().filter_map(|t|{
+        let sidecar=(t["sidecar"]==true).then(||t["id"].as_str().map(str::to_owned)).flatten();
+        Some((t["track"].as_u64()?,sidecar,labelled_sdh(t)))
+    }).collect()).unwrap_or_default();
+    let source_of=|job:&Value|sources.iter().find(|(track,sidecar,_)|job["track"].as_u64()==Some(*track)
+        && match (sidecar,job["sidecar"].as_str()) {(Some(a),Some(b))=>a==b,(None,None)=>true,_=>false}).cloned();
+    let mut detected=Vec::new();
+    if let Some(prepared)=info["prepared"].as_array_mut() {
+        for job in prepared.iter_mut().filter(|j|j["target"].is_null()) {
+            let source=source_of(job);
+            let sdh=job["sdh"]==true || source.as_ref().is_some_and(|s|s.2);
+            job["sdh"]=json!(sdh);
+            let kind=job["kind"].as_str().unwrap_or("text").to_owned();
+            if sdh && (kind=="text" || kind=="images") {
+                job["name"]=json!(crate::subtitle_jobs::track_name(job["language"].as_str().or(job["source"].as_str()).unwrap_or("und"),&kind,true));
+            }
+            if sdh { if let Some(s)=source {detected.push((s.0,s.1));} }
+        }
+    }
+    if let Some(tracks)=info["subtitle_tracks"].as_array_mut() {
+        for track in tracks.iter_mut() {
+            let sidecar=(track["sidecar"]==true).then(||track["id"].as_str().map(str::to_owned)).flatten();
+            let sdh=labelled_sdh(track) || detected.iter().any(|(n,s)|track["track"].as_u64()==Some(*n) && *s==sidecar);
+            track["sdh"]=json!(sdh);
+        }
+    }
     if let Some(tracks)=info["subtitle_tracks"].as_array_mut() {
         for track in tracks {
             if track["sidecar"]!=true && track["language"].as_str().is_none_or(|s|s.is_empty() || s=="und") {
@@ -39,6 +75,18 @@ fn normalize_prepared(info:&mut Value) {
             }
         }
     }
+}
+/// The container's hearing-impaired flag, or a name such as "English SDH",
+/// "English (CC)" or a sidecar `movie.en.sdh.srt`.
+fn labelled_sdh(track:&Value)->bool {
+    static LABEL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)(^|[^a-z])(sdh|cc|hearing[ _-]?impaired|closed[ _-]?captions?)([^a-z]|$)").expect("valid regex")
+    });
+    track["hearing_impaired"]==true || track["name"].as_str().is_some_and(|n|{
+        // A sidecar is named after the film; judge only its tags (".en.sdh.srt").
+        let tags=if track["sidecar"]==true {n.rsplit('.').take(4).take_while(|t|t.len()<=20 && !t.contains(' ')).collect::<Vec<_>>().join(".")} else {n.to_owned()};
+        LABEL.is_match(&tags)
+    })
 }
 fn save(db: &Database, id: &str, revision: &str, info: &Value) -> Result<()> {
     db.connection.execute("INSERT INTO media_inventory VALUES(?,?,?,?) ON CONFLICT(asset_id) DO UPDATE SET revision=excluded.revision,document=excluded.document,updated=excluded.updated",
@@ -169,7 +217,7 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
         let sidecar_input=input.clone();
         let sidecars=tokio::task::spawn_blocking(move ||crate::subtitles::discover(&sidecar_input)).await??;
         let mut tracks=inventory["tracks"].as_array().cloned().unwrap_or_default();
-        tracks.extend(sidecars.into_iter().map(|t|json!({"id":t.id,"track":1,"language":t.language,"name":t.name,"sidecar":true,"text_extractable":true,"extraction_supported":true,"forced":t.forced})));
+        tracks.extend(sidecars.into_iter().map(|t|json!({"id":t.id,"track":1,"language":t.language,"name":t.name,"sidecar":true,"text_extractable":true,"extraction_supported":true,"forced":t.forced,"hearing_impaired":t.hearing_impaired})));
         info=json!({"state":"ready","language_inventory_version":INVENTORY_VERSION,"audio_tracks":inventory["audio_tracks"],"subtitle_tracks":tracks,"scanned_at":now()});
     }
     let tracks=info["subtitle_tracks"].as_array().context("Invalid track inventory")?;
@@ -335,6 +383,26 @@ mod ocr_fallback_tests {
         let english=json!({"track":3,"text_extractable":true,"extraction_supported":true,"language":"eng"});
         let tracks=[chinese,english];let plan=subtitle_plan(&tracks);
         assert_eq!(plan.len(),2);assert!(plan.iter().all(|(_,source,target)|source==target));
+    }
+    #[test]
+    fn sdh_comes_from_flags_names_or_detected_text() {
+        let mut info=json!({"subtitle_tracks":[
+            {"track":3,"language":"en","name":"English SDH (SRT)"},
+            {"track":4,"language":"en","hearing_impaired":true},
+            {"track":5,"language":"en","name":"English"},
+            {"track":6,"language":"en","name":"Hindi"},
+            {"id":"abc","track":1,"language":"en","sidecar":true,"name":"Pulp Fiction (1994).en.sdh.srt"},
+            {"id":"def","track":1,"language":"en","sidecar":true,"name":"Soccer CC Movie (2001).en.srt"}],
+          "prepared":[
+            {"id":"a","track":3,"language":"en","source":"en","target":null,"extraction_method":"text","state":"ready","sidecar":null},
+            {"id":"b","track":5,"language":"en","source":"en","target":null,"extraction_method":"ocr","state":"ready","sidecar":null,"sdh":true},
+            {"id":"c","track":3,"language":"zh-Hans","source":"en","target":"zh-Hans","state":"ready","sidecar":null}]});
+        normalize_prepared(&mut info);
+        let sdh:Vec<bool>=info["subtitle_tracks"].as_array().unwrap().iter().map(|t|t["sdh"]==true).collect();
+        assert_eq!(sdh,[true,true,true,false,true,false],"name, flag, detected text, Hindi, sidecar tag, film title");
+        assert_eq!(info["prepared"][0]["name"],"English SDH");
+        assert_eq!(info["prepared"][1]["name"],"English SDH");
+        assert!(info["prepared"][2]["name"].is_null(),"translations keep their own name");
     }
     #[test]
     fn existing_bitmap_captions_are_extracted_and_forced_tracks_do_not_count_as_full() {

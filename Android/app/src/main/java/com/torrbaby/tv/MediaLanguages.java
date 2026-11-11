@@ -20,12 +20,17 @@ final class MediaLanguages {
 
   /** Short subtitle track names: "English Text", "English Images", "English Voice
    *  Transcribed", "Chinese Translated". {@code kind} is the server's track kind. */
-  static String trackName(String code, String kind) {
+  static String trackName(String code, String kind) { return trackName(code, kind, false); }
+
+  /** SDH applies to original text or image tracks ("English SDH"), not to
+   *  transcripts or translations. */
+  static String trackName(String code, String kind, boolean sdh) {
+    if (sdh && (kind == null || kind.equals("text") || kind.equals("images"))) kind = "sdh";
     String tag = code == null ? "" : code.toLowerCase(Locale.ROOT).replace('_', '-');
     String language = tag.equals("en") || tag.equals("eng") || tag.startsWith("en-") ? "English"
         : tag.equals("zh") || tag.equals("zho") || tag.equals("chi") || tag.equals("cmn") || tag.startsWith("zh-")
             ? "Chinese" : null;
-    String type = "images".equals(kind) ? "Images" : "speech".equals(kind) ? "Voice Transcribed"
+    String type = "sdh".equals(kind) ? "SDH" : "images".equals(kind) ? "Images" : "speech".equals(kind) ? "Voice Transcribed"
         : "translated".equals(kind) ? "Translated" : "Text";
     if (language != null) return L10n.t(language + " " + type);
     String other = name(code);
@@ -57,6 +62,8 @@ final class MediaLanguages {
       if (track != null) {
         if (key.equals("subtitle_tracks") && track.optString("codec").equals("unsupported")) continue;
         String language = name(track.optString("language", "und"));
+        if (!language.isEmpty() && key.equals("subtitle_tracks") && track.optBoolean("sdh"))
+          language = trackName(track.optString("language"), "text", true);
         if (!language.isEmpty()) names.add(language);
       }
     }

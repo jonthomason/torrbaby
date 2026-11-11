@@ -19,6 +19,21 @@ public class MediaLanguagesTest {
     assertEquals("English Voice Transcribed", MediaLanguages.trackName("en", "speech"));
     assertEquals("Chinese Translated", MediaLanguages.trackName("zh-Hans", "translated"));
     assertEquals("Chinese Text", MediaLanguages.trackName("chi", null));
+    assertEquals("English SDH", MediaLanguages.trackName("en", "images", true));
+    assertEquals("English SDH", MediaLanguages.trackName("eng", "text", true));
+    assertEquals("Chinese Translated", MediaLanguages.trackName("zh-Hans", "translated", true));
+  }
+  @Test public void sdhTracksAreNamedInTheLanguageSummary() throws Exception {
+    JSONObject info = new JSONObject().put("subtitle_tracks", new JSONArray()
+        .put(new JSONObject().put("language", "eng").put("codec", "S_TEXT/UTF8"))
+        .put(new JSONObject().put("language", "eng").put("codec", "S_TEXT/UTF8").put("sdh", true)));
+    assertEquals("English · English SDH", MediaLanguages.tracks(info, "subtitle_tracks"));
+  }
+  @Test public void embeddedFormatIdsGiveTrackNumbers() {
+    assertEquals(3, PlaybackActivity.trackNumber("0:3"));
+    assertEquals(3, PlaybackActivity.trackNumber("3"));
+    assertEquals(-1, PlaybackActivity.trackNumber("torrbaby-subtitle-0"));
+    assertEquals(-1, PlaybackActivity.trackNumber(null));
   }
 
   @Test public void generatedLabelsRequireReadyTranslatedJobs() throws Exception {

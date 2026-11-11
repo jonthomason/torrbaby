@@ -89,6 +89,7 @@ final class L10n {
     IDS.put("Chinese (Simplified)", R.string.ui_78bba35bec31);
     IDS.put("Chinese (Traditional)", R.string.ui_db2dff441f0d);
     IDS.put("Chinese Images", R.string.ui_da9d6066b08e);
+    IDS.put("Chinese SDH", R.string.ui_fbae2c9313c9);
     IDS.put("Chinese Text", R.string.ui_0cd88f513ebe);
     IDS.put("Chinese Translated", R.string.ui_15101682201f);
     IDS.put("Chinese Voice Transcribed", R.string.ui_54ef86452c0f);
@@ -193,6 +194,7 @@ final class L10n {
     IDS.put("English", R.string.ui_649df08a448e);
     IDS.put("English (CC)", R.string.ui_ec6f5bc52086);
     IDS.put("English Images", R.string.ui_d22733e2d012);
+    IDS.put("English SDH", R.string.ui_c1c1c0e9cca2);
     IDS.put("English Text", R.string.ui_f83664ca0270);
     IDS.put("English Translated", R.string.ui_5193195201eb);
     IDS.put("English Voice Transcribed", R.string.ui_67dad522b027);

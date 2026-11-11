@@ -31,6 +31,15 @@ public class PreparedSubtitlesTest {
         "asset-1", () -> false);
     assertEquals(1,result.length());
   }
+  @Test public void sdhNamesGeneratedTracksAndCollectsOwnSdhTracks() throws Exception {
+    java.util.Set<Integer> sdh = new java.util.HashSet<>();
+    JSONArray result = PreparedSubtitles.ready((m,p,b) -> new JSONObject("{\"subtitle_tracks\":["
+        + "{\"track\":3,\"sdh\":true},{\"track\":4},{\"track\":1,\"sidecar\":true,\"sdh\":true}],\"prepared\":["
+        + "{\"generated\":true,\"state\":\"ready\",\"language\":\"en\",\"kind\":\"images\",\"sdh\":true,\"path\":\"/ocr.vtt\"}]}"),
+        "asset-1", () -> false, sdh);
+    assertEquals("English SDH", result.getJSONObject(0).getString("name"));
+    assertEquals(java.util.Set.of(3), sdh);
+  }
   @Test(expected=CancellationException.class) public void cancellationPreventsRequest() throws Exception {
     PreparedSubtitles.ready((m,p,b) -> { fail("Cancelled request"); return null; }, "asset-1", () -> true);
   }

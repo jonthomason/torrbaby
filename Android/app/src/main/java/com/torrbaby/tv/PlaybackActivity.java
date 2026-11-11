@@ -28,6 +28,8 @@ public class PlaybackActivity extends Activity {
   private Api api;
   private JSONObject subtitlePreferences;
   private volatile boolean cancelled;
+  /** The file's own subtitle tracks (by track number) that the server found to be SDH. */
+  private final Set<Integer> sdhTracks = java.util.concurrent.ConcurrentHashMap.newKeySet();
   private ExoPlayer player;
   private boolean subtitleChoiceMade;
   private PlayerView view;
@@ -90,7 +92,7 @@ public class PlaybackActivity extends Activity {
               JSONArray tracks = inventory.optJSONArray("tracks");
               if (tracks == null) tracks = new JSONArray();
               try {
-                JSONArray prepared = PreparedSubtitles.ready(api::request, id, () -> cancelled);
+                JSONArray prepared = PreparedSubtitles.ready(api::request, id, () -> cancelled, sdhTracks);
                 for (int i = 0; i < prepared.length(); i++) tracks.put(prepared.getJSONObject(i));
               } catch (CancellationException e) {
                 return;
@@ -333,6 +335,13 @@ public class PlaybackActivity extends Activity {
     return 2;
   }
 
+  /** Container track number from an ExoPlayer format id such as "3" or "0:3". */
+  static int trackNumber(String id) {
+    if (id == null) return -1;
+    try { return Integer.parseInt(id.substring(id.lastIndexOf(':') + 1)); }
+    catch (NumberFormatException e) { return -1; }
+  }
+
   private void tracks(int type) {
     List<String> labels = new ArrayList<>();
     List<TrackSelectionOverride> overrides = new ArrayList<>();
@@ -360,9 +369,10 @@ public class PlaybackActivity extends Activity {
               String mime = format.sampleMimeType == null ? "" : format.sampleMimeType;
               boolean images = mime.equals(MimeTypes.APPLICATION_PGS) || mime.equals(MimeTypes.APPLICATION_VOBSUB)
                   || mime.equals(MimeTypes.APPLICATION_DVBSUBS);
-              name = MediaLanguages.trackName(format.language, images ? "images" : "text");
+              boolean sdh = (format.roleFlags & (C.ROLE_FLAG_CAPTION | C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND)) != 0
+                  || sdhTracks.contains(trackNumber(format.id));
+              name = MediaLanguages.trackName(format.language, images ? "images" : "text", sdh);
               if ((format.selectionFlags & C.SELECTION_FLAG_FORCED) != 0) name += " · " + L10n.t("Forced");
-              if ((format.roleFlags & C.ROLE_FLAG_CAPTION) != 0) name += " · " + L10n.t("SDH");
             }
           }
           if (type == C.TRACK_TYPE_AUDIO && format.channelCount > 0)

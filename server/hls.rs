@@ -28,6 +28,7 @@ pub struct Caption {
     pub text: String,
     /// Rendition name shown in the player's subtitle menu.
     pub name: String,
+    pub sdh: bool,
 }
 pub struct Manager {
     root: PathBuf,
@@ -287,11 +288,12 @@ fn attach_captions(root: &Path, captions: &[Caption]) -> Result<()> {
         )?;
         // Names must be unique within the group; repeat a name only with a number.
         let mut name: String = c.name.chars().filter(|ch| !ch.is_control() && *ch != '"').collect();
-        if name.trim().is_empty() { name = crate::subtitle_jobs::track_name(&c.language, "text"); }
+        if name.trim().is_empty() { name = crate::subtitle_jobs::track_name(&c.language, "text", false); }
         if captions[..i].iter().any(|other| other.name == c.name) { name = format!("{name} {}", i + 1); }
         declarations += &format!(
-            "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subtitles\",NAME=\"{name}\",LANGUAGE=\"{}\",DEFAULT=NO,AUTOSELECT=YES,URI=\"subtitle-{i}.m3u8\"\n",
-            c.language
+            "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subtitles\",NAME=\"{name}\",LANGUAGE=\"{}\",DEFAULT=NO,AUTOSELECT=YES,{}URI=\"subtitle-{i}.m3u8\"\n",
+            c.language,
+            if c.sdh { format!("CHARACTERISTICS=\"{}\",", crate::virtual_captions::SDH_CHARACTERISTICS.join(",")) } else { String::new() }
         );
     }
     let mut updated = String::new();
