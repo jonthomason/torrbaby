@@ -95,14 +95,25 @@ impl Database {
         let hidden: std::collections::HashSet<String> = self.rows("SELECT title_id FROM profile_hidden_titles WHERE profile_id=?",[profile])?.iter().filter_map(|v|v["title_id"].as_str().map(str::to_owned)).collect();
         let mut titles = BTreeMap::<String, Value>::new();
         let assets = self.visible_assets()?;
+        let listed = |asset: &Value| !(asset["available"] != true || asset["complete"] != true || asset["role"] == "extra"
+            || asset["library_ready"] == false || asset["status"] != "matched" || !asset["entity_id"].as_str().is_some_and(|id|entities.contains_key(id)));
+        let package = |asset: &Value| asset["torrent_hash"].as_str().or(asset["id"].as_str()).unwrap_or("").to_owned();
+        // A movie downloaded more than once is listed once per download, so each copy
+        // can be played and removed on its own. The earliest download keeps the movie's
+        // own title ID, and with it existing progress and hide choices.
+        let mut first_package = BTreeMap::<String, (f64, String)>::new();
+        for asset in assets.iter().filter(|a| listed(a)) {
+            let candidate = (asset["added_at"].as_f64().unwrap_or(0.0), package(asset));
+            let entry = first_package.entry(asset["entity_id"].as_str().unwrap_or("").to_owned()).or_insert(candidate.clone());
+            if candidate.0 < entry.0 || (candidate.0 == entry.0 && candidate.1 < entry.1) { *entry = candidate; }
+        }
         for asset in &assets {
-            if asset["available"] != true || asset["complete"] != true || asset["role"] == "extra"
-                || asset["library_ready"] == false || asset["status"] != "matched" || !asset["entity_id"].as_str().is_some_and(|id|entities.contains_key(id)) {
+            if !listed(asset) {
                 continue;
             }
             let id = asset["id"].as_str().context("Invalid asset ID")?;
-            let entity_id = asset["entity_id"].as_str().unwrap_or(id);
-            let entity = entities.get(entity_id).cloned().unwrap_or(json!({}));
+            let movie_id = asset["entity_id"].as_str().unwrap_or(id);
+            let entity = entities.get(movie_id).cloned().unwrap_or(json!({}));
             let file = std::path::Path::new(asset["path"].as_str().unwrap_or(""));
             let fallback = file
                 .file_stem()
@@ -120,8 +131,15 @@ impl Database {
                 .as_str()
                 .or(asset["series_name"].as_str())
                 .unwrap_or(&fallback);
+            let this_package = package(asset);
+            let entity_id = if kind == "movie" && first_package.get(movie_id).is_some_and(|(_, first)| *first != this_package) {
+                format!("{movie_id}:copy:{this_package}")
+            } else {
+                movie_id.to_owned()
+            };
+            let entity_id = entity_id.as_str();
             let title=titles.entry(entity_id.to_owned()).or_insert_with(||json!({
-                "id":entity_id,"continue_watching_hidden":hidden.contains(entity_id),"kind":kind,"title":name,"original_title":entity["original_title"],
+                "id":entity_id,"copy_of":if entity_id != movie_id { json!(movie_id) } else { Value::Null },"continue_watching_hidden":hidden.contains(entity_id),"kind":kind,"title":name,"original_title":entity["original_title"],
                 "year":title_year(&entity,file),"end_year":series_end_year(&entity),"ongoing":series_ongoing(&entity),"release_date":entity["release_date"],"genres":entity.get("genres").unwrap_or(&json!([])),
                 "summary":entity["summary"].as_str().unwrap_or(""),"content_rating":entity["content_rating"],"duration_minutes":entity["duration_minutes"],
                 "poster":entity["thumbnail"],"backdrop":entity["backdrop"],"logo":entity["logo"],"cast":entity["cast"],"provider":entity["provider"],"source_url":entity["source_url"],
@@ -312,6 +330,34 @@ mod completion_tests {
                 rusqlite::params!["episode",asset.to_string()])?;
             assert_eq!(db.catalog(crate::profiles::LEGACY_PROFILE)?["titles"].as_array().unwrap().len(), usize::from(complete));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn each_download_of_a_movie_is_its_own_title() -> Result<()> {
+        let mut db = Database { connection: rusqlite::Connection::open_in_memory()? };
+        db.connection.execute_batch(include_str!("schema.sql"))?;
+        db.migrate_profiles(9)?;
+        db.connection.execute("INSERT INTO organizer_state VALUES(1, ?)", ["{}"])?;
+        db.connection.execute("INSERT INTO library_entities VALUES('movie',?)",[r#"{"id":"movie","kind":"movie","title":"Casino Royale"}"#])?;
+        db.connection.execute("INSERT INTO library_entities VALUES('show',?)",[r#"{"id":"show","kind":"tv","title":"Friends"}"#])?;
+        let assets = [("collection", "movie", "hash-b", 20.0, None), ("single", "movie", "hash-a", 10.0, None),
+            ("part-two", "movie", "hash-a", 11.0, None), ("e1", "show", "hash-c", 1.0, Some(1)), ("e1-again", "show", "hash-d", 2.0, Some(1))];
+        for (id, entity, hash, added, episode) in assets {
+            let asset = json!({"id":id,"available":true,"complete":true,"path":format!("/Media/{id}.mp4"),"entity_id":entity,
+                "status":"matched","library_ready":true,"torrent_hash":hash,"added_at":added,"season":episode.map(|_|1),"episode":episode});
+            db.connection.execute("INSERT INTO library_assets VALUES(?,?)", rusqlite::params![id, asset.to_string()])?;
+        }
+        let catalog = db.catalog(crate::profiles::LEGACY_PROFILE)?;
+        let titles = catalog["titles"].as_array().unwrap();
+        let files = |id: &str| titles.iter().find(|t| t["id"] == id).map(|t| t["assets"].as_array().unwrap().iter().map(|a| a["id"].as_str().unwrap().to_owned()).collect::<Vec<_>>());
+        // The earliest download keeps the movie's own ID; files of one download stay together.
+        assert_eq!(files("movie"), Some(vec!["single".into(), "part-two".into()]));
+        assert_eq!(files("movie:copy:hash-b"), Some(vec!["collection".into()]));
+        assert_eq!(titles.iter().find(|t| t["id"] == "movie:copy:hash-b").unwrap()["copy_of"], "movie");
+        // Series still gather every download under one title.
+        assert_eq!(files("show").map(|f| f.len()), Some(2));
+        assert_eq!(titles.len(), 3);
         Ok(())
     }
 }
