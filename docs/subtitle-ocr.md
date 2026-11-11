@@ -55,3 +55,39 @@ The user reproduced a third Chinese option on iPad after relaunch: the supplied 
 Mobile OTA 96 published to the Mac-only Miyu Install page, macOS 96 installed, tvOS simulator 96 built, Android 27 published and installed in emulator-5554. Detail actions are exposed directly; the primary Download control is not duplicated. Apple title-detail Chinese names use Chinese (Simplified). The media-info response retains verified OCR source languages and correct provenance for cached jobs.
 
 These client edits depend on the other session's uncommitted profiles/file-actions baseline. The reviewed incremental client patches are saved in `local-state/pgs-production/*-ui.patch`; working-tree files and published builds contain them. Do not discard or overwrite that baseline. Source/build evidence: `local-state/pgs-production/`; public production decoder commit `6ed3325`.
+
+## Compressed tracks, placeholders and failure reporting (2026-11-11)
+
+Matroska ContentEncoding is now undone in one place (`matroska::decode_frame`)
+for text extraction and bitmap OCR: zlib and header stripping, in descending
+ContentEncodingOrder, bounded, for frames and (VobSub) CodecPrivate.
+Encryption, bzlib, LZO and scope-4 encodings are reported as unsupported.
+`matroska-subtitles` adds `ocr_supported`; `extraction_supported` covers text
+only, so it is always false for PGS/VobSub. Compressed text tracks are no longer
+skipped.
+
+Friends S09 "Phoebe Battles the Pink Robots": all 14 PGS tracks are zlib
+compressed (mkvmerge's default) and zlib was already handled. The two Japanese
+tracks decode to 12 readable captions. The other 12 tracks, including the
+unlabelled English and the Chinese track the queue picked, are placeholders: one
+600x64 display from 0 to 10.01 s using a palette entry that the palette never
+defines, so it is fully transparent. The decoder found no visible caption. The
+OCR wrapper reported every decoder failure as "OCR could not read these
+subtitles". Decoder failures are now reported as such. A track with no visible
+captions fails with "This subtitle track has no visible captions". The queue
+then treats that track as no source, and the title as not applicable when
+nothing else remains.
+
+The asset's alternating "No such file or directory (os error 2)" came from the
+shared subtitle directory. Running jobs rename `*.json.tmp` files there, and
+the OCR helper atomically replaces its progress file, while `prune` and the
+translation storage check listed the directory and then called `metadata()` on
+each entry. The same race existed in the OCR cache eviction. Entries that vanish
+mid-scan are now skipped. No log line survives, so this cause is inferred from
+the code and the failure pattern. Eleven other assets hit this error once each
+between 23:13 and 01:12 UTC in the extraction, OCR and translation stages, while
+their media still existed.
+
+A real compressed English PGS track (Outlander S02 deleted scene "Faith")
+decoded and was recognized by the production OCR helper: 83 captions, none
+unreadable.

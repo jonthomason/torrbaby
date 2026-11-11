@@ -243,7 +243,7 @@ impl Pgs {
             "Incomplete PGS display set"
         );
         self.close(None, out)?;
-        ensure!(!self.cues.is_empty(), "No PGS captions decoded");
+        // An empty result (no visible display) is reported by the caller.
         Ok(self.cues)
     }
 }

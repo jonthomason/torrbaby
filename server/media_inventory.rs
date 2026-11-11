@@ -73,7 +73,8 @@ fn language(track: &Value) -> Option<&'static str> {
 /// Equal source/target means extraction only; it never reaches the translator.
 fn subtitle_plan(tracks: &[Value]) -> Vec<(&Value, &'static str, &'static str)> {
     let full = |t: &&Value| t["forced"] != true;
-    let bitmap = |t: &&Value| t["codec"] == "S_VOBSUB" || t["codec"] == "S_HDMV/PGS";
+    // Older inventories have no ocr_supported field; those tracks remain eligible.
+    let bitmap = |t: &&Value| (t["codec"] == "S_VOBSUB" || t["codec"] == "S_HDMV/PGS") && t["ocr_supported"] != false;
     let text = |lang| tracks.iter().filter(full).find(|t| language(t) == Some(lang) && t["text_extractable"] == true);
     let image = |lang| tracks.iter().filter(full).filter(bitmap).find(|t| language(t) == Some(lang));
     let has = |lang| text(lang).is_some() || image(lang).is_some();
@@ -175,10 +176,18 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
     }
     let mut jobs=Vec::new();let mut prepared=Vec::new();let mut complete=true;
     let mut progress=json!({"state":"ready","stage":"subtitles","completed_cues":0,"total_cues":0});
+    // Bitmap tracks found to hold no visible captions (placeholders) are no source.
+    let mut empty_tracks=std::collections::HashSet::new();
     // Sequential stages: extraction must finish before its translation starts.
     for (path,track,language,target) in &planned {
+        if empty_tracks.contains(&(path.clone(),*track)) {continue;}
         let source=Some((*language).to_owned());let target=target.map(str::to_owned);
         let existing=s.subtitle_jobs.lookup(id,path,*track,&source,&target);
+        if target.is_none() && existing.as_ref().is_some_and(|job| job["state"]=="failed"
+            && job["error"]==crate::ocr_subtitles::NO_VISIBLE_CAPTIONS) {
+            empty_tracks.insert((path.clone(),*track));
+            continue;
+        }
         let job=match existing {
             Some(job) if job["state"]=="ready" => job,
             Some(job) if job["state"]=="running" || job["state"]=="queued" => job,
@@ -205,6 +214,9 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
         // No supported source is explicit, never silently signed off as translated.
         progress["state"]=json!("not_applicable");
         progress["reason"]=json!("No supported English or Chinese subtitle source");
+    } else if planned.iter().all(|(path,track,..)| empty_tracks.contains(&(path.clone(),*track))) {
+        progress["state"]=json!("not_applicable");
+        progress["reason"]=json!("The English and Chinese subtitle tracks contain no visible captions");
     }
     info["prepared"]=json!(prepared);info["jobs"]=json!(jobs);
     info["preparation_state"]=json!(if complete {"ready"}else if progress["state"]=="failed" {"failed"}else{"preparing"});
@@ -305,6 +317,19 @@ mod ocr_fallback_tests {
         assert_eq!(subtitle_source(&[pgs.clone()]).unwrap().1,"en");
         assert_eq!(subtitle_source(&[pgs,text.clone()]).unwrap().0["track"],4);
         let tracks=vec![text,json!({"track":5,"text_extractable":true,"extraction_supported":true,"language":"zh-Hans"})];let plan=subtitle_plan(&tracks);assert_eq!(plan.len(),2);assert!(plan.iter().all(|(_,source,target)|source==target));
+    }
+    #[test]
+    fn bitmap_tracks_with_unsupported_encodings_are_not_planned_for_ocr() {
+        // zlib-compressed PGS (the mkvmerge default) is supported; inventories
+        // written before ocr_supported existed keep their tracks eligible.
+        let compressed=json!({"track":10,"codec":"S_HDMV/PGS","language":"chi","encoded":true,"ocr_supported":true});
+        assert_eq!(subtitle_source(&[compressed]).unwrap().0["track"],10);
+        let legacy=json!({"track":10,"codec":"S_HDMV/PGS","language":"chi","encoded":true});
+        assert_eq!(subtitle_source(&[legacy]).unwrap().0["track"],10);
+        let encrypted=json!({"track":10,"codec":"S_HDMV/PGS","language":"chi","encoded":true,"ocr_supported":false});
+        let english=json!({"track":4,"codec":"S_HDMV/PGS","language":"eng","ocr_supported":true});
+        assert!(subtitle_plan(&[encrypted.clone()]).is_empty());
+        assert_eq!(subtitle_plan(&[encrypted,english]).iter().map(|(t,s,d)|(t["track"].as_u64(),*s,*d)).collect::<Vec<_>>(),[(Some(4),"en","zh-Hans")]);
     }
 }
 

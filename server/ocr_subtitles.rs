@@ -1,10 +1,10 @@
 //! Isolated bitmap decoding and bounded, cached Apple Vision fallback.
 use anyhow::{Context, Result, ensure};
-use matroska_demuxer::{ContentEncodingValue, Frame, MatroskaFile};
+use matroska_demuxer::{Frame, MatroskaFile};
 use serde_json::json;
 use std::{
     fs,
-    io::{BufReader, Read},
+    io::BufReader,
     path::Path,
     time::Instant,
 };
@@ -48,11 +48,20 @@ pub fn decode(input: &Path, track: u64, out: &Path) -> Result<()> {
         is_pgs || t.codec_id() == "S_VOBSUB",
         "Unsupported bitmap subtitle codec"
     );
+    ensure!(
+        crate::matroska::encodings_supported(t.content_encodings()),
+        "Encrypted or unsupported subtitle compression"
+    );
+    let enc = t.content_encodings().map(<[_]>::to_vec);
     let idx = if is_pgs {
         None
     } else {
-        let private = std::str::from_utf8(t.codec_private().context("Missing palette")?)?;
-        let idx = oxideav_sub_image::vobsub::parse_idx(private)?;
+        let private = crate::matroska::decode_private(
+            enc.as_deref(),
+            t.codec_private().context("Missing palette")?,
+            1_048_576,
+        )?;
+        let idx = oxideav_sub_image::vobsub::parse_idx(std::str::from_utf8(&private)?)?;
         ensure!(idx.has_palette, "Missing palette");
         Some(idx)
     };
@@ -61,7 +70,6 @@ pub fn decode(input: &Path, track: u64, out: &Path) -> Result<()> {
     } else {
         None
     };
-    let enc = t.content_encodings().unwrap_or(&[]).to_vec();
     let mut cues = Vec::new();
     let mut failures = Vec::new();
     let mut frame = Frame::default();
@@ -76,24 +84,9 @@ pub fn decode(input: &Path, track: u64, out: &Path) -> Result<()> {
             continue;
         }
         ensure!(cues.len() < 10000, "Cue limit");
-        let mut data = frame.data.clone();
-        for e in enc.iter().rev() {
-            ensure!(e.scope() == 1, "Unsupported encoding scope");
-            match e.encoding() {
-                ContentEncodingValue::Compression(c) => match c.algo() {
-                    matroska_demuxer::ContentCompAlgo::Zlib => {
-                        let mut v = Vec::new();
-                        flate2::read::ZlibDecoder::new(data.as_slice())
-                            .take(1_048_577)
-                            .read_to_end(&mut v)?;
-                        ensure!(v.len() <= 1_048_576, "Large SPU");
-                        data = v;
-                    }
-                    _ => anyhow::bail!("Unsupported compression {:?}", c.algo()),
-                },
-                _ => anyhow::bail!("Encrypted subtitle"),
-            }
-        }
+        // mkvmerge zlib-compresses PGS and VobSub blocks by default.
+        let limit = if is_pgs { 16 * 1024 * 1024 } else { 1_048_576 };
+        let data = crate::matroska::decode_frame(enc.as_deref(), &frame.data, limit)?;
         if let Some(pgs) = &mut pgs {
             pgs.push(
                 &data,
@@ -141,6 +134,8 @@ pub fn decode(input: &Path, track: u64, out: &Path) -> Result<()> {
     if let Some(pgs) = pgs {
         cues = pgs.finish(out)?;
     }
+    // Placeholder tracks (one fully transparent display set) and empty tracks.
+    ensure!(!cues.is_empty() || !failures.is_empty(), NO_VISIBLE_CAPTIONS);
     let after = fs::metadata(input)?;
     ensure!(
         before.len() == after.len() && before.modified()? == after.modified()?,
@@ -211,8 +206,15 @@ pub fn cleanup(root: &Path) -> Result<()> {
     }
     Ok(())
 }
-async fn run(program: &Path, args: &[&std::ffi::OsStr], seconds: u64) -> Result<()> {
+/// Which helper failed: the Rust bitmap decoder or the Vision recognizer.
+#[derive(Clone, Copy)]
+enum Stage {
+    Decode,
+    Recognize,
+}
+async fn run(program: &Path, args: &[&std::ffi::OsStr], seconds: u64, stage: Stage) -> Result<()> {
     use std::process::Stdio;
+    use tokio::io::AsyncReadExt;
     let mut child = tokio::process::Command::new("/bin/sh")
         .args([
             "-c",
@@ -223,23 +225,44 @@ async fn run(program: &Path, args: &[&std::ffi::OsStr], seconds: u64) -> Result<
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .context("Start OCR worker")?;
-    let status = tokio::time::timeout(std::time::Duration::from_secs(seconds), child.wait())
-        .await
-        .context("OCR worker timed out")??;
+    let mut stderr = child.stderr.take().context("OCR worker stderr unavailable")?;
+    let (status, message) = tokio::time::timeout(std::time::Duration::from_secs(seconds), async {
+        // Keep a short diagnostic; drain and drop the rest so the worker never blocks.
+        let mut message = Vec::new();
+        (&mut stderr).take(4096).read_to_end(&mut message).await?;
+        tokio::io::copy(&mut stderr, &mut tokio::io::sink()).await?;
+        anyhow::Ok((child.wait().await?, message))
+    })
+    .await
+    .context("OCR worker timed out")??;
     // The OCR helper exits with 75 when Vision's shared models were replaced
     // under it. The job is retried later; it says nothing about these subtitles.
     ensure!(status.code() != Some(OCR_MODELS_CHANGED), TEXT_MODELS_CHANGED);
-    ensure!(
-        status.success(),
-        "OCR could not read these subtitles; source preserved"
-    );
-    Ok(())
+    if status.success() {
+        return Ok(());
+    }
+    let message = String::from_utf8_lossy(&message);
+    match stage {
+        // Decoder failures were once reported as unreadable OCR text, which hid
+        // placeholder tracks and decoder limits behind the same message.
+        Stage::Decode if message.contains(NO_VISIBLE_CAPTIONS) => anyhow::bail!(NO_VISIBLE_CAPTIONS),
+        Stage::Decode => {
+            let line = message.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+            let detail: String = line.strip_prefix("Error: ").unwrap_or(line).chars().take(200).collect();
+            anyhow::bail!("Bitmap subtitles could not be decoded ({detail}); source preserved")
+        }
+        Stage::Recognize => anyhow::bail!("OCR could not read these subtitles; source preserved"),
+    }
 }
 const OCR_MODELS_CHANGED: i32 = 75;
+/// A bitmap track whose every display is empty or fully transparent, such as
+/// the placeholder PGS tracks some releases carry for unused languages. The
+/// processing queue treats it as "no subtitle source", not as a failure.
+pub const NO_VISIBLE_CAPTIONS: &str = "This subtitle track has no visible captions";
 /// Stable text the processing queue matches to requeue instead of failing.
 pub const TEXT_MODELS_CHANGED: &str = "Text recognition models changed; retry later";
 pub async fn extract(
@@ -281,6 +304,7 @@ pub async fn extract(
                 images.as_os_str(),
             ],
             200,
+            Stage::Decode,
         )
         .await?;
         let output = work.join("result.json");
@@ -293,6 +317,7 @@ pub async fn extract(
                 progress.as_os_str(),
             ],
             600,
+            Stage::Recognize,
         )
         .await?;
         let parsed = checked(&output)?;
@@ -305,7 +330,8 @@ pub async fn extract(
         for entry in fs::read_dir(&cache)? {
             let e = entry?;
             if e.file_type()?.is_file() && e.path().extension().is_some_and(|x| x == "json") {
-                let m = e.metadata()?;
+                // Concurrent OCR jobs evict and publish entries in this directory.
+                let Some(m) = crate::subtitle_jobs::present(e.metadata())? else { continue };
                 bytes += m.len();
                 entries.push((m.modified()?, e.path(), m.len()));
             }
@@ -316,7 +342,7 @@ pub async fn extract(
             if bytes + incoming <= 128 * 1024 * 1024 {
                 break;
             }
-            fs::remove_file(path)?;
+            crate::subtitle_jobs::present(fs::remove_file(path))?;
             bytes = bytes.saturating_sub(size);
         }
         ensure!(bytes + incoming <= 128 * 1024 * 1024, "OCR cache is full");
@@ -398,5 +424,89 @@ mod tests {
             vobsub_gray(&pixels, &spu.palette_sel, &spu.alpha, &palette),
             [15, 255]
         );
+    }
+
+    #[tokio::test]
+    async fn worker_failures_name_the_stage_that_failed() {
+        let sh = Path::new("/bin/sh");
+        let failing = |message: &str| ["-c".to_owned(), format!("echo 'Error: {message}' >&2; exit 1")];
+        let run_with = |args: [String; 2], stage| async move {
+            let args: Vec<&std::ffi::OsStr> = args.iter().map(std::ffi::OsStr::new).collect();
+            run(sh, &args, 10, stage).await.unwrap_err().to_string()
+        };
+        assert_eq!(run_with(failing(NO_VISIBLE_CAPTIONS), Stage::Decode).await, NO_VISIBLE_CAPTIONS);
+        assert_eq!(run_with(failing("Unsupported bitmap subtitle codec"), Stage::Decode).await,
+            "Bitmap subtitles could not be decoded (Unsupported bitmap subtitle codec); source preserved");
+        assert_eq!(run_with(failing("anything"), Stage::Recognize).await,
+            "OCR could not read these subtitles; source preserved");
+        let args: Vec<&std::ffi::OsStr> = ["-c", "exit 75"].iter().map(std::ffi::OsStr::new).collect();
+        assert_eq!(run(sh, &args, 10, Stage::Recognize).await.unwrap_err().to_string(), TEXT_MODELS_CHANGED);
+    }
+
+    /// One Matroska PGS block: a display set's segments without SUP headers.
+    fn pgs_block(palette: &[(u8, [u8; 4])]) -> Vec<u8> {
+        let sup = oxideav_sub_image::pgs::build_demo_display_set((64, 32), (4, 2), (10, 20), palette, &[1, 1, 0, 1, 1, 1, 1, 0]);
+        let mut block = Vec::new();
+        let mut pos = 0;
+        while pos < sup.len() {
+            let (_, end) = oxideav_sub_image::pgs::read_segment(&sup, pos).unwrap();
+            block.extend_from_slice(&sup[pos + 10..end]);
+            pos = end;
+        }
+        block
+    }
+    /// Composition with no objects followed by END: clears the screen.
+    fn pgs_clear() -> Vec<u8> {
+        let mut pcs = vec![0x16, 0, 11, 0, 64, 0, 32, 0x10, 0, 2, 0, 0, 0, 0];
+        pcs.extend([0x80, 0, 0]);
+        pcs
+    }
+
+    #[test]
+    fn compressed_pgs_tracks_decode_and_placeholders_are_reported() -> Result<()> {
+        use crate::matroska::fixture::*;
+        let dir = std::env::temp_dir().join(format!("torrbaby-pgs-encoding-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&dir)?;
+        let input = dir.join("pgs.mkv");
+        let visible = pgs_block(&[(1, [235, 128, 128, 255])]);
+        // Like the Friends featurette's placeholder tracks: the object uses a
+        // palette entry with zero alpha, so nothing is ever visible.
+        let placeholder = pgs_block(&[(1, [16, 128, 128, 0])]);
+        // Every stored block, the clear included, carries the track's encoding.
+        let pgs = |number, language, encodings, encode: &dyn Fn(&[u8]) -> Vec<u8>, display: &[u8]| Track {
+            number, codec: "S_HDMV/PGS", language, encodings, private: None,
+            blocks: vec![(1000, None, encode(display)), (3500, None, encode(&pgs_clear()))],
+        };
+        // Header stripping of the shared leading byte (the PCS segment type).
+        let strip = |block: &[u8]| { assert_eq!(block[0], 0x16); block[1..].to_vec() };
+        fs::write(&input, subtitles(&[
+            pgs(1, "chi", compression(0, None, 1), &zlib, &visible),
+            pgs(2, "eng", compression(3, Some(&[0x16]), 1), &strip, &visible),
+            pgs(3, "chi", compression(0, None, 1), &zlib, &placeholder),
+            pgs(4, "eng", compression(1, None, 1), &|b: &[u8]| b.to_vec(), &visible),
+        ]))?;
+        let inventory = crate::matroska::tracks(&input)?;
+        let ocr: Vec<_> = inventory["tracks"].as_array().unwrap().iter()
+            .map(|t| (t["encoded"] == true, t["ocr_supported"] == true, t["extraction_supported"] == true)).collect();
+        assert_eq!(ocr, [(true, true, false), (true, true, false), (true, true, false), (true, false, false)]);
+        for track in [1, 2] {
+            let out = dir.join(format!("images-{track}"));
+            decode(&input, track, &out)?;
+            let manifest: serde_json::Value = serde_json::from_slice(&fs::read(out.join("manifest.json"))?)?;
+            let cue = &manifest["cues"][0];
+            assert_eq!(manifest["cues"].as_array().unwrap().len(), 1);
+            assert_eq!((cue["start_ms"].as_u64(), cue["end_ms"].as_u64()), (Some(1000), Some(3500)));
+            assert_eq!((cue["width"].as_u64(), cue["height"].as_u64()), (Some(4), Some(2)));
+            let gray = fs::read(out.join(cue["file"].as_str().unwrap()))?;
+            // Opaque light text becomes dark ink; the transparent pixels stay white.
+            let ink = gray[0];
+            assert!(ink < 128);
+            assert_eq!(gray, [ink, ink, 255, ink, ink, ink, ink, 255]);
+        }
+        let error = decode(&input, 3, &dir.join("images-3")).unwrap_err();
+        assert_eq!(error.to_string(), NO_VISIBLE_CAPTIONS);
+        assert!(decode(&input, 4, &dir.join("images-4")).is_err());
+        fs::remove_dir_all(dir)?;
+        Ok(())
     }
 }

@@ -174,7 +174,12 @@ fn cadence_tolerance_ns(frame_ns: u128, scale: u64) -> u128 {
 /// leading pictures) and are presented by holding the previous frame, exactly
 /// as the source timestamps describe.
 fn video_cadence_slots(sorted_pts: &[u64], origin: u64, duration_ns: u64, scale: u64) -> Result<u64> {
-    let tolerance = cadence_tolerance_ns(duration_ns as u128, scale) as i128;
+    let tolerance = cadence_tolerance_ns(duration_ns as u128, scale);
+    cadence_slots_within(sorted_pts, origin, duration_ns, tolerance)
+}
+
+fn cadence_slots_within(sorted_pts: &[u64], origin: u64, duration_ns: u64, tolerance: u128) -> Result<u64> {
+    let tolerance = tolerance as i128;
     let duration = duration_ns as i128;
     let mut next_slot = 0i128;
     for &pts in sorted_pts {
@@ -182,12 +187,68 @@ fn video_cadence_slots(sorted_pts: &[u64], origin: u64, duration_ns: u64, scale:
         let slot = (offset + duration / 2).div_euclid(duration);
         ensure!(
             slot >= next_slot && (offset - slot * duration).abs() <= tolerance,
-            "Video offset/gap/variable cadence needs additional timing support"
+            "{IRREGULAR_VIDEO_TIMING}"
         );
         next_slot = slot + 1;
     }
     Ok(next_slot.try_into()?)
 }
+
+/// Error text for video timing that no single constant cadence describes
+/// (duplicate frames, frame-rate switches, discontinuities).
+pub(crate) const IRREGULAR_VIDEO_TIMING: &str =
+    "Video timestamps are irregular (duplicate frames, a frame-rate change or a discontinuity)";
+/// The message earlier builds used for every video cadence failure, including
+/// the clock-skew case handled now. Indexes that failed with it are rebuilt once.
+pub(crate) const LEGACY_VIDEO_TIMING: &str =
+    "Video offset/gap/variable cadence needs additional timing support";
+
+/// Largest accepted difference between a stream's measured frame period and
+/// its declared DefaultDuration: 500 ppm. Muxers that store frame durations in
+/// truncated 100 ns units (0.8 ppm for 24000/1001), whole microseconds or
+/// 90 kHz ticks (67 ppm) stay far inside it; a stream really running at 24 fps
+/// while declaring 24000/1001 (1000 ppm) does not.
+const MAX_CLOCK_SKEW_PPM: u128 = 500;
+
+/// Some muxers time every frame on a constant clock that differs slightly from
+/// the declared DefaultDuration (The Fellowship of the Ring: 41.7083 ms frames
+/// declared as 41.708333 ms, so presentation drifts 11.4 ms from the declared
+/// grid over 3 h 48 min). When the declared grid fails, measure the period that
+/// the first and last frame span and accept it only if it is close to the
+/// declaration and every frame sits on its own slot of that measured grid
+/// within rounding (3 ticks, at least 3 ms; LOTR stays within 0.5 ms). Gaps
+/// keep their slots; duplicates, frame-rate switches and discontinuities fail.
+fn measured_video_period(sorted_pts: &[u64], origin: u64, declared_ns: u64, scale: u64) -> Option<u64> {
+    let span = u128::from(sorted_pts.last()?.checked_sub(origin)?);
+    let declared = u128::from(declared_ns);
+    let slots = (span + declared / 2) / declared;
+    if slots < 2 {
+        return None;
+    }
+    let period = (span + slots / 2) / slots;
+    if period.abs_diff(declared) * 1_000_000 > declared * MAX_CLOCK_SKEW_PPM {
+        return None;
+    }
+    let period = u64::try_from(period).ok()?;
+    let rounding = (3 * u128::from(scale)).max(3_000_000);
+    cadence_slots_within(sorted_pts, origin, period, rounding).ok()?;
+    Some(period)
+}
+
+/// Raised by the first remux pass when a video track runs on a measured clock
+/// rather than its declared one. Decode times are assigned while streaming,
+/// so the remux is repeated once with the measured period.
+#[derive(Debug)]
+struct MeasuredVideoClock {
+    track: u64,
+    period_ns: u64,
+}
+impl std::fmt::Display for MeasuredVideoClock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Video track {} runs on a measured {} ns frame clock", self.track, self.period_ns)
+    }
+}
+impl std::error::Error for MeasuredVideoClock {}
 
 type Mapping = Option<std::sync::Arc<std::sync::Mutex<crate::virtual_mkv::Recording>>>;
 
@@ -215,6 +276,25 @@ pub fn run(input: &Path, output: &Path, max_bytes: u64) -> Result<serde_json::Va
 
 pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
     mapping: Option<std::sync::Arc<std::sync::Mutex<crate::virtual_mkv::Recording>>>) -> Result<serde_json::Value> {
+    match remux_pass(input, output, max_bytes, mapping.clone(), &BTreeMap::new()) {
+        Err(error) => {
+            let Some(clock) = error.downcast_ref::<MeasuredVideoClock>() else { return Err(error) };
+            // The failed pass removed its own output; start the mapping afresh.
+            if let Some(mapping) = &mapping {
+                *mapping.lock().map_err(|_| anyhow::anyhow!("Mapping lock failed"))? =
+                    crate::virtual_mkv::Recording::default();
+            }
+            let clocks = BTreeMap::from([(clock.track, clock.period_ns)]);
+            let mut result = remux_pass(input, output, max_bytes, mapping, &clocks)?;
+            result["measured_video_period_ns"] = serde_json::json!(clocks.values().next());
+            Ok(result)
+        }
+        result => result,
+    }
+}
+
+fn remux_pass(input: &Path, output: &Path, max_bytes: u64, mapping: Mapping,
+    measured_clocks: &BTreeMap<u64, u64>) -> Result<serde_json::Value> {
     ensure!(
         (1_048_576..=34_359_738_368).contains(&max_bytes),
         "Remux budget must be 1 MiB to 32 GiB"
@@ -277,10 +357,11 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
             let v = t.video().context("Missing video dimensions")?;
             params.width = Some(v.pixel_width().get().try_into()?);
             params.height = Some(v.pixel_height().get().try_into()?);
-            duration_ns = t
+            let declared = t
                 .default_duration()
                 .context("Variable frame rate needs additional timing support")?
                 .get();
+            duration_ns = measured_clocks.get(&t.track_number().get()).copied().unwrap_or(declared);
             ensure!(
                 (1_000_000..=1_000_000_000).contains(&duration_ns),
                 "Invalid video duration"
@@ -519,13 +600,25 @@ pub(crate) fn run_internal(input: &Path, output: &Path, max_bytes: u64,
         }
         let mut slots = BTreeMap::new();
         let mut access = BTreeMap::new();
-        for t in tracks.values_mut() {
+        for (&number, t) in tracks.iter_mut() {
             ensure!(t.count > 0, "Empty media track");
             if t.video {
                 let hevc = t.stream.params.codec_id.as_str() == "h265";
                 access.insert(t.stream.index + 1, random_access(&t.nal_kinds, &t.pts, hevc));
                 t.pts.sort_unstable();
-                let spanned = video_cadence_slots(&t.pts, t.origin_ns.unwrap(), t.duration_ns, scale)?;
+                let origin = t.origin_ns.unwrap();
+                let spanned = match video_cadence_slots(&t.pts, origin, t.duration_ns, scale) {
+                    Ok(spanned) => spanned,
+                    Err(error) => {
+                        // Measure only once: a second pass already uses the measured clock.
+                        if measured_clocks.is_empty() {
+                            if let Some(period_ns) = measured_video_period(&t.pts, origin, t.duration_ns, scale) {
+                                return Err(MeasuredVideoClock { track: number, period_ns }.into());
+                            }
+                        }
+                        return Err(error);
+                    }
+                };
                 // Extend only the final decode duration so the media timeline
                 // reaches the last presented frame when source slots are empty.
                 let start = t.origin_ns.unwrap() as i128 - t.codec_delay_ns as i128;
@@ -1230,5 +1323,68 @@ mod timing_tests {
         let result = result.unwrap();
         assert_eq!((result["audio_tracks"].as_u64(), result["omitted_audio"].clone()), (Some(0), serde_json::json!(["A_DTS"])));
         assert_eq!(track_durations(&mp4.unwrap()).len(), 1);
+    }
+
+    /// Presentation times of a constant clock, quantized to 1 ms Matroska ticks.
+    fn clock_ms(period_ms: f64, slots: impl Iterator<Item = u64>) -> Vec<u64> {
+        slots.map(|i| (i as f64 * period_ms).round() as u64).collect()
+    }
+
+    #[test]
+    fn skewed_constant_clock_is_measured_and_irregular_timing_is_not() {
+        let declared = 41_708_333;
+        let ms = |t: &[u64]| t.iter().map(|v| v * 1_000_000).collect::<Vec<_>>();
+        // The Fellowship of the Ring: 328,249 frames on a 41.7083 ms clock that
+        // declares 41.708333 ms. The declared grid fails 12,716 frames from 3h29m.
+        let lotr = ms(&clock_ms(41.7083, 0..328_249));
+        let error = video_cadence_slots(&lotr, 0, declared, 1_000_000).unwrap_err();
+        assert_eq!(error.to_string(), IRREGULAR_VIDEO_TIMING);
+        let period = measured_video_period(&lotr, 0, declared, 1_000_000).unwrap();
+        assert_eq!(period, 41_708_300);
+        assert_eq!(video_cadence_slots(&lotr, 0, period, 1_000_000).unwrap(), 328_249);
+        // A missing frame keeps its empty slot on the measured clock.
+        let mut gap = lotr.clone();
+        gap.remove(200_000);
+        assert_eq!(measured_video_period(&gap, 0, declared, 1_000_000), Some(41_708_300));
+        // A real 24 fps stream mislabelled 24000/1001 is 1000 ppm away: rejected.
+        let film = ms(&clock_ms(1000.0 / 24.0, 0..200_000));
+        assert!(measured_video_period(&film, 0, declared, 1_000_000).is_none());
+        // A mid-stream switch from 24000/1001 to 24 fps fits no single clock.
+        let mut switch = ms(&clock_ms(1001.0 / 24.0, 0..150_000));
+        let joined = *switch.last().unwrap();
+        switch.extend(ms(&clock_ms(1000.0 / 24.0, 1..150_000)).iter().map(|t| t + joined));
+        assert!(video_cadence_slots(&switch, 0, declared, 1_000_000).is_err());
+        assert!(measured_video_period(&switch, 0, declared, 1_000_000).is_none());
+        // Sub-frame discontinuities mid-stream (an edition join) are rejected too.
+        for shift_ms in [8, 20] {
+            let mut join = ms(&clock_ms(1001.0 / 24.0, 0..100_000));
+            let shifted: Vec<u64> = join.split_off(50_000).into_iter().map(|t| t + shift_ms * 1_000_000).collect();
+            join.extend(shifted);
+            assert!(measured_video_period(&join, 0, declared, 1_000_000).is_none(), "{shift_ms} ms join");
+        }
+        // Duplicate frames stay invalid on any clock.
+        let mut duplicate = lotr[..1000].to_vec();
+        duplicate.insert(500, duplicate[500]);
+        assert!(measured_video_period(&duplicate, 0, declared, 1_000_000).is_none());
+    }
+
+    #[test]
+    fn skewed_video_clock_is_remuxed_with_exact_source_times() {
+        // 400 ppm fast: 11.7 ms from the declared grid after 700 frames.
+        let period_ms = 41.708333 * (1.0 - 0.0004);
+        let pts: Vec<i64> = clock_ms(period_ms, 0..700).into_iter().map(|v| v as i64).collect();
+        let (result, mp4) = remux(&Fixture { video_pts_ms: pts.clone(), aac_ms: Some(aac_ms(1368)), dts: false, hevc_nals: None });
+        let result = result.unwrap();
+        let period = result["measured_video_period_ns"].as_u64().unwrap();
+        assert_eq!(period, ((pts[699] as f64 * 1e6) / 699.0).round() as u64);
+        let (presented, media, scale) = track_durations(&mp4.unwrap())[0];
+        assert_eq!(presented, 700 * period / 1_000_000);
+        assert_eq!(media * 1000 / scale as u64, presented);
+        // The declared clock alone still fails with the irregular-timing text.
+        let mut broken = pts.clone();
+        broken[350..].iter_mut().for_each(|t| *t += 20);
+        let (result, mp4) = remux(&Fixture { video_pts_ms: broken, aac_ms: Some(aac_ms(1368)), dts: false, hevc_nals: None });
+        assert_eq!(result.unwrap_err().to_string(), IRREGULAR_VIDEO_TIMING);
+        assert!(mp4.is_none());
     }
 }

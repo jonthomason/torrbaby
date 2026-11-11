@@ -239,3 +239,43 @@ never mix bytes. Titles get the new tables lazily: an episode re-indexes in a
 few seconds and a movie in 15-25 s on its next playback preparation. Old indexes
 (333, 1.8 GB at deployment time) leave through the normal LRU reclaim.
 Completed offline downloads keep the old tables until downloaded again.
+
+## Skewed constant video clocks (2026-11-11)
+
+The Lord of the Rings: The Fellowship of the Ring (2001), 5.8 GB, extended cut,
+failed indexing with "Video offset/gap/variable cadence". A full read-only scan
+of all 328,249 HEVC packets on Diamond found:
+
+- One video track, DefaultDuration 41,708,333 ns, TimestampScale 1 ms, no
+  laced video, no block durations, no ordered chapters/segment linking, no
+  interlacing flag. Presentation deltas are only 41 and 42 ms.
+- A least-squares fit gives a frame period of exactly 41.7083 ms (23.976043
+  fps) with residuals within +/-0.5 ms, i.e. pure 1 ms rounding. The muxer's
+  clock stored 1001/24 ms truncated to 100 ns units. No frame is missing,
+  duplicated or out of place; there is no frame-rate switch or discontinuity.
+- Relative to the declared 1001/24 grid the timestamps drift linearly,
+  -1.1 ms per hour, to -11.4 ms at 3h48m. The quarter-frame (10.4 ms) check
+  first failed at 3h29m24s; 12,716 late frames failed.
+- The HE-AAC track (2,048 samples at 48 kHz, starting at 43 ms) sits exactly on
+  its sample cadence for all 320,900 frames.
+
+The file is not damaged. When the declared grid fails, the remux now measures
+the period spanned by the first and last frame. It accepts it only within 500
+ppm of DefaultDuration and only when every frame sits on its own slot of the
+measured grid within 3 ticks (at least 3 ms). The remux then runs a second pass
+with that period, so decode times and durations follow the source clock.
+Presentation times remain the exact source timestamps. Duplicates, frame-rate
+switches (24000/1001 to 24 is 1000 ppm) and sub-frame joins still fail, now
+with "Video timestamps are irregular ...". A virtual-media job that failed with
+the old message is rebuilt once.
+
+Verified on Diamond (temp index, loopback server, AVFoundation on macOS 27.2):
+all 328,249 video sample PTS equal the source ms exactly, composition offsets
+-83..+168 ms, audio edit 43 ms then 320,900 samples ending at 13,691.776 s as in
+the source. Zero-tolerance AVAssetImageGenerator frames at 0, 0.042, 6845.333,
+12566.711, 13690.624 and 13690.666 s returned exactly those times. AVPlayer
+exact seeks at 1, 2, 6845.8, 12600 and 13688.7 s passed, as did 3 s of tail
+playback. An AVAssetReader decode of a sparse local copy of the virtual MP4
+(only the metadata and the media at the start, middle and end) produced video
+frames and non-silent PCM at 0-5 s, 6840-6845 s and through the last frame.
+Indexing took 74 s (two passes) under nice.

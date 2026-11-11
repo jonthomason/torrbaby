@@ -72,6 +72,17 @@ pub(crate) fn revision(path: &Path) -> Result<String> {
         m.ctime_nsec()
     ))
 }
+/// `None` when a directory entry disappeared between listing and use. Several
+/// subtitle workers write, rename and evict files in shared directories at
+/// once; such a race used to fail unrelated jobs with "No such file or
+/// directory (os error 2)".
+pub(crate) fn present<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
 fn valid(id: &str) -> bool {
     id.len() == 64
         && id
@@ -443,14 +454,17 @@ impl Manager {
             if !entry.file_type()?.is_file() {
                 continue;
             }
-            bytes = bytes.saturating_add(entry.metadata()?.len());
+            // Running jobs rename *.tmp files and the OCR helper atomically
+            // replaces its progress file here, so entries can vanish mid-scan.
+            let Some(metadata) = present(entry.metadata())? else { continue };
+            bytes = bytes.saturating_add(metadata.len());
             if path.extension().is_some_and(|e| e == "json") {
                 if let Some(id) = path
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .filter(|id| valid(id) && !pending.contains(*id))
                 {
-                    entries.push((entry.metadata()?.modified()?, id.to_owned()));
+                    entries.push((metadata.modified()?, id.to_owned()));
                 }
             }
         }
@@ -463,10 +477,9 @@ impl Manager {
             if self.read(&id).is_ok_and(|job| job.state == "ready") { continue; }
             for ext in ["json", "vtt", "progress"] {
                 let path = self.root.join(format!("{id}.{ext}"));
-                if path.exists() {
-                    let size = path.metadata()?.len();
-                    fs::remove_file(path)?;
-                    bytes = bytes.saturating_sub(size);
+                if let Some(metadata) = present(path.metadata())? {
+                    present(fs::remove_file(path))?;
+                    bytes = bytes.saturating_sub(metadata.len());
                 }
             }
             count = count.saturating_sub(1);
@@ -543,7 +556,7 @@ impl Manager {
                     job.completed_cues=end;
                     let progress=serde_json::to_vec(&ProgressRef {completed:end,cues:&cues})?;
                     ensure!(progress.len()<=16_777_216,"Subtitle checkpoint too large");
-                    let used=fs::read_dir(&self.root)?.try_fold(0u64, |sum, entry| -> Result<u64> { Ok(sum.saturating_add(entry?.metadata()?.len())) })?;
+                    let used=fs::read_dir(&self.root)?.try_fold(0u64, |sum, entry| -> Result<u64> { Ok(sum.saturating_add(present(entry?.metadata())?.map_or(0,|m|m.len()))) })?;
                     ensure!(used.saturating_add(progress.len() as u64)<=512*1024*1024,"Subtitle storage is full");
                     let temporary=self.root.join(format!("{}.progress.tmp",job.id));
                     fs::write(&temporary,progress)?;

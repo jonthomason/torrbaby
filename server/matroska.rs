@@ -1,7 +1,7 @@
 //! Read-only Matroska subtitle inspection/extraction. No codecs or OCR required.
 use crate::subtitles::TimedCue;
 use anyhow::{Context, Result, ensure};
-use matroska_demuxer::{Frame, MatroskaFile, TrackType};
+use matroska_demuxer::{ContentCompAlgo, ContentEncoding, ContentEncodingValue, Frame, MatroskaFile, TrackType};
 use serde_json::{Value, json};
 use std::{
     fs::File,
@@ -9,6 +9,64 @@ use std::{
     path::Path,
     time::{Duration, Instant},
 };
+
+/// ContentEncodingScope bits: frame contents, and the track's CodecPrivate.
+const SCOPE_FRAMES: u64 = 1;
+const SCOPE_PRIVATE: u64 = 2;
+
+/// Whether every ContentEncoding of a track can be undone here: zlib or header
+/// stripping applied to frames and/or CodecPrivate. Encryption, bzlib, LZO and
+/// encodings of other encodings (scope 4) are not supported.
+pub(crate) fn encodings_supported(encodings: Option<&[ContentEncoding]>) -> bool {
+    encodings.unwrap_or(&[]).iter().all(|e| {
+        e.scope() != 0
+            && e.scope() & !(SCOPE_FRAMES | SCOPE_PRIVATE) == 0
+            && matches!(e.encoding(), ContentEncodingValue::Compression(c)
+                if matches!(c.algo(), ContentCompAlgo::Zlib | ContentCompAlgo::Stripping))
+    })
+}
+
+/// Undo a track's ContentEncodings for one frame (`SCOPE_FRAMES`) or for its
+/// CodecPrivate (`SCOPE_PRIVATE`). Muxers apply encodings in ascending
+/// ContentEncodingOrder, so they are reversed from the highest order down.
+/// Decompressed output is bounded by `limit` bytes.
+fn decode_content(encodings: Option<&[ContentEncoding]>, scope: u64, data: &[u8], limit: usize) -> Result<Vec<u8>> {
+    use std::io::Read;
+    ensure!(encodings_supported(encodings), "Unsupported Matroska content encoding");
+    let mut ordered: Vec<_> = encodings.unwrap_or(&[]).iter().filter(|e| e.scope() & scope != 0).collect();
+    ordered.sort_by_key(|e| std::cmp::Reverse(e.order()));
+    let mut data = data.to_vec();
+    for encoding in ordered {
+        let ContentEncodingValue::Compression(compression) = encoding.encoding() else {
+            anyhow::bail!("Unsupported Matroska content encoding");
+        };
+        data = match compression.algo() {
+            ContentCompAlgo::Zlib => {
+                let mut inflated = Vec::new();
+                flate2::read::ZlibDecoder::new(data.as_slice())
+                    .take(limit as u64 + 1)
+                    .read_to_end(&mut inflated)
+                    .context("Invalid zlib-compressed Matroska block")?;
+                inflated
+            }
+            // Header stripping removed these leading bytes from every frame.
+            ContentCompAlgo::Stripping => [compression.settings().unwrap_or(&[]), &data].concat(),
+            _ => anyhow::bail!("Unsupported Matroska content encoding"),
+        };
+        ensure!(data.len() <= limit, "Decoded Matroska block too large");
+    }
+    Ok(data)
+}
+
+/// Frame payload with the track's content encodings undone.
+pub(crate) fn decode_frame(encodings: Option<&[ContentEncoding]>, data: &[u8], limit: usize) -> Result<Vec<u8>> {
+    decode_content(encodings, SCOPE_FRAMES, data, limit)
+}
+
+/// CodecPrivate with any encodings whose scope covers it undone.
+pub(crate) fn decode_private(encodings: Option<&[ContentEncoding]>, data: &[u8], limit: usize) -> Result<Vec<u8>> {
+    decode_content(encodings, SCOPE_PRIVATE, data, limit)
+}
 
 fn open(path: &Path) -> Result<MatroskaFile<BufReader<File>>> {
     let file = File::open(path)?;
@@ -106,7 +164,9 @@ pub fn tracks(path: &Path) -> Result<Value> {
             "name":t.name(),"language":t.language_bcp47().or(t.language()),
             "forced":t.flag_forced(),"hearing_impaired":t.flag_hearing_impaired(),
             "text_extractable":(["S_TEXT/UTF8","S_TEXT/ASS","S_TEXT/SSA","S_TEXT/WEBVTT"].contains(&t.codec_id())),
-            "extraction_supported":(["S_TEXT/UTF8","S_TEXT/ASS","S_TEXT/SSA"].contains(&t.codec_id())) && t.content_encodings().is_none(),
+            // Text extraction and bitmap OCR both undo zlib and header stripping.
+            "extraction_supported":(["S_TEXT/UTF8","S_TEXT/ASS","S_TEXT/SSA"].contains(&t.codec_id())) && encodings_supported(t.content_encodings()),
+            "ocr_supported":(["S_HDMV/PGS","S_VOBSUB"].contains(&t.codec_id())) && encodings_supported(t.content_encodings()),
             "encoded":t.content_encodings().is_some()})
         })
         .collect();
@@ -129,9 +189,10 @@ pub fn extract(path: &Path, track: u64) -> Result<Vec<TimedCue>> {
         "This extractor supports Matroska UTF-8, ASS and SSA text subtitles"
     );
     ensure!(
-        metadata.content_encodings().is_none(),
-        "Encoded subtitle tracks are not supported"
+        encodings_supported(metadata.content_encodings()),
+        "This subtitle track's encryption or compression is not supported"
     );
+    let encodings = metadata.content_encodings().map(<[_]>::to_vec);
     let styled = metadata.codec_id() != "S_TEXT/UTF8";
     let delay = metadata.codec_delay().unwrap_or(0);
     let scale = file.info().timestamp_scale().get();
@@ -149,9 +210,10 @@ pub fn extract(path: &Path, track: u64) -> Result<Vec<TimedCue>> {
             continue;
         }
         ensure!(frame.data.len() <= 16_384, "Subtitle cue too large");
+        let data = decode_frame(encodings.as_deref(), &frame.data, 16_384)?;
         // Some muxers retain C-string terminators in UTF-8/ASS packets.
         // Strip only trailing padding; an interior NUL remains invalid.
-        let text = std::str::from_utf8(&frame.data).context("Invalid UTF-8 subtitle text")?
+        let text = std::str::from_utf8(&data).context("Invalid UTF-8 subtitle text")?
             .trim_end_matches('\0');
         if text.trim().is_empty() {
             continue;
@@ -377,5 +439,114 @@ pub async fn tracks_worker(path: &Path) -> Result<Value> {
                 _ => anyhow::bail!("Subtitle inspection timed out"),
             }
         }
+    }
+}
+
+/// Minimal Matroska writer for subtitle tracks with content encodings (tests only).
+#[cfg(test)]
+pub(crate) mod fixture {
+    pub fn element(id: u32, body: &[u8]) -> Vec<u8> {
+        let mut out: Vec<u8> = id.to_be_bytes().into_iter().skip_while(|b| *b == 0).collect();
+        out.push(0x01);
+        out.extend_from_slice(&(body.len() as u64).to_be_bytes()[1..]);
+        out.extend_from_slice(body);
+        out
+    }
+    pub fn uint(id: u32, value: u64) -> Vec<u8> {
+        element(id, &value.to_be_bytes())
+    }
+    pub fn zlib(data: &[u8]) -> Vec<u8> {
+        use std::io::Write;
+        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(data).unwrap();
+        encoder.finish().unwrap()
+    }
+    /// ContentEncodings with one compression: algo 0 zlib, 3 header stripping.
+    pub fn compression(algo: u64, settings: Option<&[u8]>, scope: u64) -> Vec<u8> {
+        let compression = [uint(0x4254, algo), settings.map(|s| element(0x4255, s)).unwrap_or_default()].concat();
+        element(0x6D80, &element(0x6240, &[uint(0x5031, 0), uint(0x5032, scope), uint(0x5033, 0), element(0x5034, &compression)].concat()))
+    }
+    pub struct Track<'a> {
+        pub number: u64,
+        pub codec: &'a str,
+        pub language: &'a str,
+        pub encodings: Vec<u8>,
+        pub private: Option<Vec<u8>>,
+        /// (start ms, duration ms, stored payload) in timestamp order.
+        pub blocks: Vec<(u64, Option<u64>, Vec<u8>)>,
+    }
+    pub fn subtitles(tracks: &[Track]) -> Vec<u8> {
+        let header = [
+            uint(0x4286, 1), uint(0x42F7, 1), uint(0x42F2, 4), uint(0x42F3, 8),
+            element(0x4282, b"matroska"), uint(0x4287, 4), uint(0x4285, 2),
+        ].concat();
+        let info = element(0x1549A966, &[uint(0x2AD7B1, 1_000_000), element(0x4D80, b"t"), element(0x5741, b"t")].concat());
+        let entries: Vec<u8> = tracks.iter().flat_map(|t| element(0xAE, &[
+            uint(0xD7, t.number), uint(0x73C5, t.number), uint(0x83, 0x11), element(0x86, t.codec.as_bytes()),
+            element(0x22B59C, t.language.as_bytes()), t.encodings.clone(),
+            t.private.as_ref().map(|p| element(0x63A2, p)).unwrap_or_default(),
+        ].concat())).collect();
+        let mut events: Vec<(u64, Vec<u8>)> = tracks.iter().flat_map(|t| t.blocks.iter().map(|(ms, duration, payload)| {
+            let block = element(0xA1, &[&[0x80 | t.number as u8][..], &(*ms as i16).to_be_bytes(), &[0], payload].concat());
+            (*ms, element(0xA0, &[block, duration.map(|d| uint(0x9B, d)).unwrap_or_default()].concat()))
+        })).collect();
+        events.sort_by_key(|(ms, _)| *ms);
+        let mut cluster = uint(0xE7, 0);
+        for (_, group) in events { cluster.extend(group); }
+        let segment = [info, element(0x1654AE6B, &entries), element(0x1F43B675, &cluster)].concat();
+        [element(0x1A45DFA3, &header), element(0x18538067, &segment)].concat()
+    }
+}
+
+#[cfg(test)]
+mod encoding_tests {
+    use super::fixture::*;
+    use super::*;
+
+    #[test]
+    fn compressed_and_header_stripped_text_tracks_extract() -> Result<()> {
+        let dir = std::env::temp_dir().join(format!("torrbaby-mkv-encoding-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir)?;
+        let input = dir.join("subtitles.mkv");
+        let text = |number, encodings, blocks| Track { number, codec: "S_TEXT/UTF8", language: "eng", encodings, private: None, blocks };
+        std::fs::write(&input, subtitles(&[
+            text(1, compression(0, None, 1), vec![(1000, Some(1500), zlib(b"Hello from zlib")), (3000, Some(500), zlib("你好".as_bytes()))]),
+            // Header stripping: "Hello " was removed from every frame and stored once.
+            text(2, compression(3, Some(b"Hello "), 1), vec![(1000, Some(1000), b"stripped world".to_vec())]),
+            // bzlib is not supported and must say so rather than produce garbage.
+            text(3, compression(1, None, 1), vec![(1000, Some(1000), b"BZh".to_vec())]),
+        ]))?;
+        let inventory = tracks(&input)?;
+        let supported: Vec<_> = inventory["tracks"].as_array().unwrap().iter()
+            .map(|t| (t["encoded"].as_bool().unwrap(), t["extraction_supported"].as_bool().unwrap())).collect();
+        assert_eq!(supported, [(true, true), (true, true), (true, false)]);
+        let cues = extract(&input, 1)?;
+        assert_eq!(cues.iter().map(|c| (c.start_ms, c.end_ms, c.text.as_str())).collect::<Vec<_>>(),
+            [(1000, 2500, "Hello from zlib"), (3000, 3500, "你好")]);
+        assert_eq!(extract(&input, 2)?[0].text, "Hello stripped world");
+        assert!(extract(&input, 3).is_err());
+        std::fs::remove_dir_all(dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn decoded_blocks_are_bounded_and_corrupt_data_fails() {
+        // Corrupt zlib data fails instead of passing compressed bytes through.
+        let dir = std::env::temp_dir().join(format!("torrbaby-mkv-bound-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let input = dir.join("subtitles.mkv");
+        std::fs::write(&input, subtitles(&[
+            Track { number: 1, codec: "S_TEXT/UTF8", language: "eng", encodings: compression(0, None, 1), private: None,
+                blocks: vec![(0, Some(100), b"not zlib".to_vec())] },
+        ])).unwrap();
+        let file = open(&input).unwrap();
+        let encodings = file.tracks()[0].content_encodings().map(<[_]>::to_vec);
+        assert!(decode_frame(encodings.as_deref(), b"not zlib", 1024).is_err());
+        assert!(decode_frame(encodings.as_deref(), &zlib(&[0; 2048]), 1024).is_err());
+        assert_eq!(decode_frame(encodings.as_deref(), &zlib(b"abc"), 1024).unwrap(), b"abc");
+        // CodecPrivate is untouched when the encoding scope covers frames only.
+        assert_eq!(decode_private(encodings.as_deref(), b"raw", 1024).unwrap(), b"raw");
+        assert!(extract(&input, 1).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -317,7 +317,10 @@ impl Manager {
             // concurrent reclaim removed mid-build (before reuse was marked).
             let retry_storage=j.error.as_deref()==Some("Virtual media index storage limit reached")
                 || j.error.as_deref()==Some("Playback cache is busy. Please try again shortly.")
-                || j.error.as_deref().is_some_and(|e|e.contains("No such file or directory"));
+                || j.error.as_deref().is_some_and(|e|e.contains("No such file or directory"))
+                // Earlier builds rejected skewed constant video clocks with this text;
+                // irregular timing now fails with a different message, so this retries once.
+                || j.error.as_deref()==Some(crate::remux::LEGACY_VIDEO_TIMING);
             if j.state == "ready" {
                 // Mark a reused index as recently used before anyone reclaims space:
                 // otherwise a concurrent build can evict it between this check and
