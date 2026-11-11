@@ -38,8 +38,8 @@ struct InterfaceLanguagePicker: View {
             option("EN", code: "en")
             option("中文", code: "zh-Hans")
         }.font(.system(size: selectorFontSize, weight: .semibold))
-            .padding(4)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+            .padding(3)
+            .background(Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius))
             .fixedSize()
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Interface language")
@@ -54,8 +54,8 @@ struct InterfaceLanguagePicker: View {
     private func option(_ label: String, code: String) -> some View {
         Button { language.choose(code) } label: {
             Text(verbatim: label).frame(minWidth: 30).padding(.horizontal, 9).padding(.vertical, 5)
-                .foregroundStyle(language.code == code ? Color.white : Theme.mint)
-                .background(language.code == code ? Color.blue : .clear, in: RoundedRectangle(cornerRadius: 7))
+                .foregroundStyle(language.code == code ? Theme.onAccent : Color.white)
+                .background(language.code == code ? Theme.accent : .clear, in: RoundedRectangle(cornerRadius: 6))
         }.buttonStyle(.plain)
             .accessibilityLabel(code == "en" ? "English" : "中文")
             .accessibilityAddTraits(language.code == code ? .isSelected : [])
@@ -82,6 +82,29 @@ struct InterfaceLanguageSettings: View {
         Button { language.choose("system") } label: {
             Label("Follow system language", systemImage: language.selection == "system" ? "checkmark.circle.fill" : "circle")
         }
+    }
+}
+
+/// The EN/中文 switch at the trailing edge of every page's bar, without the system's
+/// shared glass capsule, so it looks and sits the same whether or not a page has search.
+struct LanguageToolbar: ToolbarContent {
+    private var placement: ToolbarItemPlacement {
+        #if os(iOS)
+        .topBarTrailing
+        #else
+        .primaryAction
+        #endif
+    }
+    var body: some ToolbarContent {
+        #if os(tvOS)
+        ToolbarItem(placement: placement) { InterfaceLanguagePicker() }
+        #else
+        if #available(macOS 26, iOS 26, *) {
+            ToolbarItem(placement: placement) { InterfaceLanguagePicker() }.sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: placement) { InterfaceLanguagePicker() }
+        }
+        #endif
     }
 }
 
@@ -129,47 +152,17 @@ struct MacSearchToolbar: ToolbarContent {
 #endif
 
 #if os(iOS)
-struct TabletSearchToolbar: ToolbarContent {
-    @Binding var text: String
-    let prompt: String
-    var body: some ToolbarContent {
-        if #available(iOS 26, *) {
-            ToolbarItem(placement: .topBarTrailing) { controls }
-                .sharedBackgroundVisibility(.hidden)
-        } else {
-            ToolbarItem(placement: .topBarTrailing) { controls }
-        }
-    }
-    private var controls: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField(LocalizedStringKey(prompt), text: $text).textFieldStyle(.plain)
-                    .autocorrectionDisabled()
-            }.padding(.horizontal, 10).padding(.vertical, 7)
-                .frame(width: 220).background(.quaternary, in: RoundedRectangle(cornerRadius: interfaceCornerRadius))
-            InterfaceLanguagePicker()
-        }
-    }
-}
+/// Search lives in the pull-down drawer on both iPhone and iPad, which keeps every
+/// page's bar the same: navigation, title, page actions, language.
 struct MobileLibrarySearch: ViewModifier {
-    @Environment(\.horizontalSizeClass) private var sizeClass
     @Binding var text: String
     let prompt: String
     func body(content: Content) -> some View {
-        if sizeClass == .regular {
-            content.toolbar { TabletSearchToolbar(text: $text, prompt: prompt) }
-        } else {
-            content.searchable(text: $text, placement: .navigationBarDrawer(displayMode: .automatic), prompt: LocalizedStringKey(prompt))
-        }
+        content.searchable(text: $text, placement: .navigationBarDrawer(displayMode: .automatic), prompt: LocalizedStringKey(prompt))
     }
 }
 #endif
 
 private var interfaceCornerRadius: CGFloat {
-    #if os(iOS)
     8
-    #else
-    100
-    #endif
 }

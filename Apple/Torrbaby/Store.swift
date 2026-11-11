@@ -700,6 +700,10 @@ struct ProfileGate<Content: View>: View {
         Group {
             if store.configured && (!store.profileReady || store.choosingProfile) {
                 ProfilePicker()
+                    #if !os(tvOS)
+                    // Leaves the language switch its own line above the heading.
+                    .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: 48) }
+                    #endif
             } else {
                 content.id(store.profileIdentity)
             }
@@ -724,9 +728,9 @@ struct ProfileAvatar: View {
     var size: CGFloat = 54
     var body: some View {
         Text(verbatim: profile.symbol).font(.system(size: size * 0.48, weight: .semibold))
-            .foregroundStyle(profileColor(profile.textColor ?? "#70E8C2"))
+            .foregroundStyle(profileColor(profile.textColor ?? "#FFFFFF"))
             .frame(width: size, height: size)
-            .background(profileColor(profile.backgroundColor ?? "#243A38"), in: Circle())
+            .background(profileColor(profile.backgroundColor ?? "#2A2A2A"), in: Circle())
             .accessibilityHidden(true)
     }
 }
@@ -764,9 +768,9 @@ struct ProfilePicker: View {
                                 ProfileAvatar(profile: person, size: 72)
                                 Text(verbatim: person.name).font(.title2.weight(.semibold))
                                 Spacer()
-                                if person.id == store.activeProfile?.id { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.mint) }
+                                if person.id == store.activeProfile?.id { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent) }
                             }.padding(16).contentShape(RoundedRectangle(cornerRadius: 8))
-                        }.buttonStyle(.bordered)
+                        }.buttonStyle(MonoButtonStyle())
                         Button { editing = person } label: { Image(systemName: "pencil").frame(width: 44, height: 44) }
                             .accessibilityLabel("Edit profile")
                     }
@@ -796,8 +800,8 @@ struct ProfileEditor: View {
         self.profile = profile
         _name = State(initialValue: profile?.name ?? "")
         _symbol = State(initialValue: profile?.avatarSymbol ?? "")
-        _foreground = State(initialValue: profile?.textColor ?? "#70E8C2")
-        _background = State(initialValue: profile?.backgroundColor ?? "#243A38")
+        _foreground = State(initialValue: profile?.textColor ?? "#FFFFFF")
+        _background = State(initialValue: profile?.backgroundColor ?? "#2A2A2A")
     }
     var body: some View {
         NavigationStack {
@@ -839,7 +843,7 @@ struct ProfileEditor: View {
 struct ProfileColorPicker: View {
     let title: String
     @Binding var hex: String
-    private let colors = ["#FFFFFF", "#70E8C2", "#F5C974", "#F18FA8", "#A89CF5", "#7DC6FF", "#243A38", "#18202B", "#4C2452", "#6A3434"]
+    private let colors = ["#FFFFFF", "#FFFFFF", "#F5C974", "#F18FA8", "#A89CF5", "#7DC6FF", "#2A2A2A", "#18202B", "#4C2452", "#6A3434"]
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(LocalizedStringKey(title)).font(.headline)
@@ -847,7 +851,7 @@ struct ProfileColorPicker: View {
                 ForEach(colors, id: \.self) { value in
                     Button { hex = value } label: {
                         Circle().fill(profileColor(value)).frame(width: 36, height: 36)
-                            .overlay { Circle().stroke(hex == value ? Theme.mint : .gray.opacity(0.4), lineWidth: hex == value ? 4 : 1) }
+                            .overlay { Circle().stroke(hex == value ? Theme.accent : .gray.opacity(0.4), lineWidth: hex == value ? 4 : 1) }
                     }.buttonStyle(.plain).accessibilityLabel(value)
                 }
             }

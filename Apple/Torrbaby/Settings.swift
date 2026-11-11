@@ -18,13 +18,13 @@ struct AutomationView: View {
                     Card {
                         VStack(alignment: .leading, spacing: 18) {
                             HStack {
-                                Image(systemName: status.settings.paused ? "pause.circle.fill" : "sparkles").font(.title).foregroundStyle(Theme.mint)
+                                Image(systemName: status.settings.paused ? "pause.circle.fill" : "sparkles").font(.title).foregroundStyle(Theme.accent)
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(LocalizedStringKey(status.settings.paused ? "Paused" : "Running")).font(.headline)
                                     Text("Checks every \(Int(status.settings.pollSeconds)) seconds").font(.caption).foregroundStyle(Theme.muted)
                                 }
                                 Spacer()
-                                Button(LocalizedStringKey(status.settings.paused ? "Resume" : "Pause")) { store.toggleAutomation() }.buttonStyle(.bordered)
+                                Button(LocalizedStringKey(status.settings.paused ? "Resume" : "Pause")) { store.toggleAutomation() }.buttonStyle(MonoButtonStyle())
                             }
                             if let error = status.lastError { Text(L10n.text(error)).foregroundStyle(.orange) }
                             if let error = status.scanError { Label("Library: " + error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
@@ -36,7 +36,7 @@ struct AutomationView: View {
                             HStack {
                                 Button("Check now") { store.perform { try await store.send("POST", "/v1/reconcile") } }
                                 Button("Scan media library") { store.perform { try await store.send("POST", "/v1/library/scan") } }
-                            }.buttonStyle(.bordered).disabled(store.busy)
+                            }.buttonStyle(MonoButtonStyle()).disabled(store.busy)
                         }
                     }
                     let issues = status.jobs.values.filter { $0.error != nil || $0.phase == "moving" || $0.phase == "blocked" }.sorted { $0.name < $1.name }
@@ -62,7 +62,7 @@ struct AutomationView: View {
                     ForEach(store.events.prefix(100)) { event in
                         HStack(alignment: .top, spacing: 15) {
                             Image(systemName: event.error == nil ? "checkmark.circle" : "exclamationmark.circle")
-                                .foregroundStyle(event.error == nil ? Theme.mint : .orange).padding(.top, 2)
+                                .foregroundStyle(event.error == nil ? Theme.accent : .orange).padding(.top, 2)
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(event.title).font(.callout.weight(.medium))
                                 if let hash = event.hash, let torrent = store.torrents.first(where: { $0.id == hash }) {
@@ -211,7 +211,7 @@ struct SettingsView: View {
             SwiftUI.Section("About") {
                 Text("MIT License")
             }
-        }.formStyle(.grouped)
+        }.formStyle(.grouped).canvasBackground()
         .onAppear {
             if let s = store.status?.settings {
                 source = s.source; movies = s.movies; tv = s.tv; interval = s.pollSeconds
@@ -276,7 +276,7 @@ struct ConnectionView: View {
             VStack(spacing: 24) {
                 Spacer()
                 Image("TorrbabyLogo").resizable().frame(width: 80, height: 80)
-                    .clipShape(RoundedRectangle(cornerRadius: 18)).accessibilityHidden(true)
+                    .clipShape(RoundedRectangle(cornerRadius: 10)).accessibilityHidden(true)
                 HStack(spacing: 20) {
                     ZStack {
                         Image(systemName: "desktopcomputer").font(.system(size: 76, weight: .light))
@@ -285,7 +285,7 @@ struct ConnectionView: View {
                     Image(systemName: "arrow.right").font(.title3).foregroundStyle(Theme.muted)
                     Image(systemName: "iphone.gen3.radiowaves.left.and.right")
                         .font(.system(size: 58, weight: .light))
-                }.foregroundStyle(Theme.mint).padding(.vertical, 12).accessibilityHidden(true)
+                }.foregroundStyle(Theme.accent).padding(.vertical, 12).accessibilityHidden(true)
                 VStack(spacing: 8) {
                     Text("Link a device").font(.system(size: 28, weight: .bold, design: .rounded))
                     Text("On your connected device").font(.subheadline).foregroundStyle(Theme.muted)
@@ -295,7 +295,7 @@ struct ConnectionView: View {
                     Label("Scan connection code", systemImage: "qrcode.viewfinder")
                         .font(.headline).padding(.horizontal, 12).padding(.vertical, 10)
                 }
-                .buttonStyle(.borderedProminent).foregroundStyle(Theme.onAccent)
+                .buttonStyle(MonoButtonStyle(prominent: true)).foregroundStyle(Theme.onAccent)
                 .sheet(isPresented: $showScanner) { LocalizedInterface { PairingScannerView { dismiss() } } }
                 Spacer()
                 Spacer().frame(height: 40)
@@ -304,7 +304,7 @@ struct ConnectionView: View {
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
             #else
             VStack(alignment: .leading, spacing: 24) {
-                Image(systemName: "arrow.down.forward.and.arrow.up.backward.circle.fill").font(.system(size: 55)).foregroundStyle(Theme.mint)
+                Image(systemName: "arrow.down.forward.and.arrow.up.backward.circle.fill").font(.system(size: 55)).foregroundStyle(Theme.accent)
                 VStack(alignment: .leading, spacing: 9) {
                     Text("Connect to Torrbaby").font(.system(size: 30, weight: .bold, design: .rounded))
                 }
@@ -327,7 +327,7 @@ struct ConnectionView: View {
                     Task { await store.connect(); if store.connected { dismiss() } }
                 } label: {
                     HStack { Spacer(); if store.isConnecting { ProgressView().controlSize(.small) }; Text(LocalizedStringKey(store.isConnecting ? "Connecting…" : "Connect to server")).fontWeight(.semibold); Spacer() }.padding(.vertical, 7)
-                }.buttonStyle(.borderedProminent).foregroundStyle(Theme.onAccent).disabled(address.isEmpty || token.isEmpty || store.isConnecting)
+                }.buttonStyle(MonoButtonStyle(prominent: true)).foregroundStyle(Theme.onAccent).disabled(address.isEmpty || token.isEmpty || store.isConnecting)
                 Spacer(minLength: 0)
             }.padding(30).background(Theme.canvas)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
@@ -393,7 +393,7 @@ struct AddTorrentView: View {
                         .accessibilityLabel("Adding download")
                     }
                 }
-            }.formStyle(.grouped).navigationTitle("Add a torrent")
+            }.formStyle(.grouped).canvasBackground().navigationTitle("Add a torrent")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }.disabled(submitting)

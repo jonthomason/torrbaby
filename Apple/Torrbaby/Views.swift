@@ -88,9 +88,10 @@ struct SubtitleQueueView: View {
                     } else { ProgressView().controlSize(.small) }
                 }
                 .padding().frame(maxWidth: .infinity, alignment: .leading)
-                .background(.regularMaterial)
+                .background(Theme.panel)
             }
         }
+        .canvasBackground()
         .navigationTitle(L10n.text("Processing"))
         .refreshable { await store.refreshStatus() }
         .task {
@@ -122,9 +123,11 @@ struct RootView: View {
     #endif
     private var pageOwnsLanguageControl: Bool {
         #if os(iOS)
-        guard sizeClass == .regular else { return false }
-        #endif
+        // Torrent pages add their own view switch, then the language control after it.
+        return [Section.active, .seeding, .complete, .attention].contains(selection ?? .library)
+        #else
         return [Section.library, .movies, .shows, .active, .seeding, .complete, .attention].contains(selection ?? .library)
+        #endif
     }
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
@@ -136,8 +139,15 @@ struct RootView: View {
         var section: Section? = .library
         var path = NavigationPath()
     }
-    @State private var location = Location()
-    @State private var preferredColumn: NavigationSplitViewColumn = .sidebar
+    // UI smoke tests can open a page directly: -initialSection "TV Shows" [-initialTitle <id>].
+    private static var smokeTestStart: Location? {
+        guard let name = UserDefaults.standard.string(forKey: "initialSection"), let section = Section(rawValue: name) else { return nil }
+        var start = Location(section: section)
+        if let id = UserDefaults.standard.string(forKey: "initialTitle") { start.path.append(LibraryDestination(id: id)) }
+        return start
+    }
+    @State private var location = smokeTestStart ?? Location()
+    @State private var preferredColumn: NavigationSplitViewColumn = smokeTestStart == nil ? .sidebar : .detail
     @State private var past: [Location] = []
     @State private var future: [Location] = []
     private var selection: Section? { location.section }
@@ -159,31 +169,42 @@ struct RootView: View {
         past.append(location)
         location = next
     }
-    @ToolbarContentBuilder private var languageControls: some ToolbarContent {
-        #if os(macOS)
-        ToolbarItem(placement: .confirmationAction) { InterfaceLanguagePicker() }
+    @ToolbarContentBuilder private var languageControls: some ToolbarContent { LanguageToolbar() }
+    // On iOS the page's own actions sit just inside the language switch, which stays last.
+    private var pageActionPlacement: ToolbarItemPlacement {
+        #if os(iOS)
+        .topBarTrailing
         #else
-        ToolbarItem(placement: .primaryAction) { InterfaceLanguagePicker() }
+        .primaryAction
         #endif
     }
+    private var ownsHistoryButtons: Bool {
+        #if os(iOS)
+        sizeClass == .regular
+        #else
+        true
+        #endif
+    }
+    @ViewBuilder private var historyButtons: some View {
+        Button(action: back) { Image(systemName: "chevron.left") }
+            .help("Back").disabled(past.isEmpty)
+        Button(action: forward) { Image(systemName: "chevron.right") }
+            .help("Forward").disabled(future.isEmpty)
+    }
+    /// Back/Forward lead the bar. A phone already has its own back button and no room to
+    /// spare, so the history pair is left out there and the language switch stays top right.
     @ToolbarContentBuilder private var historyControls: some ToolbarContent {
+        #if os(macOS)
         ToolbarItemGroup(placement: .navigation) {
-            Button(action: back) { Image(systemName: "chevron.left") }
-                .help("Back").disabled(past.isEmpty)
-            Button(action: forward) { Image(systemName: "chevron.right") }
-                .help("Forward").disabled(future.isEmpty)
-            #if os(macOS)
+            historyButtons
             Button { MacLibraryTabs.create { openWindow(id: "library-tab") } } label: {
                 Image(systemName: "plus")
             }.help("New Tab").accessibilityLabel("New Tab")
-            #endif
         }
-    }
-    private var compactSidebar: Bool {
-        #if os(iOS)
-        sizeClass == .compact
         #else
-        false
+        if sizeClass == .regular {
+            ToolbarItemGroup(placement: .topBarLeading) { historyButtons }
+        }
         #endif
     }
     private var mobileSidebar: Bool {
@@ -200,98 +221,53 @@ struct RootView: View {
         6
         #endif
     }
-    #if os(iOS)
     private var sidebarBrand: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: 8) {
             Image("TorrbabyLogo").resizable().frame(width: 28, height: 28)
                 .clipShape(RoundedRectangle(cornerRadius: 6)).accessibilityHidden(true)
             Text(verbatim: "torrbaby").font(.system(size: 18, weight: .bold, design: .rounded))
                 .lineLimit(1).minimumScaleFactor(0.8)
         }
-        .frame(maxWidth: .infinity, alignment: .center)
+        .frame(maxWidth: .infinity, alignment: mobileSidebar ? .center : .leading)
     }
-    private func mobileMenuSection(_ title: LocalizedStringKey, sections: [Section], rowHeight: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.caption.weight(.semibold)).foregroundStyle(Theme.muted).padding(.horizontal, 12)
+    /// The same menu on every platform: the current page is a white row with black text.
+    private func menuSection(_ title: LocalizedStringKey, sections: [Section], rowHeight: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(Theme.muted).padding(.horizontal, 12).padding(.bottom, 2)
             ForEach(sections) { section in
+                let selected = location.section == section
                 Button { navigate(Location(section: section)) } label: {
                     HStack(spacing: 12) {
-                        Image(systemName: section.icon).frame(width: 24).foregroundStyle(Color.blue)
-                        Text(LocalizedStringKey(section.rawValue)).foregroundStyle(.primary)
+                        Image(systemName: section.icon).frame(width: 24)
+                        Text(LocalizedStringKey(section.rawValue))
                         Spacer(minLength: 0)
-                    }.font(.body).padding(.horizontal, 12).frame(height: rowHeight)
-                        .background(location.section == section ? Color.blue.opacity(0.22) : .clear, in: RoundedRectangle(cornerRadius: 7))
+                    }.font(.body.weight(selected ? .semibold : .regular)).padding(.horizontal, 12).frame(height: rowHeight)
+                        .foregroundStyle(selected ? Theme.onAccent : Color.white)
+                        .background(selected ? Theme.accent : .clear, in: RoundedRectangle(cornerRadius: Theme.radius))
                         .contentShape(Rectangle())
                 }.buttonStyle(.plain)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
     }
-    #endif
     @State private var showConnect = false
     @State private var torrentDraft: TorrentDraft?
     var body: some View {
         NavigationSplitView(preferredCompactColumn: $preferredColumn) {
             VStack(alignment: .leading, spacing: sidebarSpacing) {
-                #if !os(iOS)
-                HStack(spacing: 11) {
-                    Image("TorrbabyLogo").resizable().frame(width: 42, height: 42)
-                        .clipShape(RoundedRectangle(cornerRadius: 9)).accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("torrbaby").font(.system(size: 24, weight: .bold, design: .rounded))
-                    }
-                }.padding(.horizontal, 18).padding(.top, 6)
-                #endif
-                #if os(iOS)
-                sidebarBrand.padding(.horizontal, 20).padding(.vertical, 12)
+                sidebarBrand.padding(.horizontal, mobileSidebar ? 20 : 24).padding(.vertical, 12)
                 GeometryReader { geometry in
+                    let rowHeight = mobileSidebar ? min(52, max(40, (geometry.size.height - 120) / 11)) : 34
                     ScrollView {
                         VStack(alignment: .leading, spacing: 14) {
-                            mobileMenuSection("Library", sections: [.library, .findTorrents, .movies, .shows, .downloads], rowHeight: min(52, max(40, (geometry.size.height - 120) / 11)))
-                            mobileMenuSection("Torrents", sections: [.active, .seeding, .complete, .subtitles, .attention], rowHeight: min(52, max(40, (geometry.size.height - 120) / 11)))
-                            mobileMenuSection("Server", sections: [.automation, .settings], rowHeight: min(52, max(40, (geometry.size.height - 120) / 11)))
+                            menuSection("Library", sections: [.library, .findTorrents, .movies, .shows, .downloads], rowHeight: rowHeight)
+                            menuSection("Torrents", sections: [.active, .seeding, .complete, .subtitles, .attention], rowHeight: rowHeight)
+                            menuSection("Server", sections: [.automation, .settings], rowHeight: rowHeight)
                         }.padding(.horizontal, 12).padding(.vertical, 6)
                     }
                 }
-                #else
-                List(selection: Binding(get: { location.section }, set: { navigate(Location(section: $0)) })) {
-                    SwiftUI.Section("Library") {
-                        ForEach([Section.library, .findTorrents, .movies, .shows, .downloads]) { section in
-                            Label(LocalizedStringKey(section.rawValue), systemImage: section.icon)
-                                .font(compactSidebar ? .callout : .body)
-                                .padding(.vertical, mobileSidebar ? 0 : 5)
-                                .listRowInsets(mobileSidebar ? EdgeInsets(top: 3, leading: 12, bottom: 3, trailing: 12) : nil)
-                                .tag(section)
-                        }
-                    }
-                    SwiftUI.Section("Torrents") {
-                        ForEach([Section.active, .seeding, .complete, .subtitles, .attention]) { section in
-                            Label(LocalizedStringKey(section.rawValue), systemImage: section.icon)
-                                .font(compactSidebar ? .callout : .body)
-                                .padding(.vertical, mobileSidebar ? 0 : 5)
-                                .listRowInsets(mobileSidebar ? EdgeInsets(top: 3, leading: 12, bottom: 3, trailing: 12) : nil)
-                                .tag(section)
-                        }
-                    }
-                    SwiftUI.Section("Server") {
-                        ForEach([Section.automation, .settings]) { section in
-                            Label(LocalizedStringKey(section.rawValue), systemImage: section.icon)
-                                .font(compactSidebar ? .callout : .body)
-                                .padding(.vertical, mobileSidebar ? 0 : 5)
-                                .listRowInsets(mobileSidebar ? EdgeInsets(top: 3, leading: 12, bottom: 3, trailing: 12) : nil)
-                                .tag(section)
-                        }
-                    }
-                }.listStyle(.sidebar)
-                .environment(\.defaultMinListRowHeight, compactSidebar ? 36 : 44)
-                #if os(iOS)
-                .tint(.blue)
-                .scrollContentBackground(.hidden)
-                .listSectionSpacing(8)
-                .contentMargins(.top, 0, for: .scrollContent)
-                #endif
-                #endif
                 HStack(spacing: 7) {
-                    Circle().fill(store.canStream ? Theme.mint : .orange).frame(width: 6, height: 6)
+                    Circle().fill(store.canStream ? Theme.accent : .orange).frame(width: 6, height: 6)
                     Text(LocalizedStringKey(store.connectionLabel))
                         .font(.caption.weight(.semibold))
                 }
@@ -301,13 +277,11 @@ struct RootView: View {
             #if os(macOS)
             .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
             #endif
+            .background(Theme.sidebar.ignoresSafeArea())
             #if os(iOS)
-            .background(Color(red: 0.10, green: 0.14, blue: 0.20).ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                if sizeClass == .compact {
-                    ToolbarItem(placement: .topBarTrailing) { InterfaceLanguagePicker() }
-                }
+                if sizeClass == .compact { LanguageToolbar() }
 
             }
             #endif
@@ -325,13 +299,18 @@ struct RootView: View {
                     else { TorrentListView(section: selection ?? .active) }
                 }
                 .background(Theme.canvas)
+                #if os(macOS)
+                .toolbarBackground(Theme.canvas, for: .windowToolbar)
+                #else
+                .toolbarBackground(Theme.canvas, for: .navigationBar)
+                #endif
                 .navigationTitle(L10n.text(selection?.rawValue ?? "Torrbaby"))
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
                 #endif
                 .toolbar {
                     historyControls
-                    ToolbarItemGroup(placement: .primaryAction) {
+                    ToolbarItemGroup(placement: pageActionPlacement) {
                         if store.busy { ProgressView().controlSize(.small) }
                         if [.active, .seeding, .complete, .attention].contains(selection) {
                             Button { torrentDraft = TorrentDraft() } label: { Label("Add torrent", systemImage: "plus") }
@@ -342,16 +321,16 @@ struct RootView: View {
                     }
                     if !pageOwnsLanguageControl { languageControls }
                 }
-                .navigationDestination(for: String.self) { hash in TorrentDetail(hash: hash).navigationBarBackButtonHidden().toolbar { historyControls; languageControls } }
+                .navigationDestination(for: String.self) { hash in TorrentDetail(hash: hash).navigationBarBackButtonHidden(ownsHistoryButtons).toolbar { historyControls; languageControls } }
                 .navigationDestination(for: LibraryShelfDestination.self) { route in
-                    LibraryBrowser(shelfIDs: route.ids).navigationTitle(route.name).navigationBarBackButtonHidden().toolbar {
+                    LibraryBrowser(shelfIDs: route.ids).navigationTitle(route.name).navigationBarBackButtonHidden(ownsHistoryButtons).toolbar {
                         historyControls
                         #if os(iOS)
-                        if sizeClass != .regular { languageControls }
+                        languageControls
                         #endif
                     }
                 }
-                .navigationDestination(for: LibraryDestination.self) { route in LibraryDetail(titleID: route.id).navigationBarBackButtonHidden().toolbar { historyControls; languageControls } }
+                .navigationDestination(for: LibraryDestination.self) { route in LibraryDetail(titleID: route.id).navigationBarBackButtonHidden(ownsHistoryButtons).toolbar { historyControls; languageControls } }
                 .safeAreaInset(edge: .top) {
                     if store.offline {
                         HStack {
@@ -456,8 +435,8 @@ struct TorrentListView: View {
                     VStack(spacing: 12) { metrics }
                 } } else {
                     HStack(spacing: 20) {
-                        Label(rate(store.torrents.reduce(0) { $0 + $1.rateDownload }), systemImage: "arrow.down").foregroundStyle(Theme.mint)
-                        Label(rate(store.torrents.reduce(0) { $0 + $1.rateUpload }), systemImage: "arrow.up").foregroundStyle(.cyan)
+                        Label(rate(store.torrents.reduce(0) { $0 + $1.rateDownload }), systemImage: "arrow.down").foregroundStyle(Theme.accent)
+                        Label(rate(store.torrents.reduce(0) { $0 + $1.rateUpload }), systemImage: "arrow.up").foregroundStyle(Theme.muted)
                     }.font(.caption.monospacedDigit())
                 }
                 TransferHistoryView(compact: compact)
@@ -523,18 +502,27 @@ struct TorrentListView: View {
         #endif
         .sheet(item: $removing) { item in LocalizedInterface { RemoveTorrentView(torrent: item) } }
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItem(placement: {
+                #if os(iOS)
+                .topBarTrailing
+                #else
+                .primaryAction
+                #endif
+            }()) {
                 Button { compact.toggle() } label: {
                     Label(LocalizedStringKey(compact ? "Comfortable view" : "Compact view"), systemImage: compact ? "rectangle.grid.1x2" : "list.bullet")
                 }.help(compact ? "Switch to comfortable view" : "Switch to compact view")
             }
+            #if os(iOS)
+            LanguageToolbar()
+            #endif
         }
         .refreshable { await store.refresh() }
     }
     @ViewBuilder var metrics: some View {
-        Metric(title: "DOWNLOADING", value: rate(store.torrents.reduce(0) { $0 + $1.rateDownload }), symbol: "arrow.down", color: Theme.mint)
-        Metric(title: "UPLOADING", value: rate(store.torrents.reduce(0) { $0 + $1.rateUpload }), symbol: "arrow.up", color: .cyan)
-        Metric(title: "LIBRARY", value: "\(store.torrents.filter(\.completed).count) complete", symbol: "checkmark", color: .purple)
+        Metric(title: "DOWNLOADING", value: rate(store.torrents.reduce(0) { $0 + $1.rateDownload }), symbol: "arrow.down", color: Theme.accent)
+        Metric(title: "UPLOADING", value: rate(store.torrents.reduce(0) { $0 + $1.rateUpload }), symbol: "arrow.up", color: Theme.muted)
+        Metric(title: "LIBRARY", value: "\(store.torrents.filter(\.completed).count) complete", symbol: "checkmark", color: Theme.muted)
     }
 }
 struct Metric: View {
@@ -562,7 +550,7 @@ struct TorrentRow: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let torrent: Torrent
     var showReason = false
-    var color: Color { torrent.needsAttention ? .orange : torrent.completed ? .cyan : Theme.mint }
+    var color: Color { torrent.needsAttention ? .orange : torrent.completed ? Theme.muted : Theme.accent }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
           HStack(alignment: .top, spacing: 16) {
@@ -587,8 +575,8 @@ struct TorrentRow: View {
           }
           if !torrent.completed { TorrentProgressGauge(value: torrent.percentDone) }
         }
-        .padding(17).background(Theme.panel, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(0.04)))
+        .padding(17).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.04)))
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
@@ -605,7 +593,7 @@ struct CompactTorrentRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(torrent.displayName).font(.system(size: 13, weight: .medium)).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                 HStack(spacing: 6) {
-                    Text(LocalizedStringKey(torrent.stateName)).foregroundStyle(torrent.needsAttention ? .orange : torrent.completed ? .cyan : Theme.mint)
+                    Text(LocalizedStringKey(torrent.stateName)).foregroundStyle(torrent.needsAttention ? .orange : torrent.completed ? Theme.muted : Theme.accent)
                         .frame(width: 76, alignment: .leading)
                     Text("\(bytes(torrent.downloaded)) / \(bytes(torrent.size))")
                         .monospacedDigit().frame(width: 150, alignment: .trailing)
@@ -616,7 +604,7 @@ struct CompactTorrentRow: View {
                     if !torrent.completed { TransferRate(value: torrent.rateDownload, upload: false) }
                     TransferRate(value: torrent.rateUpload, upload: true)
                     Text("Ratio \(max(0, torrent.uploadRatio), specifier: "%.2f")")
-                        .frame(width: 82, alignment: .trailing).foregroundStyle(.purple.opacity(0.9))
+                        .frame(width: 82, alignment: .trailing).foregroundStyle(Theme.muted)
                     if !torrent.completed { Text(LocalizedStringKey(torrent.etaText)).frame(width: 160, alignment: .leading) }
                 }.font(.caption2.monospacedDigit()).foregroundStyle(Theme.muted)
                 if let operation = torrent.fileOperation {
@@ -643,7 +631,7 @@ private struct MobileTorrentRow: View {
     let torrent: Torrent
     let showReason: Bool
     let compact: Bool
-    private var color: Color { torrent.needsAttention ? .orange : torrent.completed ? .cyan : Theme.mint }
+    private var color: Color { torrent.needsAttention ? .orange : torrent.completed ? Theme.muted : Theme.accent }
     var body: some View {
         ViewThatFits(in: .horizontal) {
             CompactTorrentRow(torrent: torrent, showReason: showReason).frame(minWidth: 650)
@@ -673,7 +661,7 @@ private struct MobileTorrentRow: View {
                 TransferRate(value: torrent.rateUpload, upload: true, numberWidth: 65)
                 Spacer(minLength: 0)
                 Text("Ratio \(max(0, torrent.uploadRatio), specifier: "%.2f")")
-                    .foregroundStyle(.purple).frame(width: 65, alignment: .trailing)
+                    .foregroundStyle(Theme.muted).frame(width: 65, alignment: .trailing)
             }.font(.caption2.monospacedDigit()).lineLimit(1)
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text(LocalizedStringKey(torrent.completed ? bytes(torrent.size) : "\(bytes(torrent.downloaded)) / \(bytes(torrent.size))"))
@@ -704,7 +692,7 @@ private struct TransferRate: View {
             Image(systemName: upload ? "arrow.up" : "arrow.down").frame(width: 12)
             Text(LocalizedStringKey(value == 0 ? "0 KB/s" : rate(value)))
                 .monospacedDigit().frame(width: numberWidth, alignment: .trailing)
-        }.foregroundStyle(upload ? Color.cyan : Theme.mint)
+        }.foregroundStyle(upload ? Theme.muted : Theme.accent)
             .fixedSize(horizontal: true, vertical: false)
     }
 }
@@ -716,12 +704,12 @@ private struct TorrentThumbnail: View {
     private var thumbnail: String? { store.metadata.first { $0.hash == torrent.id }?.selected?.thumbnail }
     var body: some View {
         ZStack {
-            Theme.mint.opacity(0.10)
+            Theme.accent.opacity(0.10)
             if let thumbnail {
                 LibraryArtwork(id: "torrent:" + torrent.id).id(thumbnail)
             } else {
                 Image(systemName: torrent.completed ? "film" : "arrow.down")
-                    .foregroundStyle(torrent.needsAttention ? .orange : Theme.mint)
+                    .foregroundStyle(torrent.needsAttention ? .orange : Theme.accent)
             }
         }.clipShape(RoundedRectangle(cornerRadius: 5))
             .accessibilityHidden(true)
@@ -731,7 +719,7 @@ private struct TorrentThumbnail: View {
 struct TorrentProgressGauge: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let value: Double
-    var color = Color(red: 0.70, green: 0.43, blue: 1.0)
+    var color = Theme.accent
     private var fraction: Double { value.isFinite ? min(1, max(0, value)) : 0 }
     private var label: String { "\(Int(fraction * 100))%" }
     var body: some View {
@@ -802,7 +790,7 @@ struct TransferHistoryView: View {
                 LineMark(x: .value("Time", sample.date), y: .value("Bytes/sec", sample.upload))
                     .foregroundStyle(by: .value("Transfer", "Upload"))
             }
-            .chartForegroundStyleScale(["Download": Theme.mint, "Upload": Color.cyan])
+            .chartForegroundStyleScale(["Download": Theme.accent, "Upload": Theme.muted])
             .chartXScale(domain: Date().addingTimeInterval(-Double(hours * 3600))...Date())
             .chartYScale(domain: .automatic(includesZero: true))
             .chartYAxis {
@@ -818,7 +806,7 @@ struct TransferHistoryView: View {
                 Text("Collecting history…").font(.caption2).foregroundStyle(Theme.muted)
             }
         }.padding(compact ? 12 : 18)
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
        }
       }.task(id: store.server + (torrentHash ?? "")) {
           guard let hash = torrentHash else { return }
@@ -838,7 +826,7 @@ struct NoticeBanner: View {
     var body: some View {
         if let notice = store.notices.first {
             HStack(spacing: 12) {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.mint)
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(notice.title).font(.headline)
                     if !notice.detail.isEmpty { Text(notice.detail).font(.caption).lineLimit(2) }
@@ -848,12 +836,12 @@ struct NoticeBanner: View {
                     Button("Show torrent") {
                         showTorrent(hash)
                         store.notices.removeAll { $0.id == notice.id }
-                    }.buttonStyle(.bordered)
+                    }.buttonStyle(MonoButtonStyle())
                 }
                 Button { store.notices.removeAll { $0.id == notice.id } } label: { Image(systemName: "xmark") }
                     .buttonStyle(.plain).accessibilityLabel("Dismiss notification")
             }.padding(16).frame(maxWidth: 480)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
                 .shadow(radius: 10).padding(.horizontal)
                 .accessibilityElement(children: .combine)
                 .task(id: notice.id) {

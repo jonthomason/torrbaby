@@ -37,8 +37,8 @@ struct PairingCodeView: View {
             VStack(spacing: 18) {
                 Text(LocalizedStringKey(paired ? "Device linked" : "Link a device")).font(.title.bold())
                 if paired {
-                    Image(systemName: "checkmark.circle.fill").font(.system(size: 80)).foregroundStyle(Theme.mint)
-                    Button("Done") { dismiss() }.buttonStyle(.borderedProminent)
+                    Image(systemName: "checkmark.circle.fill").font(.system(size: 80)).foregroundStyle(Theme.accent)
+                    Button("Done") { dismiss() }.buttonStyle(MonoButtonStyle(prominent: true))
                 } else if let error {
                     Text(L10n.text(error)).foregroundStyle(.orange)
                     Button("New code") { generation = UUID() }
@@ -100,7 +100,7 @@ struct PairingScannerView: View {
                             Text("Connect to this server?").font(.title2.bold())
                             Text(payload.server).font(.callout).textSelection(.enabled)
                             Button(LocalizedStringKey(busy ? "Connecting…" : "Connect")) { Task { await redeem(payload) } }
-                                .buttonStyle(.borderedProminent).disabled(busy)
+                                .buttonStyle(MonoButtonStyle(prominent: true)).disabled(busy)
                             Button("Scan again") { self.payload = nil; error = nil; scannerID = UUID() }.disabled(busy)
                             if let error { Text(L10n.text(error)).foregroundStyle(.orange) }
                         }.frame(maxWidth: .infinity).padding(24)
@@ -112,9 +112,9 @@ struct PairingScannerView: View {
                         layout {
                             camera.id(scannerID)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .clipShape(RoundedRectangle(cornerRadius: 16))
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
                             VStack(spacing: 12) {
-                                Image(systemName: "qrcode.viewfinder").font(.system(size: 40)).foregroundStyle(Theme.mint)
+                                Image(systemName: "qrcode.viewfinder").font(.system(size: 40)).foregroundStyle(Theme.accent)
                                 Text("Scan the QR code").font(.headline)
                                 if let error {
                                     Text(L10n.text(error)).font(.caption).foregroundStyle(.orange)

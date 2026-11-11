@@ -42,7 +42,7 @@ struct DownloadsView: View {
                                 Text(item.name).font(.caption).foregroundStyle(Theme.muted).lineLimit(1)
                             }
                             if item.state == .ready {
-                                Label(bytes(item.size), systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(Theme.mint)
+                                Label(bytes(item.size), systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(Theme.accent)
                             } else {
                                 Text("\(bytes(queue.received[item.id] ?? item.received)) / \(bytes(item.size))")
                                     .font(.caption.monospacedDigit()).foregroundStyle(Theme.muted)
@@ -141,7 +141,7 @@ private struct DownloadPoster: View {
                     if let image = UIImage(data: data) { Image(uiImage: image).resizable().scaledToFill() }
                     #endif
                 } else {
-                    Image(systemName: isTV ? "tv" : "film").font(.title2).foregroundStyle(Theme.mint)
+                    Image(systemName: isTV ? "tv" : "film").font(.title2).foregroundStyle(Theme.accent)
                 }
             }.frame(width: geometry.size.width, height: geometry.size.height).clipped()
         }.task(id: url) { data = url.flatMap { try? Data(contentsOf: $0) } }
@@ -165,7 +165,7 @@ struct DownloadSettingsView: View {
                 TextField("Keep free (GB)", value: $reserve, format: .number)
                 Toggle("Wi-Fi only", isOn: $wifiOnly)
                 Toggle("Delete after playback", isOn: $deleteAfter)
-            }.formStyle(.grouped).navigationTitle("Download storage")
+            }.formStyle(.grouped).canvasBackground().navigationTitle("Download storage")
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                     ToolbarItem(placement: .confirmationAction) {
@@ -210,11 +210,11 @@ struct DownloadAssetControl: View {
                 if item.state == .ready {
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Label("Downloaded", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.mint)
+                            Label("Downloaded", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.accent)
                             Text(bytes(item.size)).font(.caption).foregroundStyle(Theme.muted)
                         }
                         Button { confirmDelete = true } label: { Image(systemName: "trash") }
-                            .accessibilityLabel("Delete download").buttonStyle(.bordered)
+                            .accessibilityLabel("Delete download").buttonStyle(MonoButtonStyle())
                     }
                     .confirmationDialog("Delete this download?", isPresented: $confirmDelete, titleVisibility: .visible) {
                         Button("Delete download", role: .destructive) { queue.remove(item.id) }
@@ -265,7 +265,7 @@ struct DownloadAssetControl: View {
             else { Image(systemName: item == nil ? "arrow.down.circle" : item?.state == .ready ? "trash" : "xmark.circle")
                 .font(.title2).frame(width: 44, height: 44) }
         }.disabled(adding || (item == nil && (!store.connected || !asset.complete)))
-            .foregroundStyle(item?.state == .ready ? Color.red : Theme.mint)
+            .foregroundStyle(item?.state == .ready ? Color.red : Theme.accent)
             .accessibilityLabel(compactLabel).help(compactLabel)
             .confirmationDialog("Delete this device’s download?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Delete download", role: .destructive) { if let item { queue.remove(item.id) } }

@@ -26,10 +26,11 @@ struct TorrbabyApp: App {
     #endif
     @ViewBuilder private var mainContent: some View {
         #if os(tvOS)
-        LocalizedInterface { ProfileGate { TVRootView() } }.environmentObject(store).tint(Theme.mint).preferredColorScheme(.dark)
+        LocalizedInterface { ProfileGate { TVRootView() } }.environmentObject(store).tint(Theme.accent).preferredColorScheme(.dark)
         #else
         LocalizedInterface { ProfileGate { RootView() } }
-            .environmentObject(store).tint(Theme.mint).preferredColorScheme(.dark)
+            .environmentObject(store).tint(Theme.accent).preferredColorScheme(.dark)
+            .toggleStyle(MonoToggleStyle())
             #if os(iOS)
             .buttonBorderShape(.roundedRectangle(radius: 8))
             #endif
@@ -50,7 +51,7 @@ struct TorrbabyApp: App {
         #endif
         #if os(macOS)
         Settings {
-            LocalizedInterface { MacSettingsView() }.environmentObject(store).tint(Theme.mint).preferredColorScheme(.dark)
+            LocalizedInterface { MacSettingsView() }.environmentObject(store).tint(Theme.accent).preferredColorScheme(.dark).toggleStyle(MonoToggleStyle())
         }
         MenuBarExtra(isInserted: $showMenuBarRates) {
             TransferMenu(store: store)
@@ -75,26 +76,79 @@ struct TorrbabyApp: App {
     }
 }
 
+/// One monochrome look on every platform: black canvas, white selection with black
+/// text, and small-radius rounded rectangles. The purple wordmark is the only colour.
 enum Theme {
-    #if os(tvOS)
-    static let mint = Color.white
+    static let accent = Color.white
     static let onAccent = Color.black
-    #elseif os(iOS)
-    static let mint = Color.blue
-    static let onAccent = Color.white
-    #else
-    static let mint = Color(red: 0.44, green: 0.91, blue: 0.76)
-    static let onAccent = canvas
-    #endif
-    #if os(tvOS)
     static let canvas = Color.black
-    static let panel = Color(white: 0.08)
+    static let sidebar = Color(white: 0.055)
+    static let panel = Color(white: 0.09)
+    static let control = Color(white: 0.16)
     static let muted = Color(white: 0.65)
+    static let brand = Color(red: 0.70, green: 0.43, blue: 1.0)
+    static let radius: CGFloat = 8
+}
+
+/// The app's button: white with black text when prominent, selected or (on TV) focused.
+struct MonoButtonStyle: ButtonStyle {
+    var prominent = false
+    var compact = false
+    @Environment(\.isEnabled) private var enabled
+    #if os(tvOS)
+    @Environment(\.isFocused) private var focused
     #else
-    static let canvas = Color(red: 0.055, green: 0.075, blue: 0.10)
-    static let panel = Color(red: 0.09, green: 0.115, blue: 0.15)
-    static let muted = Color(red: 0.56, green: 0.63, blue: 0.69)
+    private let focused = false
     #endif
+    func makeBody(configuration: Configuration) -> some View {
+        let filled = prominent || focused
+        configuration.label
+            .lineLimit(1)
+            .padding(.horizontal, compact ? 10 : 14).padding(.vertical, compact ? 5 : 7)
+            .foregroundStyle(filled ? Theme.onAccent : Color.white)
+            .background(filled ? Theme.accent : Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius))
+            .opacity(enabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
+            .contentShape(RoundedRectangle(cornerRadius: Theme.radius))
+            #if os(tvOS)
+            .scaleEffect(focused ? 1.025 : 1).animation(.easeOut(duration: 0.15), value: focused)
+            #endif
+    }
+}
+
+#if !os(tvOS)
+/// A switch in the same vocabulary: white track with a black knob when on.
+struct MonoToggleStyle: ToggleStyle {
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        HStack {
+            configuration.label
+            Spacer(minLength: 12)
+            ZStack(alignment: configuration.isOn ? .trailing : .leading) {
+                RoundedRectangle(cornerRadius: 7).fill(configuration.isOn ? Theme.accent : Theme.control).frame(width: 42, height: 24)
+                RoundedRectangle(cornerRadius: 5).fill(configuration.isOn ? Theme.onAccent : Color.white).frame(width: 18, height: 18).padding(3)
+            }
+            .animation(.easeOut(duration: 0.12), value: configuration.isOn)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { configuration.isOn.toggle() }
+        .opacity(enabled ? 1 : 0.4)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(Text(configuration.isOn ? "On" : "Off"))
+        .accessibilityAction { configuration.isOn.toggle() }
+    }
+}
+#endif
+
+extension View {
+    /// Forms and lists sit directly on the black canvas instead of the system's grey-blue.
+    @ViewBuilder func canvasBackground() -> some View {
+        #if os(tvOS)
+        self.background(Theme.canvas)
+        #else
+        self.scrollContentBackground(.hidden).background(Theme.canvas)
+        #endif
+    }
 }
 
 struct Card<Content: View>: View {
@@ -102,8 +156,8 @@ struct Card<Content: View>: View {
     @ViewBuilder let content: Content
     var body: some View {
         content.padding(20).frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 18))
-            .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.055)))
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.055)))
     }
 }
 

@@ -442,7 +442,7 @@ private struct TVMediaDetail: View {
                     if !asset.summary.isEmpty { Text(asset.summary).font(.caption).lineLimit(2) }
                     if !asset.complete { Text("Downloading").font(.caption).foregroundStyle(Theme.muted) }
                     if asset.position > 0 && asset.duration > 0 {
-                        ProgressView(value: min(1, asset.position / asset.duration)).tint(Theme.mint)
+                        ProgressView(value: min(1, asset.position / asset.duration)).tint(Theme.accent)
                     }
                 }
                 Spacer()
@@ -658,17 +658,18 @@ private struct TVTorrentView: View {
                             }
                             HStack(spacing: 32) {
                                 Text(bytes(torrent.size))
-                                Label(rate(torrent.rateDownload), systemImage: "arrow.down").foregroundStyle(Theme.mint)
+                                Label(rate(torrent.rateDownload), systemImage: "arrow.down").foregroundStyle(Theme.accent)
                                 Label(rate(torrent.rateUpload), systemImage: "arrow.up").foregroundStyle(.cyan)
                                 Text("Ratio \(max(0, torrent.uploadRatio), specifier: "%.2f")")
                             }.font(.caption).monospacedDigit()
                             if !torrent.completed {
                                 GeometryReader { geometry in
                                     ZStack(alignment: .leading) {
-                                        Color.purple.opacity(0.2)
-                                        Color(red: 0.70, green: 0.43, blue: 1.0).frame(width: geometry.size.width * min(1, max(0, torrent.percentDone)))
+                                        Color.white.opacity(0.18)
+                                        Color.white.frame(width: geometry.size.width * min(1, max(0, torrent.percentDone)))
                                         Text(torrent.percentDone, format: .percent.precision(.fractionLength(0)))
                                             .font(.system(size: 20, weight: .bold)).frame(maxWidth: .infinity)
+                                            .blendMode(.difference)
                                     }.clipShape(RoundedRectangle(cornerRadius: 8))
                                 }.frame(height: 30)
                             }

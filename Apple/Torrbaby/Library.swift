@@ -55,18 +55,21 @@ struct LibraryCast: View {
                 #endif
             }
             if truncated { Text("Showing the first 150 cast entries.").foregroundStyle(Theme.muted) }
-        }.navigationTitle(L10n.format("Cast · %@", title))
+        }.canvasBackground().navigationTitle(L10n.format("Cast · %@", title))
+            #if os(macOS)
             .navigationBarBackButtonHidden()
             .toolbar {
                 ToolbarItemGroup(placement: .navigation) {
                     Button { dismiss() } label: { Label("Back", systemImage: "chevron.left") }
-                    #if os(macOS)
                     Button {} label: { Image(systemName: "chevron.right") }.disabled(true).help("Forward")
                     Button { MacLibraryTabs.create { openWindow(id: "library-tab") } } label: { Image(systemName: "plus") }
                         .help("New Tab (⌘T)").accessibilityLabel("New Tab")
-                    #endif
                 }
+                LanguageToolbar()
             }
+            #elseif os(iOS)
+            .toolbar { LanguageToolbar() }
+            #endif
     }
 }
 struct LibraryCastLink: View {
@@ -77,16 +80,17 @@ struct LibraryCastLink: View {
             NavigationLink {
                 LibraryCast(title: title.title, members: members, television: title.kind == "tv")
             } label: { Label("Cast", systemImage: "person.2") }
-            .libraryActionStyle()
+            .libraryActionStyle(compact: true)
         }
     }
 }
 extension LibraryAsset {
-    func playbackActionTitle(television: Bool) -> String {
+    /// `brief` leaves out the time remaining, for buttons with little room.
+    func playbackActionTitle(television: Bool, brief: Bool = false) -> String {
         let resume = position > 0 && !watched
         guard television, let season, let episode else { return L10n.text(resume ? "Resume" : "Play") }
         guard resume else { return L10n.format("Start Season %d Ep %d", season, episode) }
-        if duration > position { return L10n.format("Resume Season %d Ep %d (%d min remaining)", season, episode, Int(ceil((duration - position) / 60))) }
+        if duration > position && !brief { return L10n.format("Resume Season %d Ep %d (%d min remaining)", season, episode, Int(ceil((duration - position) / 60))) }
         return L10n.format("Resume Season %d Ep %d", season, episode)
     }
 }
@@ -387,23 +391,27 @@ struct LibraryBrowser: View {
                             .overlay(LinearGradient(colors: [.clear, .black.opacity(0.92)], startPoint: .top, endPoint: .bottom))
                             .overlay(alignment: .bottomLeading) {
                             VStack(alignment: .leading, spacing: 10) {
-                                Text(featured.title).font(.system(size: 38, weight: .bold, design: .serif))
+                                Text(featured.title).font(.system(size: 38, weight: .bold))
                                     .lineLimit(3).minimumScaleFactor(0.7).multilineTextAlignment(.leading)
                                 Text(LocalizedStringKey(([featured.year ?? ""] + featured.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · "))).font(.subheadline)
-                                Label("Explore", systemImage: "play.circle.fill").font(.headline).padding(.top, 5)
+                                Label("Explore", systemImage: "play.fill").font(.headline)
+                                    .padding(.horizontal, 16).padding(.vertical, 9)
+                                    .foregroundStyle(Theme.onAccent).background(Theme.accent, in: RoundedRectangle(cornerRadius: Theme.radius))
+                                    .padding(.top, 5)
                             }.padding(28).foregroundStyle(.white)
-                        }.clipShape(RoundedRectangle(cornerRadius: 12))
+                        }.clipShape(RoundedRectangle(cornerRadius: 10))
                     }.buttonStyle(.plain)
                 }
-                if !titles.isEmpty { HStack {
+                if !titles.isEmpty { HStack(spacing: 12) {
                     Picker("Genre", selection: $genre) {
                         Text("All genres").tag("All genres")
                         ForEach(genres, id: \.self) { Text($0).tag($0) }
-                    }
+                    }.pickerStyle(.menu).fixedSize()
                     Picker("Sort", selection: $order) {
                         ForEach(["Recently added", "Release date", "Title"], id: \.self) { Text(LocalizedStringKey($0)).tag($0) }
-                    }
-                }.frame(maxWidth: 600) }
+                    }.pickerStyle(.menu).fixedSize()
+                    Spacer(minLength: 0)
+                } }
                 if !store.offline, let error = store.libraryError ?? store.library?.error { Text(L10n.text(error)).font(.callout).foregroundStyle(.orange) }
                 if titles.isEmpty {
                     if store.offline {
@@ -412,7 +420,7 @@ struct LibraryBrowser: View {
                         } description: {
                             Text("Watch your downloaded movies and episodes.")
                         } actions: {
-                            Button(action: showDownloads) { Label("Downloads", systemImage: "arrow.down.circle.fill") }.buttonStyle(.borderedProminent)
+                            Button(action: showDownloads) { Label("Downloads", systemImage: "arrow.down.circle.fill") }.buttonStyle(MonoButtonStyle(prominent: true))
                         }
                     } else if store.configured && store.library == nil && store.libraryError == nil {
                         ProgressView("Loading library…").frame(maxWidth: .infinity).padding(.vertical, 60)
@@ -530,7 +538,15 @@ struct LibraryDetail: View {
     }
     @ViewBuilder private func playbackActions(_ asset: LibraryAsset, title: LibraryTitle) -> some View {
         Button { play(asset, title: title.title) } label: {
-            Label(LocalizedStringKey(store.canPlay(asset) ? asset.playbackActionTitle(television: title.kind == "tv") : "Not downloaded"), systemImage: store.canPlay(asset) ? "play.fill" : "wifi.slash")
+            Label {
+                if store.canPlay(asset) {
+                    // The full label when it fits on one line; otherwise without the time remaining.
+                    ViewThatFits(in: .horizontal) {
+                        Text(asset.playbackActionTitle(television: title.kind == "tv")).lineLimit(1).fixedSize()
+                        Text(asset.playbackActionTitle(television: title.kind == "tv", brief: true)).lineLimit(2)
+                    }
+                } else { Text("Not downloaded") }
+            } icon: { Image(systemName: store.canPlay(asset) ? "play.fill" : "wifi.slash") }
                 .font(.headline).frame(minWidth: title.kind == "tv" ? 120 : nil, alignment: .leading).frame(minHeight: 44)
         }.libraryActionStyle(prominent: true).disabled(loading)
         #if !os(tvOS)
@@ -570,7 +586,7 @@ struct LibraryDetail: View {
                             HStack(spacing: 10) {
                                 ForEach(seasons, id: \.self) { number in
                                     Button(LocalizedStringKey(number == 0 ? "Specials" : "Season \(number)")) { season = number }
-                                        .libraryActionStyle(prominent: selectedSeason == number)
+                                        .libraryActionStyle(prominent: selectedSeason == number, compact: true)
                                         .accessibilityAddTraits(selectedSeason == number ? .isSelected : [])
                                 }
                             }.padding(.vertical, 4)
@@ -614,9 +630,9 @@ struct LibraryDetail: View {
         HStack(spacing: 8) {
             Button { play(asset, title: title.title) } label: {
                 HStack(spacing: 12) {
-                    Image(systemName: "play.circle.fill").font(.title).foregroundStyle(Theme.mint)
+                    Image(systemName: "play.circle.fill").font(.title).foregroundStyle(Theme.accent)
                     VStack(alignment: .leading, spacing: 5) {
-                        if let s = asset.season, let e = asset.episode { Text("S\(s) · E\(e)").font(.caption).foregroundStyle(Theme.muted) }
+                        if asset.season != nil, let e = asset.episode { Text("Episode \(e)").font(.caption).foregroundStyle(Theme.muted) }
                         Text(asset.name ?? title.title).font(.headline)
                         if !asset.summary.isEmpty { Text(asset.summary).font(.caption).lineLimit(2).foregroundStyle(Theme.muted) }
                         if asset.duration > 0 && !asset.watched { ProgressView(value: min(1, asset.position / asset.duration)) }
@@ -627,7 +643,7 @@ struct LibraryDetail: View {
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain).disabled(loading)
             LibraryEpisodeActions(asset: asset, title: title)
-        }.padding(14).background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
+        }.padding(14).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
     }
     func play(_ asset: LibraryAsset, title: String) {
         guard !loading, store.canPlay(asset) else { return }
@@ -683,25 +699,27 @@ struct WatchedBadge: View {
 // Shared geometry for every library detail action on Mac, iPhone and iPad.
 private struct LibraryActionButtonStyle: ButtonStyle {
     var prominent = false
+    /// Secondary actions and season tabs are quieter than the main Play/Download row.
+    var compact = false
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.headline)
-            .padding(.horizontal, 20)
-            .frame(minHeight: 48)
-            .foregroundStyle(prominent ? Theme.onAccent : Color.primary)
-            .background(prominent ? Theme.mint : Theme.panel, in: RoundedRectangle(cornerRadius: 10))
-            .brightness(configuration.isPressed ? 0.08 : 0)
-            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .font(compact ? .subheadline.weight(.semibold) : .headline)
+            .padding(.horizontal, compact ? 14 : 20)
+            .frame(minHeight: compact ? 36 : 48)
+            .foregroundStyle(prominent ? Theme.onAccent : Color.white)
+            .background(prominent ? Theme.accent : Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius))
+            .opacity(enabled ? (configuration.isPressed ? 0.7 : 1) : 0.45)
+            .contentShape(RoundedRectangle(cornerRadius: Theme.radius))
     }
 }
 
 extension View {
-    @ViewBuilder func libraryActionStyle(prominent: Bool = false) -> some View {
+    @ViewBuilder func libraryActionStyle(prominent: Bool = false, compact: Bool = false) -> some View {
         #if os(tvOS)
         self.buttonStyle(.bordered)
         #else
-        self.buttonStyle(LibraryActionButtonStyle(prominent: prominent))
+        self.buttonStyle(LibraryActionButtonStyle(prominent: prominent, compact: compact))
         #endif
     }
 }
@@ -715,7 +733,7 @@ struct LibraryAssetActions: View {
     @State private var saving = false
     var body: some View {
         LibraryActionFlow(spacing: 10) { actions }
-            .font(.subheadline).libraryActionStyle()
+            .font(.subheadline).libraryActionStyle(compact: true)
     }
     @ViewBuilder private var actions: some View {
         Group {
@@ -770,7 +788,7 @@ struct LibraryEpisodeActions: View {
             }.disabled(saving || !store.connected)
                 .accessibilityLabel(asset.watched ? "Mark as unwatched" : "Mark as watched")
                 .help(asset.watched ? "Mark as unwatched" : "Mark as watched")
-        }.buttonStyle(.borderless).foregroundStyle(Theme.mint)
+        }.buttonStyle(.borderless).foregroundStyle(Theme.accent)
     }
 }
 
@@ -791,7 +809,7 @@ struct LibraryOperationStatus: View {
                     Text("The server will retry automatically.").font(.caption).foregroundStyle(Theme.muted)
                 }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(20)
-                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
                 #if os(tvOS)
                 .focusable()
                 #endif
@@ -854,26 +872,26 @@ struct LibraryFileManagement: View {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(preview.assets) { asset in
                             HStack(spacing: 12) {
-                                Image(systemName: "film").foregroundStyle(Theme.mint)
+                                Image(systemName: "film").foregroundStyle(Theme.accent)
                                 Text(asset.label).font(.subheadline).lineLimit(3)
                                 Spacer(minLength: 0)
                             }.padding(16)
                             if asset.id != preview.assets.last?.id { Divider().padding(.leading, 48) }
                         }
-                    }.background(Theme.panel, in: RoundedRectangle(cornerRadius: 16))
+                    }.background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
                     Text("Personal watch history and downloaded copies on other devices are kept.").foregroundStyle(.secondary)
                     ForEach(preview.blockedReasons, id: \.self) { Text($0).foregroundStyle(.red) }
                     if preview.blockedReasons.isEmpty {
                         if preview.allowedActions.contains("junk") {
                             Button { pendingAction = "junk" } label: {
                                 Label("Move to Junk", systemImage: "archivebox").frame(maxWidth: .infinity).padding(10)
-                            }.buttonStyle(.bordered).disabled(submitting)
+                            }.buttonStyle(MonoButtonStyle()).disabled(submitting)
                             Text("Finishes seeding, then deletes the files.").font(.caption).foregroundStyle(Theme.muted)
                         }
                         if preview.allowedActions.contains("delete") {
                             Button(role: .destructive) { pendingAction = "delete" } label: {
                                 Label("Delete Permanently", systemImage: "trash").frame(maxWidth: .infinity).padding(10)
-                            }.buttonStyle(.bordered).disabled(submitting)
+                            }.buttonStyle(MonoButtonStyle()).disabled(submitting)
                         }
                     }
                     if submitting { ProgressView("Submitting…") }
@@ -1023,7 +1041,7 @@ struct ContinueWatchingUndoBanner: View {
                 Button("Undo") { Task { await store.setContinueWatchingHidden(undo.id, hidden: false) } }
                 Button { store.continueWatchingUndo = nil } label: { Image(systemName: "xmark") }
                     .accessibilityLabel("Dismiss")
-            }.padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14)).padding()
+            }.padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10)).padding()
                 .task(id: undo.id) {
                     do { try await Task.sleep(for: .seconds(10)) } catch { return }
                     if store.continueWatchingUndo?.id == undo.id { store.continueWatchingUndo = nil }

@@ -340,20 +340,20 @@ struct TorrentSearchView: View {
             Picker("Search region", selection: $market) {
                 Text("World").tag("world")
                 Text("China").tag("china")
-            }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 320)
+            }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 320).frame(maxWidth: .infinity, alignment: .leading)
                 .onChange(of: market) {
                     work?.cancel(); searching = false; response = nil; selectedID = nil; error = nil; source = "all"
                     if query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 { search() }
                 }
             HStack(spacing: 12) {
-                Image(systemName: "magnifyingglass").foregroundStyle(Theme.mint)
+                Image(systemName: "magnifyingglass").foregroundStyle(Theme.accent)
                 searchField
                     .focused($searchFocused)
                     .onSubmit(search).autocorrectionDisabled().textFieldStyle(.plain)
                 Button(action: search) { Text(LocalizedStringKey(searching ? "Searching…" : "Search")) }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(MonoButtonStyle(prominent: true))
                     .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || searching)
-            }.padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 14))
+            }.padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
             ViewThatFits(in: .horizontal) {
                 HStack { sourcePicker; resolutionPicker; Spacer(); searchStatus }
                 VStack(alignment: .leading, spacing: 6) {
@@ -490,7 +490,7 @@ struct TorrentSearchView: View {
             #else
             ordinaryRow(item, inline: inline)
             #endif
-        }.listStyle(.plain).disabled(searching)
+        }.listStyle(.plain).canvasBackground().disabled(searching)
     }
     @ViewBuilder private func ordinaryRow(_ item: TorrentSearchItem, inline: Bool) -> some View {
             if item.sources.contains(where: { $0.provider == "1lou" }) {
@@ -498,7 +498,7 @@ struct TorrentSearchView: View {
             } else if inline {
                 Button { selectedID = item.id } label: { TorrentSearchRow(item: item, ownership: ownership(item), artworkYear: artworkYear(item)) }
                     .buttonStyle(.plain)
-                    .listRowBackground(selectedID == item.id ? Theme.mint.opacity(0.13) : Color.clear)
+                    .listRowBackground(selectedID == item.id ? Theme.accent.opacity(0.13) : Color.clear)
                     .accessibilityAddTraits(selectedID == item.id ? .isSelected : [])
             } else {
                 NavigationLink { TorrentSearchDetail(item: item, onAdded: { prepareNextSearch = true }).id(item.id) } label: { TorrentSearchRow(item: item, ownership: ownership(item), artworkYear: artworkYear(item)) }
@@ -671,10 +671,10 @@ private struct TorrentSearchRow: View {
                 if !displayedSize.isEmpty || item.seeders != nil {
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                         if !displayedSize.isEmpty {
-                            Text(verbatim: displayedSize).foregroundStyle(Theme.mint)
+                            Text(verbatim: displayedSize).foregroundStyle(Theme.accent)
                         }
                         if item.seeders != nil {
-                            Text(item.availability).foregroundStyle(item.seeders == 0 ? Color.orange : Theme.mint)
+                            Text(item.availability).foregroundStyle(item.seeders == 0 ? Color.orange : Theme.accent)
                         }
                     }
                     .font(.headline).monospacedDigit()
@@ -683,7 +683,7 @@ private struct TorrentSearchRow: View {
                 if !metadata.isEmpty { Text(metadata).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
                 if !tracks.isEmpty { Text(tracks).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
                 if let ownership {
-                    Label(LocalizedStringKey(ownership), systemImage: "checkmark.circle.fill").font(.caption.weight(.semibold)).foregroundStyle(Theme.mint)
+                    Label(LocalizedStringKey(ownership), systemImage: "checkmark.circle.fill").font(.caption.weight(.semibold)).foregroundStyle(Theme.accent)
                 }
                 if let addError { Text(addError).font(.caption).foregroundStyle(.orange) }
             }
@@ -703,12 +703,12 @@ private struct TorrentSearchRow: View {
             } else if isBT {
                 Spacer(minLength: 8)
                 if adding { ProgressView().controlSize(.small) }
-                else if added { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.mint).accessibilityLabel("Added") }
+                else if added { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent).accessibilityLabel("Added") }
                 else if btChoices.count == 1, let choice = btChoices.first {
-                    Button("Add torrent") { Task { await addBT(choice) } }.buttonStyle(.borderedProminent)
+                    Button("Add torrent") { Task { await addBT(choice) } }.buttonStyle(MonoButtonStyle(prominent: true))
                 } else if btChoices.count > 1 {
                     Menu("Add torrent") { ForEach(btChoices) { choice in Button(choice.name) { Task { await addBT(choice) } } } }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(MonoButtonStyle(prominent: true))
                 }
                 Button { showBTDetails=true } label: { Image(systemName:"info.circle") }
                     .buttonStyle(.borderless).accessibilityLabel("Torrent details")
@@ -781,7 +781,7 @@ private struct TorrentSearchDetail: View {
                 Text(item.title).font(.title2.bold()).searchSelectable
                 if !item.edition.isEmpty { Text(item.edition).foregroundStyle(.secondary) }
                 Text([item.quality, displayedSize].filter { !$0.isEmpty }.joined(separator: " · ")).font(.subheadline).foregroundStyle(.secondary)
-                if item.seeders != nil { Label(item.availability, systemImage: "arrow.up.circle.fill").font(.subheadline).foregroundStyle(Theme.mint) }
+                if item.seeders != nil { Label(item.availability, systemImage: "arrow.up.circle.fill").font(.subheadline).foregroundStyle(Theme.accent) }
                 Text(item.name).font(.caption).foregroundStyle(.secondary).searchSelectable
                 if let releases = detail?.releases, releases.count > 1 {
                     Picker("Release", selection: $attachment) {
@@ -799,7 +799,7 @@ private struct TorrentSearchDetail: View {
                 Toggle("Add paused", isOn: $paused).disabled(adding || added)
                 Button { Task { await add() } } label: {
                     Label(LocalizedStringKey(added ? "Added to Transmission" : adding ? "Adding…" : "Add torrent"), systemImage: added ? "checkmark.circle.fill" : "plus.circle.fill")
-                }.buttonStyle(.borderedProminent).disabled(adding || added)
+                }.buttonStyle(MonoButtonStyle(prominent: true)).disabled(adding || added)
                 if let message { Text(L10n.text(message)).foregroundStyle(.secondary) }
             }
             if !isBTListing && !item.hints.summary.isEmpty {
