@@ -70,10 +70,12 @@ pub async fn process(s:&Service, asset:&Value)->Result<()> {
         if crate::container::is_matroska(&input) {
             let job=s.virtual_media.prepare_analysis(id,input.clone())?;
             if job["state"]!="ready" {
-                if job["state"]=="failed" {
-                    let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
-                    save(&db,id,&revision,&json!({"state":"failed","error":job["error"]}))?;
-                }
+                // While the index builds, replace any earlier result: otherwise the
+                // queue re-reports a stale failure (e.g. from an older build that
+                // rejected the audio) instead of waiting for the rebuild.
+                let document=if job["state"]=="failed" {json!({"state":"failed","error":job["error"]})}else{json!({"state":"deferred"})};
+                let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+                save(&db,id,&revision,&document)?;
                 return Ok(());
             }
             reader=Some(s.virtual_media.analysis_reader(job["id"].as_str().context("Missing index")?,id,&input).await?);
