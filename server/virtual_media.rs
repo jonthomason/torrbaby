@@ -37,7 +37,7 @@ const PREPARATION_VERSION: u32 = 5;
 const LAYOUT_VERSION: u32 = 3;
 /// Disk budget for virtual-media indexes. Layout changes make every MKV rebuild
 /// once while older indexes still serve existing jobs, so leave ample headroom.
-const INDEX_BUDGET: u64 = 8 * 1024 * 1024 * 1024;
+const INDEX_BUDGET: u64 = 24 * 1024 * 1024 * 1024;
 fn playback_refusal(j: &Job) -> Option<String> {
     // Same wording as the remux failure these titles reported before.
     j.missing_audio.as_ref().map(|codec| format!("Remux codec not implemented yet: {codec}"))
