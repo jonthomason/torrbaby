@@ -529,6 +529,7 @@ final class L10n {
     IDS.put("Start trial", R.string.ui_3876de26de77);
     IDS.put("Startup diagnostics", R.string.ui_b1bfaa46b94a);
     IDS.put("Startup timings", R.string.ui_cd7984197a67);
+    IDS.put("Status", R.string.ui_bae7d5be7082);
     IDS.put("Status unavailable", R.string.ui_f261ff7629df);
     IDS.put("Stay", R.string.ui_ae768f766f75);
     IDS.put("Stereo", R.string.ui_f4f390b6d363);
@@ -640,6 +641,7 @@ final class L10n {
     IDS.put("Verify files", R.string.ui_d1f2c4d8c84b);
     IDS.put("Verify files?", R.string.ui_6f7d05c24127);
     IDS.put("Verifying", R.string.ui_536244f4cc64);
+    IDS.put("Version", R.string.ui_2da600bf9404);
     IDS.put("Video", R.string.ui_bc17c1f0179a);
     IDS.put("View source", R.string.ui_31a7604a3c74);
     IDS.put("Voice Transcribed", R.string.ui_f22eadf74236);

@@ -103,7 +103,6 @@ struct TVRootView: View {
     @EnvironmentObject var store: Store
     @Environment(\.scenePhase) var phase
     @State private var settings = false
-    @State private var showSubtitles = false
     @State private var section = "Home"
     @State private var path = NavigationPath()
     @State private var pendingShelfURL: URL?
@@ -130,19 +129,7 @@ struct TVRootView: View {
                     case "TV Shows": TVLibraryView(kind: "tv")
                     case "Torrents": TVTorrentView()
                     case "Search": TVSearchView()
-                    case "Settings":
-                        ScrollView {
-                            VStack(spacing: 30) {
-                                Text("Torrbaby").font(.largeTitle.bold())
-                                Text(AppRelease.description).font(.headline).monospacedDigit().foregroundStyle(.secondary)
-                                Label(LocalizedStringKey(store.connected ? "Connected" : "Offline"), systemImage: store.connected ? "checkmark.circle" : "wifi.slash")
-                                NavigationLink { TorrentSearchView() } label: { Label("Find torrents", systemImage: "magnifyingglass") }
-                                Button("Default subtitles") { showSubtitles = true }
-                                    .sheet(isPresented: $showSubtitles) { LocalizedInterface { SubtitlePreferencesView() } }
-                                BackgroundSubtitlesView().frame(maxWidth: 850)
-                                Button("Connection settings") { settings = true }
-                            }.padding(40)
-                        }
+                    case "Settings": TVSettingsView(connection: { settings = true })
                     default: TVLibraryView(kind: nil).id(homeReset)
                     }
                 }
@@ -208,6 +195,54 @@ struct TVRootView: View {
         let sameProfile = query.first(where: { $0.name == "profile" })?.value == store.activeProfile?.id
         let play = sameProfile && query.first(where: { $0.name == "action" })?.value == "play"
         settings = false; path = NavigationPath(); path.append(TVShelfDestination(id: id, play: play))
+    }
+}
+
+/// Settings in the system's own form: the app's mark on the left, a grouped list on the right.
+private struct TVSettingsView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    let connection: () -> Void
+    @State private var showSubtitles = false
+    var body: some View {
+        HStack(alignment: .center, spacing: 0) {
+            VStack(spacing: 22) {
+                Image("TorrbabyLogo").resizable().scaledToFit().frame(width: 300, height: 300)
+                    .clipShape(RoundedRectangle(cornerRadius: 56))
+                Text(verbatim: "Torrbaby").font(.title2.bold())
+            }.frame(maxWidth: .infinity)
+            List {
+                SwiftUI.Section("Library") {
+                    NavigationLink { TorrentSearchView() } label: { Text("Find torrents") }
+                }
+                SwiftUI.Section {
+                    Button { showSubtitles = true } label: { Text("Default subtitles") }
+                    if let status = store.status {
+                        Toggle("Process library automatically", isOn: Binding(
+                            get: { status.settings.backgroundSubtitles ?? true },
+                            set: { enabled in store.perform { try await store.send("PATCH", "/v1/settings", body: ["background_subtitles": enabled]) } }
+                        )).disabled(store.busy)
+                    }
+                } header: { Text("Subtitles") } footer: {
+                    if let preparation = store.status?.subtitlePreparation {
+                        let working = preparation.current.flatMap { job in
+                            store.library?.titles.flatMap(\.assets).first { $0.id == job.assetId }?.name
+                                .map { name in job.totalCues > 0 ? "\(name) · \(Int(Double(job.completedCues) / Double(job.totalCues) * 100))%" : name }
+                        }
+                        Text(verbatim: [L10n.format("%lld processed · %lld scanned", preparation.translated, preparation.scanned), working ?? ""]
+                            .filter { !$0.isEmpty }.joined(separator: "\n"))
+                    }
+                }
+                SwiftUI.Section("Server") {
+                    LabeledContent { Text(LocalizedStringKey(store.connected ? "Connected" : "Offline")) } label: { Text("Status") }
+                    Button(action: connection) { Text("Connection settings") }
+                }
+                SwiftUI.Section("About") {
+                    LabeledContent { Text(verbatim: AppRelease.description.replacingOccurrences(of: "Version ", with: "")).monospacedDigit() } label: { Text("Version") }
+                }
+            }.listStyle(.grouped).frame(maxWidth: 900)
+        }.padding(.horizontal, 60)
+        .sheet(isPresented: $showSubtitles) { LocalizedInterface { SubtitlePreferencesView() } }
     }
 }
 
