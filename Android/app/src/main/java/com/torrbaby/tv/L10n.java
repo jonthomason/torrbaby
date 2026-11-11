@@ -91,6 +91,7 @@ final class L10n {
     IDS.put("Choose a user before starting playback.", R.string.ui_0acf0708ca28);
     IDS.put("Choose the right title", R.string.ui_0772fa16aa51);
     IDS.put("Choose your server", R.string.ui_82be318f7bae);
+    IDS.put("Clear", R.string.ui_719ea396ad92);
     IDS.put("Clear filters", R.string.ui_412226715c56);
     IDS.put("Clear selection", R.string.ui_247fd63183c7);
     IDS.put("Click to prioritize this title in the processing queue", R.string.ui_ba29ddeac7e6);

@@ -80,6 +80,7 @@
     <string name="ui_0acf0708ca28" formatted="false">开始播放前请选择用户。</string>
     <string name="ui_0772fa16aa51" formatted="false">选择正确的影片</string>
     <string name="ui_82be318f7bae" formatted="false">选择服务器</string>
+    <string name="ui_719ea396ad92" formatted="false">清除</string>
     <string name="ui_412226715c56" formatted="false">清除筛选</string>
     <string name="ui_247fd63183c7" formatted="false">清空选择</string>
     <string name="ui_ba29ddeac7e6" formatted="false">点击优先处理此影片或剧集</string>

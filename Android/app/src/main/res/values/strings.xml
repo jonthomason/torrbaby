@@ -80,6 +80,7 @@
     <string name="ui_0acf0708ca28" formatted="false">Choose a user before starting playback.</string>
     <string name="ui_0772fa16aa51" formatted="false">Choose the right title</string>
     <string name="ui_82be318f7bae" formatted="false">Choose your server</string>
+    <string name="ui_719ea396ad92" formatted="false">Clear</string>
     <string name="ui_412226715c56" formatted="false">Clear filters</string>
     <string name="ui_247fd63183c7" formatted="false">Clear selection</string>
     <string name="ui_ba29ddeac7e6" formatted="false">Click to prioritize this title in the processing queue</string>

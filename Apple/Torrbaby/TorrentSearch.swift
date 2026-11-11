@@ -134,6 +134,9 @@ private struct TorrentSearchDetails: Decodable {
 }
 
 struct TorrentSearchView: View {
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @State private var query: String
@@ -335,17 +338,51 @@ struct TorrentSearchView: View {
         return width >= 640
         #endif
     }
+    /// World or China, beside the search box. A narrow window keeps just the globe and flag.
+    private var regionSelector: some View {
+        HStack(spacing: 2) {
+            regionOption("world", name: "World") { Image(systemName: "globe") }
+            regionOption("china", name: "China") { Text(verbatim: "🇨🇳") }
+        }.padding(3).background(Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius))
+            .fixedSize()
+            .accessibilityElement(children: .contain).accessibilityLabel("Search region")
+    }
+    private func regionOption<Icon: View>(_ value: String, name: String, @ViewBuilder icon: () -> Icon) -> some View {
+        let selected = market == value
+        return Button { market = value } label: {
+            HStack(spacing: 6) {
+                icon()
+                if !compactRegion { Text(LocalizedStringKey(name)) }
+            }.font(.subheadline.weight(.semibold)).padding(.horizontal, 10).frame(minHeight: regionHeight)
+                .foregroundStyle(selected ? Theme.onAccent : Color.white)
+                .background(selected ? Theme.accent : .clear, in: RoundedRectangle(cornerRadius: 6))
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain)
+            .accessibilityLabel(LocalizedStringKey(name)).accessibilityAddTraits(selected ? .isSelected : [])
+    }
+    private var regionHeight: CGFloat {
+        #if os(tvOS)
+        56
+        #else
+        38
+        #endif
+    }
+    private var compactRegion: Bool {
+        #if os(iOS)
+        sizeClass == .compact
+        #else
+        false
+        #endif
+    }
     private var searchHeader: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Picker("Search region", selection: $market) {
-                Text("World").tag("world")
-                Text("China").tag("china")
-            }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 320).frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 10) {
+              regionSelector
                 .onChange(of: market) {
                     work?.cancel(); searching = false; response = nil; selectedID = nil; error = nil; source = "all"
                     if query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 { search() }
                 }
-            HStack(spacing: 12) {
+              HStack(spacing: 12) {
                 Image(systemName: "magnifyingglass").foregroundStyle(Theme.accent)
                 searchField
                     .focused($searchFocused)
@@ -353,7 +390,8 @@ struct TorrentSearchView: View {
                 Button(action: search) { Text(LocalizedStringKey(searching ? "Searching…" : "Search")) }
                     .buttonStyle(MonoButtonStyle(prominent: true))
                     .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || searching)
-            }.padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+              }.padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+            }
             ViewThatFits(in: .horizontal) {
                 HStack { sourcePicker; resolutionPicker; Spacer(); searchStatus }
                 VStack(alignment: .leading, spacing: 6) {

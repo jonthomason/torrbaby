@@ -381,8 +381,50 @@ struct LibraryBrowser: View {
         let shown = Set(homeShelves.flatMap { $0.items.prefix(8).map(\.id) })
         return titles.filter { !shown.contains($0.id) }
     }
+    private var genreMenu: some View {
+        Menu {
+            Picker("Genre", selection: $genre) {
+                Text("All genres").tag("All genres")
+                ForEach(genres, id: \.self) { Text($0).tag($0) }
+            }
+        } label: { Label(LocalizedStringKey(genre), systemImage: "line.3.horizontal.decrease") }
+            .accessibilityLabel("Genre")
+    }
+    private var sortMenu: some View {
+        Menu {
+            Picker("Sort", selection: $order) {
+                ForEach(["Recently added", "Release date", "Title"], id: \.self) { Text(LocalizedStringKey($0)).tag($0) }
+            }
+        } label: { Label(LocalizedStringKey(order), systemImage: "arrow.up.arrow.down") }
+            .accessibilityLabel("Sort")
+    }
+    #if os(iOS)
+    @State private var controlsTucked = false
+    /// Search, genre and sort sit above the first row and start scrolled out of view, so a
+    /// page opens on its artwork; pulling down reveals them, like the system search drawer.
+    private var pullDownControls: some View {
+        let field = HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").foregroundStyle(Theme.muted)
+            TextField("Search movies and TV shows", text: $search).textFieldStyle(.plain).autocorrectionDisabled()
+            if !search.isEmpty {
+                Button { search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.muted) }
+                    .buttonStyle(.plain).accessibilityLabel("Clear")
+            }
+        }.padding(.horizontal, 10).frame(height: 38).background(Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius))
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) { field.frame(minWidth: 260); genreMenu; sortMenu }
+            VStack(alignment: .leading, spacing: 8) { field; HStack(spacing: 10) { genreMenu; sortMenu; Spacer(minLength: 0) } }
+        }.buttonStyle(MonoButtonStyle())
+    }
+    #endif
     var body: some View {
+        ScrollViewReader { reader in
         ScrollView {
+          // The controls are outside the lazy stack so the opening offset is exact.
+          VStack(alignment: .leading, spacing: 0) {
+            #if os(iOS)
+            pullDownControls.padding(.horizontal, compactLibrary ? 12 : 24).padding(.top, 8).padding(.bottom, 4)
+            #endif
             LazyVStack(alignment: .leading, spacing: compactLibrary ? 18 : 28) {
                 if browsing, let featured = titles.homeHero {
                     NavigationLink(value: LibraryDestination(id: featured.id)) {
@@ -402,16 +444,9 @@ struct LibraryBrowser: View {
                         }.clipShape(RoundedRectangle(cornerRadius: 10))
                     }.buttonStyle(.plain)
                 }
-                if !titles.isEmpty { HStack(spacing: 12) {
-                    Picker("Genre", selection: $genre) {
-                        Text("All genres").tag("All genres")
-                        ForEach(genres, id: \.self) { Text($0).tag($0) }
-                    }.pickerStyle(.menu).fixedSize()
-                    Picker("Sort", selection: $order) {
-                        ForEach(["Recently added", "Release date", "Title"], id: \.self) { Text(LocalizedStringKey($0)).tag($0) }
-                    }.pickerStyle(.menu).fixedSize()
-                    Spacer(minLength: 0)
-                } }
+                #if !os(iOS)
+                if !titles.isEmpty { HStack(spacing: 10) { genreMenu; sortMenu; Spacer(minLength: 0) }.buttonStyle(MonoButtonStyle()).fixedSize(horizontal: false, vertical: true) }
+                #endif
                 if !store.offline, let error = store.libraryError ?? store.library?.error { Text(L10n.text(error)).font(.callout).foregroundStyle(.orange) }
                 if titles.isEmpty {
                     if store.offline {
@@ -442,16 +477,25 @@ struct LibraryBrowser: View {
                         ForEach(titles) { title in poster(title) }
                     }
                 }
-            }.padding(compactLibrary ? 12 : 24)
+            }.padding(compactLibrary ? 12 : 24).id("content")
+          }
         }.background(Theme.canvas)
+        #if os(iOS)
+        // Runs once the library has content to scroll, and not again when returning to the page.
+        .task(id: titles.isEmpty) {
+            guard !controlsTucked, !titles.isEmpty, search.isEmpty else { return }
+            try? await Task.sleep(for: .milliseconds(60))
+            reader.scrollTo("content", anchor: .top)
+            controlsTucked = true
+        }
+        #endif
+        }
         #if os(macOS)
         .toolbar {
             MacSearchToolbar(text: $search, focus: $searchFocused, prompt: "Search movies and TV shows")
         }
         .focusedSceneValue(\.searchContent, { searchFocused = true })
-        #elseif os(iOS)
-        .modifier(MobileLibrarySearch(text: $search, prompt: "Search movies and TV shows"))
-        #else
+        #elseif os(tvOS)
         .searchable(text: $search, prompt: "Search movies and TV shows")
         #endif
     }
