@@ -1518,15 +1518,16 @@ public class MainActivity extends Activity {
     LinearLayout body = Ui.column(this);
     Ui.pad(body, 45, 22);
     Ui.add(page, body, -1, -2);
-    mediaLanguages(body, t.preferred(), false);
-    Ui.gap(body, 18);
+    // What the title is about comes first; the file's technical details follow.
     if (!t.summary.isEmpty()) {
       TextView summary = Ui.text(this, t.summary, 14, Ui.TEXT);
       summary.setLineSpacing(Ui.dp(this, 3), 1);
       if (t.kind.equals("tv")) { summary.setMaxLines(3); summary.setEllipsize(android.text.TextUtils.TruncateAt.END); }
       Ui.add(body, summary, 650, -2);
-      Ui.gap(body, 24);
+      Ui.gap(body, 12);
     }
+    mediaLanguages(body, t.preferred(), false);
+    Ui.gap(body, 24);
     if(!t.kind.equals("tv"))detailActions(body,t);
     LinearLayout episodes=Ui.column(this);
     if (t.kind.equals("tv")) {

@@ -733,13 +733,16 @@ struct LibraryDetail: View {
                             }
                         }.foregroundStyle(.white).padding(16).frame(minHeight: 380, alignment: .bottomLeading)
                     }.clipShape(RoundedRectangle(cornerRadius: 12)).environment(\.colorScheme, .dark)
+                    // What the title is about comes first; the file's technical details follow.
+                    if !title.summary.isEmpty {
+                        Text(title.summary).font(.body).lineSpacing(5).frame(maxWidth: 900, alignment: .leading)
+                    }
                     if let asset = store.preferredLibraryAsset(title) {
                         LibraryAssetActions(asset: asset, showsDownload: false, castTitle: title)
                     }
                     if let asset = store.preferredLibraryAsset(title) {
                         MediaLanguagesView(info: asset.mediaInfo)
                     }
-                    Text(title.summary).font(.body).lineSpacing(5).frame(maxWidth: 900, alignment: .leading)
                     // Extras are their own tab after the last season, not a tail on every season.
                     let extras = title.assets.filter { $0.role == "extra" }.sorted { ($0.name ?? "").localizedStandardCompare($1.name ?? "") == .orderedAscending }
                     if title.kind == "tv" {
