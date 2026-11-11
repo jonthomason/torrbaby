@@ -11,7 +11,8 @@ use std::{path::{Path, PathBuf}, process::Stdio, time::Duration};
 /// Bump to transcribe again after a helper or segmentation change.
 /// 2: Matroska audio is copied to a local raw stream (AVFoundation cannot read
 /// audio from the loopback virtual MP4).
-const VERSION: u64 = 2;
+/// 3: cue text on one line, so translation sees whole sentences.
+const VERSION: u64 = 3;
 /// English speech measured 0.85 mean word confidence and ~45 words per minute
 /// of running time on feature films; Mandarin and Japanese audio forced through
 /// the English model measured 0.37–0.40 and under 5 words per minute.
@@ -40,6 +41,14 @@ fn key(asset: &str, revision: &str) -> String {
 /// Whether transcription already reached a verdict (transcript or rejection)
 /// for this file revision.
 pub fn decided(data: &Path, asset: &str, revision: &str) -> bool { record(data, asset, revision).is_file() }
+/// Assets with an accepted transcript of any version.
+pub fn transcribed_assets(data: &Path) -> std::collections::HashSet<String> {
+    let Ok(entries) = std::fs::read_dir(directory(data)) else { return Default::default() };
+    entries.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .filter_map(|e| serde_json::from_slice::<Value>(&std::fs::read(e.path()).ok()?).ok())
+        .filter(|record| record["state"] == "ready")
+        .filter_map(|record| record["asset_id"].as_str().map(str::to_owned)).collect()
+}
 pub(crate) fn record(data: &Path, asset: &str, revision: &str) -> PathBuf {
     directory(data).join(format!("{}.json", key(asset, revision)))
 }

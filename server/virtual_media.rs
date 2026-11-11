@@ -320,7 +320,9 @@ impl Manager {
                 || j.error.as_deref().is_some_and(|e|e.contains("No such file or directory"))
                 // Earlier builds rejected skewed constant video clocks with this text;
                 // irregular timing now fails with a different message, so this retries once.
-                || j.error.as_deref()==Some(crate::remux::LEGACY_VIDEO_TIMING);
+                || j.error.as_deref()==Some(crate::remux::LEGACY_VIDEO_TIMING)
+                // Dolby Atmos (E-AC-3 JOC) audio is supported since this build.
+                || j.error.as_deref()==Some("E-AC-3 additional/JOC signalling needs additional support");
             if j.state == "ready" {
                 // Mark a reused index as recently used before anyone reclaims space:
                 // otherwise a concurrent build can evict it between this check and

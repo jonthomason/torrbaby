@@ -79,8 +79,10 @@ final class AudioInput: AsyncSequence, @unchecked Sendable {
 
 struct Word { var text: String; let start: Double; var end: Double; let confidence: Double? }
 
-/// Subtitle-sized cues from timed words: at most two lines of about 42
-/// characters, at most 6 seconds, broken at pauses and sentence ends.
+/// Subtitle-sized cues from timed words: at most about two lines (84
+/// characters), at most 6 seconds, broken at pauses and sentence ends. Cue text
+/// stays on one line: players wrap it, and on-device translation translates
+/// each line separately, so a layout break would split the sentence.
 func cues(from words: [Word]) -> [TextCue] {
     var groups: [[Word]] = []
     var current: [Word] = []
@@ -117,26 +119,9 @@ func cues(from words: [Word]) -> [TextCue] {
         end = min(end, next - 0.05)
         if end <= start + 0.2 { end = min(group.last!.end, next) }
         guard end > start else { continue }
-        result.append(TextCue(start_ms: Int((start * 1000).rounded()), end_ms: Int((end * 1000).rounded()), text: lines(group.map(\.text))))
+        result.append(TextCue(start_ms: Int((start * 1000).rounded()), end_ms: Int((end * 1000).rounded()), text: group.map(\.text).joined(separator: " ")))
     }
     return result
-}
-
-/// One line if it fits, otherwise two lines balanced at a word boundary,
-/// preferring a break after punctuation.
-func lines(_ words: [String]) -> String {
-    let text = words.joined(separator: " ")
-    guard text.count > 42, words.count > 1 else { return text }
-    var best = 1; var bestScore = Int.max
-    for split in 1..<words.count {
-        let first = words[..<split].joined(separator: " ").count
-        let second = words[split...].joined(separator: " ").count
-        var score = abs(first - second)
-        if let mark = words[split - 1].last, ",.;:?!".contains(mark) { score -= 8 }
-        if max(first, second) > 46 { score += 100 }
-        if score < bestScore { bestScore = score; best = split }
-    }
-    return words[..<best].joined(separator: " ") + "\n" + words[best...].joined(separator: " ")
 }
 
 func transcribe(input: URL, output: URL, progress: URL) async throws {

@@ -41,8 +41,11 @@ pub(crate) fn reopen_outdated(db:&Database)->Result<usize> {
 /// Files settled with no subtitle source before speech transcription existed
 /// (or before it reached a verdict) reopen their subtitle stage once; the
 /// transcript record then keeps them settled.
+/// Titles transcribed by an older transcript version are redone the same way.
 pub(crate) fn reopen_untranscribed(db:&Database,data:&Path)->Result<usize> {
-    let rows=db.rows("SELECT asset_id,revision FROM media_processing WHERE subtitles_state='not_applicable' AND inventory_state='ready' AND state!='running'",[])?;
+    let transcribed=crate::speech_subtitles::transcribed_assets(data);
+    let rows=db.rows("SELECT asset_id,revision,subtitles_state FROM media_processing WHERE inventory_state='ready' AND state!='running' AND subtitles_state IN ('not_applicable','ready')",[])?;
+    let rows:Vec<_>=rows.into_iter().filter(|r|r["subtitles_state"]=="not_applicable" || r["asset_id"].as_str().is_some_and(|id|transcribed.contains(id))).collect();
     let mut reopened=0;
     for row in rows {
         let (Some(id),Some(revision))=(row["asset_id"].as_str(),row["revision"].as_str()) else{continue};
@@ -370,6 +373,12 @@ mod tests {
         db.connection.execute("UPDATE media_processing SET state='ready',subtitles_state='not_applicable' WHERE asset_id='silent'",[])?;
         std::fs::create_dir_all(crate::speech_subtitles::directory(&data))?;
         std::fs::write(crate::speech_subtitles::record(&data,"silent","r1"),r#"{"state":"rejected"}"#)?;
+        assert_eq!(reopen_untranscribed(&db,&data)?,0);
+        // A finished title transcribed by an older version is redone once.
+        std::fs::write(crate::speech_subtitles::directory(&data).join("old.json"),r#"{"state":"ready","asset_id":"subtitled"}"#)?;
+        assert_eq!(reopen_untranscribed(&db,&data)?,1);
+        std::fs::write(crate::speech_subtitles::record(&data,"subtitled","r1"),r#"{"state":"ready","asset_id":"subtitled"}"#)?;
+        db.connection.execute("UPDATE media_processing SET state='ready',subtitles_state='ready' WHERE asset_id='subtitled'",[])?;
         assert_eq!(reopen_untranscribed(&db,&data)?,0);
         std::fs::remove_dir_all(data)?;
         Ok(())
