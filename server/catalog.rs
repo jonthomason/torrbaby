@@ -167,6 +167,18 @@ impl Database {
                 })
                 .cloned()
                 .unwrap_or(json!({}));
+            // Specials (season 0) are extras: listed with the bonus material, never in the
+            // seasons or the next-episode flow. Release packs number specials differently
+            // from TMDB, so they keep the name from their file.
+            if kind == "tv" && asset["season"] == 0 {
+                title["assets"].as_array_mut().context("Invalid title assets")?.push(json!({
+                    "id":id,"media_info":crate::media_inventory::cached(self,id)?,"role":"extra","name":extra_name(asset),"season":null,"episode":null,
+                    "summary":"","thumbnail":null,"complete":asset["complete"],"size":asset["size"],"position":progress["position"].as_f64().unwrap_or(0.0),
+                    "duration":progress["duration"].as_f64().unwrap_or(0.0),"watched":progress["watched"].as_bool().unwrap_or(false),
+                    "last_played":progress["last_played"].as_f64().unwrap_or(0.0),"torrent_hash":asset["torrent_hash"]
+                }));
+                continue;
+            }
             title["assets"].as_array_mut().context("Invalid title assets")?.push(json!({
                 "id":id,"media_info":crate::media_inventory::cached(self,id)?,"role":"main","name":episode["title"].as_str().unwrap_or(if kind=="movie"{name}else{&fallback}),
                 "season":asset["season"],"episode":asset["episode"],"summary":episode["summary"].as_str().unwrap_or(""),
@@ -187,12 +199,7 @@ impl Database {
                 continue;
             };
             let id = asset["id"].as_str().context("Invalid extra ID")?;
-            let path = std::path::Path::new(asset["path"].as_str().unwrap_or(""));
-            let name = path
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .replace(['.', '_'], " ");
+            let name = extra_name(asset);
             let media = format!(
                 "{}:{}",
                 asset["torrent_hash"].as_str().unwrap_or(id),
@@ -287,6 +294,26 @@ impl Database {
     }
 }
 
+/// An extra's name from its file, without the series prefix, special number and
+/// release tags: `Show (2003) - S00E22 - The Plan (1080p BluRay x265)` is `The Plan`.
+/// A `display_name` on the asset (set by hand for a mislabelled file) wins.
+fn extra_name(asset: &Value) -> String {
+    if let Some(name) = asset["display_name"].as_str().filter(|n| !n.trim().is_empty()) {
+        return name.to_owned();
+    }
+    static NUMBER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)^.*?\bs\d{1,2}e\d{1,3}(?:-?e\d{1,3})*\s*-\s*").expect("valid regex")
+    });
+    static TAGS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\s*\((?:[^()]*\b(?:480p|576p|720p|1080p|2160p|bluray|web-?dl|webrip|hdtv|dvdrip)\b[^()]*)\)\s*$").expect("valid regex")
+    });
+    let stem = std::path::Path::new(asset["path"].as_str().unwrap_or(""))
+        .file_stem().unwrap_or_default().to_string_lossy().into_owned();
+    let spaced = if stem.contains(' ') { stem.clone() } else { stem.replace(['.', '_'], " ") };
+    let name = TAGS.replace(&NUMBER.replace(&spaced, ""), "").trim().to_owned();
+    if name.is_empty() { spaced } else { name }
+}
+
 #[cfg(test)]
 mod completion_tests {
     use super::*;
@@ -358,6 +385,36 @@ mod completion_tests {
         // Series still gather every download under one title.
         assert_eq!(files("show").map(|f| f.len()), Some(2));
         assert_eq!(titles.len(), 3);
+        Ok(())
+    }
+
+    #[test]
+    fn specials_are_extras_named_from_their_files() -> Result<()> {
+        let mut db = Database { connection: rusqlite::Connection::open_in_memory()? };
+        db.connection.execute_batch(include_str!("schema.sql"))?;
+        db.migrate_profiles(9)?;
+        db.connection.execute("INSERT INTO organizer_state VALUES(1, ?)", ["{}"])?;
+        db.connection.execute("INSERT INTO library_entities VALUES('show',?)",[r#"{"id":"show","kind":"tv","title":"Show",
+            "episodes":[{"season":0,"episode":22,"title":"Wrong TMDB Special"},{"season":1,"episode":1,"title":"Pilot"}]}"#])?;
+        let assets = [("plan", "/Media/Show (2003) - S00E22 - The Plan (1080p BluRay x265 Celdra).mkv", Some(0), None),
+            ("razor", "/Media/Show (2003) - S00E04-E05 - Razor (1080p BluRay x265 Celdra).mkv", Some(0), None),
+            ("mini", "/Media/Show (2003) - S00E01 - The Lowdown.mkv", Some(0), Some("The Miniseries (Part 1)")),
+            ("pilot", "/Media/Show (2003) - S01E01 - Pilot.mkv", Some(1), None)];
+        for (id, path, season, display) in assets {
+            let episode = if id == "plan" { 22 } else { 1 };
+            let asset = json!({"id":id,"available":true,"complete":true,"path":path,"entity_id":"show","display_name":display,
+                "status":"matched","library_ready":true,"torrent_hash":"hash","added_at":1.0,"season":season,"episode":episode});
+            db.connection.execute("INSERT INTO library_assets VALUES(?,?)", rusqlite::params![id, asset.to_string()])?;
+        }
+        let catalog = db.catalog(crate::profiles::LEGACY_PROFILE)?;
+        let files = catalog["titles"][0]["assets"].as_array().unwrap().clone();
+        let file = |id: &str| files.iter().find(|a| a["id"] == id).unwrap().clone();
+        assert_eq!((file("pilot")["role"].clone(), file("pilot")["name"].clone()), (json!("main"), json!("Pilot")));
+        for (id, name) in [("plan", "The Plan"), ("razor", "Razor"), ("mini", "The Miniseries (Part 1)")] {
+            assert_eq!(file(id)["role"], "extra", "{id}");
+            assert_eq!(file(id)["name"], name, "{id}");
+            assert!(file(id)["season"].is_null() && file(id)["episode"].is_null(), "{id}");
+        }
         Ok(())
     }
 }
