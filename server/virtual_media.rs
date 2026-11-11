@@ -107,6 +107,16 @@ impl Manager {
         let Ok(background)=self.background.lock() else {return true};
         pending.iter().any(|id|!background.contains(id))
     }
+    /// Whether a file's shared playback index is on disk. Building it reads the
+    /// whole file, so a missing index is what makes a first play slow.
+    pub fn indexed(&self, asset: &str, input: &Path) -> bool {
+        let Ok(revision) = crate::subtitle_jobs::revision(input) else { return false };
+        let job = Job {
+            id: String::new(), asset: asset.into(), input: input.into(), revision, state: String::new(), error: None,
+            preparation_version: PREPARATION_VERSION, captions: Vec::new(), missing_audio: None,
+        };
+        self.index_path(&job).is_ok_and(|path| path.is_dir())
+    }
     pub fn idle(&self) -> bool {
         self.pending.lock().is_ok_and(|p| p.is_empty())
             && self
@@ -523,6 +533,22 @@ mod cache_tests {
         manager.reclaim_indexes()?;
         assert!(!base.exists());
         assert!(manager.can_preindex());
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_reclaimed_index_reads_as_missing_until_rebuilt() -> Result<()> {
+        let root=std::env::temp_dir().join(format!("torrbaby-indexed-{}",uuid::Uuid::new_v4()));
+        let manager=Manager::new(&root)?;
+        let input=root.join("episode.mkv");
+        fs::write(&input,b"media")?;
+        assert!(!manager.indexed("asset-one",&input));
+        let job=Job{id:String::new(),asset:"asset-one".into(),input:input.clone(),revision:crate::subtitle_jobs::revision(&input)?,
+            state:String::new(),error:None,preparation_version:PREPARATION_VERSION,captions:Vec::new(),missing_audio:None};
+        fs::create_dir(manager.index_path(&job)?)?;
+        assert!(manager.indexed("asset-one",&input));
+        assert!(!manager.indexed("asset-two",&input));
         fs::remove_dir_all(root)?;
         Ok(())
     }

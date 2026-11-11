@@ -182,6 +182,7 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
     };
     let selected_ids:Vec<String>=selected.iter().filter_map(|a|a["id"].as_str().map(str::to_owned)).collect();
     s.subtitle_jobs.yield_assets(&excess,&selected_ids);
+    let idle={
     let mut flight=IN_FLIGHT.lock().map_err(|_|anyhow::anyhow!("Processing pool unavailable"))?;
     flight.retain(|id,handle|{
         if handle.is_finished() {return false;}
@@ -197,6 +198,46 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
             if let Err(error)=process_file(&service,asset).await {tracing::warn!(asset=task_id,%error,"Media processing failed");}
         });
         flight.insert(id,handle.abort_handle());
+    }
+    flight.is_empty()
+    };
+    if idle && limit>0 {warm_playback_index(s).await?;}
+    Ok(())
+}
+/// Files whose playback index was rebuilt (or tried) in this run, and when the
+/// last warm-up pass ran.
+static WARMED:std::sync::LazyLock<std::sync::Mutex<(std::collections::HashSet<String>,f64)>>=std::sync::LazyLock::new(Default::default);
+/// Processed Matroska files can lose their playback index to the cache's space
+/// reclaim, and then the next play waits while the whole file is re-read. While
+/// nothing else is running, rebuild one missing index at a time in queue order.
+async fn warm_playback_index(s:&Service)->Result<()> {
+    {let mut warmed=WARMED.lock().map_err(|_|anyhow::anyhow!("Processing pool unavailable"))?;
+        if now()-warmed.1<60.0 {return Ok(());}
+        warmed.1=now();}
+    if !s.virtual_media.idle() || !s.virtual_media.can_preindex() || playback_active(s)? {return Ok(());}
+    let candidates:Vec<Value>={
+        let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+        let busy:bool=db.connection.query_row("SELECT EXISTS(SELECT 1 FROM media_processing WHERE state='running')",[],|r|r.get(0))?;
+        if busy {return Ok(());}
+        let ready:std::collections::HashSet<String>=db.rows("SELECT asset_id FROM media_processing WHERE state='ready'",[])?
+            .iter().filter_map(|r|r["asset_id"].as_str().map(str::to_owned)).collect();
+        assets(&db)?.into_iter().filter(|a|a["role"]!="extra" && a["id"].as_str().is_some_and(|id|ready.contains(id))).collect()
+    };
+    for asset in candidates {
+        let Some(id)=asset["id"].as_str() else{continue};
+        let Some(path)=asset["path"].as_str() else{continue};
+        let path=Path::new(path);
+        let Ok(revision)=crate::subtitle_jobs::revision(path) else{continue};
+        let key=format!("{id}:{revision}");
+        if WARMED.lock().is_ok_and(|w|w.0.contains(&key)) || !crate::container::is_matroska(path) {continue;}
+        let Ok(input)=crate::api::media_file(s,id,0).await else{continue};
+        if s.virtual_media.indexed(id,&input) {continue;}
+        if let Ok(mut warmed)=WARMED.lock() {warmed.0.insert(key);}
+        match s.virtual_media.prepare_analysis(id,input) {
+            Ok(_)=>tracing::info!(asset=id,"Rebuilding a missing playback index"),
+            Err(error)=>tracing::warn!(asset=id,%error,"Playback index warm-up failed"),
+        }
+        return Ok(());
     }
     Ok(())
 }
