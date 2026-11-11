@@ -296,16 +296,15 @@ struct MediaLanguagesView: View {
                         + info.prepared.filter { !$0.generated && $0.state == "ready" }.map { originalName($0.language, sdh: $0.sdh == true) }
                     )).filter { !$0.isEmpty }.sorted()
                     let generated = info.prepared.filter { $0.generated && $0.state == "ready" && !name($0.language).isEmpty }
-                    HStack(spacing: 6) {
-                        if !original.isEmpty { Text(original.joined(separator: " · ")) }
-                        ForEach(Array(generated.enumerated()), id: \.element.id) { index, track in
-                            if !original.isEmpty || index > 0 { Text("·") }
-                            Text(SubtitleTrackName.text(language: track.language, kind: track.kind, sdh: track.sdh == true) ?? name(track.language))
-                            Image("TorrbabyLogo").resizable().frame(width: 18, height: 18)
-                                .clipShape(RoundedRectangle(cornerRadius: 3))
-                                .accessibilityLabel("Generated subtitles")
+                    if original.isEmpty && generated.isEmpty { Text("None") }
+                    else {
+                        // One flowing line of text, so generated tracks wrap with the rest instead of sitting beside it.
+                        generated.enumerated().reduce(Text(verbatim: original.joined(separator: " · "))) { line, entry in
+                            let label = SubtitleTrackName.text(language: entry.element.language, kind: entry.element.kind, sdh: entry.element.sdh == true) ?? name(entry.element.language)
+                            return line + Text(verbatim: (original.isEmpty && entry.offset == 0 ? "" : " · ") + label + " ") + Text(InlineLogo.image).baselineOffset(InlineLogo.baseline)
                         }
-                        if original.isEmpty && generated.isEmpty { Text("None") }
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel(Text(verbatim: (original + generated.map { SubtitleTrackName.text(language: $0.language, kind: $0.kind, sdh: $0.sdh == true) ?? name($0.language) }).joined(separator: ", ")))
                     }
                 }
             } else {
@@ -336,6 +335,34 @@ struct MediaLanguagesView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
+}
+
+/// The tb mark at text size, for use inside a line of text (marks subtitles Torrbaby generated).
+enum InlineLogo {
+    #if os(tvOS)
+    private static let side: CGFloat = 30
+    #else
+    private static let side: CGFloat = 16
+    #endif
+    static let baseline: CGFloat = -side * 0.16
+    static let image: Image = {
+        let size = CGSize(width: side, height: side)
+        #if os(macOS)
+        guard let source = NSImage(named: "TorrbabyLogo") else { return Image("TorrbabyLogo") }
+        let scaled = NSImage(size: size, flipped: false) { rect in
+            NSBezierPath(roundedRect: rect, xRadius: side / 6, yRadius: side / 6).addClip()
+            source.draw(in: rect); return true
+        }
+        return Image(nsImage: scaled)
+        #else
+        guard let source = UIImage(named: "TorrbabyLogo") else { return Image("TorrbabyLogo") }
+        let scaled = UIGraphicsImageRenderer(size: size).image { _ in
+            UIBezierPath(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: side / 6).addClip()
+            source.draw(in: CGRect(origin: .zero, size: size))
+        }
+        return Image(uiImage: scaled)
+        #endif
+    }()
 }
 
 struct LibraryArtwork: View {
