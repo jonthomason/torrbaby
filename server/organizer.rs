@@ -386,13 +386,18 @@ fn plan(config: &Config, t: &Value) -> Result<Option<Value>> {
 /// queued torrent starts. Transmission keeps the idle one connected and resumes it,
 /// without a slot, as soon as a peer turns up.
 const STALLED_MINUTES: u64 = 2;
+/// Torrents trickling in from a single slow peer are not stalled, and with a small
+/// queue they would still hold every slot ahead of a well-seeded newcomer. The limit
+/// is therefore generous: it only stops a very large batch from starting all at once.
+const DOWNLOAD_SLOTS: u64 = 50;
 static QUEUE_POLICY_SET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Tell Transmission, once per run, not to let torrents that are waiting for peers clog the queue.
 pub async fn apply_queue_policy(s: &Service) {
     use std::sync::atomic::Ordering;
     if QUEUE_POLICY_SET.load(Ordering::Relaxed) { return; }
-    if s.rpc.call("session_set", json!({"queue_stalled_enabled":true,"queue_stalled_minutes":STALLED_MINUTES})).await.is_ok() {
+    if s.rpc.call("session_set", json!({"queue_stalled_enabled":true,"queue_stalled_minutes":STALLED_MINUTES,
+        "download_queue_enabled":true,"download_queue_size":DOWNLOAD_SLOTS})).await.is_ok() {
         QUEUE_POLICY_SET.store(true, Ordering::Relaxed);
     }
 }
