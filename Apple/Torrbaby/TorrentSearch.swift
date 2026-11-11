@@ -96,6 +96,15 @@ struct TorrentSearchItem: Decodable, Identifiable {
         }
         return ""
     }
+    /// The group that made the release ("HHWEB"), from the end of its name; tells same-sized releases apart.
+    var releaseGroup: String {
+        var base = name
+        for suffix in [".mkv", ".mp4", ".avi"] where base.lowercased().hasSuffix(suffix) { base.removeLast(suffix.count) }
+        if let bracket = base.lastIndex(of: "["), base.hasSuffix("]") { base = String(base[..<bracket]) }
+        guard let dash = base.lastIndex(of: "-") else { return "" }
+        let group = base[base.index(after: dash)...].trimmingCharacters(in: .whitespaces)
+        return (2...16).contains(group.count) && group.allSatisfy({ $0.isLetter || $0.isNumber }) ? group : ""
+    }
     var edition: String { [scope, hints.year.map(String.init) ?? ""].filter { !$0.isEmpty }.joined(separator: " · ") }
     var quality: String { [hints.resolution, hints.releaseSource, hints.videoCodec].compactMap { $0 }.joined(separator: " · ") }
     var languages: String {
@@ -284,7 +293,14 @@ struct TorrentSearchView: View {
             if let status = ownership(item), owned[episode] != "In your library" { owned[episode] = status }
             options[episode, default: []].append(item)
         }
-        for episode in options.keys { options[episode]?.sort { ($0.seeders ?? 0) > ($1.seeders ?? 0) } }
+        for episode in options.keys {
+            options[episode]?.sort { ($0.seeders ?? 0) > ($1.seeders ?? 0) }
+            // The same release re-uploaded under another hash is not a different choice: keep its best-seeded copy.
+            var seen = Set<String>()
+            options[episode]?.removeAll { item in
+                !seen.insert("\((item.sizeBytes ?? 0) >> 24)|\(item.quality)|\(item.hints.audioLabel)|\(item.releaseGroup)").inserted
+            }
+        }
         // The best-seeded release leads, unless it is far larger than the season's usual
         // episode and a well-seeded release of ordinary size exists: one oversized remux
         // should not stand out from the rest of the season.
@@ -691,7 +707,7 @@ private struct EpisodeDownloaderSheet: View {
     @State private var chosen: [Int: TorrentSearchItem] = [:]
     private func release(_ pick: EpisodePick) -> TorrentSearchItem { chosen[pick.episode] ?? pick.item }
     private func summary(_ item: TorrentSearchItem) -> String {
-        [item.size, item.availability, item.quality, item.hints.audioLabel].filter { !$0.isEmpty }.joined(separator: " · ")
+        [item.size, item.availability, item.quality, item.hints.audioLabel, item.releaseGroup].filter { !$0.isEmpty }.joined(separator: " · ")
     }
     private var pending: [EpisodePick] { picks.filter { $0.owned == nil && !added.contains($0.episode) } }
     var body: some View {
@@ -701,7 +717,17 @@ private struct EpisodeDownloaderSheet: View {
                     ForEach(picks) { pick in row(pick) }
                 } header: {
                     HStack {
-                        Text(verbatim: show + " · " + L10n.format("Season %d", season)).font(.subheadline.weight(.semibold))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(verbatim: show + " · " + L10n.format("Season %d", season)).font(.subheadline.weight(.semibold))
+                            // What "Add all" will download, following any releases chosen below.
+                            if !pending.isEmpty {
+                                let total = pending.reduce(UInt64(0)) { $0 + (release($1).sizeBytes ?? 0) }
+                                Text(verbatim: [L10n.format("%d to add", pending.count),
+                                                total > 0 ? ByteCountFormatter.string(fromByteCount: Int64(clamping: total), countStyle: .file) : ""]
+                                    .filter { !$0.isEmpty }.joined(separator: " · "))
+                                    .font(.caption).monospacedDigit().foregroundStyle(Theme.muted)
+                            }
+                        }
                         Spacer()
                         Button(LocalizedStringKey(pending.isEmpty ? "Nothing to add" : "Add all")) { Task { for pick in pending { await add(pick) } } }
                             .buttonStyle(MonoButtonStyle(prominent: true, compact: true))
@@ -735,8 +761,11 @@ private struct EpisodeDownloaderSheet: View {
                             }
                         }
                     } label: {
-                        Label(L10n.format("Choose another (%d)", pick.alternatives.count), systemImage: "arrow.left.arrow.right").font(.caption.weight(.semibold))
-                    }.fixedSize()
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.left.arrow.right")
+                            Text(verbatim: L10n.format("Choose another (%d)", pick.alternatives.count))
+                        }.font(.caption.weight(.semibold)).foregroundStyle(Theme.accent).padding(.vertical, 4)
+                    }.menuStyle(.borderlessButton).fixedSize()
                 }
                 if let failure = failures[pick.episode] { Text(failure).font(.caption).foregroundStyle(.orange) }
             }

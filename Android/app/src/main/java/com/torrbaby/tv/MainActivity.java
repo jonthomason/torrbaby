@@ -972,11 +972,25 @@ public class MainActivity extends Activity {
     if (!section.equals("Search") || !query.isEmpty()) grid.requestFocus();
   }
 
+  /** Why a torrent needs the user: an error, a stall, or a finished download the library cannot file. */
+  private static String torrentIssue(JSONObject item) {
+    boolean complete = item.optDouble("percent_done", 0) >= 1;
+    if (item.optInt("error") != 0) return item.optString("error_string");
+    if (complete) return item.isNull("library_issue") || item.optString("library_issue").isEmpty() ? null : item.optString("library_issue");
+    int state = item.optInt("status");
+    if (state == 0) return null;
+    if (item.optBoolean("is_stalled")) return "Transmission reports this torrent as stalled";
+    long idle = System.currentTimeMillis() / 1000 - Math.max(item.optLong("added_date"), item.optLong("activity_date"));
+    if (state == 4 && item.optLong("rate_download") == 0 && idle > 300)
+      return item.optInt("peers_connected") == 0 ? "No peers and no activity for over 5 minutes" : "Peers connected, but no activity for over 5 minutes";
+    return null;
+  }
+
   private void torrentScreen() {
     torrentActions = new TorrentActions(this, api, io, this::fetchTorrents, this::torrentRemoved);
     Ui.pad(content, 35, 16);
     LinearLayout controls = Ui.row(this);
-    for (String category : new String[] {"Downloading", "Seeding", "Complete"}) {
+    for (String category : new String[] {"Downloading", "Seeding", "Complete", "Needs attention"}) {
       Button button =
           Ui.button(
               this,
@@ -1075,7 +1089,9 @@ public class MainActivity extends Activity {
       int state = item.optInt("status");
       JSONObject fileOperation = item.optJSONObject("file_operation");
       boolean junk = fileOperation != null && fileOperation.optString("action").equals("junk");
-      if (fileOperation != null ? !torrentCategory.equals("Seeding") : torrentCategory.equals("Downloading")
+      String issue = torrentIssue(item);
+      if (torrentCategory.equals("Needs attention")) { if (junk || issue == null) continue; }
+      else if (fileOperation != null ? !torrentCategory.equals("Seeding") : torrentCategory.equals("Downloading")
           ? complete
           : torrentCategory.equals("Seeding")
               ? (!complete || state != 6)
@@ -1098,6 +1114,10 @@ public class MainActivity extends Activity {
         String operationLabel = junk ? "Junk · delete after seeding" : "Deleting files…";
         Ui.add(row, Ui.text(this, operationError.isEmpty() ? operationLabel : operationLabel + " · " + operationError,
             14, operationError.isEmpty() ? Ui.ACCENT : 0xffffffff), -1, -2);
+        Ui.gap(row, 8);
+      }
+      if (torrentCategory.equals("Needs attention") && issue != null) {
+        Ui.add(row, Ui.text(this, L10n.t(issue), 14, 0xffffb74d), -1, -2);
         Ui.gap(row, 8);
       }
       long size = 0;

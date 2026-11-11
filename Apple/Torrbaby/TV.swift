@@ -673,6 +673,7 @@ private struct TVTorrentView: View {
     }
     private var torrents: [Torrent] {
         sortSelection.wrappedValue.ordered(store.torrents.filter {
+            if category == "Needs attention" { return !$0.isJunk && $0.needsAttention }
             if $0.fileOperation != nil { return category == "Seeding" }
             return category == "Downloading" ? !$0.completed : category == "Seeding" ? $0.completed && $0.status == 6 : $0.completed && $0.status != 6
         })
@@ -680,7 +681,7 @@ private struct TVTorrentView: View {
     var body: some View {
         VStack(spacing: 30) {
             Picker("Torrents", selection: $category) {
-                ForEach(["Downloading", "Seeding", "Complete"], id: \.self) { Text(LocalizedStringKey($0)).tag($0) }
+                ForEach(["Downloading", "Seeding", "Complete", "Needs attention"], id: \.self) { Text(LocalizedStringKey($0)).tag($0) }
             }.pickerStyle(.segmented).padding(.horizontal, 70)
             if let error = store.torrentError {
                 Text("Couldn’t refresh torrents: " + error).font(.caption).foregroundStyle(.orange).padding(.horizontal, 70)
@@ -694,6 +695,9 @@ private struct TVTorrentView: View {
                     ForEach(torrents) { torrent in
                         VStack(alignment: .leading, spacing: 18) {
                             Text(torrent.displayName).font(.headline).lineLimit(2)
+                            if category == "Needs attention", let issue = torrent.progressIssue {
+                                Text(L10n.text(issue)).font(.caption).foregroundStyle(.orange)
+                            }
                             if let operation = torrent.fileOperation {
                                 Text(LocalizedStringKey(operation.label)).font(.caption).foregroundStyle(operation.error == nil ? Color.secondary : Color.red)
                             }
