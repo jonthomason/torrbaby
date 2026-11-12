@@ -17,3 +17,5 @@
 - Never ask the user to disclose a keychain password. Publishing signed builds is authorized; use the existing signing setup without collecting or logging passwords. Physical iPhone/iPad installation remains separate from OTA publication.
 
 - Active shared-worktree release coordination: read local-state/credits-release-handoff.txt before publishing. The processing-queue session should record readiness in local-state/processing-release-ready.txt; the UI/release session owns the combined build publication.
+
+- Deploy the server only with scripts/deploy_server.sh, after scripts/build_server.sh has finished successfully. Never rsync or copy a bundle over the live "Torrbaby Server.app" by hand: a half-built bundle copied that way once left the server without its binary and down. The script verifies the bundle, uploads it beside the live one, swaps it in, checks that the server answers and puts the previous bundle back if it does not; scripts/deploy_server.sh --rollback restores the previous bundle. Do not deploy while a cloud download or other long job is running unless the user asks.
