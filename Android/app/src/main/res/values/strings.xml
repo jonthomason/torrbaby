@@ -91,6 +91,7 @@
     <string name="ui_77dfd2135f4d" formatted="false">Cancel</string>
     <string name="ui_67bb11d08df2" formatted="false">Cancel download</string>
     <string name="ui_87f8cd8360cc" formatted="false">Cancel trial</string>
+    <string name="ui_24f5f64bb24c" formatted="false">Can’t reach your library right now. Try again in a moment.</string>
     <string name="ui_fe5cb199d204" formatted="false">Can’t reach your server</string>
     <string name="ui_60745aef336b" formatted="false">Cast</string>
     <string name="ui_b4e2e1ffb3ed" formatted="false">Cellular</string>

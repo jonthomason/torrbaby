@@ -189,6 +189,12 @@ struct TVRootView: View {
         .alert(ActionAlert(store.actionError, fallbackTitle: "Couldn’t complete the request").title, isPresented: Binding(get: { store.actionError != nil }, set: { if !$0 { store.actionError = nil } })) {
             Button("OK") { store.actionError = nil }
         } message: { Text(ActionAlert(store.actionError, fallbackTitle: "Couldn’t complete the request").message) }
+        // The app tints controls white, and an alert's focused button is white: its title must not be.
+        .tint(nil)
+        #if targetEnvironment(simulator)
+        // Lets a simulator run show this alert without a remote, to check it can be read.
+        .task { if let text = ProcessInfo.processInfo.environment["TORRBABY_SHOW_ALERT"] { try? await Task.sleep(for: .seconds(4)); store.actionError = text } }
+        #endif
     }
     private func openShelfSelection() {
         guard let url = pendingShelfURL, url.scheme == "torrbaby", url.host == "library",

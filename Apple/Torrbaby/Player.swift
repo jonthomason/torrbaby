@@ -117,7 +117,7 @@ final class PlaybackModel: ObservableObject {
         // choosing a title and constructing the native player.
         guard url.isFileURL ? FileManager.default.fileExists(atPath: url.path) : store.canStream else {
             player.replaceCurrentItem(with: nil)
-            error = "This title isn’t downloaded. Reconnect to your library to play it."
+            error = Store.unreachable
             return
         }
         let item = AVPlayerItem(url: url)

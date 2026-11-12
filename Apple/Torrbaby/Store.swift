@@ -691,8 +691,18 @@ extension Store {
         guard canStream else {
             throw APIError(message: usingFallback && connected
                 ? "Streaming is unavailable on fallback. Download this title to watch it."
-                : "This title isn’t downloaded. Reconnect to your library to play it.")
+                : Self.unreachable)
         }
+    }
+    /// Why a title cannot play while the server is out of reach. An Apple TV keeps no
+    /// downloads, so there the only thing to say is that the library cannot be reached,
+    /// which is usually over in a moment (the server restarting).
+    static var unreachable: String {
+        #if os(tvOS)
+        "Can’t reach your library right now. Try again in a moment."
+        #else
+        "This title isn’t downloaded. Reconnect to your library to play it."
+        #endif
     }
     /// Request native virtual MP4 tracks without copying the audiovisual stream.
     func mediaPlaybackLink(asset: LibraryAsset, titleID: String, startSession: Bool = true, progress: @escaping (String) -> Void = { _ in }) async throws -> PlaybackLink {

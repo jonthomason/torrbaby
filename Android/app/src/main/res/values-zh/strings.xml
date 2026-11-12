@@ -91,6 +91,7 @@
     <string name="ui_77dfd2135f4d" formatted="false">取消</string>
     <string name="ui_67bb11d08df2" formatted="false">取消下载</string>
     <string name="ui_87f8cd8360cc" formatted="false">取消试下载</string>
+    <string name="ui_24f5f64bb24c" formatted="false">暂时无法连接到媒体库，请稍后再试。</string>
     <string name="ui_fe5cb199d204" formatted="false">无法连接到你的服务器</string>
     <string name="ui_60745aef336b" formatted="false">演员表</string>
     <string name="ui_b4e2e1ffb3ed" formatted="false">蜂窝网络</string>

@@ -199,14 +199,23 @@ impl Watcher {
         }
         let year = entity["year"].as_str().and_then(|y| y.parse::<u16>().ok());
         let mut queued = 0u64;
+        let mut searched = 0usize;
         for (season, episode) in targets.into_iter().flat_map(|(season, episodes)| episodes.into_iter().map(move |episode| (season, episode))).take(TORRENTS_PER_CHECK) {
             let query = crate::torrent_search::Query { market: crate::torrent_search::Market::World, query: title.to_owned(), year, season: Some(season as u16), episode: Some(episode as u16), sources: Vec::new() };
-            let Ok(result) = s.torrent_search.search(query).await else { continue };
+            // Searches are spaced, and one that fails is tried once more after a pause: sources
+            // refuse a burst of requests, and a refusal must not read as "no such episode yet".
+            if searched > 0 { tokio::time::sleep(std::time::Duration::from_secs(3)).await; }
+            searched += 1;
+            let result = match s.torrent_search.search(query.clone()).await {
+                Ok(result) if !result.items.is_empty() => Ok(result),
+                _ => { tokio::time::sleep(std::time::Duration::from_secs(20)).await; s.torrent_search.search(query).await }
+            };
+            let Ok(result) = result else { tracing::warn!(show = id, season, episode, "Episode search failed twice"); continue };
             // One episode, with seeds; 1080p when there is one, then the best seeded.
             let best = result.items.iter().filter(|item| !item.magnet.is_empty() && item.seeders.unwrap_or(0) > 0
                 && item.hints.season == Some(season as u16) && item.hints.episode == Some(episode as u16) && item.hints.episode_end.is_none() && item.hints.episode_count.is_none())
                 .max_by_key(|item| (item.hints.resolution.as_deref() == Some("1080p"), item.seeders.unwrap_or(0)));
-            let Some(best) = best else { continue };
+            let Some(best) = best else { tracing::info!(show = id, season, episode, "No seeded single-episode release found"); continue };
             if crate::organizer::add(s, &json!({"magnet": best.magnet})).await.is_ok() { queued += 1; }
         }
         Ok(queued)

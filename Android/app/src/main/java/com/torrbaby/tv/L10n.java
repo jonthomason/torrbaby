@@ -102,6 +102,7 @@ final class L10n {
     IDS.put("Cancel", R.string.ui_77dfd2135f4d);
     IDS.put("Cancel download", R.string.ui_67bb11d08df2);
     IDS.put("Cancel trial", R.string.ui_87f8cd8360cc);
+    IDS.put("Can’t reach your library right now. Try again in a moment.", R.string.ui_24f5f64bb24c);
     IDS.put("Can’t reach your server", R.string.ui_fe5cb199d204);
     IDS.put("Cast", R.string.ui_60745aef336b);
     IDS.put("Cellular", R.string.ui_b4e2e1ffb3ed);
