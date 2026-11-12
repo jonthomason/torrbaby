@@ -79,5 +79,12 @@ ref = '<BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="%s
 </Scheme>
 ''')
 info = {"TopShelfKeychainGroup": "$(AppIdentifierPrefix)org.torrbaby.tv", "LSMultipleInstancesProhibited": True, "NSBonjourServices": ["_torrbaby._tcp"], "CFBundleURLTypes": [{"CFBundleURLName": "org.torrbaby.magnet", "CFBundleURLSchemes": ["magnet", "torrbaby"], "CFBundleTypeRole": "Viewer"}], "CFBundleDisplayName": "Torrbaby", "CFBundleName": "$(PRODUCT_NAME)", "CFBundleIdentifier": "$(PRODUCT_BUNDLE_IDENTIFIER)", "CFBundleExecutable": "$(EXECUTABLE_NAME)", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "$(MARKETING_VERSION)", "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)", "LSApplicationCategoryType": "public.app-category.utilities", "NSAppTransportSecurity": {"NSAllowsArbitraryLoads": True}, "NSCameraUsageDescription": "Scan a connection code from a linked Torrbaby device.", "NSLocalNetworkUsageDescription": "Connect to your Torrbaby server and stream your own media.", "UILaunchScreen": {}, "UIBackgroundModes": ["audio", "fetch", "processing"], "BGTaskSchedulerPermittedIdentifiers": ["com.jonthomason.torrbaby.episodes.refresh", "com.jonthomason.torrbaby.episodes.overnight"], "UIApplicationSceneManifest": {"UIApplicationSupportsMultipleScenes": True}, "UISupportedInterfaceOrientations": ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"], "NSHumanReadableCopyright": "Copyright © 2026 Jon Thomason. MIT License."}
+# Keys added to Info.plist by hand (document types, exported types and the like) are kept:
+# the generator sets its own keys and leaves the rest as they are. Writing only its own
+# keys once dropped the AirDrop download type and the iPad's orientations from a build.
+plist_path = root / "Torrbaby/Info.plist"
+if plist_path.exists():
+    with plist_path.open("rb") as f:
+        info = {**plistlib.load(f), **info}
 with (root / "Torrbaby/Info.plist").open("wb") as f:
     plistlib.dump(info, f)
