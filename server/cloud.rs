@@ -84,6 +84,8 @@ pub struct Cloud {
     probes: Mutex<HashMap<String, Value>>,
     /// One copy is read at a time: each read briefly saves a video to the member's drive.
     probing: tokio::sync::Mutex<()>,
+    /// Asks for the library to be scanned; several asks while one scan runs make one more scan.
+    rescan: tokio::sync::Notify,
     /// Torrents waiting to be removed because better copies of their episodes arrived, by hash; kept on disk.
     superseded_file: PathBuf,
     superseded: Mutex<HashMap<String, Superseded>>,
@@ -334,6 +336,7 @@ impl Cloud {
             probing: tokio::sync::Mutex::new(()),
             superseded: Mutex::new(std::fs::read(data.join("cloud-superseded.json")).ok().and_then(|raw| serde_json::from_slice(&raw).ok()).unwrap_or_default()),
             superseded_file: data.join("cloud-superseded.json"),
+            rescan: tokio::sync::Notify::new(),
         })
     }
     fn cookie(&self) -> Option<String> {
@@ -830,6 +833,8 @@ impl Cloud {
         for file in job.files.iter().filter(|f| !f.done) {
             for i in 0..CONNECTIONS { let _ = tokio::fs::remove_file(format!("{}.part{i:02}", file.destination.display())).await; }
             let _ = tokio::fs::remove_file(format!("{}.joining", file.destination.display())).await;
+            let _ = tokio::fs::remove_file(format!("{}.partial", file.destination.display())).await;
+            let _ = tokio::fs::remove_file(format!("{}.progress", file.destination.display())).await;
         }
         // A folder made for this job and still empty goes too; one holding episodes stays.
         if let Some(folder) = job.files.first().and_then(|f| f.destination.parent()) { let _ = tokio::fs::remove_dir(folder).await; }
@@ -847,56 +852,76 @@ impl Cloud {
         let made = self.call("/file", &[], Some(json!({"pdir_fid": parent, "file_name": name, "dir_path": "", "dir_init_lock": false})), Some(cookie), false).await?;
         made["data"]["fid"].as_str().map(str::to_owned).context("Quark did not create the folder")
     }
-    /// Fetch one file in parallel ranges. Parts are kept between attempts, so a retry continues.
+    /// Fetch one file over several connections, each writing its own stretch straight
+    /// into the file at its place: nothing is stitched together afterwards. The file is
+    /// kept under a working name until it is whole. How far each stretch has come is
+    /// noted beside it every few seconds, after the data is safely on disk, so a restart
+    /// or a retry carries on from there.
     async fn fetch(&self, cookie: &str, fid: &str, size: u64, destination: &Path) -> Result<()> {
-        use tokio::io::AsyncWriteExt;
+        use tokio::io::{AsyncSeekExt, AsyncWriteExt};
         let link = self.call("/file/download", &[], Some(json!({"fids": [fid]})), Some(cookie), true).await?;
         let url = link["data"][0]["download_url"].as_str().context("Quark gave no download link")?.to_owned();
         let parent = destination.parent().context("Invalid destination")?;
         tokio::fs::create_dir_all(parent).await?;
+        // Pieces left by the earlier way of downloading are of no use to this one.
+        for i in 0..CONNECTIONS { let _ = tokio::fs::remove_file(format!("{}.part{i:02}", destination.display())).await; }
+        let _ = tokio::fs::remove_file(format!("{}.joining", destination.display())).await;
+        let (working, notes) = (PathBuf::from(format!("{}.partial", destination.display())), PathBuf::from(format!("{}.progress", destination.display())));
         let step = size.div_ceil(CONNECTIONS).max(1);
-        let part = |i: u64| PathBuf::from(format!("{}.part{i:02}", destination.display()));
-        let ranges: Vec<(u64, u64, u64)> = (0..CONNECTIONS).map(|i| (i, i * step, ((i + 1) * step).min(size))).filter(|(_, start, end)| start < end).collect();
-        let fetched = Arc::new(AtomicU64::new(0));
+        let ranges: Vec<(usize, u64, u64)> = (0..CONNECTIONS).map(|i| (i as usize, i * step, ((i + 1) * step).min(size))).filter(|(_, start, end)| start < end).collect();
+        // What an earlier attempt noted, if it was for a file of this size and the working file is still there.
+        let known: Vec<u64> = match (tokio::fs::read(&notes).await.ok().and_then(|raw| serde_json::from_slice::<Value>(&raw).ok()), tokio::fs::metadata(&working).await) {
+            (Some(noted), Ok(file)) if noted["size"].as_u64() == Some(size) && file.len() == size =>
+                ranges.iter().map(|&(i, start, end)| noted["done"][i].as_u64().unwrap_or(0).min(end - start)).collect(),
+            _ => vec![0; ranges.len()],
+        };
+        if known.iter().all(|done| *done == 0) {
+            let file = tokio::fs::File::create(&working).await?;
+            file.set_len(size).await?;
+        }
+        let done: Arc<Vec<AtomicU64>> = Arc::new(known.iter().map(|have| AtomicU64::new(*have)).collect());
+        let total = || done.iter().map(|d| d.load(Ordering::Relaxed)).sum::<u64>();
+        self.progress.store(total(), Ordering::Relaxed);
+        let note = |done: &Vec<AtomicU64>| serde_json::to_vec(&json!({"size": size, "done": done.iter().map(|d| d.load(Ordering::Relaxed)).collect::<Vec<_>>()})).unwrap_or_default();
         let pieces = ranges.iter().map(|&(i, start, end)| {
-            let (url, path, fetched) = (url.clone(), part(i), fetched.clone());
+            let (url, working, notes, done) = (url.clone(), working.clone(), notes.clone(), done.clone());
             async move {
-                for attempt in 0..6u32 {
-                    let have = tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0).min(end - start);
-                    if attempt == 0 { fetched.fetch_add(have, Ordering::Relaxed); }
+                for _attempt in 0..6u32 {
+                    let have = done[i].load(Ordering::Relaxed);
                     if have == end - start { return Ok(()); }
                     let sent = self.http.get(&url).header("User-Agent", DESKTOP).header("Referer", "https://pan.quark.cn/").header("Cookie", cookie)
                         .header("Range", format!("bytes={}-{}", start + have, end - 1)).send().await;
                     let Ok(mut response) = sent else { tokio::time::sleep(Duration::from_secs(3)).await; continue };
                     if !response.status().is_success() { tokio::time::sleep(Duration::from_secs(3)).await; continue; }
-                    let mut file = tokio::fs::OpenOptions::new().create(true).append(true).open(&path).await?;
-                    let mut room = end - start - have;
+                    let mut file = tokio::fs::OpenOptions::new().write(true).open(&working).await?;
+                    file.seek(std::io::SeekFrom::Start(start + have)).await?;
+                    let (mut room, mut written, mut noted) = (end - start - have, have, Instant::now());
                     while let Ok(Some(chunk)) = response.chunk().await {
                         let take = (chunk.len() as u64).min(room) as usize;
                         file.write_all(&chunk[..take]).await?;
-                        room -= take as u64;
-                        fetched.fetch_add(take as u64, Ordering::Relaxed);
-                        self.progress.store(fetched.load(Ordering::Relaxed), Ordering::Relaxed);
+                        room -= take as u64; written += take as u64;
+                        self.progress.fetch_add(take as u64, Ordering::Relaxed);
+                        // Only data that has reached the disk is noted as had.
+                        if noted.elapsed() >= Duration::from_secs(4) || room == 0 {
+                            file.flush().await?; file.sync_data().await?;
+                            done[i].store(written, Ordering::Relaxed);
+                            let _ = tokio::fs::write(&notes, note(&done)).await;
+                            noted = Instant::now();
+                        }
                         if room == 0 { break; }
                     }
-                    file.flush().await?;
+                    file.flush().await?; file.sync_data().await?;
+                    // What arrived after the last note and before the connection dropped is fetched again.
+                    self.progress.fetch_sub(written - done[i].load(Ordering::Relaxed), Ordering::Relaxed);
                 }
-                let have = tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0);
-                ensure!(have == end - start, "The download kept stopping");
+                ensure!(done[i].load(Ordering::Relaxed) == end - start, "The download kept stopping");
                 Ok(())
             }
         });
         futures_util::future::try_join_all(pieces).await?;
-        let staged = PathBuf::from(format!("{}.joining", destination.display()));
-        let mut whole = tokio::fs::File::create(&staged).await?;
-        for &(i, _, _) in &ranges {
-            let mut piece = tokio::fs::File::open(part(i)).await?;
-            tokio::io::copy(&mut piece, &mut whole).await?;
-        }
-        whole.sync_all().await?;
-        ensure!(whole.metadata().await?.len() == size, "The downloaded file is the wrong size");
-        tokio::fs::rename(&staged, destination).await?;
-        for &(i, _, _) in &ranges { let _ = tokio::fs::remove_file(part(i)).await; }
+        ensure!(tokio::fs::metadata(&working).await?.len() == size && total() == size, "The downloaded file is the wrong size");
+        tokio::fs::rename(&working, destination).await?;
+        let _ = tokio::fs::remove_file(&notes).await;
         Ok(())
     }
     async fn run(&self, s: &Service, job: &Job) -> Result<()> {
@@ -980,14 +1005,26 @@ impl Cloud {
             let path = file.path.clone();
             self.update(&job.id, |j| { j.attempts = 0; if let Some(f) = j.files.iter_mut().find(|f| f.path == path) { f.done = true; f.outcome = Some(outcome.into()); } });
             // Each episode reaches the library as it lands, not when the whole series has.
-            if !present { if let Err(error) = crate::api::scan_library(s).await { tracing::warn!(%error, "Library scan after a cloud download failed"); } }
+            // It is scanned while the next one downloads; the scan is not waited for.
+            if !present { self.rescan.notify_one(); }
         }
         // The drive is only a staging post: remove the job's copy once it is in the library.
         let _ = self.call("/file/delete", &[], Some(json!({"action_type": 2, "filelist": [mine], "exclude_fids": []})), Some(&cookie), false).await;
         Ok(())
     }
     /// Run queued jobs one at a time for as long as the server lives.
+    /// Run the downloads, and beside them the library scans they ask for: an episode is
+    /// added to the library while the next one is already coming down.
     pub async fn work(&self, s: &Service) {
+        let scans = async {
+            loop {
+                self.rescan.notified().await;
+                if let Err(error) = crate::api::scan_library(s).await { tracing::warn!(%error, "Library scan after a cloud download failed"); }
+            }
+        };
+        tokio::join!(self.downloads(s), scans);
+    }
+    async fn downloads(&self, s: &Service) {
         loop {
             let next = self.jobs.lock().ok().and_then(|jobs| jobs.iter().find(|j| j.state == "queued").cloned());
             let Some(job) = next else {
