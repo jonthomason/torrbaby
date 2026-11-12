@@ -78,6 +78,20 @@ pub fn episode(name: &str) -> (Option<u64>, Option<u64>) {
 }
 
 fn now() -> f64 { crate::storage::now() }
+/// Seconds since 1970 as an ISO 8601 UTC time.
+fn date(seconds: u64) -> String {
+    let (days, rest) = (seconds / 86400, seconds % 86400);
+    // Civil date from a day count (Howard Hinnant's algorithm).
+    let z = days as i64 + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z.rem_euclid(146097);
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let (day, month) = (doy - (153 * mp + 2) / 5 + 1, if mp < 10 { mp + 3 } else { mp - 9 });
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z", rest / 3600, rest % 3600 / 60, rest % 60)
+}
 fn clean(name: &str) -> String {
     let cleaned: String = name.chars().map(|c| if "/\\:*?\"<>|\0".contains(c) || c.is_control() { ' ' } else { c }).collect();
     cleaned.split_whitespace().collect::<Vec<_>>().join(" ").trim_matches(|c: char| c == '.' || c == ' ').to_owned()
@@ -187,9 +201,16 @@ impl Cloud {
             json!({"path": path, "name": path.rsplit('/').next().unwrap_or(path), "size_bytes": entry["size"], "season": season, "episode": number})
         }).collect();
         if videos.is_empty() { return None; }
+        // When the share itself was made: the search service only knows when it found the link.
+        let made = self.call("/share/sharepage/detail", &[("pwd_id", id.clone()), ("stoken", token.clone()), ("pdir_fid", "0".into()), ("force", "0".into()),
+            ("_page", "1".into()), ("_size", "1".into()), ("_fetch_share", "1".into())], None, None, false).await.ok()
+            .and_then(|answer| answer["data"]["share"]["created_at"].as_u64()).map(|ms| date(ms / 1000));
+        let posted = made.as_deref().unwrap_or(posted);
+        // Sharers often leave the folder with a meaningless name; the listing's own title says more.
+        let title = if !note.trim().is_empty() { note } else { &title };
         let total: u64 = videos.iter().filter_map(|v| v["size_bytes"].as_u64()).sum();
         Some(json!({"url": format!("https://pan.quark.cn/s/{id}{}", url.split_once('?').map(|(_, q)| format!("?{q}")).unwrap_or_default()),
-            "title": if title.is_empty() { note } else { &title }, "note": note, "posted": posted,
+            "title": title, "note": note, "posted": posted,
             "video_count": videos.len(), "total_bytes": total, "files": videos.into_iter().take(400).collect::<Vec<_>>()}))
     }
     /// Shares for a title that hold real video, newest first. Answers are reused for half an hour.
@@ -436,6 +457,12 @@ mod tests {
         assert_eq!(episode("Zhu.Yu.EP05.1080p.mkv"), (None, Some(5)));
         assert_eq!(episode("The.Wandering.Earth.II.2023.BluRay.2160p.DTS.mkv"), (None, None));
         assert_eq!(episode("繁花.2023.4K.60fps.E30.mkv"), (None, Some(30)));
+    }
+    #[test]
+    fn dates_are_iso_times() {
+        assert_eq!(date(0), "1970-01-01T00:00:00Z");
+        assert_eq!(date(1794424716), "2026-11-11T19:18:36Z");
+        assert_eq!(date(951782400), "2000-02-29T00:00:00Z");
     }
     #[test]
     fn names_are_made_safe_for_the_library() {
