@@ -62,7 +62,7 @@ impl Drive {
                 Ok(()) => { tracing::info!(drive = self.id, media = %self.media.display(), "Marked a configured drive"); Status::Online }
                 Err(error) => { tracing::warn!(drive = self.id, %error, "Could not mark a configured drive"); Status::Missing }
             },
-            Err(_) => Status::Missing,
+            Err(_) => self.elsewhere().map_or(Status::Missing, Status::Elsewhere),
         };
         if status == Status::Online {
             // The marker proves this is the drive, so its folders can safely be created here.
@@ -72,6 +72,15 @@ impl Drive {
         status
     }
     pub fn online(&self) -> bool { self.status() == Status::Online }
+    /// This drive's Media folder on another mounted volume, found by its marker.
+    fn elsewhere(&self) -> Option<PathBuf> {
+        let relative = self.media.strip_prefix("/Volumes").ok()?.components().skip(1).collect::<PathBuf>();
+        std::fs::read_dir("/Volumes").ok()?.flatten().map(|v| v.path().join(&relative)).find(|media| {
+            *media != self.media && std::fs::read(media.join(MARKER)).ok()
+                .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
+                .is_some_and(|v| v["id"] == self.id.as_str())
+        })
+    }
     fn adoptable(&self) -> bool {
         self.media.is_dir() && self.roots().iter().any(|(_, root)| root.is_dir()) && on_its_volume(&self.media)
     }
@@ -85,6 +94,8 @@ pub enum Status {
     Missing,
     /// Another drive (with this id, or an unreadable marker) is where this one belongs.
     Foreign(String),
+    /// Connected, but mounted somewhere else (macOS names it "Beta 1" when "Beta" is taken).
+    Elsewhere(PathBuf),
 }
 
 /// The file on each drive that says which drive it is.
@@ -235,6 +246,7 @@ impl Drives {
                 Status::Online => return None,
                 Status::Missing => "Its titles return when it is connected again. Nothing has been removed.",
                 Status::Foreign(_) => "Another drive is connected where this one belongs. Nothing has been removed.",
+                Status::Elsewhere(_) => "It is connected under another name. Restart the server Mac to put it back. Nothing has been removed.",
             };
             let now = crate::storage::now();
             Some(json!({"id":ATTENTION_BASE + index as i64,"asset_id":"","title":d.name,"stage":"drive","severity":"error",
@@ -251,8 +263,12 @@ impl Drives {
     }
     /// For clients: every volume, plus the totals across them.
     pub fn report(&self) -> Value {
-        let roots: Vec<(&str, &Path)> = self.all_roots().map(|(_, role, root)| (role.name(), root)).collect();
-        let volumes = volumes(&roots);
+        // A drive that is not connected is one row under its own name, not one per folder.
+        let (here, away): (Vec<&Drive>, Vec<&Drive>) = self.0.iter().partition(|d| d.media.is_dir());
+        let roots: Vec<(&str, &Path)> = here.iter().flat_map(|d| d.roots().map(|(role, root)| (role.name(), root))).collect();
+        let mut volumes = volumes(&roots);
+        volumes.extend(away.into_iter().map(|d| Volume { mount: d.media.clone(), name: d.name.clone(), total_bytes: 0, free_bytes: 0,
+            roles: Role::ALL.iter().map(|r| r.name().to_owned()).collect() }));
         json!({
             "free_bytes": volumes.iter().map(|v| v.free_bytes).sum::<u64>(),
             "total_bytes": volumes.iter().map(|v| v.total_bytes).sum::<u64>(),
