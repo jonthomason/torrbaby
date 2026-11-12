@@ -31,7 +31,7 @@ public final class TorrentSearchActivity extends Activity {
   private void applyResolution(){
     results=new JSONArray();for(int i=0;i<allResults.length();i++){
       JSONObject item=allResults.optJSONObject(i), hints=item.optJSONObject("hints");
-      if(resolution.equals("all") || (hints!=null && resolution.equalsIgnoreCase(hints.optString("resolution"))))results.put(item);
+      if(resolution.equals("all") || isCloud(item) || (hints!=null && resolution.equalsIgnoreCase(hints.optString("resolution"))))results.put(item);
     }
     if(list!=null)((BaseAdapter)list.getAdapter()).notifyDataSetChanged();
   }
@@ -57,7 +57,7 @@ public final class TorrentSearchActivity extends Activity {
     Ui.add(resultsRoot, markets, -1, 48);
     markets.setOnCheckedChangeListener((group,id) -> {
       china = id == chinese.getId(); getPreferences(MODE_PRIVATE).edit().putBoolean("china",china).apply();
-      ++generation; source=0; sourceButton.setText(L10n.t("Recommended")); sourceButton.setVisibility(china?View.GONE:View.VISIBLE); results=new JSONArray();allResults=new JSONArray();enrichmentGeneration++;
+      ++generation; source=0; sourceButton.setText(L10n.t("Recommended")); sourceButton.setVisibility(china?View.GONE:View.VISIBLE); resolutionButton.setVisibility(china?View.GONE:View.VISIBLE); results=new JSONArray();allResults=new JSONArray();enrichmentGeneration++;
       ((BaseAdapter)list.getAdapter()).notifyDataSetChanged(); status.setText(""); search.setEnabled(true); list.setEnabled(true);
       if(query.getText().toString().trim().length()>=2)search();
     });
@@ -83,6 +83,7 @@ public final class TorrentSearchActivity extends Activity {
         resolutionButton.setText(L10n.t("Resolution")+": "+resolutionLabel());enrichmentGeneration++;applyResolution();d.dismiss();
       }).show();
     });Ui.add(resultsRoot,resolutionButton,240,44);
+    resolutionButton.setVisibility(china?View.GONE:View.VISIBLE);
     list = new ListView(this); list.setDivider(null); list.setDividerHeight(Ui.dp(this, 10));
     list.setAdapter(new Results()); list.setOnItemClickListener((parent, view, position, id) -> { JSONObject item=results.optJSONObject(position); if(isCloud(item))cloudDetails(item); else details(item); });
     resultsRoot.addView(list, new LinearLayout.LayoutParams(-1,0,1));
