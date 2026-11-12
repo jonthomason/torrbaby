@@ -14,7 +14,9 @@ final class L10n {
     IDS.put("%d episodes found", R.string.ui_0290129bc977);
     IDS.put("%d min remaining", R.string.ui_b909e7d6e8c9);
     IDS.put("%d of %d downloaded", R.string.ui_24d1fa07b247);
+    IDS.put("%d selected", R.string.ui_b295fde49b7b);
     IDS.put("%d to add", R.string.ui_216e67233653);
+    IDS.put("%d torrents could not be removed", R.string.ui_81590928ad73);
     IDS.put("%dh %dm left", R.string.ui_660a76df86fd);
     IDS.put("%dm left", R.string.ui_659748ef61cf);
     IDS.put("1 seed", R.string.ui_8256cd5880d0);
@@ -172,6 +174,7 @@ final class L10n {
     IDS.put("Delete this device’s download?", R.string.ui_b14c902794f5);
     IDS.put("Delete this download?", R.string.ui_72d3c49b323c);
     IDS.put("Delete torrent and its files?", R.string.ui_2e4bc4ccc662);
+    IDS.put("Deleting files permanently removes their downloaded data, including partial downloads.", R.string.ui_da2934b8f12a);
     IDS.put("Deleting files…", R.string.ui_cc7192d76413);
     IDS.put("Description", R.string.ui_55f8ebc805e6);
     IDS.put("Detecting credits", R.string.ui_d9319c338d5b);
@@ -209,6 +212,7 @@ final class L10n {
     IDS.put("Downloads are waiting for Wi-Fi", R.string.ui_c20a8912f0ca);
     IDS.put("Downloads unavailable", R.string.ui_022410e4af2e);
     IDS.put("Downloads wait for Wi-Fi. Allowing cellular also covers a Personal Hotspot or a Low Data Mode network, and ends after 3 hours or when you join Wi-Fi.", R.string.ui_fbe756da9c9b);
+    IDS.put("Drive not connected", R.string.ui_9c5da743abfe);
     IDS.put("Each user has their own Continue Watching and viewing history.", R.string.ui_4e45c7891116);
     IDS.put("Edit connection", R.string.ui_b3171b22b733);
     IDS.put("Edit profile", R.string.ui_15141eab3a28);
@@ -245,6 +249,7 @@ final class L10n {
     IDS.put("Files removed", R.string.ui_b677e2df8e0a);
     IDS.put("Find", R.string.ui_df251b06eefd);
     IDS.put("Find a torrent", R.string.ui_16689b7611c8);
+    IDS.put("Find missing episodes", R.string.ui_c7d293cdeab6);
     IDS.put("Find servers", R.string.ui_2893768e025f);
     IDS.put("Find the proper title", R.string.ui_26e31d51a583);
     IDS.put("Find torrents", R.string.ui_fce33b5fafaf);
@@ -366,6 +371,7 @@ final class L10n {
     IDS.put("No peers and no activity for over 5 minutes", R.string.ui_28d608ea4298);
     IDS.put("No processing jobs", R.string.ui_f4f2ec4dc27b);
     IDS.put("No recent activity", R.string.ui_6a52f1d4b635);
+    IDS.put("No release found", R.string.ui_96d679237100);
     IDS.put("No releases found", R.string.ui_6fd4ab12ee28);
     IDS.put("No reported seeds", R.string.ui_4c57e22bd419);
     IDS.put("No server found", R.string.ui_74cd1304973c);
@@ -466,6 +472,9 @@ final class L10n {
     IDS.put("Release date", R.string.ui_91315eed232f);
     IDS.put("Release tags", R.string.ui_e1490e4ce2b7);
     IDS.put("Remove", R.string.ui_e963907dac5c);
+    IDS.put("Remove %d torrents and delete files", R.string.ui_26803bf718c9);
+    IDS.put("Remove %d torrents, keep files", R.string.ui_c059882450a5);
+    IDS.put("Remove %d torrents?", R.string.ui_01d9cc52a205);
     IDS.put("Remove from Continue Watching", R.string.ui_b589f73a82dc);
     IDS.put("Remove private site", R.string.ui_280bb327e41f);
     IDS.put("Remove torrent", R.string.ui_63db985f6027);
@@ -475,6 +484,7 @@ final class L10n {
     IDS.put("Remove torrent…", R.string.ui_3e0feffd1ffa);
     IDS.put("Removed from Continue Watching", R.string.ui_24062e0e3221);
     IDS.put("Remove…", R.string.ui_8ed77723b4d4);
+    IDS.put("Removing %d of %d…", R.string.ui_522b4f2f5a23);
     IDS.put("Removing from library…", R.string.ui_ea2bc2e40726);
     IDS.put("Removing stops this torrent and removes it from Transmission.", R.string.ui_9631a003b576);
     IDS.put("Removing torrent…", R.string.ui_dd2b37f1a2d5);
@@ -519,11 +529,15 @@ final class L10n {
     IDS.put("Search region", R.string.ui_c33f99863bee);
     IDS.put("Search titles, genres or year", R.string.ui_c51ba3511ecd);
     IDS.put("Search torrents", R.string.ui_d499e5b1e322);
+    IDS.put("Searching for episode %d…", R.string.ui_25806b49a576);
+    IDS.put("Searching for the missing episodes…", R.string.ui_00e59ec60399);
     IDS.put("Searching…", R.string.ui_1a6a5ba8c23d);
     IDS.put("Season", R.string.ui_62255f5671e8);
     IDS.put("Season %d", R.string.ui_661f21d64059);
     IDS.put("Season %d Ep %d", R.string.ui_e5444912e049);
     IDS.put("Season %d Ep %d–%d", R.string.ui_7c18fa0f7817);
+    IDS.put("Season %d is missing %d of %d episodes", R.string.ui_6fa6a9b07f79);
+    IDS.put("Season %d · %d missing", R.string.ui_9fe7bc238efe);
     IDS.put("Seasons %d–%d", R.string.ui_35f3392ee19c);
     IDS.put("See All", R.string.ui_8196e42428ff);
     IDS.put("See All  ›", R.string.ui_e41966be6687);
@@ -531,6 +545,9 @@ final class L10n {
     IDS.put("Seeding target", R.string.ui_fd877c9a4fd7);
     IDS.put("Seeding will stop. All server files listed on this page will be permanently deleted for everyone. This cannot be undone.", R.string.ui_6f27fe72ee93);
     IDS.put("Seeding will stop. These server files will be permanently deleted. This cannot be undone.", R.string.ui_a7c66748478a);
+    IDS.put("Select", R.string.ui_8598222918d3);
+    IDS.put("Select all", R.string.ui_913afff1faf7);
+    IDS.put("Select none", R.string.ui_618cfb0a5361);
     IDS.put("Select to dismiss", R.string.ui_7bd7fdd7e26b);
     IDS.put("Selected", R.string.ui_9a976fc228b6);
     IDS.put("Serif", R.string.ui_a5c78a86fab1);

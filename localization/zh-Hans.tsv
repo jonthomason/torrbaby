@@ -771,3 +771,22 @@ Minimum seeding time (hours)	最短做种时间（小时）
 Minimum ratio	最低分享率
 The site's seeding rules	站点的做种规则
 Torrents from this site are seeded a quarter past both: for %@ hours, and then until their ratio reaches %@. Until both are met they keep seeding.	来自此站点的种子会比两项要求各多做种四分之一：先做种 %@ 小时，然后直到分享率达到 %@。两项都达到之前会一直做种。
+Season %d is missing %d of %d episodes	第 %d 季缺少 %d 集（已播出 %d 集）
+Also missing: %@	另缺：%@
+Find missing episodes	查找缺失剧集
+Season %d · %d missing	第 %d 季 · 缺 %d 集
+Searching for the missing episodes…	正在搜索缺失的剧集…
+Searching for episode %d…	正在搜索第 %d 集…
+No release found	未找到资源
+Remove %d torrents?	移除 %d 个种子？
+Remove %d torrents, keep files	移除 %d 个种子，保留文件
+Remove %d torrents and delete files	移除 %d 个种子并删除文件
+Deleting files permanently removes their downloaded data, including partial downloads.	删除文件会永久移除已下载的数据，包括未完成的下载。
+Select	选择
+Select all	全选
+Select none	取消全选
+%d selected	已选 %d 个
+Removing %d of %d…	正在移除第 %d 个，共 %d 个…
+%d torrents could not be removed	%d 个种子未能移除
+%@ free of %@	可用 %@，共 %@
+Drive not connected	硬盘未连接

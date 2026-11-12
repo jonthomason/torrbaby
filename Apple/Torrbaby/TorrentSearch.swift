@@ -134,7 +134,7 @@ struct TorrentSearchItem: Decodable, Identifiable {
     }
     var size: String { sizeBytes.map { ByteCountFormatter.string(fromByteCount: Int64(clamping: $0), countStyle: .file) } ?? sizeLabel ?? "" }
 }
-private struct TorrentSearchResponse: Decodable {
+struct TorrentSearchResponse: Decodable {
     struct Provider: Decodable { let provider: String; let count: Int; let error: String? }
     var items: [TorrentSearchItem]
     let providers: [Provider]
@@ -245,7 +245,7 @@ struct TorrentSearchView: View {
         }
     }
     private static let titleKeys = NSCache<NSString, NSString>()
-    private static func titleKey(_ value: String) -> String {
+    static func titleKey(_ value: String) -> String {
         if let known = titleKeys.object(forKey: value as NSString) { return known as String }
         let key = value.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
         titleKeys.setObject(key as NSString, forKey: value as NSString)
@@ -301,34 +301,7 @@ struct TorrentSearchView: View {
     /// One entry per episode found: its best-seeded release, and whether the user already has it.
     private var downloaderPicks: [EpisodePick] {
         guard let season = activeDownloaderSeason else { return [] }
-        var options: [Int: [TorrentSearchItem]] = [:], owned: [Int: String] = [:]
-        for item in downloaderCandidates where (item.hints.season ?? 1) == season {
-            guard let episode = item.hints.episode else { continue }
-            if let status = ownership(item), owned[episode] != "In your library" { owned[episode] = status }
-            options[episode, default: []].append(item)
-        }
-        for episode in options.keys {
-            options[episode]?.sort { ($0.seeders ?? 0) > ($1.seeders ?? 0) }
-            // The same release re-uploaded under another hash is not a different choice: keep its best-seeded copy.
-            var seen = Set<String>()
-            options[episode]?.removeAll { item in
-                !seen.insert("\((item.sizeBytes ?? 0) >> 24)|\(item.quality)|\(item.hints.audioLabel)|\(item.releaseGroup)").inserted
-            }
-        }
-        // The best-seeded release leads, unless it is far larger than the season's usual
-        // episode and a well-seeded release of ordinary size exists: one oversized remux
-        // should not stand out from the rest of the season.
-        let leaders = options.values.compactMap { $0.first?.sizeBytes }.sorted()
-        let usual = leaders.isEmpty ? 0 : Double(leaders[leaders.count / 2])
-        return options.keys.sorted().compactMap { number in
-            guard let all = options[number], var choice = all.first else { return nil }
-            if usual > 0, let size = choice.sizeBytes, Double(size) > usual * 2,
-               let ordinary = all.first(where: { item in
-                   guard let bytes = item.sizeBytes else { return false }
-                   return (usual * 0.5...usual * 1.6).contains(Double(bytes)) && (item.seeders ?? 0) * 4 >= (choice.seeders ?? 0)
-               }) { choice = ordinary }
-            return EpisodePick(episode: number, item: choice, owned: owned[number], alternatives: all)
-        }
+        return EpisodePick.choose(downloaderCandidates, season: season, ownership: ownership)
     }
     @ViewBuilder private var episodeDownloader: some View {
         let picks = downloaderPicks
@@ -491,6 +464,7 @@ struct TorrentSearchView: View {
                     searchStatus
                 }
             }
+            MediaDriveSpace(compact: true)
             if response != nil { refinements }
             if year != nil || season != nil || episode != nil {
                 HStack {
@@ -682,16 +656,51 @@ struct EpisodePick: Identifiable {
     /// Every release found for this episode, best seeded first; `item` is the suggested one.
     var alternatives: [TorrentSearchItem] = []
     var id: Int { episode }
+    /// One pick per episode of `season` among single-episode releases: the best seeded, unless it is
+    /// far larger than the season's usual episode and a well-seeded release of ordinary size exists.
+    static func choose(_ candidates: [TorrentSearchItem], season: Int, only wanted: Set<Int>? = nil,
+                       ownership: (TorrentSearchItem) -> String? = { _ in nil }) -> [EpisodePick] {
+        var options: [Int: [TorrentSearchItem]] = [:], owned: [Int: String] = [:]
+        for item in candidates where (item.hints.season ?? 1) == season {
+            guard let episode = item.hints.episode, wanted?.contains(episode) ?? true else { continue }
+            if let status = ownership(item), owned[episode] != "In your library" { owned[episode] = status }
+            options[episode, default: []].append(item)
+        }
+        for episode in options.keys {
+            options[episode]?.sort { ($0.seeders ?? 0) > ($1.seeders ?? 0) }
+            // The same release re-uploaded under another hash is not a different choice: keep its best-seeded copy.
+            var seen = Set<String>()
+            options[episode]?.removeAll { item in
+                !seen.insert("\((item.sizeBytes ?? 0) >> 24)|\(item.quality)|\(item.hints.audioLabel)|\(item.releaseGroup)").inserted
+            }
+        }
+        // One oversized remux should not stand out from the rest of the season.
+        let leaders = options.values.compactMap { $0.first?.sizeBytes }.sorted()
+        let usual = leaders.isEmpty ? 0 : Double(leaders[leaders.count / 2])
+        return options.keys.sorted().compactMap { number in
+            guard let all = options[number], var choice = all.first else { return nil }
+            if usual > 0, let size = choice.sizeBytes, Double(size) > usual * 2,
+               let ordinary = all.first(where: { item in
+                   guard let bytes = item.sizeBytes else { return false }
+                   return (usual * 0.5...usual * 1.6).contains(Double(bytes)) && (item.seeders ?? 0) * 4 >= (choice.seeders ?? 0)
+               }) { choice = ordinary }
+            return EpisodePick(episode: number, item: choice, owned: owned[number], alternatives: all)
+        }
+    }
 }
 
 /// Lists what the downloader found, to add all at once or one at a time.
-private struct EpisodeDownloaderSheet: View {
+struct EpisodeDownloaderSheet: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) private var dismiss
     let show: String
     let season: Int
     let picks: [EpisodePick]
+    /// Missing episodes no release was found for (the missing-episodes search only).
+    var notFound: [Int] = []
+    /// What the missing-episodes search is still doing; nil once it has finished.
+    var progress: String? = nil
     @State private var adding: Set<Int> = []
     @State private var added: Set<Int> = []
     @State private var failures: [Int: String] = [:]
@@ -707,6 +716,17 @@ private struct EpisodeDownloaderSheet: View {
             List {
                 SwiftUI.Section {
                     ForEach(picks) { pick in row(pick) }
+                    if let progress {
+                        HStack(spacing: 10) { ProgressView().controlSize(.small); Text(LocalizedStringKey(progress)).font(.callout).foregroundStyle(Theme.muted) }
+                            .padding(.vertical, 4)
+                    }
+                    ForEach(notFound, id: \.self) { episode in
+                        HStack {
+                            Text(L10n.format("Season %d Ep %d", season, episode)).font(.headline)
+                            Spacer()
+                            Label("No release found", systemImage: "questionmark.circle").font(.caption.weight(.semibold)).foregroundStyle(Theme.muted)
+                        }.padding(.vertical, 4)
+                    }
                 } header: {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
@@ -1330,3 +1350,122 @@ private struct TorrentTrialsView: View {
     }
 }
 #endif
+
+// MARK: Missing episodes
+/// A show's aired episodes with no file in the library, by season (from the server).
+struct MissingEpisodes: Decodable {
+    struct Episode: Decodable { let episode: Int; let title: String?; let airdate: String? }
+    struct Season: Decodable { let season: Int; let aired: Int; let missing: [Episode] }
+    let title: String?
+    let originalTitle: String?
+    let seasons: [Season]
+    var incomplete: [Season] { seasons.filter { !$0.missing.isEmpty } }
+}
+
+/// Under a show's seasons: what is missing, and a button that looks for just those episodes.
+struct MissingEpisodesBar: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    let title: LibraryTitle
+    let season: Int?
+    @State private var missing: MissingEpisodes?
+    @State private var finding: MissingEpisodes.Season?
+    /// The selected season when it is missing episodes; otherwise the first season that is.
+    private var target: MissingEpisodes.Season? {
+        guard let missing else { return nil }
+        return missing.incomplete.first { $0.season == season } ?? missing.incomplete.first
+    }
+    var body: some View {
+        Group {
+            if let missing, let target {
+                let others = missing.incomplete.filter { $0.season != target.season }
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: "rectangle.stack.badge.plus").foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L10n.format("Season %d is missing %d of %d episodes", target.season, target.missing.count, target.aired))
+                            .font(.subheadline.weight(.semibold))
+                        Text(verbatim: (target.missing.prefix(12).map { "E" + String(format: "%02d", $0.episode) } + (target.missing.count > 12 ? ["…"] : [])).joined(separator: " ")
+                             + (others.isEmpty ? "" : " · " + L10n.format("Also missing: %@", others.map { L10n.format("Season %d", $0.season) }.joined(separator: ", "))))
+                            .font(.caption).monospacedDigit().foregroundStyle(Theme.muted).lineLimit(2)
+                    }
+                    Spacer(minLength: 8)
+                    if others.isEmpty {
+                        Button("Find missing episodes") { finding = target }.buttonStyle(MonoButtonStyle(prominent: true, compact: true)).fixedSize()
+                    } else {
+                        Menu {
+                            ForEach(missing.incomplete, id: \.season) { item in
+                                Button(L10n.format("Season %d · %d missing", item.season, item.missing.count)) { finding = item }
+                            }
+                        } label: { Text("Find missing episodes") }.buttonStyle(MonoButtonStyle(prominent: true, compact: true)).fixedSize()
+                    }
+                }.padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+            }
+        }
+        .task(id: "\(title.id)|\(title.assets.count)") {
+            missing = try? await store.request("GET", "/v1/library/titles/\(title.id)/missing-episodes", timeout: 20)
+        }
+        .sheet(item: Binding(get: { finding.map { FindingSeason(season: $0) } }, set: { finding = $0?.season })) { item in
+            LocalizedInterface { MissingEpisodesSheet(show: title.title, season: item.season) }.environmentObject(store)
+        }
+    }
+    private struct FindingSeason: Identifiable { let season: MissingEpisodes.Season; var id: Int { season.season } }
+}
+
+/// Searches for only a season's missing episodes: one search for the season, then one per
+/// episode it did not turn up, and lists the best release of each.
+private struct MissingEpisodesSheet: View {
+    @EnvironmentObject var store: Store
+    let show: String
+    let season: MissingEpisodes.Season
+    @AppStorage("torrentSearchMarket") private var market = "world"
+    @AppStorage("torrentSearchResolution") private var resolution = "all"
+    @State private var found: [Int: [TorrentSearchItem]] = [:]
+    @State private var progress: String? = "Searching for the missing episodes…"
+    @State private var searched: Set<Int> = []
+    private var wanted: Set<Int> { Set(season.missing.map(\.episode)) }
+    private var picks: [EpisodePick] {
+        EpisodePick.choose(found.values.flatMap { $0 }, season: season.season, only: wanted, ownership: owned)
+    }
+    var body: some View {
+        let picks = picks
+        let chosen = Set(picks.map(\.episode))
+        EpisodeDownloaderSheet(show: show, season: season.season, picks: picks,
+                               notFound: season.missing.map(\.episode).filter { !chosen.contains($0) && (progress == nil || searched.contains($0)) },
+                               progress: progress)
+            .task { await search() }
+    }
+    private func owned(_ item: TorrentSearchItem) -> String? {
+        store.torrents.contains { !item.infoHash.isEmpty && $0.hashString.caseInsensitiveCompare(item.infoHash) == .orderedSame } ? "Already in your torrents" : nil
+    }
+    /// Single-episode releases of this show, with seeds, in the chosen resolution.
+    private func usable(_ items: [TorrentSearchItem]) -> [TorrentSearchItem] {
+        let key = TorrentSearchView.titleKey(show)
+        let episodes = items.filter { $0.isSingleEpisode && !$0.magnet.isEmpty && ($0.seeders ?? 0) > 0
+            && (resolution == "all" || $0.hints.resolution?.lowercased() == resolution) }
+        let named = episodes.filter { TorrentSearchView.titleKey($0.title) == key }
+        if !named.isEmpty { return named }
+        // Releases often name a show differently; fall back to the search's leading show.
+        guard let lead = episodes.first.map({ TorrentSearchView.titleKey($0.title) }) else { return [] }
+        return episodes.filter { TorrentSearchView.titleKey($0.title) == lead }
+    }
+    private func run(episode: Int?) async -> [TorrentSearchItem] {
+        var body: [String: Any] = ["query": show, "market": market, "sources": [] as [String], "season": season.season]
+        if let episode { body["episode"] = episode }
+        let response: TorrentSearchResponse? = try? await store.request("POST", "/v1/search/torrents", body: body, timeout: 30)
+        return usable(response?.items ?? []).filter { $0.hints.season ?? 1 == season.season }
+    }
+    private func search() async {
+        for item in await run(episode: nil) { if let episode = item.hints.episode, wanted.contains(episode) { found[episode, default: []].append(item) } }
+        // Each episode the season search missed gets a search of its own; the server caches and
+        // coalesces them. Bounded so a long-running show cannot start dozens of searches.
+        let remaining = season.missing.map(\.episode).filter { found[$0] == nil }
+        for episode in remaining.prefix(12) {
+            guard !Task.isCancelled else { return }
+            progress = L10n.format("Searching for episode %d…", episode)
+            for item in await run(episode: episode) where item.hints.episode == episode { found[episode, default: []].append(item) }
+            searched.insert(episode)
+        }
+        searched.formUnion(remaining)
+        progress = nil
+    }
+}

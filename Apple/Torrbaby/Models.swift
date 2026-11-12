@@ -232,6 +232,15 @@ struct DaemonStatus: Codable {
     let pendingScans: Int
     let scanError: String?
     let jobs: [String: Job]
+    /// The drives behind the library roots; absent on servers before 1.0.
+    var storage: MediaStorage? = nil
+}
+/// Free space on the server's media drives.
+struct MediaStorage: Codable {
+    struct Volume: Codable { let name: String; let totalBytes: Int64; let freeBytes: Int64; let roles: [String]; let available: Bool }
+    let freeBytes: Int64
+    let totalBytes: Int64
+    let volumes: [Volume]
 }
 struct AuditEvent: Codable, Identifiable {
     let time: Double

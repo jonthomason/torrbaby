@@ -772,6 +772,9 @@ struct LibraryDetail: View {
                                 }
                             }.padding(.vertical, 4)
                         }.scrollIndicators(.hidden)
+                        #if !os(tvOS)
+                        MissingEpisodesBar(title: title, season: selectedSeason)
+                        #endif
                         if selectedSeason == LibraryTitle.extrasTab {
                             ForEach(extras) { asset in episodeRow(asset, title: title) }
                         } else {

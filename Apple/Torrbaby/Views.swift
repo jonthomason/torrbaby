@@ -474,6 +474,11 @@ struct TorrentListView: View {
     #endif
     @State private var removing: Torrent?
     @State private var processingIssues = 0
+    /// Needs attention: choosing several torrents to remove at once.
+    @State private var selecting = false
+    @State private var selected: Set<String> = []
+    @State private var confirmingBulkRemove = false
+    @State private var bulkProgress: String?
     #if os(iOS)
     @AppStorage("compactMobileTorrentView") private var compact = true
     #else
@@ -510,6 +515,7 @@ struct TorrentListView: View {
                     }.font(.caption.monospacedDigit())
                 }
                 TransferHistoryView(compact: compact)
+                if section == .active { MediaDriveSpace(compact: compact) }
                 if section == .seeding { LibraryOperationStatus(search: search) }
                 if let error = store.torrentError {
                     Label("Couldn’t refresh torrents: " + error, systemImage: "exclamationmark.triangle")
@@ -523,46 +529,13 @@ struct TorrentListView: View {
                     }.pickerStyle(.menu).fixedSize()
                 }
                 if section == .attention { ProcessingAttention(count: $processingIssues) }
+                if section == .attention && !filtered.isEmpty { bulkBar }
                 if filtered.isEmpty && (section != .seeding || store.detachedLibraryOperations.isEmpty) && !(section == .attention && processingIssues > 0) {
                     ContentUnavailableView(search.isEmpty ? "All clear" : "No matches", systemImage: search.isEmpty ? "checkmark.circle" : "magnifyingglass", description: Text(LocalizedStringKey(search.isEmpty ? "" : "Try a different title.")))
                         .padding(.vertical, 40)
                 } else {
                     LazyVStack(spacing: compact ? 4 : 10) {
-                        ForEach(filtered) { torrent in
-                          VStack(spacing: 6) {
-                            NavigationLink(value: torrent.id) {
-                                #if os(iOS)
-                                MobileTorrentRow(torrent: torrent, showReason: section == .attention, compact: compact)
-                                #else
-                                if compact { CompactTorrentRow(torrent: torrent, showReason: section == .attention) }
-                                else { TorrentRow(torrent: torrent, showReason: section == .attention) }
-                                #endif
-                            }.buttonStyle(.plain)
-                            .contextMenu {
-                                Button { store.action(torrent, "start") } label: {
-                                    Label("Start", systemImage: "play.fill")
-                                }.disabled(store.busy || !store.connected || torrent.status != 0 || torrent.fileOperation != nil)
-                                Button { store.action(torrent, "stop") } label: {
-                                    Label("Stop", systemImage: "stop.fill")
-                                }.disabled(store.busy || !store.connected || torrent.status == 0 || torrent.fileOperation != nil)
-                                // Jumps the queue: starts now even when every download slot is taken.
-                                if !torrent.completed {
-                                    Button { store.action(torrent, torrent.downloadsFirst ? "unprioritize" : "prioritize") } label: {
-                                        Label(LocalizedStringKey(torrent.downloadsFirst ? "Stop downloading first" : "Download first"), systemImage: torrent.downloadsFirst ? "arrow.up.to.line.circle.fill" : "arrow.up.to.line")
-                                    }.disabled(store.busy || !store.connected || torrent.fileOperation != nil)
-                                }
-                                Divider()
-                                Button(role: .destructive) { removing = torrent } label: {
-                                    Label("Remove…", systemImage: "trash")
-                                }.disabled(store.busy || !store.connected || torrent.fileOperation != nil)
-                            }
-                            #if os(macOS)
-                            if !compact && (!torrent.completed || torrent.status == 6) {
-                                TransferHistoryView(compact: true, torrentHash: torrent.id, uploadOnly: torrent.completed)
-                            }
-                            #endif
-                          }
-                        }
+                        ForEach(filtered) { torrent in listItem(torrent) }
                     }
                 }
             }.padding(24).frame(maxWidth: 1200).frame(maxWidth: .infinity)
@@ -578,6 +551,14 @@ struct TorrentListView: View {
         .searchable(text: $search, prompt: "Find a torrent")
         #endif
         .sheet(item: $removing) { item in LocalizedInterface { RemoveTorrentView(torrent: item) } }
+        .confirmationDialog(L10n.format("Remove %d torrents?", selectedTorrents.count), isPresented: $confirmingBulkRemove, titleVisibility: .visible) {
+            Button(L10n.format("Remove %d torrents, keep files", selectedTorrents.count)) { removeSelected(deleteData: false) }
+            Button(L10n.format("Remove %d torrents and delete files", selectedTorrents.count), role: .destructive) { removeSelected(deleteData: true) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Deleting files permanently removes their downloaded data, including partial downloads.")
+        }
+        .onChange(of: filtered.map(\.id)) { _, ids in selected.formIntersection(ids) }
         .toolbar {
             ToolbarItem(placement: {
                 #if os(iOS)
@@ -596,11 +577,143 @@ struct TorrentListView: View {
         }
         .refreshable { await store.refresh() }
     }
+    private func listItem(_ torrent: Torrent) -> some View {
+            VStack(spacing: 6) {
+              Group { if selecting {
+                  Button { toggle(torrent) } label: {
+                      HStack(spacing: 12) {
+                          Image(systemName: selected.contains(torrent.id) ? "checkmark.circle.fill" : "circle")
+                              .font(.title3).foregroundStyle(selected.contains(torrent.id) ? Theme.accent : Theme.muted)
+                          row(torrent)
+                      }.contentShape(Rectangle())
+                  }.buttonStyle(.plain)
+                  .disabled(torrent.fileOperation != nil)
+                  .accessibilityAddTraits(selected.contains(torrent.id) ? .isSelected : [])
+              } else {
+                  NavigationLink(value: torrent.id) { row(torrent) }.buttonStyle(.plain)
+              } }
+              .contextMenu {
+                  Button { store.action(torrent, "start") } label: {
+                      Label("Start", systemImage: "play.fill")
+                  }.disabled(store.busy || !store.connected || torrent.status != 0 || torrent.fileOperation != nil)
+                  Button { store.action(torrent, "stop") } label: {
+                      Label("Stop", systemImage: "stop.fill")
+                  }.disabled(store.busy || !store.connected || torrent.status == 0 || torrent.fileOperation != nil)
+                  // Jumps the queue: starts now even when every download slot is taken.
+                  if !torrent.completed {
+                      Button { store.action(torrent, torrent.downloadsFirst ? "unprioritize" : "prioritize") } label: {
+                          Label(LocalizedStringKey(torrent.downloadsFirst ? "Stop downloading first" : "Download first"), systemImage: torrent.downloadsFirst ? "arrow.up.to.line.circle.fill" : "arrow.up.to.line")
+                      }.disabled(store.busy || !store.connected || torrent.fileOperation != nil)
+                  }
+                  Divider()
+                  Button(role: .destructive) { removing = torrent } label: {
+                      Label("Remove…", systemImage: "trash")
+                  }.disabled(store.busy || !store.connected || torrent.fileOperation != nil)
+              }
+              #if os(macOS)
+              if !compact && (!torrent.completed || torrent.status == 6) {
+                  TransferHistoryView(compact: true, torrentHash: torrent.id, uploadOnly: torrent.completed)
+              }
+              #endif
+            }
+    }
+    @ViewBuilder private func row(_ torrent: Torrent) -> some View {
+        #if os(iOS)
+        MobileTorrentRow(torrent: torrent, showReason: section == .attention, compact: compact)
+        #else
+        if compact { CompactTorrentRow(torrent: torrent, showReason: section == .attention) }
+        else { TorrentRow(torrent: torrent, showReason: section == .attention) }
+        #endif
+    }
+    private var selectable: [Torrent] { filtered.filter { $0.fileOperation == nil } }
+    private var selectedTorrents: [Torrent] { selectable.filter { selected.contains($0.id) } }
+    private func toggle(_ torrent: Torrent) {
+        if selected.contains(torrent.id) { selected.remove(torrent.id) } else { selected.insert(torrent.id) }
+    }
+    /// Select, Select all and Remove for the torrents in Needs attention.
+    @ViewBuilder private var bulkBar: some View {
+        HStack(spacing: 10) {
+            if selecting {
+                Button(LocalizedStringKey(selectedTorrents.count == selectable.count ? "Select none" : "Select all")) {
+                    selected = selectedTorrents.count == selectable.count ? [] : Set(selectable.map(\.id))
+                }.buttonStyle(MonoButtonStyle(compact: true)).fixedSize()
+                Text(L10n.format("%d selected", selectedTorrents.count)).font(.caption.weight(.semibold)).monospacedDigit().foregroundStyle(Theme.muted)
+                Spacer(minLength: 8)
+                if let bulkProgress {
+                    ProgressView().controlSize(.small)
+                    Text(verbatim: bulkProgress).font(.caption).monospacedDigit().foregroundStyle(Theme.muted)
+                } else {
+                    Button(role: .destructive) { confirmingBulkRemove = true } label: { Label("Remove…", systemImage: "trash") }
+                        .buttonStyle(MonoButtonStyle(compact: true)).fixedSize()
+                        .disabled(selectedTorrents.isEmpty || !store.connected)
+                }
+                Button("Done") { selecting = false; selected = [] }.buttonStyle(MonoButtonStyle(compact: true)).fixedSize().disabled(bulkProgress != nil)
+            } else {
+                Spacer(minLength: 0)
+                Button { selecting = true } label: { Label("Select", systemImage: "checkmark.circle") }
+                    .buttonStyle(MonoButtonStyle(compact: true)).fixedSize()
+            }
+        }
+    }
+    /// Removes the selected torrents one at a time, each confirmed by its own hash as a single removal is.
+    private func removeSelected(deleteData: Bool) {
+        let targets = selectedTorrents
+        guard !targets.isEmpty, bulkProgress == nil else { return }
+        Task {
+            var failures: [String] = []
+            for (index, torrent) in targets.enumerated() {
+                bulkProgress = L10n.format("Removing %d of %d…", index + 1, targets.count)
+                do {
+                    try await store.send("POST", "/v1/torrents/\(torrent.id)/remove", body: ["delete_data": deleteData, "confirm_hash": torrent.id])
+                    selected.remove(torrent.id)
+                } catch { failures.append(torrent.displayName + ": " + error.localizedDescription) }
+            }
+            bulkProgress = nil
+            if failures.isEmpty { selecting = false } else {
+                store.actionError = L10n.format("%d torrents could not be removed", failures.count) + "\n" + failures.joined(separator: "\n")
+            }
+            await store.refresh()
+        }
+    }
     @ViewBuilder var metrics: some View {
         Metric(title: "DOWNLOADING", value: rate(store.torrents.reduce(0) { $0 + $1.rateDownload }), symbol: "arrow.down", color: Theme.accent)
         Metric(title: "UPLOADING", value: rate(store.torrents.reduce(0) { $0 + $1.rateUpload }), symbol: "arrow.up", color: Theme.muted)
         Metric(title: "LIBRARY", value: "\(store.torrents.filter(\.completed).count) complete", symbol: "checkmark", color: Theme.muted)
     }
+}
+/// Free space on the server's media drive (each drive, when the library spans several).
+struct MediaDriveSpace: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    var compact = false
+    var body: some View {
+        if let storage = store.status?.storage, !storage.volumes.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(storage.volumes, id: \.name) { volume in
+                    HStack(spacing: 10) {
+                        Image(systemName: volume.available ? "externaldrive.fill" : "externaldrive.badge.exclamationmark")
+                            .foregroundStyle(!volume.available || low(volume) ? .orange : Theme.muted)
+                        if volume.available {
+                            Text(L10n.format("%@ free of %@", bytes(volume.freeBytes), bytes(volume.totalBytes)))
+                                .font(.caption.weight(.semibold)).monospacedDigit()
+                            if !compact {
+                                ProgressView(value: Double(volume.totalBytes - volume.freeBytes), total: Double(max(volume.totalBytes, 1)))
+                                    .tint(low(volume) ? .orange : Theme.accent).frame(maxWidth: 160)
+                            }
+                        } else {
+                            Text("Drive not connected").font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                        }
+                        Text(verbatim: volume.name).font(.caption).foregroundStyle(Theme.muted).lineLimit(1)
+                    }
+                }
+            }.accessibilityElement(children: .combine)
+        }
+    }
+    /// Under 5% or 50 GB left: time to make room.
+    private func low(_ volume: MediaStorage.Volume) -> Bool {
+        volume.freeBytes < 50_000_000_000 || volume.freeBytes * 20 < volume.totalBytes
+    }
+    private func bytes(_ value: Int64) -> String { ByteCountFormatter.string(fromByteCount: value, countStyle: .file) }
 }
 struct Metric: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared

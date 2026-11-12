@@ -3,7 +3,9 @@
     <string name="ui_0290129bc977" formatted="false">找到 %d 集</string>
     <string name="ui_b909e7d6e8c9" formatted="false">剩余 %d 分钟</string>
     <string name="ui_24d1fa07b247" formatted="false">已下载 %d/%d</string>
+    <string name="ui_b295fde49b7b" formatted="false">已选 %d 个</string>
     <string name="ui_216e67233653" formatted="false">%d 集待添加</string>
+    <string name="ui_81590928ad73" formatted="false">%d 个种子未能移除</string>
     <string name="ui_660a76df86fd" formatted="false">剩余 %d 小时 %d 分钟</string>
     <string name="ui_659748ef61cf" formatted="false">剩余 %d 分钟</string>
     <string name="ui_8256cd5880d0" formatted="false">1 个做种</string>
@@ -161,6 +163,7 @@
     <string name="ui_b14c902794f5" formatted="false">删除此设备上的下载？</string>
     <string name="ui_72d3c49b323c" formatted="false">删除此下载？</string>
     <string name="ui_2e4bc4ccc662" formatted="false">删除种子及其文件？</string>
+    <string name="ui_da2934b8f12a" formatted="false">删除文件会永久移除已下载的数据，包括未完成的下载。</string>
     <string name="ui_cc7192d76413" formatted="false">正在删除文件…</string>
     <string name="ui_55f8ebc805e6" formatted="false">简介</string>
     <string name="ui_d9319c338d5b" formatted="false">检测片尾字幕</string>
@@ -198,6 +201,7 @@
     <string name="ui_c20a8912f0ca" formatted="false">下载正在等待 Wi-Fi</string>
     <string name="ui_022410e4af2e" formatted="false">下载不可用</string>
     <string name="ui_fbe756da9c9b" formatted="false">下载会等待 Wi-Fi。允许蜂窝网络时也包括个人热点和低数据模式网络，3 小时后或连接 Wi-Fi 时结束。</string>
+    <string name="ui_9c5da743abfe" formatted="false">硬盘未连接</string>
     <string name="ui_4e45c7891116" formatted="false">每位用户都有自己的继续观看和观看记录。</string>
     <string name="ui_b3171b22b733" formatted="false">编辑连接</string>
     <string name="ui_15141eab3a28" formatted="false">编辑用户</string>
@@ -234,6 +238,7 @@
     <string name="ui_b677e2df8e0a" formatted="false">文件已删除</string>
     <string name="ui_df251b06eefd" formatted="false">查找</string>
     <string name="ui_16689b7611c8" formatted="false">查找种子</string>
+    <string name="ui_c7d293cdeab6" formatted="false">查找缺失剧集</string>
     <string name="ui_2893768e025f" formatted="false">查找服务器</string>
     <string name="ui_26e31d51a583" formatted="false">查找正确的影片</string>
     <string name="ui_fce33b5fafaf" formatted="false">查找种子</string>
@@ -355,6 +360,7 @@
     <string name="ui_28d608ea4298" formatted="false">超过 5 分钟没有节点或活动</string>
     <string name="ui_f4f2ec4dc27b" formatted="false">没有待处理任务</string>
     <string name="ui_6a52f1d4b635" formatted="false">暂无近期活动</string>
+    <string name="ui_96d679237100" formatted="false">未找到资源</string>
     <string name="ui_6fd4ab12ee28" formatted="false">未找到资源</string>
     <string name="ui_4c57e22bd419" formatted="false">暂无做种信息</string>
     <string name="ui_74cd1304973c" formatted="false">未找到服务器</string>
@@ -455,6 +461,9 @@
     <string name="ui_91315eed232f" formatted="false">上映日期</string>
     <string name="ui_e1490e4ce2b7" formatted="false">资源标签</string>
     <string name="ui_e963907dac5c" formatted="false">移除</string>
+    <string name="ui_26803bf718c9" formatted="false">移除 %d 个种子并删除文件</string>
+    <string name="ui_c059882450a5" formatted="false">移除 %d 个种子，保留文件</string>
+    <string name="ui_01d9cc52a205" formatted="false">移除 %d 个种子？</string>
     <string name="ui_b589f73a82dc" formatted="false">从继续观看中移除</string>
     <string name="ui_280bb327e41f" formatted="false">移除私有站点</string>
     <string name="ui_63db985f6027" formatted="false">移除种子</string>
@@ -464,6 +473,7 @@
     <string name="ui_3e0feffd1ffa" formatted="false">移除种子…</string>
     <string name="ui_24062e0e3221" formatted="false">已从继续观看中移除</string>
     <string name="ui_8ed77723b4d4" formatted="false">移除…</string>
+    <string name="ui_522b4f2f5a23" formatted="false">正在移除第 %d 个，共 %d 个…</string>
     <string name="ui_ea2bc2e40726" formatted="false">正在从媒体库移除…</string>
     <string name="ui_9631a003b576" formatted="false">移除会停止此种子，并将其从 Transmission 移除。</string>
     <string name="ui_dd2b37f1a2d5" formatted="false">正在移除种子…</string>
@@ -508,11 +518,15 @@
     <string name="ui_c33f99863bee" formatted="false">搜索地区</string>
     <string name="ui_c51ba3511ecd" formatted="false">搜索片名、类型或年份</string>
     <string name="ui_d499e5b1e322" formatted="false">搜索种子</string>
+    <string name="ui_25806b49a576" formatted="false">正在搜索第 %d 集…</string>
+    <string name="ui_00e59ec60399" formatted="false">正在搜索缺失的剧集…</string>
     <string name="ui_1a6a5ba8c23d" formatted="false">正在搜索…</string>
     <string name="ui_62255f5671e8" formatted="false">季</string>
     <string name="ui_661f21d64059" formatted="false">第 %d 季</string>
     <string name="ui_e5444912e049" formatted="false">第 %d 季 第 %d 集</string>
     <string name="ui_7c18fa0f7817" formatted="false">第 %d 季 第 %d–%d 集</string>
+    <string name="ui_6fa6a9b07f79" formatted="false">第 %d 季缺少 %d 集（已播出 %d 集）</string>
+    <string name="ui_9fe7bc238efe" formatted="false">第 %d 季 · 缺 %d 集</string>
     <string name="ui_35f3392ee19c" formatted="false">第 %d–%d 季</string>
     <string name="ui_8196e42428ff" formatted="false">查看全部</string>
     <string name="ui_e41966be6687" formatted="false">查看全部  ›</string>
@@ -520,6 +534,9 @@
     <string name="ui_fd877c9a4fd7" formatted="false">做种目标</string>
     <string name="ui_6f27fe72ee93" formatted="false">做种将停止。此页列出的所有服务器文件将为所有用户永久删除。此操作无法撤销。</string>
     <string name="ui_a7c66748478a" formatted="false">做种将停止，这些服务器文件将被永久删除。此操作无法撤销。</string>
+    <string name="ui_8598222918d3" formatted="false">选择</string>
+    <string name="ui_913afff1faf7" formatted="false">全选</string>
+    <string name="ui_618cfb0a5361" formatted="false">取消全选</string>
     <string name="ui_7bd7fdd7e26b" formatted="false">选择以忽略</string>
     <string name="ui_9a976fc228b6" formatted="false">已选择</string>
     <string name="ui_a5c78a86fab1" formatted="false">衬线字体</string>

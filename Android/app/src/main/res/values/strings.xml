@@ -3,7 +3,9 @@
     <string name="ui_0290129bc977" formatted="false">%d episodes found</string>
     <string name="ui_b909e7d6e8c9" formatted="false">%d min remaining</string>
     <string name="ui_24d1fa07b247" formatted="false">%d of %d downloaded</string>
+    <string name="ui_b295fde49b7b" formatted="false">%d selected</string>
     <string name="ui_216e67233653" formatted="false">%d to add</string>
+    <string name="ui_81590928ad73" formatted="false">%d torrents could not be removed</string>
     <string name="ui_660a76df86fd" formatted="false">%dh %dm left</string>
     <string name="ui_659748ef61cf" formatted="false">%dm left</string>
     <string name="ui_8256cd5880d0" formatted="false">1 seed</string>
@@ -161,6 +163,7 @@
     <string name="ui_b14c902794f5" formatted="false">Delete this device’s download?</string>
     <string name="ui_72d3c49b323c" formatted="false">Delete this download?</string>
     <string name="ui_2e4bc4ccc662" formatted="false">Delete torrent and its files?</string>
+    <string name="ui_da2934b8f12a" formatted="false">Deleting files permanently removes their downloaded data, including partial downloads.</string>
     <string name="ui_cc7192d76413" formatted="false">Deleting files…</string>
     <string name="ui_55f8ebc805e6" formatted="false">Description</string>
     <string name="ui_d9319c338d5b" formatted="false">Detecting credits</string>
@@ -198,6 +201,7 @@
     <string name="ui_c20a8912f0ca" formatted="false">Downloads are waiting for Wi-Fi</string>
     <string name="ui_022410e4af2e" formatted="false">Downloads unavailable</string>
     <string name="ui_fbe756da9c9b" formatted="false">Downloads wait for Wi-Fi. Allowing cellular also covers a Personal Hotspot or a Low Data Mode network, and ends after 3 hours or when you join Wi-Fi.</string>
+    <string name="ui_9c5da743abfe" formatted="false">Drive not connected</string>
     <string name="ui_4e45c7891116" formatted="false">Each user has their own Continue Watching and viewing history.</string>
     <string name="ui_b3171b22b733" formatted="false">Edit connection</string>
     <string name="ui_15141eab3a28" formatted="false">Edit profile</string>
@@ -234,6 +238,7 @@
     <string name="ui_b677e2df8e0a" formatted="false">Files removed</string>
     <string name="ui_df251b06eefd" formatted="false">Find</string>
     <string name="ui_16689b7611c8" formatted="false">Find a torrent</string>
+    <string name="ui_c7d293cdeab6" formatted="false">Find missing episodes</string>
     <string name="ui_2893768e025f" formatted="false">Find servers</string>
     <string name="ui_26e31d51a583" formatted="false">Find the proper title</string>
     <string name="ui_fce33b5fafaf" formatted="false">Find torrents</string>
@@ -355,6 +360,7 @@
     <string name="ui_28d608ea4298" formatted="false">No peers and no activity for over 5 minutes</string>
     <string name="ui_f4f2ec4dc27b" formatted="false">No processing jobs</string>
     <string name="ui_6a52f1d4b635" formatted="false">No recent activity</string>
+    <string name="ui_96d679237100" formatted="false">No release found</string>
     <string name="ui_6fd4ab12ee28" formatted="false">No releases found</string>
     <string name="ui_4c57e22bd419" formatted="false">No reported seeds</string>
     <string name="ui_74cd1304973c" formatted="false">No server found</string>
@@ -455,6 +461,9 @@
     <string name="ui_91315eed232f" formatted="false">Release date</string>
     <string name="ui_e1490e4ce2b7" formatted="false">Release tags</string>
     <string name="ui_e963907dac5c" formatted="false">Remove</string>
+    <string name="ui_26803bf718c9" formatted="false">Remove %d torrents and delete files</string>
+    <string name="ui_c059882450a5" formatted="false">Remove %d torrents, keep files</string>
+    <string name="ui_01d9cc52a205" formatted="false">Remove %d torrents?</string>
     <string name="ui_b589f73a82dc" formatted="false">Remove from Continue Watching</string>
     <string name="ui_280bb327e41f" formatted="false">Remove private site</string>
     <string name="ui_63db985f6027" formatted="false">Remove torrent</string>
@@ -464,6 +473,7 @@
     <string name="ui_3e0feffd1ffa" formatted="false">Remove torrent…</string>
     <string name="ui_24062e0e3221" formatted="false">Removed from Continue Watching</string>
     <string name="ui_8ed77723b4d4" formatted="false">Remove…</string>
+    <string name="ui_522b4f2f5a23" formatted="false">Removing %d of %d…</string>
     <string name="ui_ea2bc2e40726" formatted="false">Removing from library…</string>
     <string name="ui_9631a003b576" formatted="false">Removing stops this torrent and removes it from Transmission.</string>
     <string name="ui_dd2b37f1a2d5" formatted="false">Removing torrent…</string>
@@ -508,11 +518,15 @@
     <string name="ui_c33f99863bee" formatted="false">Search region</string>
     <string name="ui_c51ba3511ecd" formatted="false">Search titles, genres or year</string>
     <string name="ui_d499e5b1e322" formatted="false">Search torrents</string>
+    <string name="ui_25806b49a576" formatted="false">Searching for episode %d…</string>
+    <string name="ui_00e59ec60399" formatted="false">Searching for the missing episodes…</string>
     <string name="ui_1a6a5ba8c23d" formatted="false">Searching…</string>
     <string name="ui_62255f5671e8" formatted="false">Season</string>
     <string name="ui_661f21d64059" formatted="false">Season %d</string>
     <string name="ui_e5444912e049" formatted="false">Season %d Ep %d</string>
     <string name="ui_7c18fa0f7817" formatted="false">Season %d Ep %d–%d</string>
+    <string name="ui_6fa6a9b07f79" formatted="false">Season %d is missing %d of %d episodes</string>
+    <string name="ui_9fe7bc238efe" formatted="false">Season %d · %d missing</string>
     <string name="ui_35f3392ee19c" formatted="false">Seasons %d–%d</string>
     <string name="ui_8196e42428ff" formatted="false">See All</string>
     <string name="ui_e41966be6687" formatted="false">See All  ›</string>
@@ -520,6 +534,9 @@
     <string name="ui_fd877c9a4fd7" formatted="false">Seeding target</string>
     <string name="ui_6f27fe72ee93" formatted="false">Seeding will stop. All server files listed on this page will be permanently deleted for everyone. This cannot be undone.</string>
     <string name="ui_a7c66748478a" formatted="false">Seeding will stop. These server files will be permanently deleted. This cannot be undone.</string>
+    <string name="ui_8598222918d3" formatted="false">Select</string>
+    <string name="ui_913afff1faf7" formatted="false">Select all</string>
+    <string name="ui_618cfb0a5361" formatted="false">Select none</string>
     <string name="ui_7bd7fdd7e26b" formatted="false">Select to dismiss</string>
     <string name="ui_9a976fc228b6" formatted="false">Selected</string>
     <string name="ui_a5c78a86fab1" formatted="false">Serif</string>
