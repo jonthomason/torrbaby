@@ -641,6 +641,7 @@
     <string name="ui_e50bad848e4a" formatted="false">Unsupported media container for processing</string>
     <string name="ui_567bfc4dad37" formatted="false">Up next</string>
     <string name="ui_8bdf057f91e7" formatted="false">Upload</string>
+    <string name="ui_50bda393938a" formatted="false">Upload &amp; Seeding</string>
     <string name="ui_2fb6cfd6c7df" formatted="false">Use Torrbaby for magnet links</string>
     <string name="ui_952de75621d0" formatted="false">Use available space</string>
     <string name="ui_7669011536cd" formatted="false">Use this name</string>

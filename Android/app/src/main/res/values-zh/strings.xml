@@ -641,6 +641,7 @@
     <string name="ui_e50bad848e4a" formatted="false">不支持处理此媒体容器</string>
     <string name="ui_567bfc4dad37" formatted="false">接下来播放</string>
     <string name="ui_8bdf057f91e7" formatted="false">上传</string>
+    <string name="ui_50bda393938a" formatted="false">上传与做种</string>
     <string name="ui_2fb6cfd6c7df" formatted="false">使用 Torrbaby 打开磁力链接</string>
     <string name="ui_952de75621d0" formatted="false">使用可用空间</string>
     <string name="ui_7669011536cd" formatted="false">使用此名称</string>

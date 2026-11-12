@@ -652,6 +652,7 @@ final class L10n {
     IDS.put("Unsupported media container for processing", R.string.ui_e50bad848e4a);
     IDS.put("Up next", R.string.ui_567bfc4dad37);
     IDS.put("Upload", R.string.ui_8bdf057f91e7);
+    IDS.put("Upload & Seeding", R.string.ui_50bda393938a);
     IDS.put("Use Torrbaby for magnet links", R.string.ui_2fb6cfd6c7df);
     IDS.put("Use available space", R.string.ui_952de75621d0);
     IDS.put("Use this name", R.string.ui_7669011536cd);

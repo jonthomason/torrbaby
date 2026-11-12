@@ -212,9 +212,6 @@ private struct TVSettingsView: View {
                 Text(verbatim: "Torrbaby").font(.title2.bold())
             }.frame(maxWidth: .infinity)
             List {
-                SwiftUI.Section("Library") {
-                    NavigationLink { TorrentSearchView() } label: { Text("Find torrents") }
-                }
                 SwiftUI.Section("User") {
                     LabeledContent { Text(verbatim: store.activeProfile?.name ?? L10n.text("Choose a user")) } label: { Text("User") }
                     Button { store.choosingProfile = true } label: { Text("Switch user") }
@@ -228,10 +225,13 @@ private struct TVSettingsView: View {
                 }
                 SwiftUI.Section {
                     if let status = store.status {
-                        Toggle("Process library automatically", isOn: Binding(
-                            get: { status.settings.backgroundSubtitles ?? true },
-                            set: { enabled in store.perform { try await store.send("PATCH", "/v1/settings", body: ["background_subtitles": enabled]) } }
-                        )).disabled(store.busy)
+                        // tvOS Settings style: the row keeps its title and shows On/Off as its value.
+                        let enabled = status.settings.backgroundSubtitles ?? true
+                        Button {
+                            store.perform { try await store.send("PATCH", "/v1/settings", body: ["background_subtitles": !enabled]) }
+                        } label: {
+                            LabeledContent { Text(LocalizedStringKey(enabled ? "On" : "Off")) } label: { Text("Process library automatically") }
+                        }.disabled(store.busy)
                     }
                 } header: { Text("Subtitles & Translation") } footer: {
                     if let preparation = store.status?.subtitlePreparation {
@@ -243,9 +243,13 @@ private struct TVSettingsView: View {
                             .filter { !$0.isEmpty }.joined(separator: "\n"))
                     }
                 }
+                // Rows are buttons so focus can reach the end of the list.
                 SwiftUI.Section("About") {
-                    LabeledContent { Text(verbatim: AppRelease.description.replacingOccurrences(of: "Version ", with: "")).monospacedDigit() } label: { Text("Version") }
-                    if let status = store.status { LabeledContent { Text(verbatim: status.version).monospacedDigit() } label: { Text("Server version") } }
+                    Button {} label: { LabeledContent { Text(verbatim: AppRelease.description.replacingOccurrences(of: "Version ", with: "")).monospacedDigit() } label: { Text("Version") } }
+                    if let status = store.status { Button {} label: { LabeledContent { Text(verbatim: status.version).monospacedDigit() } label: { Text("Server version") } } }
+                }
+                SwiftUI.Section("Library") {
+                    NavigationLink { TorrentSearchView() } label: { Text("Find torrents") }
                 }
             }.listStyle(.grouped).frame(maxWidth: 900)
         }.padding(.horizontal, 60)

@@ -88,7 +88,7 @@ struct AutomationView: View {
 enum SettingsPage: String, CaseIterable, Identifiable {
     case user = "User", general = "General", notifications = "Notifications", playback = "Playback", downloads = "Downloads"
     case connection = "Connection", devices = "Devices"
-    case library = "Library & Organizing", seeding = "Seeding", subtitles = "Subtitles & Translation"
+    case library = "Library & Organizing", seeding = "Upload & Seeding", subtitles = "Subtitles & Translation"
     case about = "About"
     var id: String { rawValue }
     var symbol: String {
@@ -224,7 +224,25 @@ struct SettingsPageView: View {
             case .subtitles: SwiftUI.Section { BackgroundSubtitlesView() } footer: { Text("Prepares English and Chinese subtitles for new titles on your server, on the server itself.") }
             case .about: AboutSettings()
             }
-        }.formStyle(.grouped).canvasBackground()
+        }.formStyle(.grouped).canvasBackground().tint(Theme.accent)
+        #if !os(macOS)
+        .toolbar { LanguageToolbar() }
+        #endif
+    }
+}
+
+/// A row that opens a sheet, drawn like a navigation row so it reads as tappable.
+struct SettingsDisclosureRow: View {
+    let title: String
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                Text(LocalizedStringKey(title)).foregroundStyle(.primary)
+                Spacer()
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            }.contentShape(Rectangle())
+        }.buttonStyle(.plain)
     }
 }
 
@@ -298,7 +316,7 @@ private struct PlaybackSettings: View {
     @State private var showSubtitles = false
     var body: some View {
         SwiftUI.Section {
-            Button("Default subtitles") { showSubtitles = true }
+            SettingsDisclosureRow(title: "Default subtitles") { showSubtitles = true }
                 .sheet(isPresented: $showSubtitles) { LocalizedInterface { SubtitlePreferencesView() } }
         } footer: { Text("Subtitle choices belong to this device.") }
     }
@@ -313,8 +331,11 @@ private struct ConnectionSettings: View {
             LabeledContent { Text(LocalizedStringKey(store.connectionLabel)) } label: { Text("Status") }
             LabeledContent("Server", value: store.server.isEmpty ? L10n.text("Not configured") : store.primaryAddress)
             Button { showFallback = true } label: {
-                LabeledContent("Fallback address", value: store.fallbackServer.isEmpty ? L10n.text("Not configured") : store.fallbackServer)
-            }
+                HStack {
+                    LabeledContent("Fallback address", value: store.fallbackServer.isEmpty ? L10n.text("Not configured") : store.fallbackServer)
+                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                }.contentShape(Rectangle())
+            }.buttonStyle(.plain)
             .sheet(isPresented: $showFallback) { LocalizedInterface { FallbackAddressView() } }
         } footer: { Text("Used when the primary address is unreachable. Torrents and downloads are available; streaming is disabled.") }
         SwiftUI.Section { Button("Edit connection") { showConnect = true } }
@@ -332,14 +353,7 @@ private struct DeviceSettings: View {
         }
         SwiftUI.Section("Devices") {
             ForEach(store.clients) { client in
-                HStack {
-                    DeviceNameRow(client: client, isCurrent: client.id == store.clientId)
-                    if client.id != store.clientId && client.pairedCredential == 1 {
-                        Button("Revoke access", role: .destructive) {
-                            store.perform { try await store.send("DELETE", "/v1/device-credentials/" + client.id) }
-                        }.font(.caption)
-                    }
-                }
+                DeviceNameRow(client: client, isCurrent: client.id == store.clientId)
             }
         }
     }
@@ -361,9 +375,16 @@ private struct LibrarySettings: View {
                 Stepper("Check every \(Int(interval)) seconds", value: $interval, in: 5...3600, step: 5)
             }
             SwiftUI.Section("Folders on your server") {
-                TextField("Downloads", text: $source)
-                TextField("Movies", text: $movies)
-                TextField("TV shows", text: $tv)
+                ForEach([("Downloads", $source), ("Movies", $movies), ("TV shows", $tv)], id: \.0) { label, binding in
+                    LabeledContent(LocalizedStringKey(label)) {
+                        TextField(LocalizedStringKey(label), text: binding).labelsHidden().multilineTextAlignment(.trailing)
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            #endif
+                    }
+                }
+            }
+            SwiftUI.Section {
                 Button(LocalizedStringKey(saved ? "Saved" : "Save settings")) {
                     store.perform {
                         try await store.send("PATCH", "/v1/settings", body: ["source": source, "movies": movies, "tv": tv, "poll_seconds": interval])
@@ -403,13 +424,17 @@ struct SeedingSettings: View {
     struct Policy: Decodable { let enabled: Bool; let ratio: Double }
     var body: some View {
         Group {
-            if available {
-                SwiftUI.Section("Seeding") {
+            if !available {
+                SwiftUI.Section { HStack { Spacer(); ProgressView(); Spacer() } }
+            } else {
+                SwiftUI.Section {
                     Toggle("Move to Complete at target ratio", isOn: $enabled)
-                    TextField("Target upload/download ratio", value: $ratio, format: .number.precision(.fractionLength(1...2)))
-                        .disabled(!enabled)
-                    Text("Individual torrent limits take precedence.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    LabeledContent("Seeding target") {
+                        TextField("Target upload/download ratio", value: $ratio, format: .number.precision(.fractionLength(1...2)))
+                            .labelsHidden().multilineTextAlignment(.trailing)
+                    }.disabled(!enabled)
+                } footer: { Text("Individual torrent limits take precedence.") }
+                SwiftUI.Section {
                     Button(LocalizedStringKey(saved ? "Saved" : "Save seeding settings")) {
                         store.perform {
                             let policy: Policy = try await store.request("PATCH", "/v1/seeding", body: ["enabled":enabled, "ratio":ratio])
@@ -610,12 +635,22 @@ struct DeviceNameRow: View {
     let isCurrent: Bool
     @State private var name = ""
     var body: some View {
-        HStack {
-            TextField(client.platform, text: $name)
-            if isCurrent { Text("This device").font(.caption).foregroundStyle(.secondary) }
-            Button("Save") {
-                store.perform { try await store.send("PATCH", "/v1/clients/" + client.id, body: ["name": name]) }
-            }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || name == client.name || store.busy)
+        VStack(alignment: .leading, spacing: 6) {
+            TextField(client.platform, text: $name).font(.body)
+            HStack(spacing: 16) {
+                if isCurrent { Text("This device").font(.caption).foregroundStyle(.secondary) }
+                Spacer()
+                if name != client.name {
+                    Button("Save") {
+                        store.perform { try await store.send("PATCH", "/v1/clients/" + client.id, body: ["name": name]) }
+                    }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || store.busy)
+                }
+                if !isCurrent && client.pairedCredential == 1 {
+                    Button("Revoke access", role: .destructive) {
+                        store.perform { try await store.send("DELETE", "/v1/device-credentials/" + client.id) }
+                    }
+                }
+            }.font(.caption).buttonStyle(.borderless)
         }.onAppear { name = client.name }
         .onChange(of: client.name) { _, value in name = value }
     }
@@ -634,18 +669,21 @@ struct BackgroundSubtitlesView: View {
                 set: { enabled in store.perform { try await store.send("PATCH", "/v1/settings", body: ["background_subtitles": enabled]) } }
             )).disabled(store.busy)
             if let preparation = status.subtitlePreparation {
-                Text("\(preparation.translated) processed · \(preparation.scanned) scanned").font(.callout).foregroundStyle(.secondary)
-                if let job = preparation.current {
-                    let asset = store.library?.titles.flatMap(\.assets).first { $0.id == job.assetId }
-                    Text(LocalizedStringKey(asset?.name ?? "Translating subtitles…")).lineLimit(2)
-                    if job.totalCues > 0 {
-                        ProgressView(value: Double(job.completedCues), total: Double(job.totalCues))
-                        Text("\(Int(Double(job.completedCues) / Double(job.totalCues) * 100))%").monospacedDigit().font(.caption)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("\(preparation.translated) processed · \(preparation.scanned) scanned").font(.callout).foregroundStyle(.secondary)
+                    if let job = preparation.current {
+                        let asset = store.library?.titles.flatMap(\.assets).first { $0.id == job.assetId }
+                        HStack {
+                            Text(LocalizedStringKey(asset?.name ?? "Translating subtitles…")).lineLimit(2)
+                            Spacer()
+                            if job.totalCues > 0 { Text("\(Int(Double(job.completedCues) / Double(job.totalCues) * 100))%").monospacedDigit().font(.caption).foregroundStyle(.secondary) }
+                        }
+                        if job.totalCues > 0 { ProgressView(value: Double(job.completedCues), total: Double(job.totalCues)) }
+                    } else if preparation.waitingForIdle && status.settings.backgroundSubtitles != false {
+                        Text("Resumes after playback").foregroundStyle(.secondary)
                     }
-                } else if preparation.waitingForIdle && status.settings.backgroundSubtitles != false {
-                    Text("Resumes after playback").foregroundStyle(.secondary)
-                }
-                if preparation.failed > 0 { Text("\(preparation.failed) awaiting retry").foregroundStyle(.secondary) }
+                    if preparation.failed > 0 { Text("\(preparation.failed) awaiting retry").foregroundStyle(.secondary) }
+                }.padding(.vertical, 2)
             }
         }
     }

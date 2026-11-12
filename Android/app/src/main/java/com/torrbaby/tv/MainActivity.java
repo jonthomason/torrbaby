@@ -1991,6 +1991,8 @@ public class MainActivity extends Activity {
         .setTitle(L10n.t(title))
         .setItems(L10n.labels(items), (d, w) -> action.accept(w))
         .setNegativeButton(L10n.t("Back"), (d, w) -> settings())
+        // The remote's Back key returns to the categories, like the Back button.
+        .setOnCancelListener(d -> settings())
         .show();
   }
 

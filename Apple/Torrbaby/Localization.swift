@@ -83,8 +83,14 @@ struct LocalizedInterface<Content: View>: View {
 struct InterfaceLanguageSettings: View {
     @ObservedObject private var language = InterfaceLanguage.shared
     var body: some View {
-        Button { language.choose("system") } label: {
-            Label("Follow system language", systemImage: language.selection == "system" ? "checkmark.circle.fill" : "circle")
+        ForEach([("system", "Follow system language"), ("en", "English"), ("zh-Hans", "中文")], id: \.0) { code, name in
+            Button { language.choose(code) } label: {
+                HStack {
+                    if code == "zh-Hans" || code == "en" { Text(verbatim: code == "en" ? "English" : name) } else { Text(LocalizedStringKey(name)) }
+                    Spacer()
+                    if language.selection == code { Image(systemName: "checkmark").fontWeight(.semibold).foregroundStyle(Theme.accent) }
+                }.contentShape(Rectangle())
+            }.buttonStyle(.plain)
         }
     }
 }

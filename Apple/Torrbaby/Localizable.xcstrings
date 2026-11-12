@@ -12518,6 +12518,23 @@
           }
         }
       }
+    },
+    "Upload & Seeding": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Upload & Seeding"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上传与做种"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
