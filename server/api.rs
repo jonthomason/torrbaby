@@ -1415,7 +1415,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         ("PUT","/v1/subtitle-preferences") => db.save_subtitle_preferences(None, body),
         ("GET","/v1/storage") => {
             let config = effective.as_ref().context("Missing settings")?;
-            Ok(crate::volumes::report(&config.source,&config.movies,&config.tv))
+            Ok(crate::drives::Drives::of(config).report())
         },
         ("GET","/v1/library/revision") => Ok(json!({"revision":db.catalog_revision()?})),
         ("GET","/v1/processing") => crate::processing::summary(&db),
@@ -1438,7 +1438,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             let config = effective.as_ref().context("Missing settings")?;
             Ok(json!({"version":env!("CARGO_PKG_VERSION"),"uptime_seconds":s.started.elapsed().as_secs(),
                 "settings":{"background_subtitles":config.background_subtitles,"source":config.source,"movies":config.movies,"tv":config.tv,"poll_seconds":config.poll_seconds,"paused":s.preview || config.paused},
-                "storage":crate::volumes::report(&config.source,&config.movies,&config.tv),
+                "storage":crate::drives::Drives::of(&config).report(),
                 "credits_analysis":crate::credits::summary(&db)?,"subtitle_preparation":crate::media_inventory::summary(&db,&s.subtitle_jobs)?,"last_poll":state["last_poll"],"last_error":if s.preview { json!("Migration preview: organizer not enabled") } else {state["last_error"].clone()},"pending_scans":if state["library_scan"]["scanning"] == true {1} else {0},"scan_error":state["library_scan"]["error"],"jobs":state["jobs"]}))
         }
         ("GET","/v1/events") => Ok(db.state()?["events"].take()),
@@ -1507,9 +1507,10 @@ pub(crate) async fn processing_file(s: &Service, id: &str) -> Result<PathBuf> {
     let asset = s.db.lock().map_err(|_| anyhow::anyhow!("Database lock failed"))?.asset(id)?;
     if asset["complete"] == true { return media_file(s, id, 0).await; }
     let path = crate::scanner::work_path(&asset).context("Download is not complete")?;
-    let config = s.effective_config()?;
-    let relative = path.strip_prefix(&config.source).ok().and_then(|r| r.to_str()).context("Media is outside managed roots")?;
-    let path = checked_path(std::path::Path::new(&config.source), relative)?;
+    let drives = crate::drives::Drives::of(&s.effective_config()?);
+    let root = drives.roots(crate::drives::Role::Downloads).find(|root| path.starts_with(root)).context("Media is outside managed roots")?;
+    let relative = path.strip_prefix(root).ok().and_then(|r| r.to_str()).context("Media is outside managed roots")?;
+    let path = checked_path(root, relative)?;
     anyhow::ensure!(path.metadata().is_ok_and(|m| m.is_file() && Some(m.len()) == asset["size"].as_u64()), "Media is unavailable or changed");
     Ok(path)
 }
@@ -1534,14 +1535,13 @@ pub(crate) async fn media_file(s: &Service, hash: &str, index: u64) -> Result<Pa
         }
         let path = PathBuf::from(text(&asset, "path")?);
         let mut allowed = None;
-        let config = s.effective_config()?;
-        for root in [&config.source, &config.movies, &config.tv] {
+        let drives = crate::drives::Drives::of(&s.effective_config()?);
+        if let Some((_, _, root)) = drives.root_of(&path) {
             if let Ok(relative) = path.strip_prefix(root) {
                 allowed = Some(checked_path(
-                    std::path::Path::new(root),
+                    root,
                     relative.to_str().context("Invalid media path")?,
                 )?);
-                break;
             }
         }
         let path = allowed.context("Media is outside managed roots")?;
@@ -1579,11 +1579,7 @@ async fn torrent_media_file(s: &Service, hash: &str, index: u64) -> Result<PathB
         .and_then(|a| a.first())
         .context("Torrent not found")?;
     let root = std::path::Path::new(text(torrent, "download_dir")?);
-    let config = s.effective_config()?;
-    if ![&config.source, &config.movies, &config.tv]
-        .iter()
-        .any(|p| root == std::path::Path::new(p))
-    {
+    if !crate::drives::Drives::of(&s.effective_config()?).is_root(root) {
         bail!("Media is outside managed roots");
     }
     let file = torrent["files"]
@@ -2543,7 +2539,7 @@ async fn collect_metadata(s: &Service) -> Result<()> {
         // file name carries a franchise or site prefix. Library roots are not titles.
         let folder = path.parent().filter(|parent| {
             asset["metadata_query"].is_null() && asset["series_query"].is_null() && asset["series_name"].is_null()
-                && ![&config.source, &config.movies, &config.tv].iter().any(|root| *parent == std::path::Path::new(root))
+                && !crate::drives::Drives::of(&config).is_root(parent)
         }).and_then(|parent| parent.file_name()).map(|folder| folder.to_string_lossy().into_owned());
         let result = s.metadata.search_in(&name, folder.as_deref()).await;
         match result {
@@ -2604,6 +2600,8 @@ impl Service {
             "tv",
             "background_subtitles",
         ] {
+            // Folders saved before a drives list was configured no longer apply.
+            if !self.config.drives.is_empty() && ["source", "movies", "tv"].contains(&key) { continue; }
             if let Some(value) = state["settings"].get(key) {
                 config[key] = value.clone();
             }

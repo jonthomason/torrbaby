@@ -33,12 +33,43 @@ pub struct Config {
     pub state_file: String,
     pub transmission_url: String,
     pub transmission_auth_file: Option<String>,
+    /// Drive 1's folders when there is no `drives` list. Empty when there is one.
+    #[serde(default)]
     pub source: String,
+    #[serde(default)]
     pub movies: String,
+    #[serde(default)]
     pub tv: String,
+    /// The drives media is kept on (docs/disk-aggregation.md). Absent: `source`,
+    /// `movies` and `tv` are the only drive. Ask `crate::drives`, not these fields.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drives: Vec<DriveConfig>,
     pub poll_seconds: f64,
     #[serde(default)]
     pub paused: bool,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DriveConfig {
+    /// Stable identity, recorded on the drive; never derived from its mount path.
+    pub id: String,
+    /// The drive's `Media` folder, holding `Downloads`, `Movies` and `TV`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<String>,
+    /// Exact folders, overriding the ones under `media`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub downloads: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub movies: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tv: Option<String>,
+    /// False keeps new downloads off this drive (full, or being retired).
+    #[serde(default = "accept_new_default")]
+    pub accept_new: bool,
+    /// Free space never to place below; default 50 GB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reserve_bytes: Option<u64>,
 }
 
 pub fn expand(value: &str) -> Result<PathBuf> {
@@ -81,18 +112,30 @@ impl Config {
         if !config.poll_seconds.is_finite() || !(5.0..=3600.0).contains(&config.poll_seconds) {
             bail!("poll_seconds must be between 5 and 3600");
         }
-        let roots = [&config.source, &config.movies, &config.tv];
-        for (index, root) in roots.iter().enumerate() {
-            let path = Path::new(root);
-            if !path.is_absolute()
-                || path
-                    .components()
-                    .any(|c| matches!(c, std::path::Component::ParentDir))
-            {
-                bail!("Media folders must be absolute paths without parent components");
+        if config.drives.is_empty() {
+            if [&config.source, &config.movies, &config.tv].iter().any(|r| r.is_empty()) {
+                bail!("Configure source, movies and tv, or a drives list");
             }
+        } else {
+            if [&config.source, &config.movies, &config.tv].iter().any(|r| !r.is_empty()) {
+                bail!("Media folders are set per drive when a drives list is configured");
+            }
+            let mut ids = std::collections::HashSet::new();
+            for drive in &config.drives {
+                if drive.id.is_empty() || drive.id.len() > 64
+                    || !drive.id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+                    bail!("Drive ids must be 1-64 letters, digits, '-' or '_'");
+                }
+                if !ids.insert(drive.id.as_str()) { bail!("Drive ids must be unique"); }
+                if let Some(media) = &drive.media { absolute(media)?; }
+            }
+        }
+        let drives = crate::drives::Drives::of(config);
+        let roots: Vec<&Path> = drives.all_roots().map(|(_, _, root)| root).collect();
+        for (index, path) in roots.iter().enumerate() {
+            absolute(&path.to_string_lossy())?;
             for other in roots.iter().skip(index + 1) {
-                if path.starts_with(other) || Path::new(other).starts_with(path) {
+                if path.starts_with(other) || other.starts_with(path) {
                     bail!("Media folders must not overlap");
                 }
             }
@@ -110,6 +153,15 @@ impl Config {
     }
 }
 
+fn absolute(folder: &str) -> Result<()> {
+    let path = Path::new(folder);
+    if !path.is_absolute() || path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        bail!("Media folders must be absolute paths without parent components");
+    }
+    Ok(())
+}
+
+fn accept_new_default() -> bool { true }
 fn background_subtitles_default() -> bool { true }
 fn processing_concurrency_default() -> usize { 8 }
 fn on_device_processing_concurrency_default() -> usize { 2 }

@@ -40,7 +40,8 @@ mod torrent_search;
 mod cloud;
 mod transmission;
 mod video_metadata;
-mod volumes;
+mod drives;
+mod scan_report;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::{
@@ -170,6 +171,20 @@ enum Command {
         database: PathBuf,
         #[arg(long, default_value = "127.0.0.1:8766")]
         listen: String,
+    },
+    /// Print what a library scan would record and what the organizer would move, changing
+    /// nothing. Use a copy of the database. Compares builds on the same library.
+    ScanReport {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        database: PathBuf,
+        /// Use this saved Transmission snapshot instead of asking Transmission.
+        #[arg(long)]
+        torrents: Option<PathBuf>,
+        /// Save the Transmission snapshot used, for a later run.
+        #[arg(long)]
+        save_torrents: Option<PathBuf>,
     },
     /// Test directory enumeration and one file read in each media root.
     CheckAccess {
@@ -362,6 +377,10 @@ async fn main() -> Result<()> {
             database,
             listen,
         } => api::serve(config, database, listen, true).await?,
+        Command::ScanReport { config, database, torrents, save_torrents } => {
+            let report = scan_report::run(&config, &database, torrents.as_deref(), save_torrents.as_deref()).await?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
         Command::CheckAccess { media_root } => {
             let mut failed = false;
             for folder in ["Downloads", "Movies", "TV"] {

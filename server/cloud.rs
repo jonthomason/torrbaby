@@ -640,7 +640,7 @@ impl Cloud {
         let config = s.effective_config()?;
         // One video without an episode number is a film; anything else is a series.
         let film = chosen.len() == 1 && episode(&chosen[0].0).1.is_none() && body["kind"] != "tv" || body["kind"] == "movie";
-        let folder = PathBuf::from(if film { &config.movies } else { &config.tv }).join(&title);
+        let folder = crate::drives::Drives::of(&config).primary().library(!film).join(&title);
         let files = chosen.into_iter().map(|(path, size)| {
             let extension = path.rsplit('.').next().unwrap_or("mkv").to_ascii_lowercase();
             let (stated, number) = episode(&path);

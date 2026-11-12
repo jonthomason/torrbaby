@@ -143,8 +143,9 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
 /// `incomplete` is Transmission's incomplete directory, when enabled and known.
 pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, incomplete: Option<&Path>) -> Inventory {
     // A misconfigured incomplete directory must never hide a library root.
+    let drives = crate::drives::Drives::of(config);
     let incomplete = incomplete.filter(|dir| dir.is_absolute() && dir.components().count() > 2
-        && ![&config.source, &config.movies, &config.tv].iter().any(|root| Path::new(root).starts_with(dir)));
+        && !drives.all_roots().any(|(_, _, root)| root.starts_with(dir)));
     let mut candidates: HashMap<PathBuf, Value> = HashMap::new();
     let mut errors = Vec::new();
     // Present torrents' video file names, those not yet at their final path, and those paths.
@@ -154,7 +155,7 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
             continue;
         };
         if crate::trials::trial_path(root) {continue;}
-        if [&config.source,&config.movies,&config.tv].iter().any(|managed|Path::new(root).starts_with(Path::new(managed).join("Junk"))) { continue; }
+        if drives.all_roots().any(|(_, _, managed)|Path::new(root).starts_with(managed.join("Junk"))) { continue; }
         if let Some(files) = torrent["files"].as_array() {
             let package_complete = package_complete(files) && files.iter().all(|file| {
                 let Some(name) = file["name"].as_str() else { return false; };
@@ -202,12 +203,13 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
             }
         }
     }
-    for (root, complete) in [
-        (&config.movies, true),
-        (&config.tv, true),
-        (&config.source, false),
-    ] {
-        let mut pending = vec![PathBuf::from(root)];
+    // Library roots first, then Downloads, drive by drive.
+    use crate::drives::Role;
+    let walk: Vec<(&Path, Role)> = [Role::Movies, Role::Tv, Role::Downloads].into_iter()
+        .flat_map(|role| drives.roots(role).map(move |root| (root, role))).collect();
+    for (root, role) in walk {
+        let complete = role != Role::Downloads;
+        let mut pending = vec![root.to_path_buf()];
         while let Some(directory) = pending.pop() {
             let entries = match fs::read_dir(&directory) {
                 Ok(entries) => entries,
@@ -236,10 +238,10 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
                 }
                 if kind.is_dir() {
                     if entry.file_name()==".torrbaby-trials" {continue;}
-                    if entry.path() == Path::new(root).join("Junk") { continue; }
+                    if entry.path() == root.join("Junk") { continue; }
                     pending.push(entry.path());
                 } else if kind.is_file() && video(&entry.path())
-                    && !(root == &config.source && torrent_copy(&entry.path(), Path::new(&config.source), incomplete, &unfinished_names, &tracked)) {
+                    && !(role == Role::Downloads && torrent_copy(&entry.path(), root, incomplete, &unfinished_names, &tracked)) {
                     candidates.entry(entry.path()).or_insert_with(
                         || json!({"complete":complete,"added_at":now(),"torrent_present":false}),
                     );
@@ -262,13 +264,12 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
     let mut assets = Vec::new();
     let mut seen = HashSet::new();
     for (path, info) in candidates {
-        let valid_root = [&config.source, &config.movies, &config.tv]
-            .iter()
-            .any(|root| {
+        let valid_root = drives.all_roots()
+            .any(|(_, _, root)| {
                 let Ok(relative) = path.strip_prefix(root) else {
                     return false;
                 };
-                let mut current = PathBuf::from(root);
+                let mut current = root.to_path_buf();
                 relative.components().all(|part| {
                     current.push(part);
                     !current.is_symlink()
@@ -310,7 +311,7 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
             asset["complete"] = json!(false);
         }
         asset["path"] = json!(name);
-        asset["library_ready"] = json!(path.starts_with(&config.movies) || path.starts_with(&config.tv));
+        asset["library_ready"] = json!(drives.in_library(&path));
         asset["inode"] = json!(inode);
         asset["available"] = json!(metadata.is_some());
         if metadata.is_none() { asset["complete"] = json!(false); }
@@ -383,8 +384,8 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
         if asset["torrent_hash"].is_null() && asset["confirmed"] != true
             && asset["path"].as_str().is_some_and(|path| {
                 let gone = matches!(fs::metadata(path), Err(e) if e.kind() == std::io::ErrorKind::NotFound);
-                torrent_copy(Path::new(path), Path::new(&config.source), incomplete,
-                    if gone { &torrent_names } else { &unfinished_names }, &tracked)
+                drives.roots(Role::Downloads).any(|downloads| torrent_copy(Path::new(path), downloads, incomplete,
+                    if gone { &torrent_names } else { &unfinished_names }, &tracked))
             })
         {
             if let Some(id) = asset["id"].as_str() { superseded.push(id.to_owned()); }

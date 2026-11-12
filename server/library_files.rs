@@ -136,7 +136,7 @@ fn package_preview(asset: &Value, assets: &[Value], torrents: &[Value], roots: &
 pub async fn preview(s: &Service, id: &str) -> Result<Value> {
     let torrents = organizer::torrents(s).await?;
     let config = s.effective_config()?;
-    let roots = [&config.source, &config.movies, &config.tv].map(PathBuf::from);
+    let roots = crate::drives::Drives::of(&config).all_roots().map(|(_, _, root)| root.to_path_buf()).collect::<Vec<_>>();
     let (asset, assets, active) = {
         let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
         let active = db.rows("SELECT DISTINCT s.media_id FROM playback_sessions s JOIN profile_playback p ON p.active_session=s.id WHERE s.ended=0 AND p.last_played>?", [now()-30.0])?
@@ -166,8 +166,8 @@ pub async fn submit(s: &Service, asset_id: &str, action: &str, token: &str) -> R
     let config = s.effective_config()?;
     let destination = if action == "junk" {
         let source = Path::new(current["download_dir"].as_str().context("Junk requires a torrent package")?);
-        let managed = [&config.source,&config.movies,&config.tv].into_iter()
-            .find(|root| source.starts_with(root)).context("Unmanaged torrent location")?;
+        let drives = crate::drives::Drives::of(&config);
+        let (_, _, managed) = drives.root_of(source).context("Unmanaged torrent location")?;
         let hash = current["torrent_hash"].as_str().context("Missing torrent hash")?;
         ensure!(hash.len() == 40 && hash.bytes().all(|b|b.is_ascii_hexdigit()),"Invalid torrent identity");
         let destination = checked_path(Path::new(managed), &format!("Junk/{hash}"))?;
@@ -286,7 +286,7 @@ async fn advance(s: &Service, operation: &Value) -> Result<()> {
     let original: Value = serde_json::from_str(operation["preview"].as_str().context("Missing operation manifest")?)?;
     let manifest = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.relocated_manifest(id)?.unwrap_or(original.clone());
     let config = s.effective_config()?;
-    let roots = [&config.source,&config.movies,&config.tv].map(PathBuf::from);
+    let roots = crate::drives::Drives::of(&config).all_roots().map(|(_, _, root)| root.to_path_buf()).collect::<Vec<_>>();
     let advance = |next: &str| -> Result<()> {
         s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.advance_library_operation(id,phase,next)
     };

@@ -1,7 +1,7 @@
 # Disk aggregation: one library across several drives
 
-Status: design, not started. Work happens in the `disk-aggregation` worktree,
-separate from release work. Written 2026-11-12, when Diamond had one 2 TB drive
+Status: phase 1 done (2026-11-12); phase 2 next. Work happens in the
+`drive-aggregation` worktree, separate from release work. Written 2026-11-12, when Diamond had one 2 TB drive
 (`/Volumes/Alpha`, about 620 GB free) and a second 2 TB drive was expected.
 
 ## Decision
@@ -140,6 +140,12 @@ drives or to empty one before retiring it.
    - Acceptance: every test passes; Diamond's library, scan results and
      organizer actions are identical before and after, compared on a copy of
      the database.
+   - Done: `server/drives.rs` (grown from `volumes.rs`) and the `drives` config.
+     `torrbaby scan-report` prints what a scan would record and what the
+     organizer would move, changing nothing. Run before and after on Diamond
+     against a backup of the database and one saved Transmission snapshot, the
+     output was identical (1,539 assets). With every torrent pointed at
+     Downloads, the organizer's plans and refusals were identical too.
 2. **Read across drives.**
    - Scan every drive; path safety accepts any managed root.
    - Missing-drive handling (no false deletions), the drive markers, and a
@@ -168,13 +174,12 @@ drives or to empty one before retiring it.
 - Unit tests use temporary directories, as `volumes.rs` does. A "missing drive"
   test removes the marker or the directory and asserts no asset is marked gone.
 
-## Open questions
+## Decisions (answered 2026-11-12)
 
-- Should a new show prefer the drive with the most free space, or keep each kind
-  together (all movies on one drive)? The default proposed here is most free
-  space; per-drive roles could come later.
-- On first sight of a new drive, should Torrbaby start using it automatically,
-  or wait until it is accepted in Settings? Proposed: automatic, because a drive
-  only gets mounted at `/Volumes/<name>/Media` on purpose.
-- Should clients ever see drive names beyond the storage line? Proposed: only in
-  Settings and in Needs attention.
+- A new show or film goes to the drive with the most free space, which balances
+  the drives over time. Episodes still follow their show.
+- A new drive is not used until it is added in Settings. Torrbaby never adopts a
+  mounted volume on its own.
+- Drives stay invisible to everyone except when administration needs them: names
+  appear in Settings → Server and, only while a drive is missing, in Needs
+  attention.

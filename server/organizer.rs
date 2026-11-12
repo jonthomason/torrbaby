@@ -1,6 +1,7 @@
 use crate::{
     api::{Service, checked_path},
     config::Config,
+    drives::Drives,
     scanner::video,
     storage::now,
 };
@@ -59,9 +60,7 @@ pub async fn torrent(s: &Service, hash: &str) -> Result<Value> {
     Ok(values.remove(0))
 }
 fn managed(config: &Config, root: &Path) -> bool {
-    [&config.source, &config.movies, &config.tv]
-        .iter()
-        .any(|p| root == Path::new(p))
+    Drives::of(config).is_root(root)
 }
 fn owned(t: &Value) -> Result<HashSet<PathBuf>> {
     files(t)?
@@ -228,7 +227,7 @@ pub(crate) async fn add_at(s: &Service, body: &Value, directory:Option<&Path>) -
         None => false,
         Some(v) => v.as_bool().context("paused must be boolean")?,
     };
-    let mut params = json!({"download_dir":directory.map(|p|p.to_string_lossy().into_owned()).unwrap_or(config.source),"paused":paused});
+    let mut params = json!({"download_dir":directory.map(|p|p.to_string_lossy().into_owned()).unwrap_or_else(||Drives::of(&config).primary().downloads.to_string_lossy().into_owned()),"paused":paused});
     if let Some(magnet) = magnet {
         if !magnet.starts_with("magnet:?") {
             bail!("Expected a magnet link");
@@ -355,8 +354,13 @@ pub async fn rename(s: &Service, hash: &str, path: &str, name: &str) -> Result<V
     Ok(refreshed)
 }
 
-fn plan(config: &Config, t: &Value) -> Result<Option<Value>> {
-    if t["download_dir"] != config.source || !complete(t) {
+pub(crate) fn plan(config: &Config, t: &Value) -> Result<Option<Value>> {
+    let drives = Drives::of(config);
+    // A torrent is filed on the drive it downloaded to, so the move is a rename.
+    let Some(drive) = t["download_dir"].as_str().and_then(|dir| drives.downloading_into(Path::new(dir))) else {
+        return Ok(None);
+    };
+    if !complete(t) {
         return Ok(None);
     }
     if !files(t)?.iter().any(|f| {
@@ -371,9 +375,8 @@ fn plan(config: &Config, t: &Value) -> Result<Option<Value>> {
         || files(t)?
             .iter()
             .any(|f| crate::metadata::parse_name(f["name"].as_str().unwrap_or("")).2 == "tv");
-    let destination = if is_tv { &config.tv } else { &config.movies };
-    let source = Path::new(&config.source);
-    let dest = Path::new(destination);
+    let source = drive.downloads.as_path();
+    let dest = drive.library(is_tv);
     if !source.is_dir() || !dest.is_dir() {
         bail!("Library volume/directory unavailable");
     }
@@ -396,7 +399,7 @@ fn plan(config: &Config, t: &Value) -> Result<Option<Value>> {
         }
     }
     Ok(Some(
-        json!({"hash":t["hash_string"],"name":t["name"],"category":if is_tv{"tv"}else{"movies"},"source":config.source,"destination":destination,"files":t["files"],"phase":"moving","created":now(),"attempted":0}),
+        json!({"hash":t["hash_string"],"name":t["name"],"category":if is_tv{"tv"}else{"movies"},"source":source,"destination":dest,"files":t["files"],"phase":"moving","created":now(),"attempted":0}),
     ))
 }
 
@@ -540,7 +543,7 @@ async fn advance(
 ) -> Result<()> {
     let hash = text(t, "hash_string")?;
     if job.is_null() || job["phase"] == "blocked" {
-        if t["download_dir"] == config.source && complete(t) {
+        if t["download_dir"].as_str().is_some_and(|dir| Drives::of(config).downloading_into(Path::new(dir)).is_some()) && complete(t) {
             let assets=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?.documents("assets")?;
             if !identified(hash, files(t)?, &assets) { bail!("Waiting for media identification before moving to the library"); }
             auto_name(s,config,hash).await?;
@@ -853,6 +856,38 @@ async fn auto_name(s: &Service, config: &Config, hash: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_finished_torrent_is_filed_on_the_drive_it_downloaded_to() {
+        let root = std::env::temp_dir().join(format!("torrbaby-plan-{}", uuid::Uuid::new_v4()));
+        let media = |drive: &str| root.join(drive).join("Media");
+        for drive in ["Alpha", "Beta"] { for folder in ["Downloads", "Movies", "TV"] { std::fs::create_dir_all(media(drive).join(folder)).unwrap(); } }
+        let finished = |dir: &Path, name: &str| {
+            std::fs::create_dir_all(dir.join(name)).unwrap();
+            std::fs::write(dir.join(name).join("Show.S01E01.mkv"), vec![0u8; 10]).unwrap();
+            json!({"hash_string":"h","name":name,"download_dir":dir,"metadata_percent_complete":1.0,"percent_done":1.0,"left_until_done":0,"error":0,"status":6,
+                "files":[{"name":format!("{name}/Show.S01E01.mkv"),"length":10,"bytes_completed":10}]})
+        };
+        let base = |extra: Value| -> Config {
+            let mut v = json!({"listen_host":"127.0.0.1","listen_port":1,"token_file":"t","state_file":"s","transmission_url":"x","transmission_auth_file":null,"poll_seconds":30});
+            v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            serde_json::from_value(v).unwrap()
+        };
+        // Drive 1 from the folders configured before drives existed.
+        let legacy = base(json!({"source":media("Alpha").join("Downloads"),"movies":media("Alpha").join("Movies"),"tv":media("Alpha").join("TV")}));
+        let plan_one = plan(&legacy, &finished(&media("Alpha").join("Downloads"), "Show.S01")).unwrap().unwrap();
+        assert_eq!(plan_one["source"], json!(media("Alpha").join("Downloads")));
+        assert_eq!(plan_one["destination"], json!(media("Alpha").join("TV")));
+        assert_eq!(plan_one["category"], "tv");
+        // A torrent on the second drive is filed on that drive, never moved across.
+        let two = base(json!({"drives":[{"id":"alpha","media":media("Alpha")},{"id":"beta","media":media("Beta")}]}));
+        let plan_two = plan(&two, &finished(&media("Beta").join("Downloads"), "Other.S01")).unwrap().unwrap();
+        assert_eq!(plan_two["source"], json!(media("Beta").join("Downloads")));
+        assert_eq!(plan_two["destination"], json!(media("Beta").join("TV")));
+        // Already filed, or outside any drive's Downloads: nothing to do.
+        assert!(plan(&two, &finished(&media("Beta").join("TV"), "Filed.S01")).unwrap().is_none());
+        assert!(plan(&two, &finished(&root.join("Elsewhere"), "Loose.S01")).unwrap().is_none());
+        std::fs::remove_dir_all(root).ok();
+    }
     #[test]
     fn private_site_torrents_seed_past_the_time_then_to_the_ratio() {
         let (seconds, ratio) = (90.0 * 3600.0, 1.0);
