@@ -5,8 +5,7 @@ It organizes downloads while preserving seeding and exposes an authenticated HTT
 API and CLI. MIT licensed.
 
 The deployed server is Rust and streams directly from the filesystem. Plex is
-not required by the Rust server. Legacy Python sources remain temporarily for
-rollback and migration reference.
+not required by the Rust server.
 
 ## Active development goal
 
@@ -120,34 +119,31 @@ read from the current user's Plex preferences without being printed. Alternative
 set `plex_token_file` to a private text file. Transmission Basic credentials may
 be supplied as `user:password` in `transmission_auth_file`.
 
-Copy this repository to the server and run:
+Build the signed server bundle (Rust daemon plus Swift helpers):
 
 ```sh
-python3 scripts/install.py --media-root /path/to/Media --listen-host 127.0.0.1
+MAC_SIGNING_IDENTITY='Developer ID Application: …' scripts/build_server.sh
 ```
 
-For remote native apps, use the server's **Tailscale IP** as `--listen-host`.
+Install `local-state/server/Torrbaby Server.app` to `~/Applications/` and run it
+from a per-user LaunchAgent, `~/Library/LaunchAgents/org.torrbaby.daemon.plist`,
+whose `ProgramArguments` are
+`…/Torrbaby Server.app/Contents/MacOS/torrbaby serve --config …/config.json`.
+
+For remote native apps, set `listen_host` to the server's **Tailscale IP**.
 This binds to that address, not to all interfaces. HTTP is carried inside
 Tailscale's encrypted connection. Don't expose the HTTP listener to the public
 internet; use a TLS reverse proxy if deploying outside a private encrypted network.
 
-The installer creates a random API token with mode 0600, preserves existing
-configuration/state on upgrades, and restarts only Torrbaby's LaunchAgent:
+Server data lives in `~/Library/Application Support/Torrbaby/`:
 
-- `~/Library/Application Support/Torrbaby/app/`: application code
-- `~/Library/Application Support/Torrbaby/config.json`: server configuration
-- `~/Library/Application Support/Torrbaby/api.token`: private bearer token
-- `~/Library/Application Support/Torrbaby/state.sqlite3`: settings, jobs, recent events, devices and playback history. An existing `state.json` is imported once and retained as a migration backup
-- `~/Library/Application Support/Torrbaby/torrbaby.log`: rotating operation log
-- `~/Library/LaunchAgents/org.torrbaby.daemon.plist`: per-user service
+- `config.json`: server configuration (start from `config.example.json`)
+- `api.token`: private random bearer token, mode 0600
+- `state.sqlite3`: settings, jobs, recent events, devices and playback history
+- `torrbaby.log`: rotating operation log
 
-This is a LaunchAgent, so it starts in the user's login session. Transmission and
-Plex are independent services. For Linux or a different supervisor, copy
-`config.example.json`, create a private random token file, edit paths and run:
-
-```sh
-python3 torrbaby.py serve --config /path/to/config.json
-```
+This is a LaunchAgent, so it starts in the user's login session. Transmission is
+an independent service.
 
 Only one process may own a state file. Stop Torrbaby before copying its SQLite database, or use SQLite’s online backup API so WAL transactions are included. Back up configuration and state when
 upgrading. To stop/uninstall the macOS service without deleting media:
@@ -175,13 +171,13 @@ The CLI invokes the same API as an app; it does not bypass the service:
 ```sh
 export TORRBABY_URL=http://127.0.0.1:8765
 export TORRBABY_TOKEN_FILE="$HOME/Library/Application Support/Torrbaby/api.token"
-python3 torrbaby.py request GET /v1/status
-python3 torrbaby.py request GET /v1/torrents
-python3 torrbaby.py request GET /v1/events
-python3 torrbaby.py request PATCH /v1/settings --data '{"paused":true}'
-python3 torrbaby.py request PATCH /v1/settings --data '{"paused":false}'
-python3 torrbaby.py request POST /v1/reconcile
-python3 torrbaby.py request POST /v1/plex/scan
+torrbaby request GET /v1/status
+torrbaby request GET /v1/torrents
+torrbaby request GET /v1/events
+torrbaby request PATCH /v1/settings --data '{"paused":true}'
+torrbaby request PATCH /v1/settings --data '{"paused":false}'
+torrbaby request POST /v1/reconcile
+torrbaby request POST /v1/plex/scan
 ```
 
 Use `--url` and `--token-file` instead of environment variables if preferred.
@@ -246,12 +242,11 @@ and queues a Plex scan. A future app can provide a review/accept screen.
 ## Development
 
 ```sh
-python3 -m unittest discover -s tests -v
-python3 -m py_compile torrbaby.py scripts/install.py
+cargo test --locked
+python3 tests/test_real_transmission_junk.py   # isolated real-Transmission acceptance
 ```
 
-Tests use temporary files and fake RPC/Plex backends, plus a real local HTTP
-server for API authentication checks. They do not touch your media library.
+Tests use temporary files and fixtures. They do not touch your media library.
 
 The shared SwiftUI client in `Apple/` runs on iOS, iPadOS and macOS. Playback uses
 Apple's native `AVPlayerViewController` / `AVPlayerView`. The daemon serves original file bytes with HTTP range support; it never transcodes.
