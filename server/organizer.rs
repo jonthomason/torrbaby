@@ -214,8 +214,8 @@ pub(crate) async fn add_at(s: &Service, body: &Value, directory:Option<&Path>) -
     }
     let magnet = body["magnet"].as_str().filter(|v| !v.is_empty());
     // A cloud-drive result is not a torrent: its videos are queued as a cloud download.
-    if let Some((url, title)) = magnet.and_then(crate::torrent_search::cloud_listing) {
-        let queued = s.cloud.add(s, &json!({"url": url, "title": title})).await?;
+    if let Some((url, title, copy)) = magnet.and_then(crate::torrent_search::cloud_listing) {
+        let queued = s.cloud.add(s, &json!({"url": url, "title": title, "copy": copy})).await?;
         return Ok(json!({"result": "success", "cloud_job": queued["job_id"]}));
     }
     let metainfo = body["metainfo"].as_str().filter(|v| !v.is_empty());

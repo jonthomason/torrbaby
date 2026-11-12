@@ -503,6 +503,27 @@ impl Metadata {
         }
         Ok(json!({"query":query,"year":year,"kind":kind,"candidates":candidates,"exact":null,"matched_query":null,"attempts":tried}))
     }
+    /// A series by the title it is known by at home ("九重紫"), with each season's episode
+    /// count and how many of them have aired. Null when no series has exactly that title.
+    pub async fn series_episodes(&self, name: &str) -> Result<Value> {
+        let fold = |text: &str| text.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect::<String>();
+        let wanted = fold(name);
+        if wanted.is_empty() { return Ok(Value::Null); }
+        let data = self.request("search/tv", &[("query", name), ("language", "zh-CN"), ("include_adult", "false")]).await?;
+        // TMDB lists the best-known first, so the first exact title is the one meant.
+        let Some(hit) = array(&data["results"]).iter().find(|hit| [&hit["name"], &hit["original_name"]].iter().any(|title| title.as_str().is_some_and(|t| fold(t) == wanted))) else { return Ok(Value::Null) };
+        let Some(id) = hit["id"].as_u64() else { return Ok(Value::Null) };
+        let detail = self.request(&format!("tv/{id}"), &[("language", "zh-CN")]).await?;
+        let last = &detail["last_episode_to_air"];
+        let (reached, number) = (last["season_number"].as_u64().unwrap_or(0), last["episode_number"].as_u64().unwrap_or(0));
+        let seasons: Vec<Value> = array(&detail["seasons"]).iter().filter_map(|season| {
+            let (index, episodes) = (season["season_number"].as_u64().filter(|n| *n > 0)?, season["episode_count"].as_u64().unwrap_or(0));
+            let aired = if index < reached { episodes } else if index == reached { number.min(episodes.max(number)) } else { 0 };
+            Some(json!({"season": index, "episodes": episodes.max(aired), "aired": aired}))
+        }).collect();
+        Ok(json!({"provider": "TMDB", "provider_id": id.to_string(), "title": detail["name"], "original_title": detail["original_name"],
+            "year": detail["first_air_date"].as_str().and_then(|date| date.get(..4)), "status": detail["status"], "seasons": seasons}))
+    }
     pub async fn cast(&self, entity: &Value) -> Result<Value> {
         let kind=entity["kind"].as_str().context("Missing media kind")?;
         anyhow::ensure!(["movie","tv"].contains(&kind), "Invalid media kind");

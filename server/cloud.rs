@@ -80,6 +80,135 @@ pub fn episode(name: &str) -> (Option<u64>, Option<u64>) {
     (None, BARE.captures(&plain).and_then(|found| found[1].parse().ok()).filter(|n| *n > 0))
 }
 
+/// The season a title names: "第二季", "S02", "Season 2".
+pub fn stated_season(text: &str) -> Option<u64> {
+    static CHINESE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"第\s*([一二三四五六七八九十\d]{1,3})\s*[季部]").expect("valid regex"));
+    static LATIN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:^|[^a-z0-9])(?:s|season\s*)(\d{1,2})(?:[^0-9]|$)").expect("valid regex"));
+    if let Some(found) = CHINESE.captures(text) {
+        let numeral = &found[1];
+        if let Ok(number) = numeral.parse() { return Some(number); }
+        let digit = |c: char| "一二三四五六七八九".chars().position(|d| d == c).map(|i| i as u64 + 1);
+        let letters: Vec<char> = numeral.chars().collect();
+        return match letters.as_slice() {
+            ['十'] => Some(10),
+            ['十', unit] => digit(*unit).map(|u| 10 + u),
+            [tens, '十'] => digit(*tens).map(|t| t * 10),
+            [tens, '十', unit] => Some(digit(*tens)? * 10 + digit(*unit)?),
+            [unit] => digit(*unit),
+            _ => None,
+        };
+    }
+    LATIN.captures(text).and_then(|found| found[1].parse().ok()).filter(|n| *n > 0)
+}
+/// A searched title without the season it names: "庆余年 第二季" is the show "庆余年".
+pub fn title_and_season(query: &str) -> (String, Option<u64>) {
+    static MARK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\s*(?:第\s*[一二三四五六七八九十\d]{1,3}\s*[季部]|\bseason\s*\d{1,2}\b|\bs\d{1,2}\b)\s*").expect("valid regex"));
+    let season = stated_season(query);
+    let title = if season.is_some() { MARK.replace_all(query, " ").trim().to_owned() } else { query.trim().to_owned() };
+    if title.is_empty() { (query.trim().to_owned(), season) } else { (title, season) }
+}
+/// The picture size a video has, from what the drive measured or, failing that, its name.
+fn resolution(video: &Value) -> Option<&'static str> {
+    static NAMED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(2160p|4k|uhd)|(1080[pi])|(720p)").expect("valid regex"));
+    let (width, height) = (video["width"].as_u64().unwrap_or(0), video["height"].as_u64().unwrap_or(0));
+    if width > 0 || height > 0 {
+        // Width decides: a 3840×1608 widescreen picture is still 4K.
+        return Some(if width >= 3000 || height >= 2000 { "2160p" } else if width >= 1800 || height >= 1000 { "1080p" } else if width >= 1200 || height >= 700 { "720p" } else { "480p" });
+    }
+    let found = NAMED.captures(video["path"].as_str().unwrap_or(""))?;
+    Some(if found.get(1).is_some() { "2160p" } else if found.get(2).is_some() { "1080p" } else { "720p" })
+}
+/// The separate copies of a series inside one share. Sharers often bundle the same
+/// episodes in several qualities, a folder each; a copy is one folder's videos of one
+/// picture size and frame rate. Each video is marked with its copy's key.
+pub fn copies(videos: &mut [Value], listing: &str) -> Vec<Value> {
+    static ATMOS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)atmos|杜比全景声|全景声").expect("valid regex"));
+    static SURROUND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:^|[^0-9])([57])\.1(?:[^0-9]|$)").expect("valid regex"));
+    static STEREO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:aac|ddp?|eac3|ac3)[ ._-]?2\.0|(?:^|[^0-9])2\.0(?:[^0-9]|$)|立体声").expect("valid regex"));
+    static FAST: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:50|60|120)\s*(?:fps|帧)").expect("valid regex"));
+    static VISION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)杜比视界|dolby[ ._-]?vision|dovi|(?:^|[^a-z])dv(?:[^a-z]|$)").expect("valid regex"));
+    static HDR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)hdr|臻彩").expect("valid regex"));
+    static CODEC: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(h\.?265|hevc|x265)|(h\.?264|x264|avc)|(av1)").expect("valid regex"));
+    let folder = |video: &Value| video["path"].as_str().unwrap_or("").rsplit_once('/').map_or(String::new(), |(folder, _)| folder.to_owned());
+    // A video the drive did not measure takes its folder's picture size when the folder has just one.
+    let mut sizes: HashMap<String, std::collections::BTreeSet<&'static str>> = HashMap::new();
+    for video in videos.iter() { if let Some(size) = resolution(video) { sizes.entry(folder(video)).or_default().insert(size); } }
+    let mut order: Vec<String> = Vec::new();
+    let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
+    for (index, video) in videos.iter_mut().enumerate() {
+        let folder = folder(video);
+        let size = resolution(video).or_else(|| sizes.get(&folder).filter(|known| known.len() == 1).and_then(|known| known.iter().next().copied()));
+        let fast = video["fps"].as_f64().is_some_and(|fps| fps >= 49.0) || (video["fps"].as_f64().is_none() && FAST.is_match(video["path"].as_str().unwrap_or("")));
+        let key = format!("{folder}|{}|{}", size.unwrap_or(""), if fast { "60" } else { "" });
+        video["copy"] = json!(key);
+        if !groups.contains_key(&key) { order.push(key.clone()); }
+        groups.entry(key).or_default().push(index);
+    }
+    // The listing's own title describes the share's one copy; with several it could mean any of them.
+    let listing = if order.len() == 1 { listing } else { "" };
+    let mut found: Vec<Value> = order.into_iter().map(|key| {
+        let members: Vec<&Value> = groups[&key].iter().map(|i| &videos[*i]).collect();
+        let first = members[0];
+        let said = format!("{} {} {listing}", first["path"].as_str().unwrap_or(""), members.last().and_then(|v| v["path"].as_str()).unwrap_or(""));
+        let mut parts = key.rsplitn(3, '|');
+        let (fast, size, folder) = (parts.next() == Some("60"), parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+        let mut episodes: Vec<u64> = members.iter().filter_map(|v| v["episode"].as_u64()).collect();
+        episodes.sort_unstable(); episodes.dedup();
+        let seasons: std::collections::BTreeSet<u64> = members.iter().filter_map(|v| v["season"].as_u64()).collect();
+        let total: u64 = members.iter().filter_map(|v| v["size_bytes"].as_u64()).sum();
+        let mut lengths: Vec<u64> = members.iter().filter_map(|v| v["duration"].as_u64()).filter(|d| *d > 0).collect();
+        lengths.sort_unstable();
+        let measured = lengths.len() == members.len();
+        let seconds: u64 = lengths.iter().sum();
+        let rate = members.iter().filter_map(|v| v["fps"].as_f64()).find(|fps| *fps > 0.0).map(|fps| fps.round() as u64);
+        json!({"key": key, "folder": folder, "resolution": if size.is_empty() { Value::Null } else { json!(size) },
+            "width": members.iter().find_map(|v| v["width"].as_u64().filter(|w| *w > 0)), "height": members.iter().find_map(|v| v["height"].as_u64().filter(|h| *h > 0)),
+            "fps": rate.or(fast.then_some(60)),
+            "hdr": if VISION.is_match(&said) { json!("Dolby Vision") } else if HDR.is_match(&said) { json!("HDR") } else { Value::Null },
+            "codec": CODEC.captures(&said).map(|c| if c.get(1).is_some() { "H.265" } else if c.get(2).is_some() { "H.264" } else { "AV1" }),
+            // Names are the only evidence of sound: the drive measures the picture alone.
+            "audio": if ATMOS.is_match(&said) { json!("atmos") } else if let Some(layout) = SURROUND.captures(&said) { json!(format!("{}.1", &layout[1])) } else if STEREO.is_match(&said) { json!("stereo") } else { Value::Null },
+            "season": if seasons.len() == 1 { json!(seasons.iter().next()) } else { Value::Null },
+            "episodes": episodes, "extras": members.iter().filter(|v| v["episode"].is_null()).count(),
+            "video_count": members.len(), "total_bytes": total,
+            "minutes": (!lengths.is_empty()).then(|| (lengths[lengths.len() / 2] + 30) / 60),
+            "mbps": (measured && seconds > 0).then(|| (total as f64 * 8.0 / seconds as f64 / 100_000.0).round() / 10.0)})
+    }).collect();
+    found.sort_by(|a, b| b["total_bytes"].as_u64().cmp(&a["total_bytes"].as_u64()));
+    found
+}
+/// Set each copy against the series it belongs to: its season, how many of that
+/// season's aired episodes it holds and which are missing. `show` is the series as
+/// the metadata service knows it, or null when it does not.
+pub fn cover(found: &mut Value, show: &Value, wanted: Option<u64>) {
+    let seasons = show["seasons"].as_array().cloned().unwrap_or_default();
+    for share in found["shares"].as_array_mut().into_iter().flatten() {
+        let named = stated_season(share["title"].as_str().unwrap_or(""));
+        for copy in share["copies"].as_array_mut().into_iter().flatten() {
+            let season = copy["season"].as_u64().or_else(|| stated_season(copy["folder"].as_str().unwrap_or(""))).or(named).or(wanted)
+                .or((seasons.len() == 1).then(|| seasons[0]["season"].as_u64()).flatten()).unwrap_or(1);
+            copy["season"] = json!(season);
+            let Some(known) = seasons.iter().find(|s| s["season"].as_u64() == Some(season)) else { continue };
+            let (aired, total) = (known["aired"].as_u64().unwrap_or(0), known["episodes"].as_u64().unwrap_or(0));
+            let held: Vec<u64> = copy["episodes"].as_array().into_iter().flatten().filter_map(Value::as_u64).collect();
+            let missing: Vec<u64> = (1..=aired).filter(|n| !held.contains(n)).collect();
+            copy["aired"] = json!(aired); copy["total"] = json!(total);
+            copy["complete"] = json!(aired > 0 && missing.is_empty());
+            copy["missing"] = json!(missing);
+        }
+    }
+    if show.is_object() { found["show"] = show.clone(); }
+}
+/// How well a copy suits a library, best first: every aired episode, then the sharpest
+/// picture, then surround sound, then the native frame rate (60 fps copies of dramas
+/// are interpolated), then the larger files.
+pub fn preference(copy: &Value) -> impl Ord + use<> {
+    let held = copy["episodes"].as_array().map_or(0, Vec::len) as u64;
+    let covered = match copy["aired"].as_u64() { Some(aired) => aired.saturating_sub(copy["missing"].as_array().map_or(0, Vec::len) as u64), None => held };
+    let picture = match copy["resolution"].as_str() { Some("2160p") => 3, Some("1080p") => 2, Some("720p") => 1, _ => 0 };
+    let sound = match copy["audio"].as_str() { Some("stereo") => 0, Some(_) => 2, None => 1 };
+    std::cmp::Reverse((copy["complete"] == true, covered, picture, sound, copy["fps"].as_u64().is_none_or(|fps| fps < 49), copy["total_bytes"].as_u64().unwrap_or(0)))
+}
 fn now() -> f64 { crate::storage::now() }
 /// Seconds since 1970 as an ISO 8601 UTC time.
 fn date(seconds: u64) -> String {
@@ -199,10 +328,7 @@ impl Cloud {
     async fn inspect(&self, url: &str, posted: &str, note: &str) -> Option<Value> {
         let (id, token, title) = self.open(url).await.ok()?;
         let files = self.contents(&id, &token).await.ok()?;
-        let videos: Vec<Value> = files.iter().filter(|(path, entry)| VIDEO.is_match(path) && entry["size"].as_u64().unwrap_or(0) >= 50_000_000).map(|(path, entry)| {
-            let (season, number) = episode(path);
-            json!({"path": path, "name": path.rsplit('/').next().unwrap_or(path), "size_bytes": entry["size"], "season": season, "episode": number})
-        }).collect();
+        let (videos, copies) = Self::videos(&files, note);
         if videos.is_empty() { return None; }
         // When the share itself was made: the search service only knows when it found the link.
         let made = self.call("/share/sharepage/detail", &[("pwd_id", id.clone()), ("stoken", token.clone()), ("pdir_fid", "0".into()), ("force", "0".into()),
@@ -214,7 +340,17 @@ impl Cloud {
         let total: u64 = videos.iter().filter_map(|v| v["size_bytes"].as_u64()).sum();
         Some(json!({"url": format!("https://pan.quark.cn/s/{id}{}", url.split_once('?').map(|(_, q)| format!("?{q}")).unwrap_or_default()),
             "title": title, "note": note, "posted": posted,
-            "video_count": videos.len(), "total_bytes": total, "files": videos.into_iter().take(400).collect::<Vec<_>>()}))
+            "video_count": videos.len(), "total_bytes": total, "copies": copies, "files": videos.into_iter().take(400).collect::<Vec<_>>()}))
+    }
+    /// A share's videos as results describe them, and the copies they form.
+    fn videos(files: &[(String, Value)], listing: &str) -> (Vec<Value>, Vec<Value>) {
+        let mut videos: Vec<Value> = files.iter().filter(|(path, entry)| VIDEO.is_match(path) && entry["size"].as_u64().unwrap_or(0) >= 50_000_000).map(|(path, entry)| {
+            let (season, number) = episode(path);
+            json!({"path": path, "name": path.rsplit('/').next().unwrap_or(path), "size_bytes": entry["size"], "season": season, "episode": number,
+                "width": entry["video_width"], "height": entry["video_height"], "fps": entry["fps"], "duration": entry["duration"]})
+        }).collect();
+        let copies = copies(&mut videos, listing);
+        (videos, copies)
     }
     /// Ways a title may be written in a listing: as typed, without its separators
     /// ("星汉灿烂·月升沧海" is as often "星汉灿烂月升沧海"), and its first part alone.
@@ -325,12 +461,18 @@ impl Cloud {
         let url = body["url"].as_str().context("Missing share link")?;
         let title = clean(body["title"].as_str().unwrap_or(""));
         ensure!(!title.is_empty() && title.chars().count() <= 150, "Missing title");
-        let season = body["season"].as_u64().unwrap_or(1).min(99);
+        let season = body["season"].as_u64().or_else(|| stated_season(body["title"].as_str().unwrap_or(""))).unwrap_or(1).min(99);
         let wanted: Option<Vec<&str>> = body["files"].as_array().map(|list| list.iter().filter_map(Value::as_str).collect());
         let (id, token, _) = self.open(url).await?;
-        let chosen: Vec<(String, u64)> = self.contents(&id, &token).await?.into_iter()
+        let contents = self.contents(&id, &token).await?;
+        // A result for one copy of a share that holds several takes that copy's videos only.
+        let copy: Option<Vec<String>> = body["copy"].as_str().filter(|key| !key.is_empty()).map(|key| {
+            Self::videos(&contents, "").0.into_iter().filter(|video| video["copy"] == key).filter_map(|video| video["path"].as_str().map(str::to_owned)).collect()
+        });
+        let chosen: Vec<(String, u64)> = contents.into_iter()
             .filter(|(path, entry)| VIDEO.is_match(path) && entry["size"].as_u64().unwrap_or(0) >= 50_000_000)
             .filter(|(path, _)| wanted.as_ref().is_none_or(|wanted| wanted.contains(&path.as_str())))
+            .filter(|(path, _)| copy.as_ref().is_none_or(|copy| copy.contains(path)))
             .map(|(path, entry)| (path, entry["size"].as_u64().unwrap_or(0))).collect();
         ensure!(!chosen.is_empty(), "Nothing in this share matches");
         ensure!(chosen.len() <= 200, "Choose at most 200 files at a time");
@@ -510,6 +652,41 @@ mod tests {
         assert_eq!(episode("28.4k.mp4"), (None, Some(28)));
         assert_eq!(episode("01 4K.mp4"), (None, Some(1)));
         assert_eq!(episode("12.5.1.mkv"), (None, Some(12)));
+    }
+    #[test]
+    fn a_share_with_several_qualities_is_several_copies() {
+        let video = |path: &str, width: u64, fps: f64, size: u64| json!({"path": path, "size_bytes": size, "season": episode(path).0, "episode": episode(path).1,
+            "width": if width > 0 { json!(width) } else { Value::Null }, "height": Value::Null, "fps": fps, "duration": 2700});
+        let mut videos = vec![video("九重紫/4K/01.4K.mp4", 3840, 25.0, 900_000_000), video("九重紫/4K/02.4K.mp4", 3840, 25.0, 900_000_000), video("九重紫/4K/04.4K.mp4", 0, 25.0, 900_000_000),
+            video("九重紫/臻彩视听HDR [60帧率版]/Blossom.S01E01.2160p.H265.HDR.60fps.mkv", 3840, 60.0, 2_000_000_000), video("九重紫/01.mp4", 1920, 25.0, 400_000_000), video("九重紫/花絮.mp4", 1920, 25.0, 400_000_000)];
+        let found = copies(&mut videos, "九重紫 全集 杜比全景声");
+        assert_eq!(found.len(), 3);
+        assert_eq!(found[0]["audio"], Value::Null);
+        let mut one = vec![video("a/01.mp4", 3840, 25.0, 900_000_000)];
+        assert_eq!(copies(&mut one, "尚公主 4K DDP5.1")[0]["audio"], "5.1");
+        assert_eq!(copies(&mut one, "尚公主 4K 杜比全景声")[0]["audio"], "atmos");
+        // Largest first; the unmeasured file joins its folder's one picture size.
+        assert_eq!(found[0]["key"], "九重紫/4K|2160p|");
+        assert_eq!(found[0]["episodes"], json!([1, 2, 4]));
+        assert_eq!((found[1]["resolution"].as_str(), found[1]["fps"].as_u64(), found[1]["hdr"].as_str(), found[1]["codec"].as_str(), found[1]["season"].as_u64()), (Some("2160p"), Some(60), Some("HDR"), Some("H.265"), Some(1)));
+        assert_eq!((found[2]["resolution"].as_str(), found[2]["extras"].as_u64(), found[2]["minutes"].as_u64(), found[2]["mbps"].as_f64()), (Some("1080p"), Some(1), Some(45), Some(1.2)));
+        assert_eq!(videos[2]["copy"], "九重紫/4K|2160p|");
+        let mut search = json!({"shares": [{"title": "九重紫", "copies": found}]});
+        cover(&mut search, &json!({"title": "九重紫", "seasons": [{"season": 1, "episodes": 34, "aired": 4}]}), None);
+        let copy = &search["shares"][0]["copies"][0];
+        assert_eq!((copy["season"].as_u64(), copy["aired"].as_u64(), copy["total"].as_u64(), copy["complete"].as_bool()), (Some(1), Some(4), Some(34), Some(false)));
+        assert_eq!(copy["missing"], json!([3]));
+    }
+    #[test]
+    fn seasons_are_read_from_titles() {
+        assert_eq!(stated_season("庆余年 第二季 4K"), Some(2));
+        assert_eq!(stated_season("某剧 第十二季"), Some(12));
+        assert_eq!(stated_season("Show.S03.2160p"), Some(3));
+        assert_eq!(stated_season("Show Season 4"), Some(4));
+        assert_eq!(stated_season("九重紫"), None);
+        assert_eq!(stated_season("Blossoms Shanghai"), None);
+        assert_eq!(title_and_season("庆余年 第二季"), ("庆余年".to_owned(), Some(2)));
+        assert_eq!(title_and_season("九重紫"), ("九重紫".to_owned(), None));
     }
     #[test]
     fn titles_are_searched_with_and_without_their_separators() {
