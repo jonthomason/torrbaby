@@ -127,7 +127,7 @@ struct DownloadsView: View {
         }.listStyle(.plain).scrollContentBackground(.hidden).background(Theme.canvas)
         // Opening this page is one of the two moments downloads are checked for updates
         // (the other is a title's own page). Nothing checks in the background.
-        .task { if let library = store.library { await queue.checkForUpdates(library: library) } }
+        .task(id: store.connected && store.library != nil) { if let library = store.library { await queue.checkForUpdates(library: library) } }
         .task(id: queue.items.first(where: { $0.state != .removed })?.id) {
             guard !swipeHintSeen, let first = queue.items.first(where: { $0.state != .removed }) else { return }
             guard !reduceMotion else { swipeHintSeen = true; return }
@@ -286,7 +286,8 @@ struct DownloadAssetControl: View {
         queue.items.first { $0.assetID == asset.id && $0.server == store.server && $0.state != .removed }
     }
     var body: some View {
-        content.task(id: title.id) { await queue.checkForUpdates(title: title) }
+        // Checked when the page opens, and again if the connection arrives after it.
+        content.task(id: title.id + (store.connected ? "|connected" : "")) { await queue.checkForUpdates(title: title) }
     }
     private var content: some View {
         Group {
@@ -420,8 +421,7 @@ struct DownloadUpdateOffer: View {
                 } label: {
                     if busy { Label("Updating…", systemImage: "arrow.triangle.2.circlepath") }
                     else {
-                        Label(pending.count == 1 ? L10n.text("Update download") : L10n.format("Update %lld downloads", pending.count), systemImage: "arrow.triangle.2.circlepath")
-                        Text(verbatim: bytes(size)).font(.caption).foregroundStyle(Theme.muted)
+                        Label((pending.count == 1 ? L10n.text("Update download") : L10n.format("Update %lld downloads", pending.count)) + " · " + bytes(size), systemImage: "arrow.triangle.2.circlepath")
                     }
                 }.buttonStyle(MonoButtonStyle()).disabled(busy)
             }
@@ -447,6 +447,13 @@ struct DownloadSeasonControl: View {
         queue.items.filter { $0.server == store.server && $0.titleID == title.id && $0.season == season && $0.state != .removed && $0.state != .removing }
     }
     var body: some View {
+        // Whatever the season's state, finished episodes can be offered their update.
+        VStack(alignment: .leading, spacing: 8) {
+            state
+            DownloadUpdateOffer(ids: items.filter { $0.state == .ready }.map(\.id))
+        }.task(id: title.id + (store.connected ? "|connected" : "")) { await queue.checkForUpdates(title: title) }
+    }
+    @ViewBuilder private var state: some View {
         let items = items
         let unfinished = items.filter { $0.state != .ready }
         if adding || !unfinished.isEmpty {
@@ -471,7 +478,6 @@ struct DownloadSeasonControl: View {
                 Text(bytes(items.reduce(0) { $0 + $1.size })).font(.caption).foregroundStyle(Theme.muted)
             }.padding(.horizontal, 20).frame(minHeight: 48).frame(maxWidth: fullWidth ? .infinity : nil)
                 .background(Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius))
-            DownloadUpdateOffer(ids: items.map(\.id))
         } else { button }
     }
     private var button: some View {
