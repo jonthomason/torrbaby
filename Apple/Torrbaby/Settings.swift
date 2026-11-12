@@ -144,6 +144,31 @@ struct SettingsIcon: View {
     }
 }
 
+/// The two things Settings is opened for most, kept above everything else: linking
+/// another device, and which build this is.
+private struct SettingsQuickRows: View {
+    @EnvironmentObject var store: Store
+    @State private var showPairing = false
+    private func icon(_ symbol: String, _ tint: Color) -> some View {
+        Image(systemName: symbol).font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+            .frame(width: 29, height: 29).background(tint.gradient, in: RoundedRectangle(cornerRadius: 7))
+            .accessibilityHidden(true)
+    }
+    var body: some View {
+        Button { showPairing = true } label: {
+            Label { Text("Link a device").foregroundStyle(Color.primary) } icon: { icon("qrcode", .indigo) }
+        }
+        .buttonStyle(.plain)
+        .disabled(!store.connected)
+        .sheet(isPresented: $showPairing) { LocalizedInterface { PairingCodeView() } }
+        LabeledContent {
+            Text(verbatim: AppRelease.description.replacingOccurrences(of: "Version ", with: "")).monospacedDigit().textSelection(.enabled)
+        } label: {
+            Label { Text("Version") } icon: { icon("info", .gray) }
+        }
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
@@ -156,6 +181,7 @@ struct SettingsView: View {
         // System Settings on the Mac: categories on the left, the chosen page on the right.
         HStack(spacing: 0) {
             List(selection: $selected) {
+                SwiftUI.Section { SettingsQuickRows() }
                 ForEach(Array(SettingsPage.groups.enumerated()), id: \.offset) { _, group in
                     SwiftUI.Section {
                         ForEach(group.pages) { page in
@@ -170,6 +196,7 @@ struct SettingsView: View {
         }.background(Theme.canvas)
         #else
         List {
+            SwiftUI.Section { SettingsQuickRows() }
             ForEach(Array(SettingsPage.groups.enumerated()), id: \.offset) { _, group in
                 SwiftUI.Section {
                     ForEach(group.pages) { page in

@@ -2011,7 +2011,8 @@ public class MainActivity extends Activity {
   private void settings() {
     String[] pages = {"User", "General", "Playback", "Connection", "About"};
     new AlertDialog.Builder(this)
-        .setTitle(L10n.t("Settings"))
+        // The build is what Settings is most often opened for, so it sits in the title.
+        .setTitle(L10n.t("Settings") + " · " + BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")")
         .setItems(L10n.labels(pages), (d, w) -> {
           if (w == 0) settingsPage("User", new String[] {"Switch user"}, i -> { if (api != null) chooseProfile(true); });
           else if (w == 1) settingsPage("General", new String[] {"Follow system language", "Refresh library"}, i -> {

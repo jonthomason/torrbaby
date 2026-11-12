@@ -199,6 +199,21 @@ struct TVRootView: View {
 }
 
 /// Settings in the system's own form: the app's mark on the left, a grouped list on the right.
+/// A settings row's title and value. The focused row is white, so its text turns dark;
+/// the app's white tint otherwise leaves a button's title white on white.
+private struct TVSettingsRow: View {
+    @Environment(\.isFocused) private var focused
+    let title: String
+    var value: String? = nil
+    var body: some View {
+        HStack {
+            Text(LocalizedStringKey(title)).foregroundStyle(focused ? Color.black : Color.white)
+            Spacer(minLength: 16)
+            if let value { Text(verbatim: value).monospacedDigit().foregroundStyle(focused ? Color.black.opacity(0.6) : Color.white.opacity(0.6)) }
+        }
+    }
+}
+
 private struct TVSettingsView: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
@@ -212,16 +227,20 @@ private struct TVSettingsView: View {
                 Text(verbatim: "Torrbaby").font(.title2.bold())
             }.frame(maxWidth: .infinity)
             List {
+                // Which build this is comes first: it is what Settings is most often opened for.
+                SwiftUI.Section {
+                    Button {} label: { TVSettingsRow(title: "Version", value: AppRelease.description.replacingOccurrences(of: "Version ", with: "")) }
+                }
                 SwiftUI.Section("User") {
                     LabeledContent { Text(verbatim: store.activeProfile?.name ?? L10n.text("Choose a user")) } label: { Text("User") }
-                    Button { store.choosingProfile = true } label: { Text("Switch user") }
+                    Button { store.choosingProfile = true } label: { TVSettingsRow(title: "Switch user") }
                 }
                 SwiftUI.Section("Playback") {
-                    Button { showSubtitles = true } label: { Text("Default subtitles") }
+                    Button { showSubtitles = true } label: { TVSettingsRow(title: "Default subtitles") }
                 }
                 SwiftUI.Section("Connection") {
                     LabeledContent { Text(LocalizedStringKey(store.connected ? "Connected" : "Offline")) } label: { Text("Status") }
-                    Button(action: connection) { Text("Connection settings") }
+                    Button(action: connection) { TVSettingsRow(title: "Connection settings") }
                 }
                 SwiftUI.Section {
                     if let status = store.status {
@@ -230,7 +249,7 @@ private struct TVSettingsView: View {
                         Button {
                             store.perform { try await store.send("PATCH", "/v1/settings", body: ["background_subtitles": !enabled]) }
                         } label: {
-                            LabeledContent { Text(LocalizedStringKey(enabled ? "On" : "Off")) } label: { Text("Process library automatically") }
+                            TVSettingsRow(title: "Process library automatically", value: L10n.text(enabled ? "On" : "Off"))
                         }.disabled(store.busy)
                     }
                 } header: { Text("Subtitles & Translation") } footer: {
@@ -245,13 +264,16 @@ private struct TVSettingsView: View {
                 }
                 // Rows are buttons so focus can reach the end of the list.
                 SwiftUI.Section("About") {
-                    Button {} label: { LabeledContent { Text(verbatim: AppRelease.description.replacingOccurrences(of: "Version ", with: "")).monospacedDigit() } label: { Text("Version") } }
-                    if let status = store.status { Button {} label: { LabeledContent { Text(verbatim: status.version).monospacedDigit() } label: { Text("Server version") } } }
+                    if let status = store.status { Button {} label: { TVSettingsRow(title: "Server version", value: status.version) } }
                 }
                 SwiftUI.Section("Library") {
                     NavigationLink { TorrentSearchView() } label: { Text("Find torrents") }
                 }
             }.listStyle(.grouped).frame(maxWidth: 900)
+            // The app tints controls white; a focused row is white too, so its title must not be.
+            .tint(nil)
+            // Rows scrolled off the top stop at the tab bar instead of sliding under it.
+            .mask(Rectangle().padding(.horizontal, -80).padding(.bottom, -80))
         }.padding(.horizontal, 60)
         .sheet(isPresented: $showSubtitles) { LocalizedInterface { SubtitlePreferencesView() } }
     }
