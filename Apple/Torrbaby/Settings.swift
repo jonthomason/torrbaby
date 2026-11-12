@@ -303,7 +303,10 @@ private struct UserSettings: View {
                     ProfileAvatar(profile: profile, size: 52)
                     Text(verbatim: profile.name).font(.title3.weight(.semibold))
                 }.padding(.vertical, 4)
+                // The sheet hangs on this one button. On the section it was applied to every
+                // row, and several sheets opening at once closed each other straight away.
                 Button("Edit profile") { editing = profile }
+                    .sheet(item: $editing) { person in LocalizedInterface { ProfileEditor(profile: person) }.environmentObject(store) }
             } else {
                 LabeledContent { Text("Choose a user") } label: { Text("User") }
             }
@@ -315,7 +318,6 @@ private struct UserSettings: View {
                 #endif
             }
         } footer: { Text("Each user has their own Continue Watching and viewing history.") }
-        .sheet(item: $editing) { person in LocalizedInterface { ProfileEditor(profile: person) }.environmentObject(store) }
     }
 }
 
