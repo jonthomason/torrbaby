@@ -22,7 +22,10 @@ struct EpisodeNumber: Codable, Hashable { let season: Int; let episode: Int }
         storage = try DownloadStorage(root: root)
         assert(storage.items[0].viewing("profile-jon").position == 300)
         assert(storage.items[0].viewing("alex").position == 0)
+        // Watched only once playback actually reaches the end (b50454c), and only for that person.
         try storage.recordPlayback(item.id, profile: "alex", position: 920, duration: 1000, reachedEnd: false)
+        assert(!storage.items[0].viewing("alex").watched)
+        try storage.recordPlayback(item.id, profile: "alex", position: 1000, duration: 1000, reachedEnd: true)
         assert(storage.items[0].viewing("alex").watched)
         assert(!storage.items[0].viewing("profile-jon").watched)
         let jonEvent = storage.items[0].viewing("profile-jon").progressEventID!
