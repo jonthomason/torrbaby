@@ -703,8 +703,9 @@ impl Cloud {
     /// Remove, with their files, the torrents whose episodes all have better copies now,
     /// when that is harmless: the torrent has finished seeding; or it never finished
     /// downloading and either has barely started (under 5%) or promises no sharper a
-    /// picture than the copy that replaced it. One still seeding waits until it is done,
-    /// and one holding an episode with no better copy is left alone.
+    /// picture than the copy that replaced it; or it is going nowhere, with nobody
+    /// connected and no activity for an hour. One actively seeding waits until it is
+    /// done, and one holding an episode with no better copy is left alone.
     pub async fn reap(&self, s: &Service) {
         let waiting = self.superseded.lock().map(|all| all.clone()).unwrap_or_default();
         if waiting.is_empty() { return; }
@@ -717,7 +718,13 @@ impl Cloud {
                 .all(|asset| asset["path"].as_str().is_some_and(|path| entry.paths.iter().any(|known| known == path)));
             if !whole { continue; }
             let done = torrent["percent_done"].as_f64().unwrap_or(0.0);
-            let harmless = if done >= 1.0 { torrent["status"].as_u64() == Some(0) } else { done < 0.05 || entry.outclassed };
+            // Seeding that will never finish is not worth waiting for: nobody connected,
+            // nothing sent, and no activity for an hour. A torrent from the member's private
+            // site is the exception; there the seeding time is owed, so it is waited out.
+            let owed = torrent["labels"].as_array().is_some_and(|labels| labels.iter().any(|label| label == crate::torrent_search::PRIVATE_LABEL));
+            let quiet = torrent["peers_connected"].as_u64().unwrap_or(0) == 0 && torrent["rate_upload"].as_u64().unwrap_or(0) == 0
+                && torrent["activity_date"].as_f64().is_some_and(|last| now() - last > 3600.0);
+            let harmless = if done >= 1.0 { torrent["status"].as_u64() == Some(0) || (quiet && !owed) } else { done < 0.05 || entry.outclassed || (quiet && !owed) };
             if !harmless { continue; }
             match crate::organizer::action(s, hash, "remove", &json!({"delete_data": true, "confirm_hash": hash})).await {
                 Ok(_) => { tracing::info!(hash, name = torrent["name"].as_str().unwrap_or(""), "Removed a torrent whose episodes all have better copies"); settled.push(hash.clone()); }
