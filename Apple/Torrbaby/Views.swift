@@ -247,7 +247,7 @@ struct RootView: View {
     }
     private var brandInBar: Bool {
         #if os(iOS)
-        sizeClass == .regular
+        true
         #else
         false
         #endif
@@ -333,6 +333,10 @@ struct RootView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.horizontal, 18).padding(.vertical, 6)
+                #if os(iOS)
+                // iPhone: the status sits low, beside the home indicator, leaving the list the room.
+                .padding(.bottom, sizeClass == .compact ? -22 : 0)
+                #endif
             }
             #if os(macOS)
             .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
@@ -341,8 +345,10 @@ struct RootView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // The wordmark sits at the leading edge of the bar; on iPhone the language
+                // switch is opposite it.
                 if sizeClass == .compact { LanguageToolbar() }
-                else if #available(iOS 26, *) {
+                if #available(iOS 26, *) {
                     ToolbarItem(placement: .topBarLeading) { sidebarBrand.fixedSize() }.sharedBackgroundVisibility(.hidden)
                 } else {
                     ToolbarItem(placement: .topBarLeading) { sidebarBrand.fixedSize() }
