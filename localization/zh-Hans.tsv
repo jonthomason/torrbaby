@@ -804,3 +804,6 @@ Torrent details	种子详情
 %d of %d releases	%d / %d 个资源
 %d releases	%d 个资源
 Show all	显示全部
+None of them match the resolution or other filters you have chosen.	它们都不符合你选择的分辨率或其他筛选条件。
+None of them match the resolution you have chosen.	它们都不符合你选择的分辨率。
+%d releases hidden by filters	筛选条件隐藏了 %d 个资源

@@ -220,8 +220,7 @@ struct TorrentSearchView: View {
     #if !os(tvOS)
     #endif
     private var resolutionItems: [TorrentSearchItem] {
-        // A cloud share's title rarely states a resolution, and one share may hold several: never filtered.
-        (response?.items ?? []).filter { resolution == "all" || $0.isCloud || $0.hints.resolution?.lowercased() == resolution }
+        (response?.items ?? []).filter { resolution == "all" || $0.hints.resolution?.lowercased() == resolution }
     }
     private var availableSeasons: [Int] {
         Array(Set(resolutionItems.flatMap { item in item.hints.season.map { Array($0...max($0, item.hints.seasonEnd ?? $0)) } ?? [] })).sorted()
@@ -374,6 +373,8 @@ struct TorrentSearchView: View {
                             // Everything found is filtered out: say so, or it reads as a failed search.
                             ContentUnavailableView {
                                 Label("\(response.items.count) releases hidden by filters", systemImage: "line.3.horizontal.decrease.circle")
+                            } description: {
+                                Text("None of them match the resolution or other filters you have chosen.")
                             } actions: {
                                 Button("Show all") { resolution = "all"; scopeFilter = "all"; seasonFilter = nil; episodeFilter = nil; selectedID = visibleItems.first?.id }
                             }
@@ -480,9 +481,9 @@ struct TorrentSearchView: View {
                         })
             }
             ViewThatFits(in: .horizontal) {
-                HStack { if market != "china" { sourcePicker; resolutionPicker }; Spacer(); searchStatus }
+                HStack { if market != "china" { sourcePicker }; resolutionPicker; Spacer(); searchStatus }
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack { if market != "china" { sourcePicker.labelsHidden() }; Spacer(); if market != "china" { resolutionPicker.labelsHidden() } }
+                    HStack { if market != "china" { sourcePicker.labelsHidden() }; Spacer(); resolutionPicker.labelsHidden() }
                     searchStatus
                 }
             }

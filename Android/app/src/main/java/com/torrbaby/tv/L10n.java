@@ -18,6 +18,7 @@ final class L10n {
     IDS.put("%d of %d releases", R.string.ui_5f03e85d806c);
     IDS.put("%d of %d videos", R.string.ui_cf5dae5645db);
     IDS.put("%d releases", R.string.ui_b4d8b30e51a8);
+    IDS.put("%d releases hidden by filters", R.string.ui_55d456f87a3f);
     IDS.put("%d selected", R.string.ui_b295fde49b7b);
     IDS.put("%d to add", R.string.ui_216e67233653);
     IDS.put("%d torrents could not be removed", R.string.ui_81590928ad73);
@@ -389,6 +390,8 @@ final class L10n {
     IDS.put("No trial made progress", R.string.ui_0180f27718d1);
     IDS.put("No trials yet", R.string.ui_d839d62a2b1e);
     IDS.put("None", R.string.ui_6eef6648406c);
+    IDS.put("None of them match the resolution or other filters you have chosen.", R.string.ui_2d4f57f93a15);
+    IDS.put("None of them match the resolution you have chosen.", R.string.ui_fadae5312047);
     IDS.put("Not configured", R.string.ui_811931bba8d1);
     IDS.put("Not downloaded", R.string.ui_5fe04f57e34d);
     IDS.put("Not enough download storage for this title.", R.string.ui_d93783e0c5db);

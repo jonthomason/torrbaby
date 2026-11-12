@@ -14063,6 +14063,57 @@
           }
         }
       }
+    },
+    "None of them match the resolution or other filters you have chosen.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "None of them match the resolution or other filters you have chosen."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "它们都不符合你选择的分辨率或其他筛选条件。"
+          }
+        }
+      }
+    },
+    "None of them match the resolution you have chosen.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "None of them match the resolution you have chosen."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "它们都不符合你选择的分辨率。"
+          }
+        }
+      }
+    },
+    "%d releases hidden by filters": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d releases hidden by filters"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "筛选条件隐藏了 %d 个资源"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

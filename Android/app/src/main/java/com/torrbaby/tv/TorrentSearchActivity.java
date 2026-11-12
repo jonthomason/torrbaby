@@ -26,6 +26,8 @@ public final class TorrentSearchActivity extends Activity {
   private JSONArray results = new JSONArray(), allResults = new JSONArray();
   private String resolution="all";
   private Button resolutionButton;
+  private LinearLayout hiddenBox;
+  private TextView hiddenTitle;
   private volatile int enrichmentGeneration;
   private String resolutionLabel(){return resolution.equals("all")?L10n.t("All resolutions"):resolution;}
   /** Source errors from the last search, shown after the count. */
@@ -39,9 +41,14 @@ public final class TorrentSearchActivity extends Activity {
   private void applyResolution(){
     results=new JSONArray();for(int i=0;i<allResults.length();i++){
       JSONObject item=allResults.optJSONObject(i), hints=item.optJSONObject("hints");
-      if(resolution.equals("all") || isCloud(item) || (hints!=null && resolution.equalsIgnoreCase(hints.optString("resolution"))))results.put(item);
+      if(resolution.equals("all") || (hints!=null && resolution.equalsIgnoreCase(hints.optString("resolution"))))results.put(item);
     }
     if(list!=null)((BaseAdapter)list.getAdapter()).notifyDataSetChanged();
+    if(hiddenBox!=null&&list!=null){
+      boolean hidden=results.length()==0&&allResults.length()>0;
+      hiddenTitle.setText(String.format(L10n.locale(),L10n.t("%d releases hidden by filters"),allResults.length()));
+      hiddenBox.setVisibility(hidden?View.VISIBLE:View.GONE);list.setVisibility(hidden?View.GONE:View.VISIBLE);
+    }
   }
   private int source, generation;
   private boolean china;
@@ -65,7 +72,7 @@ public final class TorrentSearchActivity extends Activity {
     Ui.add(resultsRoot, markets, -1, 48);
     markets.setOnCheckedChangeListener((group,id) -> {
       china = id == chinese.getId(); getPreferences(MODE_PRIVATE).edit().putBoolean("china",china).apply();
-      ++generation; source=0; sourceButton.setText(L10n.t("Recommended")); sourceButton.setVisibility(china?View.GONE:View.VISIBLE); resolutionButton.setVisibility(china?View.GONE:View.VISIBLE); results=new JSONArray();allResults=new JSONArray();enrichmentGeneration++;
+      ++generation; source=0; sourceButton.setText(L10n.t("Recommended")); sourceButton.setVisibility(china?View.GONE:View.VISIBLE); results=new JSONArray();allResults=new JSONArray();enrichmentGeneration++;if(hiddenBox!=null){hiddenBox.setVisibility(View.GONE);list.setVisibility(View.VISIBLE);}
       ((BaseAdapter)list.getAdapter()).notifyDataSetChanged(); status.setText(""); search.setEnabled(true); list.setEnabled(true);
       if(query.getText().toString().trim().length()>=2)search();
     });
@@ -91,7 +98,15 @@ public final class TorrentSearchActivity extends Activity {
         resolutionButton.setText(L10n.t("Resolution")+": "+resolutionLabel());enrichmentGeneration++;applyResolution();if(!searchedQuery.isEmpty()&&search.isEnabled())showCount();d.dismiss();
       }).show();
     });Ui.add(resultsRoot,resolutionButton,240,44);
-    resolutionButton.setVisibility(china?View.GONE:View.VISIBLE);
+    // Everything found is filtered out: say so in large type, or it reads as a failed search.
+    hiddenBox=new LinearLayout(this);hiddenBox.setOrientation(LinearLayout.VERTICAL);hiddenBox.setGravity(Gravity.CENTER);hiddenBox.setVisibility(View.GONE);
+    hiddenTitle=Ui.title(this,"",28);hiddenTitle.setGravity(Gravity.CENTER);hiddenBox.addView(hiddenTitle);
+    TextView hiddenWhy=Ui.text(this,L10n.t("None of them match the resolution you have chosen."),16,0xFFAAAAAA);hiddenWhy.setGravity(Gravity.CENTER);hiddenBox.addView(hiddenWhy);
+    Ui.add(hiddenBox,Ui.button(this,L10n.t("Show all"),()->{
+      resolution="all";getPreferences(MODE_PRIVATE).edit().putString("resolution",resolution).apply();
+      resolutionButton.setText(L10n.t("Resolution")+": "+resolutionLabel());enrichmentGeneration++;applyResolution();showCount();list.requestFocus();
+    }),240,44);
+    resultsRoot.addView(hiddenBox,new LinearLayout.LayoutParams(-1,0,1));
     list = new ListView(this); list.setDivider(null); list.setDividerHeight(Ui.dp(this, 10));
     list.setAdapter(new Results()); list.setOnItemClickListener((parent, view, position, id) -> { JSONObject item=results.optJSONObject(position); if(isCloud(item))cloudDetails(item); else details(item); });
     resultsRoot.addView(list, new LinearLayout.LayoutParams(-1,0,1));
@@ -126,7 +141,7 @@ public final class TorrentSearchActivity extends Activity {
   private void search() {
     String value=query.getText().toString().trim(); if (value.length()<2) return;
     enrichmentGeneration++;
-    int request=++generation; int provider=source; boolean requestChina=china; search.setEnabled(false); list.setEnabled(false); status.setText(L10n.t(requestChina?"Searching and checking links…":"Searching…"));
+    int request=++generation; int provider=source; boolean requestChina=china; search.setEnabled(false); list.setEnabled(false); hiddenBox.setVisibility(View.GONE); list.setVisibility(View.VISIBLE); status.setText(L10n.t(requestChina?"Searching and checking links…":"Searching…"));
     ((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(query.getWindowToken(),0);
     io.execute(() -> {
       try {

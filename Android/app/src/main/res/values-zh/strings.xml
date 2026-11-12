@@ -7,6 +7,7 @@
     <string name="ui_5f03e85d806c" formatted="false">%d / %d 个资源</string>
     <string name="ui_cf5dae5645db" formatted="false">%d / %d 个视频</string>
     <string name="ui_b4d8b30e51a8" formatted="false">%d 个资源</string>
+    <string name="ui_55d456f87a3f" formatted="false">筛选条件隐藏了 %d 个资源</string>
     <string name="ui_b295fde49b7b" formatted="false">已选 %d 个</string>
     <string name="ui_216e67233653" formatted="false">%d 集待添加</string>
     <string name="ui_81590928ad73" formatted="false">%d 个种子未能移除</string>
@@ -378,6 +379,8 @@
     <string name="ui_0180f27718d1" formatted="false">所有试下载均无进展</string>
     <string name="ui_d839d62a2b1e" formatted="false">暂无试下载</string>
     <string name="ui_6eef6648406c" formatted="false">无</string>
+    <string name="ui_2d4f57f93a15" formatted="false">它们都不符合你选择的分辨率或其他筛选条件。</string>
+    <string name="ui_fadae5312047" formatted="false">它们都不符合你选择的分辨率。</string>
     <string name="ui_811931bba8d1" formatted="false">未配置</string>
     <string name="ui_5fe04f57e34d" formatted="false">未下载</string>
     <string name="ui_d93783e0c5db" formatted="false">下载存储空间不足，无法保存此影片。</string>
