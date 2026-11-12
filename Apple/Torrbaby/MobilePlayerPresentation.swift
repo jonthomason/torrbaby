@@ -3,6 +3,22 @@ import SwiftUI
 import AVKit
 import Combine
 
+/// iPhone shows its library and settings in portrait only; the player alone rotates.
+/// iPad is unaffected.
+@MainActor enum PhoneOrientation {
+    static var playerVisible = false
+    static var allowed: UIInterfaceOrientationMask {
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return .all }
+        return playerVisible ? .allButUpsideDown : .portrait
+    }
+    static func returnToPortrait() {
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
+            scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait)) { _ in }
+            for window in scene.windows { window.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations() }
+        }
+    }
+}
 /// Presents AVKit itself, rather than embedding it in a SwiftUI sheet.
 /// Retains the playback session while AVKit is running in Picture in Picture.
 struct MobilePlayerPresentation: UIViewControllerRepresentable {
@@ -87,8 +103,22 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
             showNextButton()
             return !(touch.view?.isDescendant(of: nextButton) ?? false)
         }
+        // iPhone: the player is the only screen that turns; everything else is portrait.
+        override func viewWillAppear(_ animated: Bool) {
+            super.viewWillAppear(animated)
+            PhoneOrientation.playerVisible = true
+            setNeedsUpdateOfSupportedInterfaceOrientations()
+        }
+        override func viewWillDisappear(_ animated: Bool) {
+            super.viewWillDisappear(animated)
+            guard isBeingDismissed || presentingViewController == nil else { return }
+            PhoneOrientation.playerVisible = false
+            PhoneOrientation.returnToPortrait()
+        }
         override func viewDidDisappear(_ animated: Bool) {
             super.viewDidDisappear(animated)
+            PhoneOrientation.playerVisible = false
+            PhoneOrientation.returnToPortrait()
             hideNextButton?.cancel()
             interactionDeadline = .distantPast
             nextButton.isHidden = true

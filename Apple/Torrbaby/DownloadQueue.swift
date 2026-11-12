@@ -532,6 +532,9 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
 
 #if os(iOS)
 final class DownloadAppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        PhoneOrientation.allowed
+    }
     func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String,
                      completionHandler: @escaping () -> Void) {
         guard identifier == DownloadQueue.sessionID else { completionHandler(); return }
