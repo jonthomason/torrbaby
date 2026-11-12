@@ -45,7 +45,7 @@ swiftc -parse-as-library -O -target "$(uname -m)-apple-macos26.0" \
     "$ROOT/helpers/CreditsScanner.swift" "$ROOT/helpers/CreditCards.swift" \
     -o "$APP/Contents/MacOS/torrbaby-credits-scanner"
 codesign --force --options runtime --identifier "$VISION_IDENTIFIER" --sign "$MAC_SIGNING_IDENTITY" "$APP/Contents/MacOS/torrbaby-credits-scanner"
-# On-device English speech transcription for titles without subtitles.
+# On-device English and Mandarin speech transcription for titles without subtitles.
 swiftc -parse-as-library -O -target "$(uname -m)-apple-macos26.0" \
     "$ROOT/helpers/SpeechSubtitles.swift" -o "$APP/Contents/MacOS/torrbaby-speech-subtitles"
 codesign --force --options runtime --sign "$MAC_SIGNING_IDENTITY" "$APP/Contents/MacOS/torrbaby-speech-subtitles"

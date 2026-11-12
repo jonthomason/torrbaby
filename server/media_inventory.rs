@@ -272,8 +272,8 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
     }
     let mut outcome=advance_jobs(s,asset,id,&planned)?;
     if outcome.no_source {
-        // No usable English or Chinese subtitles: transcribe the English audio,
-        // then translate the transcript to Chinese like any English text track.
+        // No usable English or Chinese subtitles: transcribe the English or Mandarin
+        // audio, then translate the transcript to the other language like any text track.
         let report=|done:u64,total:u64|{
             if let Ok(db)=s.db.lock() {
                 let detail=json!({"state":"running","stage":"transcription","completed_cues":done,"total_cues":total});
@@ -281,8 +281,8 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
             }
         };
         match crate::speech_subtitles::transcript(s,asset,&input,report).await? {
-            crate::speech_subtitles::Transcript::Ready(path) => {
-                let planned=vec![(path.clone(),1,"en",None),(path,1,"en",Some("zh-Hans"))];
+            crate::speech_subtitles::Transcript::Ready(path,language) => {
+                let planned=vec![(path.clone(),1,language,None),(path,1,language,Some(if language=="en" {"zh-Hans"}else{"en"}))];
                 outcome=advance_jobs(s,asset,id,&planned)?;
             }
             crate::speech_subtitles::Transcript::Rejected(reason) => {

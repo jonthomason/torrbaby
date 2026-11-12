@@ -4,13 +4,14 @@ import CoreMedia
 import Speech
 import NaturalLanguage
 
-// Transcribes a title's spoken English into timed subtitle cues with Apple's
-// on-device SpeechAnalyzer. The server calls it only for files with no usable
-// English or Chinese subtitles, then translates the result like any other text
-// track. Nothing leaves the Mac: audio is decoded locally and the transcription
-// model runs on device (the system installs the English model once).
+// Transcribes a title's spoken English or Mandarin into timed subtitle cues with
+// Apple's on-device SpeechAnalyzer. The server calls it only for files with no
+// usable English or Chinese subtitles, then translates the result like any other
+// text track. Nothing leaves the Mac: audio is decoded locally and the
+// transcription model runs on device (the system installs each language's model once).
 //
-// Arguments: media path or loopback URL, result path, progress path.
+// Arguments: media path or loopback URL, result path, progress path, and the
+// spoken language to transcribe ("en", the default, or "zh-Hans").
 // Exit 0 writes the result; exit 3 means the file has no decodable audio and
 // exit 4 that it has no speech (music, ambience);
 // any other failure exits 1 with a short reason on stderr.
@@ -19,10 +20,12 @@ struct TextCue: Codable { let start_ms: Int; let end_ms: Int; let text: String }
 struct Output: Codable {
     let language: String
     let method: String
-    /// Mean word confidence (0–1). Speech in another language transcribed as
-    /// English scores low; the server uses it to reject such tracks.
+    /// Mean word confidence (0–1). Speech transcribed as the wrong language
+    /// scores low; the server uses it to reject such tracks.
     let confidence: Double
     let words: Int
+    /// Letters and ideographs in the transcript: Chinese has no spaces to count words by.
+    let characters: Int
     let speech_seconds: Double
     let duration_seconds: Double
     let detected_language: String
@@ -83,25 +86,36 @@ struct Word { var text: String; let start: Double; var end: Double; let confiden
 /// characters), at most 6 seconds, broken at pauses and sentence ends. Cue text
 /// stays on one line: players wrap it, and on-device translation translates
 /// each line separately, so a layout break would split the sentence.
-func cues(from words: [Word]) -> [TextCue] {
+///
+/// Chinese is written without spaces and reads at about a third of the width:
+/// its cues hold at most 26 characters and break at Chinese punctuation.
+func cues(from words: [Word], chinese: Bool = false) -> [TextCue] {
     var groups: [[Word]] = []
     var current: [Word] = []
-    func length(_ ws: [Word]) -> Int { ws.map(\.text).joined(separator: " ").count }
+    let separator = chinese ? "" : " "
+    let (full, half, short, long) = chinese ? (26, 14, 4, 18) : (84, 42, 12, 60)
+    let sentenceMarks = chinese ? ".?!。？！…" : ".?!", clauseMarks = chinese ? ",;:，；：、" : ",;:"
+    func length(_ ws: [Word]) -> Int { ws.map(\.text).joined(separator: separator).count }
     for word in words {
         if let last = current.last {
             let gap = word.start - last.end
-            let sentenceEnd = last.text.last.map { ".?!".contains($0) } ?? false
-            let clauseEnd = last.text.last.map { ",;:".contains($0) } ?? false
+            let sentenceEnd = last.text.last.map { sentenceMarks.contains($0) } ?? false
+            let clauseEnd = last.text.last.map { clauseMarks.contains($0) } ?? false
             let size = length(current)
             let joined = length(current + [word])
-            if joined > 84 || word.end - current[0].start > 6.0 {
+            if joined > full || word.end - current[0].start > 6.0 {
                 // Full: end the cue at the last punctuation in its second half, so
                 // a clause is not split across cues just because the cue filled up.
                 let marks = current.indices.filter { i in i + 1 < current.count && i + 1 >= current.count / 2
-                    && current[i].text.last.map { ",.;:?!".contains($0) } == true }
-                let cut = (marks.last ?? current.count - 1) + 1
+                    && current[i].text.last.map { (sentenceMarks + clauseMarks).contains($0) } == true }
+                // Mandarin transcripts are thinly punctuated: failing a mark, end at the
+                // longest pause in the second half, which is where the speaker stopped.
+                let pauses = current.indices.filter { i in i + 1 < current.count && i + 1 >= current.count / 2
+                    && current[i + 1].start - current[i].end > 0.15 }
+                let pause = chinese ? pauses.max { current[$0 + 1].start - current[$0].end < current[$1 + 1].start - current[$1].end } : nil
+                let cut = (marks.last ?? pause ?? current.count - 1) + 1
                 groups.append(Array(current[..<cut])); current = Array(current[cut...])
-            } else if gap > 0.8 || (sentenceEnd && size >= 12 && (gap > 0.3 || joined > 42)) || (clauseEnd && size >= 60) {
+            } else if gap > 0.8 || (sentenceEnd && size >= short && (gap > 0.3 || joined > half)) || (clauseEnd && size >= long) {
                 // Short consecutive sentences spoken together share a cue.
                 groups.append(current); current = []
             }
@@ -119,25 +133,27 @@ func cues(from words: [Word]) -> [TextCue] {
         end = min(end, next - 0.05)
         if end <= start + 0.2 { end = min(group.last!.end, next) }
         guard end > start else { continue }
-        result.append(TextCue(start_ms: Int((start * 1000).rounded()), end_ms: Int((end * 1000).rounded()), text: group.map(\.text).joined(separator: " ")))
+        result.append(TextCue(start_ms: Int((start * 1000).rounded()), end_ms: Int((end * 1000).rounded()), text: group.map(\.text).joined(separator: separator)))
     }
     return result
 }
 
-func transcribe(input: URL, output: URL, progress: URL) async throws {
+func transcribe(input: URL, output: URL, progress: URL, language: String) async throws {
+    let chinese = language == "zh-Hans"
     let asset = AVURLAsset(url: input)
     let tracks = try await asset.loadTracks(withMediaType: .audio)
     var chosen: AVAssetTrack?
     for track in tracks where chosen == nil {
         let code = (try? await track.load(.languageCode))?.lowercased() ?? ""
-        if code == "en" || code == "eng" || code.hasPrefix("en-") { chosen = track }
+        let wanted = chinese ? ["zh", "zho", "chi", "cmn"] : ["en", "eng"]
+        if wanted.contains(code) || code.hasPrefix(chinese ? "zh-" : "en-") { chosen = track }
     }
     guard let track = chosen ?? tracks.first else { throw TranscriptionFailure(message: "No decodable audio track", status: 3) }
     let duration = try await asset.load(.duration).seconds
     guard duration.isFinite, duration > 0, duration < 6 * 3600 else { throw TranscriptionFailure(message: "Invalid media duration", status: 1) }
 
     guard SpeechTranscriber.isAvailable,
-          let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "en-US"))
+          let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: chinese ? "zh-CN" : "en-US"))
     else { throw TranscriptionFailure(message: "Speech transcription is unavailable on this Mac", status: 1) }
     let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [],
                                         attributeOptions: [.audioTimeRange, .transcriptionConfidence])
@@ -172,10 +188,13 @@ func transcribe(input: URL, output: URL, progress: URL) async throws {
             for run in text.runs {
                 let piece = String(text[run.range].characters).trimmingCharacters(in: .whitespacesAndNewlines)
                 if piece.isEmpty { continue }
+                // Punctuation belongs to the word before it, timed or not, so a cue never opens with a full stop.
+                let mark = piece.unicodeScalars.allSatisfy { CharacterSet.punctuationCharacters.contains($0) }
+                if mark, !words.isEmpty { words[words.count - 1].text += piece; continue }
                 if let range = run.audioTimeRange, range.start.isNumeric, range.duration.isNumeric {
                     let start = range.start.seconds
                     // A run is usually one word; split defensively on spaces.
-                    for part in piece.split(separator: " ") {
+                    for part in chinese ? [Substring(piece)] : piece.split(separator: " ") {
                         words.append(Word(text: String(part), start: start, end: range.end.seconds, confidence: run.transcriptionConfidence))
                     }
                 } else if !words.isEmpty {
@@ -194,15 +213,16 @@ func transcribe(input: URL, output: URL, progress: URL) async throws {
         await analyzer.cancelAndFinishNow()
     }
     let words = try await collector.value.sorted { $0.start < $1.start }
-    let result = cues(from: words)
+    let result = cues(from: words, chinese: chinese)
     guard !result.isEmpty else { throw TranscriptionFailure(message: "No speech was recognized", status: 4) }
     let confidences = words.compactMap(\.confidence)
     let recognizer = NLLanguageRecognizer()
-    recognizer.processString(String(result.map(\.text).joined(separator: " ").prefix(30000)))
+    let everything = result.map(\.text).joined(separator: " ")
+    recognizer.processString(String(everything.prefix(30000)))
     let speech = words.reduce(0.0) { $0 + max(0, $1.end - $1.start) }
-    let document = Output(language: "en", method: "speech",
+    let document = Output(language: language, method: "speech",
                           confidence: confidences.isEmpty ? 0 : confidences.reduce(0, +) / Double(confidences.count),
-                          words: words.count, speech_seconds: speech, duration_seconds: duration,
+                          words: words.count, characters: everything.unicodeScalars.filter { CharacterSet.letters.contains($0) }.count, speech_seconds: speech, duration_seconds: duration,
                           detected_language: recognizer.dominantLanguage?.rawValue ?? "", cues: result)
     let data = try JSONEncoder().encode(document)
     guard data.count <= 16_777_216 else { throw TranscriptionFailure(message: "Transcript too large", status: 1) }
@@ -212,13 +232,13 @@ func transcribe(input: URL, output: URL, progress: URL) async throws {
 @main struct SpeechSubtitles {
     static func main() async {
         let args = CommandLine.arguments
-        guard args.count == 4 else {
-            FileHandle.standardError.write(Data("Expected media, result path, progress path\n".utf8)); exit(2)
+        guard args.count == 4 || args.count == 5, args.count == 4 || ["en", "zh-Hans"].contains(args[4]) else {
+            FileHandle.standardError.write(Data("Expected media, result path, progress path and optionally en or zh-Hans\n".utf8)); exit(2)
         }
         let input = args[1].hasPrefix("http://127.0.0.1:") ? URL(string: args[1]) : URL(fileURLWithPath: args[1])
         guard let input else { FileHandle.standardError.write(Data("Invalid media URL\n".utf8)); exit(2) }
         do {
-            try await transcribe(input: input, output: URL(fileURLWithPath: args[2]), progress: URL(fileURLWithPath: args[3]))
+            try await transcribe(input: input, output: URL(fileURLWithPath: args[2]), progress: URL(fileURLWithPath: args[3]), language: args.count == 5 ? args[4] : "en")
         } catch let failure as TranscriptionFailure {
             FileHandle.standardError.write(Data("\(failure.message)\n".utf8)); exit(failure.status)
         } catch {

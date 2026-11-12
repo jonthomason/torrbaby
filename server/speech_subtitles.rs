@@ -1,7 +1,9 @@
-//! English subtitles transcribed from a title's audio, for files that have no
-//! usable English or Chinese subtitles. Apple's on-device SpeechAnalyzer runs in
-//! a helper; the transcript is stored as a private SRT and then flows through
-//! the normal subtitle jobs (extraction, then on-device translation to Chinese).
+//! Subtitles transcribed from a title's English or Mandarin audio, for files that
+//! have no usable English or Chinese subtitles. Apple's on-device SpeechAnalyzer
+//! runs in a helper; the transcript is stored as a private SRT and then flows
+//! through the normal subtitle jobs (extraction, then on-device translation to
+//! the other language). The audio is tried as each language in turn: speech
+//! transcribed as the wrong language is plainly bad, and is rejected in seconds.
 use crate::{api::Service, storage::now};
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
@@ -18,13 +20,18 @@ const VERSION: u64 = 3;
 /// the English model measured 0.37–0.40 and under 5 words per minute.
 const MIN_CONFIDENCE: f64 = 0.7;
 const MIN_WORDS_PER_MINUTE: f64 = 15.0;
+/// Mandarin drama measured 0.87–0.93 confidence and 115–128 characters per minute.
+const MIN_CHARACTERS_PER_MINUTE: f64 = 40.0;
+/// The languages speech is transcribed in.
+const LANGUAGES: [&str; 2] = ["en", "zh-Hans"];
+const NOT_SPEECH: &str = "The audio is not English or Mandarin speech";
 /// Concurrent transcriptions across the processing pool.
 static GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
 pub enum Transcript {
-    /// The transcript SRT, ready to use as an English text source.
-    Ready(PathBuf),
-    /// Not English speech, or no decodable audio. Final for this file revision.
+    /// The transcript SRT and its language, ready to use as a text source.
+    Ready(PathBuf, &'static str),
+    /// Neither English nor Mandarin speech, or no decodable audio. Final for this file revision.
     Rejected(String),
     /// Try again later (playback preparation, Matroska index still building).
     Deferred,
@@ -46,7 +53,26 @@ fn key(data: &Path, asset: &str, revision: &str) -> String {
 
 /// Whether transcription already reached a verdict (transcript or rejection)
 /// for this file revision.
-pub fn decided(data: &Path, asset: &str, revision: &str) -> bool { record(data, asset, revision).is_file() }
+pub fn decided(data: &Path, asset: &str, revision: &str) -> bool {
+    std::fs::read(record(data, asset, revision)).ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .is_some_and(|saved| saved["state"] == "ready" || untried(&saved).is_empty())
+}
+/// The languages a rejected file has yet to be tried in. Rejections recorded when
+/// only English was transcribed carry no list: they were tried in English alone,
+/// which is how every Mandarin title came to have no subtitles.
+fn untried(saved: &Value) -> Vec<&'static str> {
+    if saved["reason"] == "No decodable audio track" { return vec![]; }
+    let tried: Vec<&str> = match saved["tried"].as_array() {
+        Some(list) => list.iter().filter_map(Value::as_str).collect(),
+        None if saved["state"] == "rejected" => vec!["en"],
+        None => vec![],
+    };
+    LANGUAGES.into_iter().filter(|language| !tried.contains(language)).collect()
+}
+/// Chinese in the file's name: try Mandarin first.
+fn chinese_name(input: &Path) -> bool {
+    input.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)))
+}
 /// Assets with an accepted transcript of any version.
 pub fn transcribed_assets(data: &Path) -> std::collections::HashSet<String> {
     let Ok(entries) = std::fs::read_dir(directory(data)) else { return Default::default() };
@@ -59,15 +85,14 @@ pub(crate) fn record(data: &Path, asset: &str, revision: &str) -> PathBuf {
     directory(data).join(format!("{}.json", key(data, asset, revision)))
 }
 
-/// Accept a helper result as English speech, or say why not.
-fn verdict(result: &Value) -> Result<(), String> {
+/// Accept a helper result as speech in the language it was transcribed in, or not.
+fn verdict(result: &Value, language: &str) -> bool {
     let confidence = result["confidence"].as_f64().unwrap_or(0.0);
-    let words = result["words"].as_f64().unwrap_or(0.0);
     let minutes = result["duration_seconds"].as_f64().unwrap_or(0.0) / 60.0;
-    if minutes <= 0.0 || words / minutes < MIN_WORDS_PER_MINUTE || confidence < MIN_CONFIDENCE {
-        return Err("The audio is not English speech".into());
-    }
-    Ok(())
+    // Chinese is written without spaces, so its measure is characters.
+    let (amount, least) = if language == "zh-Hans" { (result["characters"].as_f64().unwrap_or(0.0), MIN_CHARACTERS_PER_MINUTE) }
+        else { (result["words"].as_f64().unwrap_or(0.0), MIN_WORDS_PER_MINUTE) };
+    minutes > 0.0 && amount / minutes >= least && confidence >= MIN_CONFIDENCE
 }
 
 fn srt(cues: &[crate::subtitles::TimedCue]) -> String {
@@ -83,12 +108,21 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
     let root = directory(&s.data_dir);
     std::fs::create_dir_all(&root)?;
     let name = key(&s.data_dir, id, &revision);
-    let output = root.join(format!("{name}.en.srt"));
     let record = root.join(format!("{name}.json"));
+    let output = |language: &str| root.join(format!("{name}.{language}.srt"));
+    let mut remaining: Vec<&'static str> = LANGUAGES.to_vec();
+    if chinese_name(input) { remaining.reverse(); }
+    let mut tried: Vec<&'static str> = Vec::new();
     if let Ok(bytes) = std::fs::read(&record) {
         let saved: Value = serde_json::from_slice(&bytes)?;
-        if saved["state"] == "rejected" { return Ok(Transcript::Rejected(saved["reason"].as_str().unwrap_or("No English speech").into())); }
-        if saved["state"] == "ready" && output.is_file() { return Ok(Transcript::Ready(output)); }
+        let language = LANGUAGES.into_iter().find(|l| saved["language"] == *l).unwrap_or("en");
+        if saved["state"] == "ready" && output(language).is_file() { return Ok(Transcript::Ready(output(language), language)); }
+        if saved["state"] == "rejected" {
+            let left = untried(&saved);
+            if left.is_empty() { return Ok(Transcript::Rejected(saved["reason"].as_str().unwrap_or(NOT_SPEECH).into())); }
+            tried = LANGUAGES.into_iter().filter(|l| !left.contains(l)).collect();
+            remaining.retain(|l| left.contains(l));
+        }
     }
     if s.virtual_media.preparing() { return Ok(Transcript::Deferred); }
     let _permit = GATE.acquire().await?;
@@ -110,12 +144,64 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
             }
         }
     } else { input.to_str().context("Invalid media path")?.to_owned() };
+    let save = |document: &Value| -> Result<()> {
+        let temporary = root.join(format!("{name}.json.tmp"));
+        std::fs::write(&temporary, document.to_string())?;
+        std::fs::rename(temporary, &record)?; Ok(())
+    };
+    let mut finding = Ok(Transcript::Rejected(NOT_SPEECH.into()));
+    let mut reason = NOT_SPEECH.to_owned();
+    let mut last_stats = Value::Null;
+    for language in remaining {
+        let outcome = match hear(s, &root, &name, &media, language, &report).await {
+            Ok(Some(outcome)) => outcome,
+            Ok(None) => { finding = Ok(Transcript::Deferred); break; }
+            Err(error) => { finding = Err(error); break; }
+        };
+        if crate::subtitle_jobs::revision(input)? != revision { finding = Err(anyhow::anyhow!("Media changed during speech transcription")); break; }
+        tried.push(language);
+        let result = match outcome {
+            // No decodable audio is no better in another language; no speech heard may be.
+            Err(why) if why.is_empty() || why == "No decodable audio track" => {
+                save(&json!({"state":"rejected","reason":"No decodable audio track","asset_id":id,"updated":now()}))?;
+                finding = Ok(Transcript::Rejected("No decodable audio track".into())); break;
+            }
+            Err(why) => { reason = why; save(&json!({"state":"rejected","reason":reason,"tried":tried,"asset_id":id,"updated":now()}))?; continue; }
+            Ok(result) => result,
+        };
+        let stats = json!({"language":language,"confidence":result["confidence"],"words":result["words"],"characters":result["characters"],"duration_seconds":result["duration_seconds"],"speech_seconds":result["speech_seconds"]});
+        if !verdict(&result, language) {
+            tracing::info!(asset = id, %stats, "Speech transcription rejected");
+            reason = NOT_SPEECH.to_owned(); last_stats = stats;
+            save(&json!({"state":"rejected","reason":reason,"tried":tried,"asset_id":id,"stats":last_stats,"updated":now()}))?;
+            continue;
+        }
+        let mut cues: Vec<crate::subtitles::TimedCue> = serde_json::from_value(result["cues"].clone())?;
+        for cue in &mut cues { cue.start_ms += offset_ms; cue.end_ms += offset_ms; }
+        if !(!cues.is_empty() && cues.iter().all(|c| c.end_ms > c.start_ms && !c.text.trim().is_empty() && c.text.len() <= 16_384)) {
+            finding = Err(anyhow::anyhow!("Invalid speech transcript")); break;
+        }
+        let temporary = root.join(format!("{name}.{language}.srt.tmp"));
+        std::fs::write(&temporary, srt(&cues))?;
+        std::fs::rename(temporary, output(language))?;
+        save(&json!({"state":"ready","language":language,"asset_id":id,"stats":stats,"cues":cues.len(),"updated":now()}))?;
+        tracing::info!(asset = id, %stats, cues = cues.len(), "Speech transcription finished");
+        finding = Ok(Transcript::Ready(output(language), language)); break;
+    }
+    if let Some(path) = &temporary_audio { let _ = std::fs::remove_file(path); }
+    if matches!(finding, Ok(Transcript::Rejected(_))) { finding = Ok(Transcript::Rejected(reason)); }
+    finding
+}
+
+/// Run the helper over the audio as one language. None: stopped for playback
+/// preparation. Err inside: the helper found no decodable audio or no speech.
+async fn hear(s: &Service, root: &Path, name: &str, media: &str, language: &str, report: &impl Fn(u64, u64)) -> Result<Option<Result<Value, String>>> {
     let result_path = root.join(format!("{name}.result.tmp"));
     let progress = root.join(format!("{name}.progress"));
     let outcome = async {
         let helper = std::env::current_exe()?.with_file_name("torrbaby-speech-subtitles");
         let mut child = tokio::process::Command::new("/usr/bin/nice").args(["-n", "15"]).arg(helper)
-            .arg(&media).arg(&result_path).arg(&progress)
+            .arg(media).arg(&result_path).arg(&progress).arg(language)
             .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(true).spawn()?;
         let stderr = child.stderr.take().context("Missing transcriber errors")?;
         use tokio::io::AsyncReadExt;
@@ -143,40 +229,9 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
         ensure!(bytes.len() <= 16_777_216, "Transcript too large");
         Ok(Some(Ok(serde_json::from_slice::<Value>(&bytes)?)))
     }.await;
-    if let Some(path) = &temporary_audio { let _ = std::fs::remove_file(path); }
     let _ = std::fs::remove_file(&result_path);
     let _ = std::fs::remove_file(&progress);
-    let Some(outcome) = outcome? else { return Ok(Transcript::Deferred) };
-    ensure!(crate::subtitle_jobs::revision(input)? == revision, "Media changed during speech transcription");
-    let save = |document: &Value| -> Result<()> {
-        let temporary = root.join(format!("{name}.json.tmp"));
-        std::fs::write(&temporary, document.to_string())?;
-        std::fs::rename(temporary, &record)?; Ok(())
-    };
-    let result = match outcome {
-        Err(reason) => {
-            let reason = if reason.is_empty() { "No decodable audio track".to_owned() } else { reason };
-            save(&json!({"state":"rejected","reason":reason,"asset_id":id,"updated":now()}))?;
-            return Ok(Transcript::Rejected(reason));
-        }
-        Ok(result) => result,
-    };
-    let stats = json!({"confidence":result["confidence"],"words":result["words"],"duration_seconds":result["duration_seconds"],"speech_seconds":result["speech_seconds"]});
-    if let Err(reason) = verdict(&result) {
-        save(&json!({"state":"rejected","reason":reason,"asset_id":id,"stats":stats,"updated":now()}))?;
-        tracing::info!(asset = id, %stats, "Speech transcription rejected");
-        return Ok(Transcript::Rejected(reason));
-    }
-    let mut cues: Vec<crate::subtitles::TimedCue> = serde_json::from_value(result["cues"].clone())?;
-    for cue in &mut cues { cue.start_ms += offset_ms; cue.end_ms += offset_ms; }
-    ensure!(!cues.is_empty() && cues.iter().all(|c| c.end_ms > c.start_ms && !c.text.trim().is_empty() && c.text.len() <= 16_384),
-        "Invalid speech transcript");
-    let temporary = root.join(format!("{name}.en.srt.tmp"));
-    std::fs::write(&temporary, srt(&cues))?;
-    std::fs::rename(temporary, &output)?;
-    save(&json!({"state":"ready","asset_id":id,"stats":stats,"cues":cues.len(),"updated":now()}))?;
-    tracing::info!(asset = id, %stats, cues = cues.len(), "Speech transcription finished");
-    Ok(Transcript::Ready(output))
+    outcome
 }
 
 /// ADTS header fields from an AAC AudioSpecificConfig: (profile, sampling
@@ -260,10 +315,29 @@ mod tests {
         let english = json!({"confidence":0.857,"words":5544,"duration_seconds":7540.5});
         let mandarin = json!({"confidence":0.404,"words":73,"duration_seconds":900.0});
         let japanese = json!({"confidence":0.365,"words":21,"duration_seconds":900.0});
-        assert!(verdict(&english).is_ok());
-        assert!(verdict(&mandarin).is_err() && verdict(&japanese).is_err());
+        assert!(verdict(&english, "en"));
+        assert!(!verdict(&mandarin, "en") && !verdict(&japanese, "en"));
         // Confident but nearly silent (music video, ambience) is not a dialogue track.
-        assert!(verdict(&json!({"confidence":0.9,"words":40,"duration_seconds":600.0})).is_err());
+        assert!(!verdict(&json!({"confidence":0.9,"words":40,"duration_seconds":600.0}), "en"));
+    }
+    #[test]
+    fn mandarin_speech_is_accepted_as_mandarin_and_not_as_english() {
+        // Measured on ten minutes each of 尚公主 and 九重紫, in both languages.
+        let shang = json!({"confidence":0.933,"words":1149,"characters":1149,"duration_seconds":600.0});
+        let jiu = json!({"confidence":0.875,"words":1277,"characters":1275,"duration_seconds":600.0});
+        assert!(verdict(&shang, "zh-Hans") && verdict(&jiu, "zh-Hans"));
+        assert!(!verdict(&json!({"confidence":0.641,"words":6,"characters":26,"duration_seconds":600.0}), "en"));
+        assert!(!verdict(&json!({"confidence":0.246,"words":8,"characters":30,"duration_seconds":600.0}), "en"));
+        assert!(!verdict(&json!({"confidence":0.9,"characters":120,"duration_seconds":600.0}), "zh-Hans"), "a few words in a music video");
+    }
+    #[test]
+    fn files_rejected_when_only_english_was_tried_are_tried_in_mandarin() {
+        assert_eq!(untried(&json!({"state":"rejected","reason":"The audio is not English speech"})), ["zh-Hans"]);
+        assert_eq!(untried(&json!({"state":"rejected","reason":"No speech was recognized"})), ["zh-Hans"]);
+        assert!(untried(&json!({"state":"rejected","reason":"No decodable audio track"})).is_empty());
+        assert!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["zh-Hans","en"]})).is_empty());
+        assert_eq!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["zh-Hans"]})), ["en"]);
+        assert!(chinese_name(Path::new("/tv/尚公主 - S01E05.mkv")) && !chinese_name(Path::new("/tv/Black Doves - S01E01.mkv")));
     }
     #[test]
     fn aac_configuration_becomes_adts_headers() -> Result<()> {
