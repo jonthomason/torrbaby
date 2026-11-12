@@ -30,7 +30,6 @@ struct DownloadsView: View {
                     Spacer()
                     Button { settings = true } label: { Image(systemName: "slider.horizontal.3") }.help("Download settings").accessibilityLabel("Download settings")
                 }
-                DownloadUpdateOffer(ids: queue.items.filter { $0.server == store.server && $0.state == .ready }.map(\.id))
                 #if os(iOS)
                 if queue.waitingForWiFi && queue.items.contains(where: { $0.state == .queued || $0.state == .transferring }) {
                     HStack {
@@ -90,6 +89,8 @@ struct DownloadsView: View {
                       if item.state != .ready {
                           TorrentProgressGauge(value: item.size > 0 ? Double(queue.received[item.id] ?? item.received) / Double(item.size) : 0)
                       }
+                      // In the row it belongs to, so it is clear which download is behind.
+                      DownloadUpdateOffer(ids: [item.id]).padding(.leading, 56)
                     }.padding(.vertical, 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
