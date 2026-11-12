@@ -78,6 +78,8 @@ public final class Library {
     public final List<Asset> assets = new ArrayList<>();
     public final JSONArray cast;
     public boolean continueWatchingHidden;
+    /** Every file is on a server drive that is not connected now. */
+    public final boolean offline;
     public boolean isContinuing() { return !continueWatchingHidden && resume()!=null; }
     /** A movie's year, or a series' run: "2018–2025", or "2018–" while it continues. */
     public String yearLabel() {
@@ -89,6 +91,7 @@ public final class Library {
 
     Title(JSONObject j) {
       continueWatchingHidden=j.optBoolean("continue_watching_hidden",false);
+      offline=j.optBoolean("offline",false);
       cast=j.optJSONArray("cast");
       id = string(j, "id");
       kind = string(j, "kind");
@@ -199,6 +202,8 @@ public final class Library {
     public final JSONObject mediaInfo;
     public final int season, episode;
     public final boolean complete, watched, hasSeason;
+    /** On a server drive that is not connected now; it returns when the drive does. */
+    public final boolean offline;
     public final double position, duration, lastPlayed;
 
     Asset(JSONObject j) {
@@ -212,6 +217,7 @@ public final class Library {
       season = j.optInt("season", 0);
       episode = j.optInt("episode", 0);
       complete = j.optBoolean("complete");
+      offline = j.optBoolean("offline");
       watched = j.optBoolean("watched");
       position = Math.max(0, j.optDouble("position", 0));
       duration = Math.max(0, j.optDouble("duration", 0));
@@ -229,6 +235,7 @@ public final class Library {
     }
 
     public String status() {
+      if (offline) return L10n.t("Drive not connected");
       if (!complete) return "Not yet available";
       if (watched) return "Watched";
       if (position > 0 && duration > position) return time(duration - position) + " left";

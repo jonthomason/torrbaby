@@ -67,7 +67,9 @@ final class PosterCard extends LinearLayout {
 
   void bind(Library.Title value) {
     item=value; setTag("title:"+value.id);
-    setContentDescription(value.title+", "+value.year+(value.watched()?", Watched":""));
+    setContentDescription(value.title+", "+value.year+(value.watched()?", Watched":"")+(value.offline?", "+L10n.t("Drive not connected"):""));
+    // A title whose server drive is not connected is dimmed until the drive returns.
+    artwork.setAlpha(value.offline ? 0.45f : 1f);
     title.setText(value.title);title.setVisibility(value.poster.isEmpty()?VISIBLE:GONE);
     watched.setVisibility(value.watched()?VISIBLE:GONE);
     Library.Asset resume=value.resume();

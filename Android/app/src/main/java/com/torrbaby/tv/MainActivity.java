@@ -1929,6 +1929,10 @@ public class MainActivity extends Activity {
   }
 
   private void play(Library.Title t, Library.Asset a, boolean beginning) {
+    if (a.offline) {
+      error(L10n.t("This title is on a drive that is not connected"));
+      return;
+    }
     if (!a.complete) {
       error("This media file is not yet available on the server.");
       return;
