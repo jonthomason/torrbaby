@@ -1876,15 +1876,17 @@ struct CloudJobsSection: View {
         .padding(.bottom, jobs.isEmpty ? -sectionSpacing : 0)
         .task(id: store.server) {
             while !Task.isCancelled {
-                if let list: JobList = try? await store.request("GET", "/v1/cloud/jobs", timeout: 15) { jobs = list.jobs }
+                if let list: JobList = try? await store.request("GET", "/v1/cloud/jobs", timeout: 15) { jobs = shown(list.jobs) }
                 let active = jobs.contains(where: \.isActive)
                 try? await Task.sleep(for: .seconds(active ? 3 : 15))
             }
         }
     }
     private func reload() {
-        Task { if let list: JobList = try? await store.request("GET", "/v1/cloud/jobs", timeout: 15) { jobs = list.jobs } }
+        Task { if let list: JobList = try? await store.request("GET", "/v1/cloud/jobs", timeout: 15) { jobs = shown(list.jobs) } }
     }
+    /// A finished download is in the library; this section lists only what is still coming or has failed.
+    private func shown(_ all: [CloudJob]) -> [CloudJob] { all.filter { $0.state != "done" } }
 }
 /// One cloud-drive download: its title in the downloads' colour, progress, speed, time
 /// left, the video being fetched, and Cancel, Retry or Dismiss. Sits among the torrents.

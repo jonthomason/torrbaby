@@ -19,6 +19,7 @@
     <string name="ui_712d2e5c0047" formatted="false">%d videos</string>
     <string name="ui_660a76df86fd" formatted="false">%dh %dm left</string>
     <string name="ui_659748ef61cf" formatted="false">%dm left</string>
+    <string name="ui_9b722d3ba900" formatted="false">%s free of %s</string>
     <string name="ui_c428b17e2512" formatted="false">1 DOWNLOAD</string>
     <string name="ui_54fc19e5c9f4" formatted="false">1 episode</string>
     <string name="ui_8256cd5880d0" formatted="false">1 seed</string>

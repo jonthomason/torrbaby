@@ -63,7 +63,7 @@ public final class TorrentSearchActivity extends Activity {
     try { api = new SecureStore(this).load(); } catch (Exception ignored) {}
     if (api == null) { finish(); return; }
     resultsRoot = page();
-    Ui.add(resultsRoot, Ui.title(this, L10n.t("Find torrents"), 28), -1, 48);
+    Ui.add(resultsRoot, Ui.title(this, L10n.t("Find"), 28), -1, 48);
     china = getPreferences(MODE_PRIVATE).getBoolean("china", false);
     RadioGroup markets = new RadioGroup(this); markets.setOrientation(LinearLayout.HORIZONTAL);
     RadioButton world = new RadioButton(this); world.setText(L10n.t("World")); world.setId(View.generateViewId()); world.setTextColor(Ui.TEXT);

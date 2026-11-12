@@ -144,7 +144,8 @@ struct TVRootView: View {
                     HStack(spacing: 8) {
                         ForEach(sections, id: \.self) { item in
                             Button { settings = false; section = item } label: {
-                                Text(LocalizedStringKey(item)).font(.system(size: 24, weight: .semibold))
+                                // The page holds cloud downloads as well as torrents, so the television calls it Downloads.
+                                Text(LocalizedStringKey(item == "Torrents" ? "Downloads" : item)).font(.system(size: 24, weight: .semibold))
                             }.buttonStyle(TVMonochromeButtonStyle(selected: section == item)).focused($focusedTab, equals: item)
                         }
                     }
@@ -270,7 +271,7 @@ private struct TVSettingsView: View {
                     if let status = store.status { Button {} label: { TVSettingsRow(title: "Server version", value: status.version) } }
                 }
                 SwiftUI.Section("Library") {
-                    NavigationLink { TorrentSearchView() } label: { Text("Find torrents") }
+                    NavigationLink { TorrentSearchView() } label: { Text("Find") }
                 }
             }.listStyle(.grouped).frame(maxWidth: 900)
             // The app tints controls white; a focused row is white too, so its title must not be.

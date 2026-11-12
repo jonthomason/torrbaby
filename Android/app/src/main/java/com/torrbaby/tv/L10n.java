@@ -30,6 +30,7 @@ final class L10n {
     IDS.put("%d videos", R.string.ui_712d2e5c0047);
     IDS.put("%dh %dm left", R.string.ui_660a76df86fd);
     IDS.put("%dm left", R.string.ui_659748ef61cf);
+    IDS.put("%s free of %s", R.string.ui_9b722d3ba900);
     IDS.put("1 DOWNLOAD", R.string.ui_c428b17e2512);
     IDS.put("1 episode", R.string.ui_54fc19e5c9f4);
     IDS.put("1 seed", R.string.ui_8256cd5880d0);

@@ -217,7 +217,8 @@ public class MainActivity extends Activity {
       Button b =
           Ui.button(
               this,
-              L10n.t(label),
+              // The page holds cloud downloads as well as torrents, so the television calls it Downloads.
+              L10n.t(label.equals("Torrents") ? "Downloads" : label),
               () -> {
                 if (!section.equals(label)) transition = 2;
                 section = label;
@@ -1024,7 +1025,7 @@ public class MainActivity extends Activity {
     }
     View space = new View(this);
     controls.addView(space, new LinearLayout.LayoutParams(0, 1, 1));
-    Ui.add(controls, Ui.button(this, L10n.t("Find torrents"), () -> startActivity(new Intent(this, TorrentSearchActivity.class))), -2, 42);
+    Ui.add(controls, Ui.button(this, L10n.t("Find"), () -> startActivity(new Intent(this, TorrentSearchActivity.class))), -2, 42);
     Ui.gap(controls, 12);
     Ui.add(controls, Ui.button(this, L10n.t("Manage"), () -> torrentActions.manage()), -2, 42);
     Ui.gap(controls, 12);
@@ -1296,7 +1297,7 @@ public class MainActivity extends Activity {
       JSONObject volume = volumes.optJSONObject(i);
       if (volume == null) continue;
       String line = volume.optBoolean("available")
-          ? String.format(L10n.locale(), L10n.t("%@ free of %@").replace("%@", "%s"), bytes(volume.optLong("free_bytes")), bytes(volume.optLong("total_bytes")))
+          ? String.format(L10n.locale(), L10n.t("%s free of %s"), bytes(volume.optLong("free_bytes")), bytes(volume.optLong("total_bytes")))
           : L10n.t("Drive not connected");
       Ui.add(rows, Ui.text(this, line + " · " + volume.optString("name"), 14, Ui.MUTED), -1, -2);
     }
@@ -1304,8 +1305,10 @@ public class MainActivity extends Activity {
     for (int i = 0; cloudJobs != null && i < cloudJobs.length(); i++) {
       JSONObject job = cloudJobs.optJSONObject(i);
       if (job == null) continue;
-      added++;
       String state = job.optString("state");
+      // A finished download is in the library; the television lists only what is still coming.
+      if (state.equals("done")) continue;
+      added++;
       LinearLayout row = Ui.column(this);
       Ui.focus(row);
       row.setOnFocusChangeListener((v, focused) -> Ui.secondaryContrast(v, focused));
@@ -1332,6 +1335,17 @@ public class MainActivity extends Activity {
       if (job.optInt("replaced") > 0) outcomes.add(String.format(L10n.locale(), L10n.t("Replaced with better: %d"), job.optInt("replaced")));
       if (job.optInt("discarded") > 0) outcomes.add(String.format(L10n.locale(), L10n.t("Already had as good: %d"), job.optInt("discarded")));
       if (!outcomes.isEmpty()) Ui.add(row, Ui.text(this, String.join(" · ", outcomes), 12, Ui.MUTED), -1, -2);
+      if (job.optLong("total_bytes") > 0) {
+        // The same bar a torrent has.
+        Ui.gap(row, 10);
+        ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        bar.setProgressTintList(android.content.res.ColorStateList.valueOf(0xffffffff));
+        int percent = (int) (100 * job.optLong("done_bytes") / job.optLong("total_bytes"));
+        bar.setProgress(percent);
+        Ui.add(row, bar, -1, 8);
+        Ui.gap(row, 6);
+        Ui.add(row, Ui.text(this, percent + "%", 12, Ui.MUTED), -1, -2);
+      }
       if (!job.isNull("current") && !job.optString("current").isEmpty()) Ui.add(row, Ui.text(this, job.optString("current"), 12, Ui.MUTED), -1, -2);
       String error = job.isNull("error") ? "" : job.optString("error");
       if (!error.isEmpty()) Ui.add(row, Ui.text(this, error, 12, Ui.MUTED), -1, -2);

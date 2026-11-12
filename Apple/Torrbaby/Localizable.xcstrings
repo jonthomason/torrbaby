@@ -14947,6 +14947,23 @@
           }
         }
       }
+    },
+    "%s free of %s": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%s free of %s"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可用 %s，共 %s"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
