@@ -594,7 +594,7 @@ public class MainActivity extends Activity {
       // actions live in one compact menu beside Play.
       if (t.kind.equals("tv") && asset != null) {
         Ui.gap(buttons, 10);
-        Button more = Ui.button(this, L10n.t("⋯  More"), () -> moreActions(t));
+        Button more = Ui.button(this, L10n.t("More…"), () -> moreActions(t));
         more.setTag("more");
         more.setOnFocusChangeListener(heroFocus);
         Ui.add(buttons, more, -2, 48);
