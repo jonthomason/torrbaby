@@ -398,6 +398,15 @@ struct LibraryArtwork: View {
         let revision = variant == "episode" ? episode?.thumbnail : variant == "backdrop" ? title?.backdrop : title?.poster
         return [store.server, store.clientId, id, variant, revision ?? ""].joined(separator: "\n")
     }
+    /// From memory, else from this device's artwork store (a small local file read).
+    private func stored(_ identifier: String) -> Data? {
+        let key = identifier as NSString
+        Self.cache.totalCostLimit = 48 * 1024 * 1024
+        if let cached = Self.cache.object(forKey: key) { return cached as Data }
+        guard let saved = LibraryDiskCache.storedArtwork(key: identifier) else { return nil }
+        Self.cache.setObject(saved as NSData, forKey: key, cost: saved.count)
+        return saved
+    }
     var body: some View {
         GeometryReader { geometry in
           ZStack(alignment: alignment) {
@@ -413,18 +422,13 @@ struct LibraryArtwork: View {
             }
           }.frame(width: geometry.size.width, height: geometry.size.height, alignment: alignment).clipped()
         }
+        // Art already on this device is shown in the first frame: no placeholder, no request.
+        .onAppear { if data == nil { data = stored(artworkKey) } }
         .task(id: artworkKey) {
-            data = nil
             let identifier = artworkKey
             let key = identifier as NSString
-            Self.cache.totalCostLimit = 48 * 1024 * 1024
-            if let cached = Self.cache.object(forKey: key) { data = cached as Data; return }
-            if let saved = await LibraryDiskCache.shared.artwork(key: identifier) {
-                guard !Task.isCancelled else { return }
-                data = saved
-                Self.cache.setObject(saved as NSData, forKey: key, cost: saved.count)
-                return
-            }
+            if let saved = stored(identifier) { data = saved; return }
+            data = nil
             struct Artwork: Decodable { let data: String? }
             do {
                 let image: Artwork = try await store.request("GET", "/v1/library/artwork/\(id)/\(variant)")
@@ -1173,12 +1177,34 @@ actor LibraryDiskCache {
     private var database: OpaquePointer?
     private var lastTrim = Date.distantPast
     private let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-    init(root override: URL? = nil) {
-        root = override ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("TorrbabyLibrary-v1", isDirectory: true)
-    }
-    private func digest(_ value: String) -> String {
+    /// Application Support, not Caches: iOS empties Caches when the device runs short
+    /// of space (which offline downloads make likely), and every poster would then be
+    /// fetched again. The store caps itself at 192 MB and is excluded from backups.
+    static let defaultRoot: URL = {
+        let files = FileManager.default
+        let caches = files.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("TorrbabyLibrary-v1", isDirectory: true)
+        guard let support = files.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return caches }
+        var root = support.appendingPathComponent("TorrbabyLibrary-v1", isDirectory: true)
+        if !files.fileExists(atPath: root.path) {
+            try? files.createDirectory(at: support, withIntermediateDirectories: true)
+            // Keep what earlier builds already fetched.
+            if files.fileExists(atPath: caches.path) { try? files.moveItem(at: caches, to: root) }
+            try? files.createDirectory(at: root, withIntermediateDirectories: true)
+        }
+        var values = URLResourceValues(); values.isExcludedFromBackup = true
+        try? root.setResourceValues(values)
+        return files.fileExists(atPath: root.path) ? root : caches
+    }()
+    init(root override: URL? = nil) { root = override ?? Self.defaultRoot }
+    private static func digest(_ value: String) -> String {
         SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+    private func digest(_ value: String) -> String { Self.digest(value) }
+    /// Synchronous read for the first frame; writes are atomic, so no coordination is needed.
+    nonisolated static func storedArtwork(key: String) -> Data? {
+        let path = defaultRoot.appendingPathComponent(digest(key) + ".image")
+        guard let size = try? path.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 8 * 1024 * 1024 else { return nil }
+        return try? Data(contentsOf: path)
     }
     private func open() -> Bool {
         if database != nil { return true }
