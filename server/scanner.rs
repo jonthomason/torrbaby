@@ -106,6 +106,22 @@ pub fn variety(asset: &mut Value, path: &Path, roots: &[&str]) {
     if !label.is_empty() { object.insert("label".into(), json!(label)); }
 }
 
+/// The name a variety show's part goes by, from its file: "第2期(三)", or with the
+/// description some releases carry, "第5期(一) 小海进修情商课句句点黄渤". The provider's titles for
+/// such parts ("Episode 2 (Part 3)") only repeat the numbering, beside the episode number.
+pub fn part_name(path: &str) -> Option<String> {
+    let stem = Path::new(path).file_stem()?.to_str()?;
+    let found = ISSUE_PART.find(stem)?;
+    static NOISE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"【[^】]*】|\[[^\]]*\]|(?i)[-. ]*(?:4k|2160p|1080p|高码率|60fps)[-. ]*").expect("valid regex")
+    });
+    let rest = NOISE.replace_all(&stem[found.end()..], " ");
+    // A wrapper around the label ("20260710(第2期(一))") leaves its closing bracket behind.
+    let rest = rest.trim().trim_start_matches([')', '）']).trim_matches(|c: char| c.is_whitespace() || "-_.".contains(c));
+    let label = found.as_str().split_whitespace().collect::<String>();
+    Some(if rest.is_empty() { label } else { format!("{label} {rest}") })
+}
+
 /// The provider's episode number for a variety show's part ("第3期(二)"), when the provider
 /// names the season's episodes by issue and part ("Episode 3 (Part 2)"). Otherwise the
 /// file's own number stands.
@@ -515,6 +531,12 @@ mod tests {
         // Ordinary episodes and plain films are left alone.
         let plain = scan("Friends - S01E02.mkv");
         assert_eq!((plain["season"].clone(), plain["episode"].clone(), plain["label"].clone()), (json!(1), json!(2), Value::Null));
+        let name = |file: &str| part_name(&format!("{folder}/{file}"));
+        assert_eq!(name("喜剧之王单口季 - S03E02 - 2026.07.11-第2期(三).mp4").as_deref(), Some("第2期(三)"));
+        assert_eq!(name("喜剧之王单口季 - S03E08 - 2026.08.21-第8期(一)-4K.高码率.mp4").as_deref(), Some("第8期(一)"));
+        assert_eq!(name("喜剧之王单口季 - S03E02 - 20260710(第2期(一)).mp4").as_deref(), Some("第2期(一)"));
+        assert_eq!(name("喜剧之王单口季 - S03E05 - 2026-07-31 【正片】第5期(一) 小海进修情商课句句点黄渤【4K】.mp4").as_deref(), Some("第5期(一) 小海进修情商课句句点黄渤"));
+        assert_eq!(name("Friends - S01E02.mkv"), None);
         assert!(!variety_labelled("The Pilot (2020)"));
         assert!(variety_labelled("2026.08.21-第8期(一)-4K.高码率"));
     }
