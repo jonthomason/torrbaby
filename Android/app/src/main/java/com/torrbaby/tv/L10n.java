@@ -75,6 +75,7 @@ final class L10n {
     IDS.put("Cancel download", R.string.ui_67bb11d08df2);
     IDS.put("Cancel trial", R.string.ui_87f8cd8360cc);
     IDS.put("Cast", R.string.ui_60745aef336b);
+    IDS.put("Cellular", R.string.ui_b4e2e1ffb3ed);
     IDS.put("Cellular downloads allowed until", R.string.ui_6b9dfc21816d);
     IDS.put("Change", R.string.ui_64fbd995d3b6);
     IDS.put("Change server connection", R.string.ui_d4223134a9c8);
@@ -99,6 +100,7 @@ final class L10n {
     IDS.put("Choose a profile", R.string.ui_f47537b34855);
     IDS.put("Choose a release", R.string.ui_bf1604f52dd4);
     IDS.put("Choose a release, then add it.", R.string.ui_9d6a2b12fd09);
+    IDS.put("Choose a user", R.string.ui_5f0667ffb45c);
     IDS.put("Choose a user before starting playback.", R.string.ui_0acf0708ca28);
     IDS.put("Choose another (%d)", R.string.ui_2c052719b7f2);
     IDS.put("Choose the right title", R.string.ui_0772fa16aa51);
@@ -187,6 +189,7 @@ final class L10n {
     IDS.put("Download limit (GB)", R.string.ui_c6cf3bcf805a);
     IDS.put("Download paused: not enough available storage.", R.string.ui_f3c236f285e4);
     IDS.put("Download progress", R.string.ui_9c8fe84bfbc4);
+    IDS.put("Download settings", R.string.ui_4b3aafa26849);
     IDS.put("Download storage", R.string.ui_2d4ee79253e4);
     IDS.put("Download to this device", R.string.ui_2a18b6447c5a);
     IDS.put("Downloaded", R.string.ui_c61970292546);
@@ -194,8 +197,10 @@ final class L10n {
     IDS.put("Downloading", R.string.ui_9b4592f9ae45);
     IDS.put("Downloading first", R.string.ui_af948f4e4aee);
     IDS.put("Downloads", R.string.ui_a862c2b21b5e);
+    IDS.put("Downloads are waiting for Wi-Fi", R.string.ui_c20a8912f0ca);
     IDS.put("Downloads unavailable", R.string.ui_022410e4af2e);
     IDS.put("Downloads wait for Wi-Fi. Allowing cellular also covers a Personal Hotspot or a Low Data Mode network, and ends after 3 hours or when you join Wi-Fi.", R.string.ui_fbe756da9c9b);
+    IDS.put("Each user has their own Continue Watching and viewing history.", R.string.ui_4e45c7891116);
     IDS.put("Edit connection", R.string.ui_b3171b22b733);
     IDS.put("Edit profile", R.string.ui_15141eab3a28);
     IDS.put("Enable device notifications", R.string.ui_9c98222b05e5);
@@ -249,6 +254,7 @@ final class L10n {
     IDS.put("Font", R.string.ui_b97c4d4cddf2);
     IDS.put("Forced", R.string.ui_6f1b97e4c290);
     IDS.put("Forward", R.string.ui_ba4e72261283);
+    IDS.put("General", R.string.ui_9239ee2cda84);
     IDS.put("Generated", R.string.ui_8eefdd52ad2d);
     IDS.put("Generated subtitles", R.string.ui_a1af0d20ca98);
     IDS.put("Genre", R.string.ui_2aa31fca5e4f);
@@ -279,9 +285,11 @@ final class L10n {
     IDS.put("Languages unavailable", R.string.ui_4ece8db0cba2);
     IDS.put("Leave Torrbaby?", R.string.ui_88a68e0e00b7);
     IDS.put("Library", R.string.ui_b8100f5ba8bd);
+    IDS.put("Library & Organizing", R.string.ui_cbfda9ea6b27);
     IDS.put("Library files", R.string.ui_16add3775c70);
     IDS.put("Library metadata", R.string.ui_e35ac2febb1c);
     IDS.put("Library unavailable", R.string.ui_152e8ef91c16);
+    IDS.put("License", R.string.ui_3229609e1543);
     IDS.put("Link a device", R.string.ui_e716356061f3);
     IDS.put("Link this TV to your server again.", R.string.ui_aaee331bfc80);
     IDS.put("Loading details…", R.string.ui_d6b61171cda1);
@@ -398,6 +406,7 @@ final class L10n {
     IDS.put("Playback speed", R.string.ui_6ff42b75c926);
     IDS.put("Please try again.", R.string.ui_83a6fd7b7878);
     IDS.put("Prepare translations automatically", R.string.ui_3480a027386f);
+    IDS.put("Prepares English and Chinese subtitles for new titles on your server, on the server itself.", R.string.ui_1d5dd746a0c5);
     IDS.put("Preparing", R.string.ui_96a9b7cdbe40);
     IDS.put("Preparing audio transcript", R.string.ui_2381f39df5a4);
     IDS.put("Preparing download", R.string.ui_f9b13bce28d6);
@@ -507,6 +516,7 @@ final class L10n {
     IDS.put("Server torrents", R.string.ui_d83a107297bb);
     IDS.put("Server transfers", R.string.ui_fad23a8672e6);
     IDS.put("Server updated", R.string.ui_ed99436dccac);
+    IDS.put("Server version", R.string.ui_2546318d7620);
     IDS.put("Settings", R.string.ui_c7f73bb54d92);
     IDS.put("Settings saved", R.string.ui_aef97bb06af4);
     IDS.put("Settings → Link a device", R.string.ui_c0f6e98ebf63);
@@ -542,14 +552,17 @@ final class L10n {
     IDS.put("Stop downloading first", R.string.ui_76a8ecfbed37);
     IDS.put("Stop now", R.string.ui_43719e09ba7f);
     IDS.put("Stop tracking the torrent in Transmission. Keep all downloaded files on Diamond.", R.string.ui_8cf498a528c2);
+    IDS.put("Storage", R.string.ui_9e092dda4f0e);
     IDS.put("Streaming is unavailable on fallback. Download this title to watch it.", R.string.ui_3c3bc1c865fc);
     IDS.put("Style", R.string.ui_99a0efc6cfd8);
     IDS.put("Submitting…", R.string.ui_25bdf9860e96);
     IDS.put("Subtitle", R.string.ui_e159d05a124c);
+    IDS.put("Subtitle choices belong to this device.", R.string.ui_a664261a5123);
     IDS.put("Subtitle preferences", R.string.ui_a0744ab06c56);
     IDS.put("Subtitle preferences saved", R.string.ui_f777f345eac3);
     IDS.put("Subtitle style", R.string.ui_2e86ef3a303d);
     IDS.put("Subtitles", R.string.ui_17770471cb9f);
+    IDS.put("Subtitles & Translation", R.string.ui_9389df521f5d);
     IDS.put("Subtitles on this TV", R.string.ui_fd035728d654);
     IDS.put("Subtitles on this device", R.string.ui_bb959ff245cd);
     IDS.put("Subtitles unavailable", R.string.ui_1f591ba0ae14);
@@ -581,6 +594,7 @@ final class L10n {
     IDS.put("The server will retry automatically.", R.string.ui_1bab38b72a4a);
     IDS.put("The torrent is still listed. Refresh in a moment to check whether removal finished.", R.string.ui_6ddf94adca4b);
     IDS.put("The video stream was interrupted. Check the server and network connection.", R.string.ui_196686e4c2fc);
+    IDS.put("These settings apply to everyone who uses this server.", R.string.ui_6315e169d054);
     IDS.put("This affects the entire download package and everyone’s library.", R.string.ui_a3594939d5f3);
     IDS.put("This code has expired.", R.string.ui_1d3888fca6b7);
     IDS.put("This device", R.string.ui_fa5a6dd9d249);

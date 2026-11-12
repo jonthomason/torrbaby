@@ -64,6 +64,7 @@
     <string name="ui_67bb11d08df2" formatted="false">Cancel download</string>
     <string name="ui_87f8cd8360cc" formatted="false">Cancel trial</string>
     <string name="ui_60745aef336b" formatted="false">Cast</string>
+    <string name="ui_b4e2e1ffb3ed" formatted="false">Cellular</string>
     <string name="ui_6b9dfc21816d" formatted="false">Cellular downloads allowed until</string>
     <string name="ui_64fbd995d3b6" formatted="false">Change</string>
     <string name="ui_d4223134a9c8" formatted="false">Change server connection</string>
@@ -88,6 +89,7 @@
     <string name="ui_f47537b34855" formatted="false">Choose a profile</string>
     <string name="ui_bf1604f52dd4" formatted="false">Choose a release</string>
     <string name="ui_9d6a2b12fd09" formatted="false">Choose a release, then add it.</string>
+    <string name="ui_5f0667ffb45c" formatted="false">Choose a user</string>
     <string name="ui_0acf0708ca28" formatted="false">Choose a user before starting playback.</string>
     <string name="ui_2c052719b7f2" formatted="false">Choose another (%d)</string>
     <string name="ui_0772fa16aa51" formatted="false">Choose the right title</string>
@@ -176,6 +178,7 @@
     <string name="ui_c6cf3bcf805a" formatted="false">Download limit (GB)</string>
     <string name="ui_f3c236f285e4" formatted="false">Download paused: not enough available storage.</string>
     <string name="ui_9c8fe84bfbc4" formatted="false">Download progress</string>
+    <string name="ui_4b3aafa26849" formatted="false">Download settings</string>
     <string name="ui_2d4ee79253e4" formatted="false">Download storage</string>
     <string name="ui_2a18b6447c5a" formatted="false">Download to this device</string>
     <string name="ui_c61970292546" formatted="false">Downloaded</string>
@@ -183,8 +186,10 @@
     <string name="ui_9b4592f9ae45" formatted="false">Downloading</string>
     <string name="ui_af948f4e4aee" formatted="false">Downloading first</string>
     <string name="ui_a862c2b21b5e" formatted="false">Downloads</string>
+    <string name="ui_c20a8912f0ca" formatted="false">Downloads are waiting for Wi-Fi</string>
     <string name="ui_022410e4af2e" formatted="false">Downloads unavailable</string>
     <string name="ui_fbe756da9c9b" formatted="false">Downloads wait for Wi-Fi. Allowing cellular also covers a Personal Hotspot or a Low Data Mode network, and ends after 3 hours or when you join Wi-Fi.</string>
+    <string name="ui_4e45c7891116" formatted="false">Each user has their own Continue Watching and viewing history.</string>
     <string name="ui_b3171b22b733" formatted="false">Edit connection</string>
     <string name="ui_15141eab3a28" formatted="false">Edit profile</string>
     <string name="ui_9c98222b05e5" formatted="false">Enable device notifications</string>
@@ -238,6 +243,7 @@
     <string name="ui_b97c4d4cddf2" formatted="false">Font</string>
     <string name="ui_6f1b97e4c290" formatted="false">Forced</string>
     <string name="ui_ba4e72261283" formatted="false">Forward</string>
+    <string name="ui_9239ee2cda84" formatted="false">General</string>
     <string name="ui_8eefdd52ad2d" formatted="false">Generated</string>
     <string name="ui_a1af0d20ca98" formatted="false">Generated subtitles</string>
     <string name="ui_2aa31fca5e4f" formatted="false">Genre</string>
@@ -268,9 +274,11 @@
     <string name="ui_4ece8db0cba2" formatted="false">Languages unavailable</string>
     <string name="ui_88a68e0e00b7" formatted="false">Leave Torrbaby?</string>
     <string name="ui_b8100f5ba8bd" formatted="false">Library</string>
+    <string name="ui_cbfda9ea6b27" formatted="false">Library &amp; Organizing</string>
     <string name="ui_16add3775c70" formatted="false">Library files</string>
     <string name="ui_e35ac2febb1c" formatted="false">Library metadata</string>
     <string name="ui_152e8ef91c16" formatted="false">Library unavailable</string>
+    <string name="ui_3229609e1543" formatted="false">License</string>
     <string name="ui_e716356061f3" formatted="false">Link a device</string>
     <string name="ui_aaee331bfc80" formatted="false">Link this TV to your server again.</string>
     <string name="ui_d6b61171cda1" formatted="false">Loading details…</string>
@@ -387,6 +395,7 @@
     <string name="ui_6ff42b75c926" formatted="false">Playback speed</string>
     <string name="ui_83a6fd7b7878" formatted="false">Please try again.</string>
     <string name="ui_3480a027386f" formatted="false">Prepare translations automatically</string>
+    <string name="ui_1d5dd746a0c5" formatted="false">Prepares English and Chinese subtitles for new titles on your server, on the server itself.</string>
     <string name="ui_96a9b7cdbe40" formatted="false">Preparing</string>
     <string name="ui_2381f39df5a4" formatted="false">Preparing audio transcript</string>
     <string name="ui_f9b13bce28d6" formatted="false">Preparing download</string>
@@ -496,6 +505,7 @@
     <string name="ui_d83a107297bb" formatted="false">Server torrents</string>
     <string name="ui_fad23a8672e6" formatted="false">Server transfers</string>
     <string name="ui_ed99436dccac" formatted="false">Server updated</string>
+    <string name="ui_2546318d7620" formatted="false">Server version</string>
     <string name="ui_c7f73bb54d92" formatted="false">Settings</string>
     <string name="ui_aef97bb06af4" formatted="false">Settings saved</string>
     <string name="ui_c0f6e98ebf63" formatted="false">Settings → Link a device</string>
@@ -531,14 +541,17 @@
     <string name="ui_76a8ecfbed37" formatted="false">Stop downloading first</string>
     <string name="ui_43719e09ba7f" formatted="false">Stop now</string>
     <string name="ui_8cf498a528c2" formatted="false">Stop tracking the torrent in Transmission. Keep all downloaded files on Diamond.</string>
+    <string name="ui_9e092dda4f0e" formatted="false">Storage</string>
     <string name="ui_3c3bc1c865fc" formatted="false">Streaming is unavailable on fallback. Download this title to watch it.</string>
     <string name="ui_99a0efc6cfd8" formatted="false">Style</string>
     <string name="ui_25bdf9860e96" formatted="false">Submitting…</string>
     <string name="ui_e159d05a124c" formatted="false">Subtitle</string>
+    <string name="ui_a664261a5123" formatted="false">Subtitle choices belong to this device.</string>
     <string name="ui_a0744ab06c56" formatted="false">Subtitle preferences</string>
     <string name="ui_f777f345eac3" formatted="false">Subtitle preferences saved</string>
     <string name="ui_2e86ef3a303d" formatted="false">Subtitle style</string>
     <string name="ui_17770471cb9f" formatted="false">Subtitles</string>
+    <string name="ui_9389df521f5d" formatted="false">Subtitles &amp; Translation</string>
     <string name="ui_fd035728d654" formatted="false">Subtitles on this TV</string>
     <string name="ui_bb959ff245cd" formatted="false">Subtitles on this device</string>
     <string name="ui_1f591ba0ae14" formatted="false">Subtitles unavailable</string>
@@ -570,6 +583,7 @@
     <string name="ui_1bab38b72a4a" formatted="false">The server will retry automatically.</string>
     <string name="ui_6ddf94adca4b" formatted="false">The torrent is still listed. Refresh in a moment to check whether removal finished.</string>
     <string name="ui_196686e4c2fc" formatted="false">The video stream was interrupted. Check the server and network connection.</string>
+    <string name="ui_6315e169d054" formatted="false">These settings apply to everyone who uses this server.</string>
     <string name="ui_a3594939d5f3" formatted="false">This affects the entire download package and everyone’s library.</string>
     <string name="ui_1d3888fca6b7" formatted="false">This code has expired.</string>
     <string name="ui_fa5a6dd9d249" formatted="false">This device</string>

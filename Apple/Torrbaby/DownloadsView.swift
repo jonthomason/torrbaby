@@ -22,8 +22,23 @@ struct DownloadsView: View {
                     Label(queue.policy.useAvailableSpace ? L10n.format("%@ used · Available space", bytes(queue.used)) : L10n.format("%@ used · %@ limit", bytes(queue.used), bytes(queue.policy.limitBytes)), systemImage: "internaldrive")
                         .font(.subheadline.monospacedDigit()).foregroundStyle(Theme.muted)
                     Spacer()
-                    Button { settings = true } label: { Image(systemName: "slider.horizontal.3") }.help("Download storage").accessibilityLabel("Download storage")
+                    Button { settings = true } label: { Image(systemName: "slider.horizontal.3") }.help("Download settings").accessibilityLabel("Download settings")
                 }
+                #if os(iOS)
+                if queue.waitingForWiFi && queue.items.contains(where: { $0.state == .queued || $0.state == .transferring }) {
+                    HStack {
+                        Label("Downloads are waiting for Wi-Fi", systemImage: "wifi.exclamationmark").font(.subheadline)
+                        Spacer()
+                        Button("Allow cellular for 3 hours") { queue.allowMeteredForAWhile() }.font(.subheadline.weight(.semibold))
+                    }
+                } else if queue.metered, queue.meteredAllowed, let until = queue.policy.meteredUntil {
+                    HStack {
+                        Label(L10n.text("Cellular downloads allowed until") + " " + Date(timeIntervalSince1970: until).formatted(date: .omitted, time: .shortened), systemImage: "antenna.radiowaves.left.and.right").font(.subheadline)
+                        Spacer()
+                        Button("Stop now") { queue.endMeteredAllowance() }.font(.subheadline.weight(.semibold))
+                    }
+                }
+                #endif
                 if let error = queue.error {
                     HStack { Text(L10n.text(error)).foregroundStyle(.orange); Spacer(); Button { queue.error = nil } label: { Image(systemName: "xmark.circle") } }
                 }
@@ -152,58 +167,68 @@ private struct DownloadPoster: View {
     }
 }
 
+/// The Downloads screen's shortcut to Settings → Downloads.
 struct DownloadSettingsView: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
-    @ObservedObject private var queue = DownloadQueue.shared
     @Environment(\.dismiss) private var dismiss
-    @State private var limit = 20.0
-    @State private var reserve = 0.0
-    @State private var useAvailableSpace = true
-    @State private var deleteAfter = true
     var body: some View {
         NavigationStack {
-            Form {
-                SwiftUI.Section {
-                    Toggle("Use available space", isOn: $useAvailableSpace)
-                    if !useAvailableSpace { LabeledContent("Download limit (GB)") { TextField("Download limit (GB)", value: $limit, format: .number).labelsHidden().multilineTextAlignment(.trailing) } }
-                    LabeledContent("Keep free (GB)") { TextField("Keep free (GB)", value: $reserve, format: .number).labelsHidden().multilineTextAlignment(.trailing) }
-                    Toggle("Delete after playback", isOn: $deleteAfter)
-                }
-                #if os(iOS)
-                SwiftUI.Section {
-                    if queue.meteredAllowed, let until = queue.policy.meteredUntil {
-                        LabeledContent(L10n.text("Cellular downloads allowed until"), value: Date(timeIntervalSince1970: until).formatted(date: .omitted, time: .shortened))
-                        Button("Stop now") { queue.endMeteredAllowance() }
-                    } else {
-                        Button("Allow cellular for 3 hours") { queue.allowMeteredForAWhile() }
-                    }
-                } footer: {
-                    Text("Downloads wait for Wi-Fi. Allowing cellular also covers a Personal Hotspot or a Low Data Mode network, and ends after 3 hours or when you join Wi-Fi.")
-                }
-                #endif
-            }.formStyle(.grouped).canvasBackground().navigationTitle("Download storage")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Save") {
-                            var policy = queue.policy
-                            policy.useAvailableSpace = useAvailableSpace
-                            policy.limitBytes = Int64(limit * 1_000_000_000)
-                            policy.freeSpaceBytes = Int64(reserve * 1_000_000_000)
-                            policy.deleteAfterPlayback = deleteAfter
-                            queue.setPolicy(policy); dismiss()
-                        }.disabled(!limit.isFinite || !reserve.isFinite || limit < 0 || reserve < 0 || limit > 100_000 || reserve > 100_000)
-                    }
-                }
-        }.onAppear {
-            useAvailableSpace = queue.policy.useAvailableSpace
-            limit = Double(queue.policy.limitBytes) / 1_000_000_000
-            reserve = Double(queue.policy.freeSpaceBytes) / 1_000_000_000
-            deleteAfter = queue.policy.deleteAfterPlayback
+            Form { DownloadPolicySettings() }.formStyle(.grouped).canvasBackground().navigationTitle(L10n.text("Downloads"))
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
         #if os(macOS)
-        .frame(width: 460, height: 400)
+        .frame(width: 460, height: 420)
         #endif
+    }
+}
+
+/// Settings → Downloads. Choices apply at once, as in iOS Settings; typed sizes apply when
+/// editing ends or the page closes.
+struct DownloadPolicySettings: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @ObservedObject private var queue = DownloadQueue.shared
+    @State private var limit = 20.0
+    @State private var reserve = 0.0
+    @State private var loaded = false
+    private var sizesValid: Bool { limit.isFinite && reserve.isFinite && limit >= 0 && reserve >= 0 && limit <= 100_000 && reserve <= 100_000 }
+    private func update(_ change: (inout DownloadStorage.Policy) -> Void) {
+        var policy = queue.policy; change(&policy); queue.setPolicy(policy)
+    }
+    private func applySizes() {
+        guard loaded, sizesValid else { return }
+        let limitBytes = Int64(limit * 1_000_000_000), freeBytes = Int64(reserve * 1_000_000_000)
+        guard limitBytes != queue.policy.limitBytes || freeBytes != queue.policy.freeSpaceBytes else { return }
+        update { $0.limitBytes = limitBytes; $0.freeSpaceBytes = freeBytes }
+    }
+    var body: some View {
+        Group {
+            SwiftUI.Section {
+                Toggle("Use available space", isOn: Binding(get: { queue.policy.useAvailableSpace }, set: { value in update { $0.useAvailableSpace = value } }))
+                if !queue.policy.useAvailableSpace { LabeledContent("Download limit (GB)") { TextField("Download limit (GB)", value: $limit, format: .number).labelsHidden().multilineTextAlignment(.trailing).onSubmit(applySizes) } }
+                LabeledContent("Keep free (GB)") { TextField("Keep free (GB)", value: $reserve, format: .number).labelsHidden().multilineTextAlignment(.trailing).onSubmit(applySizes) }
+            } header: { Text("Storage") }
+            SwiftUI.Section {
+                Toggle("Delete after playback", isOn: Binding(get: { queue.policy.deleteAfterPlayback }, set: { value in update { $0.deleteAfterPlayback = value } }))
+            }
+            #if os(iOS)
+            SwiftUI.Section {
+                if queue.meteredAllowed, let until = queue.policy.meteredUntil {
+                    LabeledContent(L10n.text("Cellular downloads allowed until"), value: Date(timeIntervalSince1970: until).formatted(date: .omitted, time: .shortened))
+                    Button("Stop now") { queue.endMeteredAllowance() }
+                } else {
+                    Button("Allow cellular for 3 hours") { queue.allowMeteredForAWhile() }
+                }
+            } header: { Text("Cellular") } footer: {
+                Text("Downloads wait for Wi-Fi. Allowing cellular also covers a Personal Hotspot or a Low Data Mode network, and ends after 3 hours or when you join Wi-Fi.")
+            }
+            #endif
+        }
+        .onAppear {
+            limit = Double(queue.policy.limitBytes) / 1_000_000_000
+            reserve = Double(queue.policy.freeSpaceBytes) / 1_000_000_000
+            loaded = true
+        }
+        .onDisappear(perform: applySizes)
     }
 }
 

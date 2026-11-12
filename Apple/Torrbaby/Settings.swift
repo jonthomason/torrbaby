@@ -82,35 +82,255 @@ struct AutomationView: View {
     }
 }
 
+/// The settings categories, in the order of iOS Settings: things about you and this device
+/// first, then how it reaches the server, then the server's own settings (which apply to
+/// everyone), then About. iPhone, iPad and Apple TV drill into each; the Mac shows a sidebar.
+enum SettingsPage: String, CaseIterable, Identifiable {
+    case user = "User", general = "General", notifications = "Notifications", playback = "Playback", downloads = "Downloads"
+    case connection = "Connection", devices = "Devices"
+    case library = "Library & Organizing", seeding = "Seeding", subtitles = "Subtitles & Translation"
+    case about = "About"
+    var id: String { rawValue }
+    var symbol: String {
+        switch self {
+        case .user: "person.crop.circle.fill"
+        case .general: "gearshape.fill"
+        case .notifications: "bell.badge.fill"
+        case .playback: "play.rectangle.fill"
+        case .downloads: "arrow.down.circle.fill"
+        case .connection: "network"
+        case .devices: "laptopcomputer.and.iphone"
+        case .library: "folder.fill"
+        case .seeding: "arrow.up.circle.fill"
+        case .subtitles: "captions.bubble.fill"
+        case .about: "info.circle.fill"
+        }
+    }
+    var tint: Color {
+        switch self {
+        case .user: .blue
+        case .general, .devices, .about: .gray
+        case .notifications: .red
+        case .playback, .connection: .blue
+        case .downloads, .seeding: .green
+        case .library: .orange
+        case .subtitles: .purple
+        }
+    }
+    /// Groups as they appear in the list; Downloads exists only where the app keeps offline copies.
+    static var groups: [(header: String?, footer: String?, pages: [SettingsPage])] {
+        [(nil, nil, [.user]),
+         (nil, nil, [.general, .notifications, .playback] + (downloadsAvailable ? [.downloads] : [])),
+         (nil, nil, [.connection, .devices]),
+         ("Server", "These settings apply to everyone who uses this server.", [.library, .seeding, .subtitles]),
+         (nil, nil, [.about])]
+    }
+    static var downloadsAvailable: Bool {
+        #if os(tvOS)
+        false
+        #else
+        true
+        #endif
+    }
+}
+
+/// The coloured rounded-square icon iOS Settings uses for each row.
+struct SettingsIcon: View {
+    let page: SettingsPage
+    var body: some View {
+        Image(systemName: page.symbol).font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+            .frame(width: 29, height: 29).background(page.tint.gradient, in: RoundedRectangle(cornerRadius: 7))
+            .accessibilityHidden(true)
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @Binding var showConnect: Bool
-    @State private var source = ""
-    @State private var movies = ""
-    @State private var tv = ""
-    @State private var interval = 30.0
-    @State private var saved = false
-    @AppStorage("activityAlerts") private var activityAlerts = true
-    @State private var notificationStatus: String?
+    #if os(macOS)
+    @State private var selected: SettingsPage? = .general
+    #endif
+    var body: some View {
+        #if os(macOS)
+        // System Settings on the Mac: categories on the left, the chosen page on the right.
+        HStack(spacing: 0) {
+            List(selection: $selected) {
+                ForEach(Array(SettingsPage.groups.enumerated()), id: \.offset) { _, group in
+                    SwiftUI.Section {
+                        ForEach(group.pages) { page in
+                            Label { Text(LocalizedStringKey(page.rawValue)) } icon: { SettingsIcon(page: page) }.tag(page)
+                        }
+                    } header: { if let header = group.header { Text(LocalizedStringKey(header)) } }
+                }
+            }.listStyle(.sidebar).frame(width: 220)
+            Divider()
+            SettingsPageView(page: selected ?? .general, showConnect: $showConnect)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }.background(Theme.canvas)
+        #else
+        List {
+            ForEach(Array(SettingsPage.groups.enumerated()), id: \.offset) { _, group in
+                SwiftUI.Section {
+                    ForEach(group.pages) { page in
+                        NavigationLink {
+                            SettingsPageView(page: page, showConnect: $showConnect)
+                                .navigationTitle(L10n.text(page == .user ? (store.activeProfile?.name ?? "User") : page.rawValue))
+                        } label: {
+                            if page == .user {
+                                HStack(spacing: 14) {
+                                    Image(systemName: page.symbol).font(.system(size: 44)).foregroundStyle(page.tint).accessibilityHidden(true)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(verbatim: store.activeProfile?.name ?? L10n.text("Choose a user")).font(.title3.weight(.semibold))
+                                        Text("Switch user").font(.subheadline).foregroundStyle(.secondary)
+                                    }
+                                }.padding(.vertical, 4)
+                            } else {
+                                Label { Text(LocalizedStringKey(page.rawValue)) } icon: { SettingsIcon(page: page) }
+                            }
+                        }
+                    }
+                } header: { if let header = group.header { Text(LocalizedStringKey(header)) } }
+                  footer: { if let footer = group.footer { Text(LocalizedStringKey(footer)) } }
+            }
+        }
+        #if os(iOS)
+        .listStyle(.insetGrouped)
+        #endif
+        .canvasBackground()
+        #endif
+    }
+}
+
+/// One settings page. Changes take effect at once, as in iOS Settings, except where a page
+/// edits server folders or seeding, which need an explicit Save because they move files.
+struct SettingsPageView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    let page: SettingsPage
+    @Binding var showConnect: Bool
+    var body: some View {
+        Form {
+            switch page {
+            case .user: UserSettings()
+            case .general: GeneralSettings()
+            case .notifications: NotificationSettings()
+            case .playback: PlaybackSettings()
+            case .downloads: DownloadPolicySettings()
+            case .connection: ConnectionSettings(showConnect: $showConnect)
+            case .devices: DeviceSettings()
+            case .library: LibrarySettings()
+            case .seeding: SeedingSettings()
+            case .subtitles: SwiftUI.Section { BackgroundSubtitlesView() } footer: { Text("Prepares English and Chinese subtitles for new titles on your server, on the server itself.") }
+            case .about: AboutSettings()
+            }
+        }.formStyle(.grouped).canvasBackground()
+    }
+}
+
+private struct UserSettings: View {
+    @EnvironmentObject var store: Store
     #if os(macOS)
     @Environment(\.openWindow) private var openWindow
-    @AppStorage("showMenuBarRates") private var showMenuBarRates = true
     #endif
-    @State private var magnetStatus: String?
-    @State private var showPairing = false
-    @State private var showSubtitles = false
-    @State private var showFallback = false
-    private var linkDeviceButton: some View {
-        Button { showPairing = true } label: { Label("Link a device", systemImage: "qrcode") }
-            .disabled(!store.connected)
-            .sheet(isPresented: $showPairing) { LocalizedInterface { PairingCodeView() } }
+    var body: some View {
+        SwiftUI.Section {
+            LabeledContent { Text(verbatim: store.activeProfile?.name ?? L10n.text("Choose a user")) } label: { Text("User") }
+            Button("Switch user") {
+                store.choosingProfile = true
+                #if os(macOS)
+                openWindow(id: "main")
+                NSApp.activate(ignoringOtherApps: true)
+                #endif
+            }
+        } footer: { Text("Each user has their own Continue Watching and viewing history.") }
     }
-    private var deviceSection: some View {
+}
+
+private struct GeneralSettings: View {
+    #if os(macOS)
+    @AppStorage("showMenuBarRates") private var showMenuBarRates = true
+    @State private var magnetStatus: String?
+    #endif
+    var body: some View {
+        SwiftUI.Section("Interface language") { InterfaceLanguageSettings() }
+        #if os(macOS)
+        SwiftUI.Section("Menu bar") {
+            Toggle("Show download and upload rates", isOn: $showMenuBarRates)
+        }
+        SwiftUI.Section("Magnet links") {
+            Button("Use Torrbaby for magnet links") {
+                NSWorkspace.shared.setDefaultApplication(at: Bundle.main.bundleURL, toOpenURLsWithScheme: "magnet") { error in
+                    Task { @MainActor in
+                        magnetStatus = error?.localizedDescription ?? "Torrbaby is now your default magnet-link app."
+                    }
+                }
+            }
+            if let magnetStatus { Text(L10n.text(magnetStatus)).font(.caption).foregroundStyle(.secondary) }
+        }
+        #endif
+    }
+}
+
+private struct NotificationSettings: View {
+    @AppStorage("activityAlerts") private var activityAlerts = true
+    @State private var notificationStatus: String?
+    var body: some View {
+        SwiftUI.Section {
+            Toggle("Download and seeding updates", isOn: $activityAlerts)
+        }
+        #if os(iOS)
+        SwiftUI.Section {
+            Button("Enable device notifications") {
+                Task {
+                    do {
+                        let allowed = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+                        notificationStatus = allowed ? "Notifications enabled" : "Allow notifications in iOS Settings."
+                    } catch { notificationStatus = error.localizedDescription }
+                }
+            }
+        } footer: { if let notificationStatus { Text(L10n.text(notificationStatus)) } }
+        #endif
+    }
+}
+
+private struct PlaybackSettings: View {
+    @State private var showSubtitles = false
+    var body: some View {
+        SwiftUI.Section {
+            Button("Default subtitles") { showSubtitles = true }
+                .sheet(isPresented: $showSubtitles) { LocalizedInterface { SubtitlePreferencesView() } }
+        } footer: { Text("Subtitle choices belong to this device.") }
+    }
+}
+
+private struct ConnectionSettings: View {
+    @EnvironmentObject var store: Store
+    @Binding var showConnect: Bool
+    @State private var showFallback = false
+    var body: some View {
+        SwiftUI.Section {
+            LabeledContent { Text(LocalizedStringKey(store.connectionLabel)) } label: { Text("Status") }
+            LabeledContent("Server", value: store.server.isEmpty ? L10n.text("Not configured") : store.primaryAddress)
+            Button { showFallback = true } label: {
+                LabeledContent("Fallback address", value: store.fallbackServer.isEmpty ? L10n.text("Not configured") : store.fallbackServer)
+            }
+            .sheet(isPresented: $showFallback) { LocalizedInterface { FallbackAddressView() } }
+        } footer: { Text("Used when the primary address is unreachable. Torrents and downloads are available; streaming is disabled.") }
+        SwiftUI.Section { Button("Edit connection") { showConnect = true } }
+    }
+}
+
+private struct DeviceSettings: View {
+    @EnvironmentObject var store: Store
+    @State private var showPairing = false
+    var body: some View {
+        SwiftUI.Section {
+            Button { showPairing = true } label: { Label("Link a device", systemImage: "qrcode") }
+                .disabled(!store.connected)
+                .sheet(isPresented: $showPairing) { LocalizedInterface { PairingCodeView() } }
+        }
         SwiftUI.Section("Devices") {
-            #if !os(macOS)
-            linkDeviceButton
-            #endif
             ForEach(store.clients) { client in
                 HStack {
                     DeviceNameRow(client: client, isCurrent: client.id == store.clientId)
@@ -123,63 +343,18 @@ struct SettingsView: View {
             }
         }
     }
+}
+
+private struct LibrarySettings: View {
+    @EnvironmentObject var store: Store
+    @State private var source = ""
+    @State private var movies = ""
+    @State private var tv = ""
+    @State private var interval = 30.0
+    @State private var saved = false
     var body: some View {
-        Form {
-            #if os(macOS)
-            SwiftUI.Section { linkDeviceButton }
-            #endif
-            SwiftUI.Section("Torrbaby") {
-                Text(AppRelease.description).monospacedDigit()
-            }
-            SwiftUI.Section("Interface language") { InterfaceLanguageSettings() }
-            SwiftUI.Section("User") {
-                Text(store.activeProfile?.name ?? "Choose a user")
-                Button("Switch user") {
-                    store.choosingProfile = true
-                    #if os(macOS)
-                    openWindow(id: "main")
-                    NSApp.activate(ignoringOtherApps: true)
-                    #endif
-                }
-            }
-            SwiftUI.Section("Playback") {
-                Button("Default subtitles") { showSubtitles = true }
-                    .sheet(isPresented: $showSubtitles) { LocalizedInterface { SubtitlePreferencesView() } }
-            }
-            SwiftUI.Section("Translations") {
-                BackgroundSubtitlesView()
-            }
-            SwiftUI.Section("Connection") {
-                LabeledContent("Server", value: store.server.isEmpty ? "Not configured" : store.primaryAddress)
-                if let status = store.status { LabeledContent("Daemon", value: "Torrbaby \(status.version)") }
-                Button { showFallback = true } label: {
-                    LabeledContent("Fallback address", value: store.fallbackServer.isEmpty ? L10n.text("Not configured") : store.fallbackServer)
-                }
-                .sheet(isPresented: $showFallback) { LocalizedInterface { FallbackAddressView() } }
-                Button("Edit connection") { showConnect = true }
-            }
-            #if os(macOS)
-            SwiftUI.Section("Menu bar") {
-                Toggle("Show download and upload rates", isOn: $showMenuBarRates)
-            }
-            #endif
-            SwiftUI.Section("Notifications") {
-                Toggle("Download and seeding updates", isOn: $activityAlerts)
-                #if os(iOS)
-                Button("Enable device notifications") {
-                    Task {
-                        do {
-                            let allowed = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
-                            notificationStatus = allowed ? "Notifications enabled" : "Allow notifications in iOS Settings."
-                        } catch { notificationStatus = error.localizedDescription }
-                    }
-                }
-                if let notificationStatus { Text(notificationStatus).font(.caption) }
-                #endif
-            }
-            deviceSection
-            SeedingSettings()
-            SwiftUI.Section("Automation") {
+        Group {
+            SwiftUI.Section {
                 if let status = store.status {
                     Toggle("Organize completed downloads", isOn: Binding(get: { !status.settings.paused }, set: { _ in store.toggleAutomation() })).disabled(store.busy)
                 }
@@ -196,31 +371,25 @@ struct SettingsView: View {
                     }
                 }.disabled(store.busy || !store.connected)
             }
-            #if os(macOS)
-            SwiftUI.Section("Magnet links") {
-                Button("Use Torrbaby for magnet links") {
-                    NSWorkspace.shared.setDefaultApplication(at: Bundle.main.bundleURL, toOpenURLsWithScheme: "magnet") { error in
-                        Task { @MainActor in
-                            magnetStatus = error?.localizedDescription ?? "Torrbaby is now your default magnet-link app."
-                        }
-                    }
-                }
-                if let magnetStatus { Text(magnetStatus).font(.caption).foregroundStyle(.secondary) }
-            }
-            #endif
-            SwiftUI.Section("About") {
-                Text("MIT License")
-            }
-        }.formStyle(.grouped).canvasBackground()
+        }
         .onAppear {
-            if let s = store.status?.settings {
-                source = s.source; movies = s.movies; tv = s.tv; interval = s.pollSeconds
-            }
+            if let s = store.status?.settings { source = s.source; movies = s.movies; tv = s.tv; interval = s.pollSeconds }
         }
         .onChange(of: source) { _, _ in saved = false }
         .onChange(of: movies) { _, _ in saved = false }
         .onChange(of: tv) { _, _ in saved = false }
         .onChange(of: interval) { _, _ in saved = false }
+    }
+}
+
+private struct AboutSettings: View {
+    @EnvironmentObject var store: Store
+    var body: some View {
+        SwiftUI.Section {
+            LabeledContent { Text(verbatim: AppRelease.description.replacingOccurrences(of: "Version ", with: "")).monospacedDigit() } label: { Text("Version") }
+            if let status = store.status { LabeledContent { Text(verbatim: status.version).monospacedDigit() } label: { Text("Server version") } }
+            LabeledContent { Text("MIT License") } label: { Text("License") }
+        }
     }
 }
 

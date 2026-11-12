@@ -1961,42 +1961,55 @@ public class MainActivity extends Activity {
     }); }
   }
 
+  /** Settings in the same categories as the Apple apps: User, General, Playback, Connection, About. */
   private void settings() {
+    String[] pages = {"User", "General", "Playback", "Connection", "About"};
     new AlertDialog.Builder(this)
-        .setTitle("Torrbaby " + BuildConfig.VERSION_NAME + " · build " + BuildConfig.VERSION_CODE)
-        .setItems(
-            L10n.labels(new String[] {
-              "Refresh library",
-              "Change server connection",
-              "Default subtitles",
-              "Startup diagnostics",
-              "Disconnect this TV",
-              "Follow system language"
-            }),
-            (d, w) -> {
-              if (w == 0) load();
-              else if (w == 1) discover("");
-              else if (w == 2) Subtitles.edit(this, api, io, null);
-              else if (w == 3) new AlertDialog.Builder(this).setTitle(L10n.t("Startup timings")).setMessage(StartupTrace.text()).setPositiveButton(L10n.t("Close"), null).show();
-              else if (w == 5) L10n.system(this);
-              else
-                new AlertDialog.Builder(this)
-                    .setTitle(L10n.t("Disconnect this TV?"))
-                    .setMessage(L10n.t("Your library and viewing history stay on the server."))
-                    .setNegativeButton(L10n.t("Cancel"), null)
-                    .setPositiveButton(
-                        L10n.t("Disconnect"),
-                        (x, y) -> {
-                          store.clear();
-                          api = null;
-                          library = null;
-                          if (art != null) {
-                            art.close();
-                            art = null;
-                          }
-                          discover("");
-                        })
-                    .show();
+        .setTitle(L10n.t("Settings"))
+        .setItems(L10n.labels(pages), (d, w) -> {
+          if (w == 0) settingsPage("User", new String[] {"Switch user"}, i -> { if (api != null) chooseProfile(true); });
+          else if (w == 1) settingsPage("General", new String[] {"Follow system language", "Refresh library"}, i -> {
+            if (i == 0) L10n.system(this); else load();
+          });
+          else if (w == 2) settingsPage("Playback", new String[] {"Default subtitles"}, i -> Subtitles.edit(this, api, io, null));
+          else if (w == 3) settingsPage("Connection", new String[] {"Change server connection", "Disconnect this TV"}, i -> {
+            if (i == 0) discover(""); else disconnect();
+          });
+          else new AlertDialog.Builder(this)
+              .setTitle(L10n.t("About"))
+              .setMessage(L10n.t("Version") + " " + BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")")
+              .setNeutralButton(L10n.t("Startup diagnostics"), (x, y) -> new AlertDialog.Builder(this)
+                  .setTitle(L10n.t("Startup timings")).setMessage(StartupTrace.text()).setPositiveButton(L10n.t("Close"), null).show())
+              .setPositiveButton(L10n.t("Close"), null)
+              .show();
+        })
+        .show();
+  }
+
+  private void settingsPage(String title, String[] items, java.util.function.IntConsumer action) {
+    new AlertDialog.Builder(this)
+        .setTitle(L10n.t(title))
+        .setItems(L10n.labels(items), (d, w) -> action.accept(w))
+        .setNegativeButton(L10n.t("Back"), (d, w) -> settings())
+        .show();
+  }
+
+  private void disconnect() {
+    new AlertDialog.Builder(this)
+        .setTitle(L10n.t("Disconnect this TV?"))
+        .setMessage(L10n.t("Your library and viewing history stay on the server."))
+        .setNegativeButton(L10n.t("Cancel"), null)
+        .setPositiveButton(
+            L10n.t("Disconnect"),
+            (x, y) -> {
+              store.clear();
+              api = null;
+              library = null;
+              if (art != null) {
+                art.close();
+                art = null;
+              }
+              discover("");
             })
         .show();
   }

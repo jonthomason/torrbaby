@@ -215,30 +215,37 @@ private struct TVSettingsView: View {
                 SwiftUI.Section("Library") {
                     NavigationLink { TorrentSearchView() } label: { Text("Find torrents") }
                 }
-                SwiftUI.Section {
+                SwiftUI.Section("User") {
+                    LabeledContent { Text(verbatim: store.activeProfile?.name ?? L10n.text("Choose a user")) } label: { Text("User") }
+                    Button { store.choosingProfile = true } label: { Text("Switch user") }
+                }
+                SwiftUI.Section("Playback") {
                     Button { showSubtitles = true } label: { Text("Default subtitles") }
+                }
+                SwiftUI.Section("Connection") {
+                    LabeledContent { Text(LocalizedStringKey(store.connected ? "Connected" : "Offline")) } label: { Text("Status") }
+                    Button(action: connection) { Text("Connection settings") }
+                }
+                SwiftUI.Section {
                     if let status = store.status {
                         Toggle("Process library automatically", isOn: Binding(
                             get: { status.settings.backgroundSubtitles ?? true },
                             set: { enabled in store.perform { try await store.send("PATCH", "/v1/settings", body: ["background_subtitles": enabled]) } }
                         )).disabled(store.busy)
                     }
-                } header: { Text("Subtitles") } footer: {
+                } header: { Text("Subtitles & Translation") } footer: {
                     if let preparation = store.status?.subtitlePreparation {
                         let working = preparation.current.flatMap { job in
                             store.library?.titles.flatMap(\.assets).first { $0.id == job.assetId }?.name
                                 .map { name in job.totalCues > 0 ? "\(name) · \(Int(Double(job.completedCues) / Double(job.totalCues) * 100))%" : name }
                         }
-                        Text(verbatim: [L10n.format("%lld processed · %lld scanned", preparation.translated, preparation.scanned), working ?? ""]
+                        Text(verbatim: [L10n.text("These settings apply to everyone who uses this server."), L10n.format("%lld processed · %lld scanned", preparation.translated, preparation.scanned), working ?? ""]
                             .filter { !$0.isEmpty }.joined(separator: "\n"))
                     }
                 }
-                SwiftUI.Section("Server") {
-                    LabeledContent { Text(LocalizedStringKey(store.connected ? "Connected" : "Offline")) } label: { Text("Status") }
-                    Button(action: connection) { Text("Connection settings") }
-                }
                 SwiftUI.Section("About") {
                     LabeledContent { Text(verbatim: AppRelease.description.replacingOccurrences(of: "Version ", with: "")).monospacedDigit() } label: { Text("Version") }
+                    if let status = store.status { LabeledContent { Text(verbatim: status.version).monospacedDigit() } label: { Text("Server version") } }
                 }
             }.listStyle(.grouped).frame(maxWidth: 900)
         }.padding(.horizontal, 60)
