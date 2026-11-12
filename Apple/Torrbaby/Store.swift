@@ -338,6 +338,10 @@ final class Store: ObservableObject {
         #if !os(tvOS)
         DownloadQueue.shared.attach(self)
         #endif
+        #if DEBUG
+        // UI checks can open the user chooser directly: -initialChooser YES.
+        if UserDefaults.standard.bool(forKey: "initialChooser") { choosingProfile = true }
+        #endif
         #if os(iOS)
         AutoDownload.store = self
         UNUserNotificationCenter.current().delegate = NotificationPresenter.shared
@@ -801,7 +805,12 @@ struct ProfileGate<Content: View>: View {
         }
         .overlay(alignment: .topTrailing) {
             if store.configured && (!store.profileReady || store.choosingProfile) {
+                #if os(tvOS)
+                // A strip across the top for the remote, so left, right and down all leave the switch sensibly.
+                HStack { Spacer(); InterfaceLanguagePicker() }.padding(16).frame(maxWidth: .infinity).focusSection()
+                #else
                 InterfaceLanguagePicker().padding(16)
+                #endif
             }
         }
         .onChange(of: scenePhase) { _, phase in
@@ -836,14 +845,31 @@ struct ProfilePicker: View {
     @State private var editing: UserProfile?
     @State private var creating = false
     @State private var working = false
+    @FocusState private var focusedProfile: String?
+    /// Wide, centred bars on the television; a readable column elsewhere.
+    private var columnWidth: CGFloat {
+        #if os(tvOS)
+        1180
+        #else
+        760
+        #endif
+    }
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                Text("Who's watching?").font(.largeTitle.bold())
+            VStack(alignment: .center, spacing: 22) {
+                Text("Who's watching?").font(.largeTitle.bold()).frame(maxWidth: .infinity, alignment: .center)
                 if store.loadingProfiles || working { ProgressView() }
                 if let error = store.profileError {
-                    Text(L10n.text(error)).foregroundStyle(.orange)
-                    Button("Try again") { Task { await store.loadProfiles() } }.buttonStyle(MonoButtonStyle(compact: true))
+                    // Said plainly, with what to check and one way forward.
+                    HStack(alignment: .center, spacing: 18) {
+                        Image(systemName: store.connected ? "exclamationmark.triangle" : "wifi.exclamationmark").font(.title2).foregroundStyle(.orange).accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(store.connected ? LocalizedStringKey(L10n.text(error)) : "Can’t reach your server").font(.headline)
+                            if !store.connected { Text("Check that the server is on and that this device is on the same network.").font(.subheadline).foregroundStyle(Theme.muted) }
+                        }
+                        Spacer(minLength: 12)
+                        Button("Try again") { Task { await store.loadProfiles() } }.buttonStyle(MonoButtonStyle(compact: true)).fixedSize()
+                    }.padding(18).frame(maxWidth: .infinity).background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
                 }
                 ForEach(store.profiles) { person in
                     HStack(spacing: 16) {
@@ -859,9 +885,10 @@ struct ProfilePicker: View {
                                 ProfileAvatar(profile: person, size: 72)
                                 Text(verbatim: person.name).font(.title2.weight(.semibold))
                                 Spacer()
-                                if person.id == store.activeProfile?.id { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent) }
+                                // Takes the row's own colour, so it stays visible when the row is focused and turns white.
+                                if person.id == store.activeProfile?.id { Image(systemName: "checkmark.circle.fill") }
                             }.padding(16).contentShape(RoundedRectangle(cornerRadius: 8))
-                        }.buttonStyle(MonoButtonStyle())
+                        }.buttonStyle(MonoButtonStyle()).focused($focusedProfile, equals: person.id)
                         Button { editing = person } label: { Image(systemName: "pencil").frame(width: 44, height: 44) }
                             .buttonStyle(MonoButtonStyle()).accessibilityLabel("Edit profile")
                     }
@@ -871,12 +898,26 @@ struct ProfilePicker: View {
                 Button { creating = true } label: {
                     Label("Create user", systemImage: "plus").font(.title3.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 10)
                 }.buttonStyle(MonoButtonStyle())
-            }.disabled(working).padding(40).frame(maxWidth: 760).frame(maxWidth: .infinity)
+            }.disabled(working).padding(40).frame(maxWidth: columnWidth).frame(maxWidth: .infinity)
+                #if os(tvOS)
+                // The whole width belongs to this column for the remote: moving down from the
+                // language switch in the corner lands here, though nothing sits right below it.
+                .focusSection()
+                // The remote starts on the user already in use, not on Create user.
+                .defaultFocus($focusedProfile, store.activeProfile?.id ?? store.profiles.first?.id, priority: .userInitiated)
+                #endif
         }.background(Theme.canvas)
             #if os(tvOS)
             .onExitCommand { if store.profileReady { store.choosingProfile = false } }
             #endif
-            .task { await store.loadProfiles() }
+            .task {
+                await store.loadProfiles()
+                #if os(tvOS)
+                // Once the users are on screen, put the remote on the one in use.
+                try? await Task.sleep(for: .milliseconds(350))
+                focusedProfile = store.activeProfile?.id ?? store.profiles.first?.id
+                #endif
+            }
             .sheet(isPresented: $creating) { LocalizedInterface { ProfileEditor(profile: nil) } }
             .sheet(item: $editing) { person in LocalizedInterface { ProfileEditor(profile: person) } }
     }

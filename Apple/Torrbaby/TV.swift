@@ -134,6 +134,10 @@ struct TVRootView: View {
                     }
                 }
             }
+            // The page takes the whole width for the remote: moving down from the language
+            // switch at the far right lands in the page even when nothing sits right below it.
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .focusSection()
             .navigationDestination(for: LibraryDestination.self) { route in TVMediaDetail(titleID: route.id) }
             .navigationDestination(for: TVShelfDestination.self) { route in TVMediaDetail(titleID: route.id, autoPlay: route.play) }
         }
@@ -338,9 +342,11 @@ private struct TVMonochromeButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .padding(.horizontal, 18).padding(.vertical, 8)
-            .foregroundStyle(focused || selected ? Color.black : .white)
-            .background(focused || selected ? Color.white : .clear, in: RoundedRectangle(cornerRadius: 8))
-            .scaleEffect(focused ? 1.025 : 1)
+            // Where the remote is must never look the same as what is merely chosen: focus
+            // is solid white and a little larger; the chosen tab is a quiet tint until focused.
+            .foregroundStyle(focused ? Color.black : .white)
+            .background(focused ? Color.white : selected ? Color.white.opacity(0.22) : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .scaleEffect(focused ? 1.08 : 1)
             .opacity(configuration.isPressed ? 0.75 : 1)
             .animation(.easeOut(duration: 0.15), value: focused)
     }

@@ -91,6 +91,7 @@
     <string name="ui_77dfd2135f4d" formatted="false">Cancel</string>
     <string name="ui_67bb11d08df2" formatted="false">Cancel download</string>
     <string name="ui_87f8cd8360cc" formatted="false">Cancel trial</string>
+    <string name="ui_fe5cb199d204" formatted="false">Can’t reach your server</string>
     <string name="ui_60745aef336b" formatted="false">Cast</string>
     <string name="ui_b4e2e1ffb3ed" formatted="false">Cellular</string>
     <string name="ui_6b9dfc21816d" formatted="false">Cellular downloads allowed until</string>
@@ -101,6 +102,7 @@
     <string name="ui_eba399ce4b7b" formatted="false">Check access to your Application Support folder and try again.</string>
     <string name="ui_e185048ce3c0" formatted="false">Check again</string>
     <string name="ui_2ce5dd0d6f18" formatted="false">Check now</string>
+    <string name="ui_b4d790f692fb" formatted="false">Check that the server is on and that this device is on the same network.</string>
     <string name="ui_ffe5184940bc" formatted="false">Check the server address and network connection.</string>
     <string name="ui_8e6b214072c4" formatted="false">Check the year and episodes before applying.</string>
     <string name="ui_07369df4cdcc" formatted="false">Checking files…</string>

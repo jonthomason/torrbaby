@@ -102,6 +102,7 @@ final class L10n {
     IDS.put("Cancel", R.string.ui_77dfd2135f4d);
     IDS.put("Cancel download", R.string.ui_67bb11d08df2);
     IDS.put("Cancel trial", R.string.ui_87f8cd8360cc);
+    IDS.put("Can’t reach your server", R.string.ui_fe5cb199d204);
     IDS.put("Cast", R.string.ui_60745aef336b);
     IDS.put("Cellular", R.string.ui_b4e2e1ffb3ed);
     IDS.put("Cellular downloads allowed until", R.string.ui_6b9dfc21816d);
@@ -112,6 +113,7 @@ final class L10n {
     IDS.put("Check access to your Application Support folder and try again.", R.string.ui_eba399ce4b7b);
     IDS.put("Check again", R.string.ui_e185048ce3c0);
     IDS.put("Check now", R.string.ui_2ce5dd0d6f18);
+    IDS.put("Check that the server is on and that this device is on the same network.", R.string.ui_b4d790f692fb);
     IDS.put("Check the server address and network connection.", R.string.ui_ffe5184940bc);
     IDS.put("Check the year and episodes before applying.", R.string.ui_8e6b214072c4);
     IDS.put("Checking files…", R.string.ui_07369df4cdcc);

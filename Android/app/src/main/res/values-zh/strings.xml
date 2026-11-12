@@ -91,6 +91,7 @@
     <string name="ui_77dfd2135f4d" formatted="false">取消</string>
     <string name="ui_67bb11d08df2" formatted="false">取消下载</string>
     <string name="ui_87f8cd8360cc" formatted="false">取消试下载</string>
+    <string name="ui_fe5cb199d204" formatted="false">无法连接到你的服务器</string>
     <string name="ui_60745aef336b" formatted="false">演员表</string>
     <string name="ui_b4e2e1ffb3ed" formatted="false">蜂窝网络</string>
     <string name="ui_6b9dfc21816d" formatted="false">蜂窝网络下载允许至</string>
@@ -101,6 +102,7 @@
     <string name="ui_eba399ce4b7b" formatted="false">请检查应用程序支持文件夹的访问权限，然后重试。</string>
     <string name="ui_e185048ce3c0" formatted="false">再次检查</string>
     <string name="ui_2ce5dd0d6f18" formatted="false">立即检查</string>
+    <string name="ui_b4d790f692fb" formatted="false">请确认服务器已开启，并且此设备与它在同一网络中。</string>
     <string name="ui_ffe5184940bc" formatted="false">请检查服务器地址和网络连接。</string>
     <string name="ui_8e6b214072c4" formatted="false">应用前请确认年份和集数。</string>
     <string name="ui_07369df4cdcc" formatted="false">正在检查文件…</string>

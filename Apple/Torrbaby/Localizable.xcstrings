@@ -14981,6 +14981,40 @@
           }
         }
       }
+    },
+    "Can’t reach your server": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can’t reach your server"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法连接到你的服务器"
+          }
+        }
+      }
+    },
+    "Check that the server is on and that this device is on the same network.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check that the server is on and that this device is on the same network."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请确认服务器已开启，并且此设备与它在同一网络中。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
