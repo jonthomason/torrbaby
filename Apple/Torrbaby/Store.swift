@@ -843,7 +843,7 @@ struct ProfilePicker: View {
                 if store.loadingProfiles || working { ProgressView() }
                 if let error = store.profileError {
                     Text(L10n.text(error)).foregroundStyle(.orange)
-                    Button("Try again") { Task { await store.loadProfiles() } }
+                    Button("Try again") { Task { await store.loadProfiles() } }.buttonStyle(MonoButtonStyle(compact: true))
                 }
                 ForEach(store.profiles) { person in
                     HStack(spacing: 16) {
@@ -863,13 +863,19 @@ struct ProfilePicker: View {
                             }.padding(16).contentShape(RoundedRectangle(cornerRadius: 8))
                         }.buttonStyle(MonoButtonStyle())
                         Button { editing = person } label: { Image(systemName: "pencil").frame(width: 44, height: 44) }
-                            .accessibilityLabel("Edit profile")
+                            .buttonStyle(MonoButtonStyle()).accessibilityLabel("Edit profile")
                     }
                 }
-                Button("Create user") { creating = true }.libraryActionStyle()
-                if store.profileReady { Button("Back to library") { store.choosingProfile = false } }
+                // As wide as the users above it, and in the same style. There is no "back" button:
+                // choosing the user already in use returns to the library, as does the remote's Back.
+                Button { creating = true } label: {
+                    Label("Create user", systemImage: "plus").font(.title3.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 10)
+                }.buttonStyle(MonoButtonStyle())
             }.disabled(working).padding(40).frame(maxWidth: 760).frame(maxWidth: .infinity)
         }.background(Theme.canvas)
+            #if os(tvOS)
+            .onExitCommand { if store.profileReady { store.choosingProfile = false } }
+            #endif
             .task { await store.loadProfiles() }
             .sheet(isPresented: $creating) { LocalizedInterface { ProfileEditor(profile: nil) } }
             .sheet(item: $editing) { person in LocalizedInterface { ProfileEditor(profile: person) } }
