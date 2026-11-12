@@ -767,3 +767,7 @@ For a private site you are a member of. Its results appear in Find under China. 
 The private site timed out	私有站点请求超时
 The private site could not be reached	无法连接私有站点
 Add your private site and passkey in Settings	请在设置中添加私有站点和密钥
+Minimum seeding time (hours)	最短做种时间（小时）
+Minimum ratio	最低分享率
+The site's seeding rules	站点的做种规则
+Torrents from this site are seeded a quarter past both: for %@ hours, and then until their ratio reaches %@. Until both are met they keep seeding.	来自此站点的种子会比两项要求各多做种四分之一：先做种 %@ 小时，然后直到分享率达到 %@。两项都达到之前会一直做种。

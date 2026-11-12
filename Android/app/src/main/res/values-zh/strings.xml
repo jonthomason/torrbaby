@@ -318,6 +318,8 @@
     <string name="ui_13cc75488bfe" formatted="false">媒体文件在处理期间发生变化</string>
     <string name="ui_2f28e570a801" formatted="false">菜单栏</string>
     <string name="ui_9188f98eea10" formatted="false">正在 Diamond 上获取影片信息</string>
+    <string name="ui_1a41eb35728a" formatted="false">最低分享率</string>
+    <string name="ui_4fc5110aa6f0" formatted="false">最短做种时间（小时）</string>
     <string name="ui_c5c5533844c5" formatted="false">单声道</string>
     <string name="ui_216fcddff2f9" formatted="false">等宽字体</string>
     <string name="ui_4bab2d8fe13f" formatted="false">更多</string>
@@ -609,6 +611,7 @@
     <string name="ui_be694571db36" formatted="false">离开此页面后，服务器仍将继续此操作。</string>
     <string name="ui_2dee52785f6e" formatted="false">关闭此页面后，服务器仍将继续此操作。</string>
     <string name="ui_1bab38b72a4a" formatted="false">服务器将自动重试。</string>
+    <string name="ui_47e2d404730f" formatted="false">站点的做种规则</string>
     <string name="ui_6ddf94adca4b" formatted="false">种子仍在列表中，请稍后刷新以确认是否已移除。</string>
     <string name="ui_196686e4c2fc" formatted="false">视频流已中断，请检查服务器和网络连接。</string>
     <string name="ui_6315e169d054" formatted="false">这些设置适用于使用此服务器的所有人。</string>

@@ -329,6 +329,8 @@ final class L10n {
     IDS.put("Media changed during processing", R.string.ui_13cc75488bfe);
     IDS.put("Menu bar", R.string.ui_2f28e570a801);
     IDS.put("Metadata is being gathered on Diamond", R.string.ui_9188f98eea10);
+    IDS.put("Minimum ratio", R.string.ui_1a41eb35728a);
+    IDS.put("Minimum seeding time (hours)", R.string.ui_4fc5110aa6f0);
     IDS.put("Mono", R.string.ui_c5c5533844c5);
     IDS.put("Monospace", R.string.ui_216fcddff2f9);
     IDS.put("More", R.string.ui_4bab2d8fe13f);
@@ -620,6 +622,7 @@ final class L10n {
     IDS.put("The server will continue this operation after you leave this screen.", R.string.ui_be694571db36);
     IDS.put("The server will continue this operation if you close this screen.", R.string.ui_2dee52785f6e);
     IDS.put("The server will retry automatically.", R.string.ui_1bab38b72a4a);
+    IDS.put("The site's seeding rules", R.string.ui_47e2d404730f);
     IDS.put("The torrent is still listed. Refresh in a moment to check whether removal finished.", R.string.ui_6ddf94adca4b);
     IDS.put("The video stream was interrupted. Check the server and network connection.", R.string.ui_196686e4c2fc);
     IDS.put("These settings apply to everyone who uses this server.", R.string.ui_6315e169d054);

@@ -232,6 +232,8 @@ pub(crate) async fn add_at(s: &Service, body: &Value, directory:Option<&Path>) -
             // A private site's result: its .torrent is fetched here, with the member's passkey.
             let bytes = s.torrent_search.private_metainfo(&listing).await?;
             params["metainfo"] = json!(base64::engine::general_purpose::STANDARD.encode(bytes));
+            // Marked so it is seeded by the site's rules, not the general target.
+            params["labels"] = json!([crate::torrent_search::PRIVATE_LABEL]);
         } else { params["filename"] = json!(magnet); }
     } else if let Some(raw) = torrent_url {
         let url=reqwest::Url::parse(raw)?;
@@ -413,8 +415,35 @@ pub async fn apply_queue_policy(s: &Service) {
     }
 }
 
+/// What Transmission should be told about a private-site torrent that has seeded for
+/// `seeded` seconds: no limit until the time target, then stop at the ratio target.
+/// Both must be met, so a torrent nobody wants keeps seeding; that is what such sites reward.
+fn private_seeding(seeded: f64, seconds: f64, ratio: f64) -> Value {
+    if seeded < seconds { json!({"seed_ratio_mode":2,"seed_idle_mode":2}) }
+    else { json!({"seed_ratio_mode":1,"seed_ratio_limit":ratio,"seed_idle_mode":2}) }
+}
+/// Keep torrents from the member's private site seeding to that site's minimum time and
+/// ratio, each with a margin. Transmission has no minimum seeding time of its own.
+pub async fn apply_private_seeding(s: &Service) {
+    let Some(site) = s.torrent_search.private_site() else { return };
+    let (seconds, ratio) = site.seeding_targets();
+    let Ok(found) = s.rpc.call("torrent_get", json!({"fields":["hash_string","labels","seconds_seeding","seed_ratio_mode","seed_ratio_limit","seed_idle_mode"]})).await else { return };
+    for t in found["torrents"].as_array().into_iter().flatten() {
+        if !t["labels"].as_array().is_some_and(|labels| labels.iter().any(|l| l == crate::torrent_search::PRIVATE_LABEL)) { continue; }
+        let want = private_seeding(t["seconds_seeding"].as_f64().unwrap_or(0.0), seconds, ratio);
+        let same = t["seed_ratio_mode"] == want["seed_ratio_mode"] && t["seed_idle_mode"] == want["seed_idle_mode"]
+            && want["seed_ratio_limit"].as_f64().is_none_or(|limit| (t["seed_ratio_limit"].as_f64().unwrap_or(-1.0) - limit).abs() < 0.001);
+        if same { continue; }
+        let mut change = want.clone();
+        change["ids"] = json!([t["hash_string"]]);
+        if s.rpc.call("torrent_set", change).await.is_ok() { s.invalidate_torrents(); }
+    }
+}
+
 pub async fn tick(s: &Service) -> Result<()> {
     apply_queue_policy(s).await;
+    // Before the pause check: seeding obligations do not pause with automation.
+    apply_private_seeding(s).await;
     let _guard = s.mutation_lock.lock().await;
     let config = s.effective_config()?;
     if config.paused {
@@ -819,6 +848,13 @@ async fn auto_name(s: &Service, config: &Config, hash: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn private_site_torrents_seed_past_the_time_then_to_the_ratio() {
+        let (seconds, ratio) = (90.0 * 3600.0, 1.0);
+        assert_eq!(private_seeding(0.0, seconds, ratio), json!({"seed_ratio_mode":2,"seed_idle_mode":2}), "no limit before the time is served");
+        assert_eq!(private_seeding(seconds - 1.0, seconds, ratio)["seed_ratio_mode"], 2);
+        assert_eq!(private_seeding(seconds, seconds, ratio), json!({"seed_ratio_mode":1,"seed_ratio_limit":1.0,"seed_idle_mode":2}));
+    }
     #[test]
     fn identification_uses_tracked_records_and_ignores_stale_duplicates() {
         let files = json!([{"name":"Set/1.Dr.No.1962/DR.No.1962.mp4"},{"name":"Set/1.Dr.No.1962/DR.No.1962.srt"},

@@ -24,8 +24,34 @@ impl Market {
 /// site's search feed and torrent downloads; it stays on this server and is never
 /// returned to a client, logged, or placed in a result.
 #[derive(Clone, Deserialize, Serialize)]
-pub struct PrivateSite { pub base_url: String, passkey: String }
+pub struct PrivateSite {
+    pub base_url: String,
+    passkey: String,
+    /// The site's own minimums for a download to count as properly seeded.
+    #[serde(default = "PrivateSite::usual_hours")]
+    pub min_seed_hours: f64,
+    #[serde(default = "PrivateSite::usual_ratio")]
+    pub min_ratio: f64,
+}
+/// Transmission label on torrents added from the member's private site.
+pub const PRIVATE_LABEL: &str = "private-site";
 impl PrivateSite {
+    fn usual_hours() -> f64 { 72.0 }
+    fn usual_ratio() -> f64 { 0.8 }
+    /// Such sites meter their member feed; HHanClub's rule is one request every five
+    /// minutes, and it enforces it. This is the site's limit, not one of Torrbaby's.
+    pub const FEED_INTERVAL: Duration = Duration::from_secs(310);
+    /// How far past the site's minimums its torrents are seeded.
+    pub const MARGIN: f64 = 1.25;
+    pub fn with_minimums(mut self, hours: f64, ratio: f64) -> Result<Self> {
+        ensure!(hours.is_finite() && (0.0..=8760.0).contains(&hours), "Minimum seeding time must be between 0 and 8760 hours");
+        ensure!(ratio.is_finite() && (0.0..=100.0).contains(&ratio), "Minimum ratio must be between 0 and 100");
+        self.min_seed_hours = hours; self.min_ratio = ratio;
+        Ok(self)
+    }
+    pub fn passkey(&self) -> &str { &self.passkey }
+    /// Seconds and ratio the site's torrents are seeded to: both, each a quarter over the minimum.
+    pub fn seeding_targets(&self) -> (f64, f64) { (self.min_seed_hours * 3600.0 * Self::MARGIN, self.min_ratio * Self::MARGIN) }
     pub fn new(base_url: &str, passkey: &str) -> Result<Self> {
         let mut url = reqwest::Url::parse(base_url.trim()).context("Enter the site's address, starting with https://")?;
         ensure!(url.scheme() == "https" && url.host_str().is_some_and(|h| h.contains('.')), "Enter the site's address, starting with https://");
@@ -33,11 +59,11 @@ impl PrivateSite {
         if !url.path().ends_with('/') { let path = format!("{}/", url.path()); url.set_path(&path); }
         let passkey = passkey.trim();
         ensure!((16..=64).contains(&passkey.len()) && passkey.bytes().all(|b| b.is_ascii_alphanumeric()), "That does not look like a passkey");
-        Ok(Self { base_url: url.to_string(), passkey: passkey.to_owned() })
+        Ok(Self { base_url: url.to_string(), passkey: passkey.to_owned(), min_seed_hours: Self::usual_hours(), min_ratio: Self::usual_ratio() })
     }
     pub fn load(path: &std::path::Path) -> Option<Self> {
         let saved: Self = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
-        Self::new(&saved.base_url, &saved.passkey).ok()
+        Self::new(&saved.base_url, &saved.passkey).ok()?.with_minimums(saved.min_seed_hours, saved.min_ratio).ok()
     }
     pub fn save(&self, path: &std::path::Path) -> Result<()> {
         use std::os::unix::fs::OpenOptionsExt; use std::io::Write;
@@ -134,6 +160,8 @@ fn release_key(item: &Item) -> String {
 
 pub struct Search {
     lou: tokio::sync::Mutex<(Instant, HashMap<String, (Instant, Vec<Item>)>)>,
+    /// When the private site's feed may next be asked, and what it last answered per search.
+    private_feed: tokio::sync::Mutex<(Option<Instant>, HashMap<String, (Instant, Vec<Item>)>)>,
     http: reqwest::Client,
     cache_dir: Option<std::path::PathBuf>,
     private_site: Option<std::path::PathBuf>,
@@ -152,6 +180,7 @@ impl Search {
             cache_dir: None,
             private_site: None,
             lou: tokio::sync::Mutex::new((Instant::now(), HashMap::new())),
+            private_feed: tokio::sync::Mutex::new((None, HashMap::new())),
             http: builder
                 .user_agent("Torrbaby/0.3 (personal media library)")
                 .connect_timeout(Duration::from_secs(8))
@@ -174,7 +203,10 @@ impl Search {
     pub fn private_site_path(&self) -> Option<&std::path::Path> { self.private_site.as_deref() }
     pub fn private_site(&self) -> Option<PrivateSite> { PrivateSite::load(self.private_site.as_deref()?) }
     /// Forget cached results after the site or passkey changes.
-    pub fn private_site_changed(&self) { if let Ok(mut cache) = self.cache.lock() { cache.clear(); } }
+    pub fn private_site_changed(&self) {
+        if let Ok(mut cache) = self.cache.lock() { cache.clear(); }
+        if let Ok(mut feed) = self.private_feed.try_lock() { feed.1.clear(); }
+    }
     /// One request to the private site. Errors never carry the address: it holds the passkey.
     async fn read_private(&self, url: reqwest::Url) -> Result<Vec<u8>> {
         let failed = |e: reqwest::Error| {
@@ -193,11 +225,25 @@ impl Search {
     }
     async fn search_private(&self, terms: &str) -> Result<Vec<Item>> {
         let site = self.private_site().context("Add your private site and passkey in Settings")?;
+        // Answers are reused for half an hour, and requests are spaced as the site requires.
+        let mut feed = self.private_feed.lock().await;
+        feed.1.retain(|_, (at, _)| at.elapsed() < Duration::from_secs(1800));
+        if let Some((_, items)) = feed.1.get(terms) { return Ok(items.clone()); }
+        if let Some(wait) = feed.0.map(|next| next.saturating_duration_since(Instant::now())).filter(|wait| !wait.is_zero()) {
+            anyhow::bail!("The private site allows one search every 5 minutes. Try again in {} minutes.", wait.as_secs() / 60 + 1);
+        }
+        feed.0 = Some(Instant::now() + PrivateSite::FEED_INTERVAL);
+        let items = self.fetch_private(&site, terms).await?;
+        if feed.1.len() >= 64 { feed.1.clear(); }
+        feed.1.insert(terms.to_owned(), (Instant::now(), items.clone()));
+        Ok(items)
+    }
+    async fn fetch_private(&self, site: &PrivateSite, terms: &str) -> Result<Vec<Item>> {
         // NexusPHP's own search, through the member's feed: one request, no page scraping.
         let mut url = site.page("torrentrss.php")?;
         url.query_pairs_mut().append_pair("passkey", &site.passkey).append_pair("rows", "50").append_pair("linktype", "dl")
             .append_pair("isize", "1").append_pair("search", terms).append_pair("search_mode", "0");
-        parse_private_feed(&String::from_utf8(self.read_private(url).await?).context("The private site's answer could not be read")?, &site)
+        parse_private_feed(&String::from_utf8(self.read_private(url).await?).context("The private site's answer could not be read")?, site)
     }
     /// The .torrent for one of the site's listings, fetched with the passkey at Add time.
     pub async fn private_metainfo(&self, id: &str) -> Result<Vec<u8>> {
@@ -1196,6 +1242,9 @@ mod tests {
     fn private_site_results_never_carry_the_passkey() {
         let site = PrivateSite::new("https://pt.example.org", "0123456789abcdef0123456789abcdef").unwrap();
         assert_eq!(site.base_url, "https://pt.example.org/");
+        assert_eq!(site.seeding_targets(), (72.0 * 3600.0 * 1.25, 1.0), "a quarter past 72 hours and past a ratio of 0.8");
+        assert_eq!(site.clone().with_minimums(48.0, 1.0).unwrap().seeding_targets(), (48.0 * 3600.0 * 1.25, 1.25));
+        assert!(site.clone().with_minimums(-1.0, 1.0).is_err());
         assert!(PrivateSite::new("http://pt.example.org", "0123456789abcdef0123456789abcdef").is_err());
         assert!(PrivateSite::new("https://pt.example.org/?x=1", "0123456789abcdef0123456789abcdef").is_err());
         assert!(PrivateSite::new("https://pt.example.org", "short").is_err());

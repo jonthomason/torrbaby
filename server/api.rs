@@ -1193,14 +1193,27 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         // The member's private site. The passkey can be set or removed, never read back.
         let file = s.torrent_search.private_site_path().context("Private sites are unavailable")?.to_owned();
         if method == Method::PUT {
-            crate::torrent_search::PrivateSite::new(text(&body, "base_url")?, text(&body, "passkey")?)?.save(&file)?;
+            // An empty passkey keeps the saved one, so the minimums can be changed without re-entering it.
+            let existing = s.torrent_search.private_site();
+            let passkey = match body["passkey"].as_str().filter(|p| !p.trim().is_empty()) {
+                Some(passkey) => passkey.to_owned(),
+                None => existing.as_ref().map(|site| site.passkey().to_owned()).context("Enter your passkey")?,
+            };
+            let usual = crate::torrent_search::PrivateSite::new(text(&body, "base_url")?, &passkey)?;
+            let hours = body["min_seed_hours"].as_f64().unwrap_or(existing.as_ref().map_or(usual.min_seed_hours, |site| site.min_seed_hours));
+            let ratio = body["min_ratio"].as_f64().unwrap_or(existing.as_ref().map_or(usual.min_ratio, |site| site.min_ratio));
+            usual.with_minimums(hours, ratio)?.save(&file)?;
             s.torrent_search.private_site_changed();
         } else if method == Method::DELETE {
             match std::fs::remove_file(&file) { Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()), _ => {} }
             s.torrent_search.private_site_changed();
         } else if method != Method::GET { bail!("Unsupported method") }
         let site = s.torrent_search.private_site();
-        return Ok(json!({"configured": site.is_some(), "base_url": site.map(|s| s.base_url)}));
+        let usual = crate::torrent_search::PrivateSite::new("https://example.org", "0000000000000000")?;
+        let shown = site.as_ref().unwrap_or(&usual);
+        let (seconds, ratio) = shown.seeding_targets();
+        return Ok(json!({"configured": site.is_some(), "base_url": site.as_ref().map(|s| s.base_url.clone()),
+            "min_seed_hours": shown.min_seed_hours, "min_ratio": shown.min_ratio, "seed_hours": seconds / 3600.0, "seed_ratio": ratio}));
     }
     if path == "/v1/seeding" {
         if method == Method::PATCH {

@@ -13164,6 +13164,74 @@
           }
         }
       }
+    },
+    "Minimum seeding time (hours)": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minimum seeding time (hours)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最短做种时间（小时）"
+          }
+        }
+      }
+    },
+    "Minimum ratio": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minimum ratio"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最低分享率"
+          }
+        }
+      }
+    },
+    "The site's seeding rules": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The site's seeding rules"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "站点的做种规则"
+          }
+        }
+      }
+    },
+    "Torrents from this site are seeded a quarter past both: for %@ hours, and then until their ratio reaches %@. Until both are met they keep seeding.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Torrents from this site are seeded a quarter past both: for %@ hours, and then until their ratio reaches %@. Until both are met they keep seeding."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "来自此站点的种子会比两项要求各多做种四分之一：先做种 %@ 小时，然后直到分享率达到 %@。两项都达到之前会一直做种。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

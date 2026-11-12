@@ -506,8 +506,19 @@ struct PrivateSiteSettings: View {
     @State private var configured = false
     @State private var address = ""
     @State private var passkey = ""
-    struct Site: Decodable { let configured: Bool; let baseUrl: String? }
-    private func show(_ site: Site) { configured = site.configured; address = site.baseUrl ?? address; passkey = ""; loaded = true }
+    @State private var hours = 72.0
+    @State private var ratio = 0.8
+    @State private var seedHours = 90.0
+    @State private var seedRatio = 1.0
+    struct Site: Decodable {
+        let configured: Bool; let baseUrl: String?
+        let minSeedHours: Double?; let minRatio: Double?; let seedHours: Double?; let seedRatio: Double?
+    }
+    private func show(_ site: Site) {
+        configured = site.configured; address = site.baseUrl ?? address; passkey = ""; loaded = true
+        hours = site.minSeedHours ?? hours; ratio = site.minRatio ?? ratio
+        seedHours = site.seedHours ?? hours * 1.25; seedRatio = site.seedRatio ?? ratio * 1.25
+    }
     var body: some View {
         Group {
             if !loaded {
@@ -528,9 +539,20 @@ struct PrivateSiteSettings: View {
                     Text("For a private site you are a member of. Its results appear in Find under China. The passkey is kept on your server and is used only to search the site and to fetch the torrents you add.")
                 }
                 SwiftUI.Section {
+                    LabeledContent("Minimum seeding time (hours)") {
+                        TextField("Minimum seeding time (hours)", value: $hours, format: .number.precision(.fractionLength(0...1))).labelsHidden().multilineTextAlignment(.trailing)
+                    }
+                    LabeledContent("Minimum ratio") {
+                        TextField("Minimum ratio", value: $ratio, format: .number.precision(.fractionLength(0...2))).labelsHidden().multilineTextAlignment(.trailing)
+                    }
+                } header: { Text("The site's seeding rules") } footer: {
+                    Text(L10n.format("Torrents from this site are seeded a quarter past both: for %@ hours, and then until their ratio reaches %@. Until both are met they keep seeding.",
+                                     seedHours.formatted(.number.precision(.fractionLength(0...1))), seedRatio.formatted(.number.precision(.fractionLength(0...2)))))
+                }
+                SwiftUI.Section {
                     Button("Save private site") {
-                        store.perform { show(try await store.request("PUT", "/v1/private-site", body: ["base_url": address, "passkey": passkey])) }
-                    }.disabled(store.busy || !store.connected || address.isEmpty || passkey.isEmpty)
+                        store.perform { show(try await store.request("PUT", "/v1/private-site", body: ["base_url": address, "passkey": passkey, "min_seed_hours": hours, "min_ratio": ratio])) }
+                    }.disabled(store.busy || !store.connected || address.isEmpty || (passkey.isEmpty && !configured) || !hours.isFinite || hours < 0 || !ratio.isFinite || ratio < 0)
                     if configured {
                         Button("Remove private site", role: .destructive) {
                             store.perform { let site: Site = try await store.request("DELETE", "/v1/private-site"); address = ""; show(site) }

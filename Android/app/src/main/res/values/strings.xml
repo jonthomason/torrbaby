@@ -318,6 +318,8 @@
     <string name="ui_13cc75488bfe" formatted="false">Media changed during processing</string>
     <string name="ui_2f28e570a801" formatted="false">Menu bar</string>
     <string name="ui_9188f98eea10" formatted="false">Metadata is being gathered on Diamond</string>
+    <string name="ui_1a41eb35728a" formatted="false">Minimum ratio</string>
+    <string name="ui_4fc5110aa6f0" formatted="false">Minimum seeding time (hours)</string>
     <string name="ui_c5c5533844c5" formatted="false">Mono</string>
     <string name="ui_216fcddff2f9" formatted="false">Monospace</string>
     <string name="ui_4bab2d8fe13f" formatted="false">More</string>
@@ -609,6 +611,7 @@
     <string name="ui_be694571db36" formatted="false">The server will continue this operation after you leave this screen.</string>
     <string name="ui_2dee52785f6e" formatted="false">The server will continue this operation if you close this screen.</string>
     <string name="ui_1bab38b72a4a" formatted="false">The server will retry automatically.</string>
+    <string name="ui_47e2d404730f" formatted="false">The site\'s seeding rules</string>
     <string name="ui_6ddf94adca4b" formatted="false">The torrent is still listed. Refresh in a moment to check whether removal finished.</string>
     <string name="ui_196686e4c2fc" formatted="false">The video stream was interrupted. Check the server and network connection.</string>
     <string name="ui_6315e169d054" formatted="false">These settings apply to everyone who uses this server.</string>

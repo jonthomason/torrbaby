@@ -27,6 +27,8 @@ pub async fn create(s:&Service,body:&Value)->Result<Value> {
   ensure!(candidate["name"].as_str().is_some_and(|n|!n.is_empty() && n.len()<4096),"Invalid release name");
   let source=candidate["source"].as_object().context("Invalid torrent source")?;
   ensure!(source.len()==1 && source.iter().all(|(k,v)|["magnet","torrent_url","metainfo"].contains(&k.as_str()) && v.as_str().is_some_and(|s|!s.is_empty())),"Invalid torrent source");
+  // A trial starts a torrent and abandons it, which private sites treat as hit-and-run.
+  ensure!(source.get("magnet").and_then(Value::as_str).and_then(crate::torrent_search::private_listing).is_none(),"Private-site releases cannot be trialled: the site forbids leaving a torrent early");
  }
  let id=uuid::Uuid::new_v4().to_string();
  let root=std::path::PathBuf::from(s.effective_config()?.source).join(".torrbaby-trials").join(&id);
