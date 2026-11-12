@@ -187,6 +187,7 @@
     <string name="ui_4b3aafa26849" formatted="false">Download settings</string>
     <string name="ui_2d4ee79253e4" formatted="false">Download storage</string>
     <string name="ui_2a18b6447c5a" formatted="false">Download to this device</string>
+    <string name="ui_1c2b219a8a65" formatted="false">Download updated</string>
     <string name="ui_c61970292546" formatted="false">Downloaded</string>
     <string name="ui_06a34e14fcd4" formatted="false">Downloaded file is missing or incomplete. Download it again.</string>
     <string name="ui_9b4592f9ae45" formatted="false">Downloading</string>
@@ -603,6 +604,7 @@
     <string name="ui_1d3888fca6b7" formatted="false">This code has expired.</string>
     <string name="ui_fa5a6dd9d249" formatted="false">This device</string>
     <string name="ui_6aacdc553205" formatted="false">This device could not decode the video or audio format.</string>
+    <string name="ui_63f0d417cbbf" formatted="false">This download can\'t be updated in place. Delete it and download it again.</string>
     <string name="ui_f85d694d9581" formatted="false">This episode is not yet available on the server.</string>
     <string name="ui_f71f96454e21" formatted="false">This file couldn’t play</string>
     <string name="ui_6ca3d776fe97" formatted="false">This media file is not yet available on the server.</string>
@@ -657,6 +659,9 @@
     <string name="ui_b8bef37b7153" formatted="false">Unlimited</string>
     <string name="ui_e50bad848e4a" formatted="false">Unsupported media container for processing</string>
     <string name="ui_567bfc4dad37" formatted="false">Up next</string>
+    <string name="ui_1b0fb105245e" formatted="false">Update download</string>
+    <string name="ui_fcb0f4dbd866" formatted="false">Updated subtitles are available for this download.</string>
+    <string name="ui_3ab0d73100de" formatted="false">Updating…</string>
     <string name="ui_8bdf057f91e7" formatted="false">Upload</string>
     <string name="ui_50bda393938a" formatted="false">Upload &amp; Seeding</string>
     <string name="ui_2fb6cfd6c7df" formatted="false">Use Torrbaby for magnet links</string>

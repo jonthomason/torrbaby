@@ -452,6 +452,70 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
               let size = DownloadStorage.fileSize(piece) else { return false }
         return (try? DownloadStorage.join(piece: piece, to: partial, offset: base, count: min(size, fetched))) != nil
     }
+    // MARK: Updates to finished downloads
+    /// Finished downloads whose server version now differs only after the video (new or
+    /// changed subtitles), by item.
+    @Published private(set) var updates: [UUID: DownloadStorage.Update] = [:]
+    @Published private(set) var updating: Set<UUID> = []
+    private var updateChecks: [String: Date] = [:]
+    /// Ask the server what it would send today for each finished download of a title, and
+    /// note the ones that can be brought up to date by fetching only what changed. It is
+    /// easy to download a title before its subtitles have been prepared.
+    func checkForUpdates(title: LibraryTitle) async {
+        guard let store, store.connected, let storage else { return }
+        let key = store.server + "|" + title.id
+        if let last = updateChecks[key], Date().timeIntervalSince(last) < 60 { return }
+        updateChecks[key] = Date()
+        let server = store.server
+        struct Info: Decodable {
+            struct Reuse: Decodable { let prefix: Int64; let patchAt: Int64; let probes: [DownloadStorage.Update.Probe] }
+            let size: Int64; let etag: String; let reuse: Reuse?
+        }
+        for item in items where item.server == server && item.titleID == title.id && item.state == .ready {
+            guard let asset = title.playable.first(where: { $0.id == item.assetID }) else { continue }
+            do {
+                let link = try await store.mediaPlaybackLink(asset: asset, titleID: title.id, startSession: false)
+                guard store.server == server else { return }
+                guard let job = URLComponents(string: link.path)?.queryItems?.first(where: { $0.name == "virtual" })?.value,
+                      job != item.virtualJob else { updates[item.id] = nil; continue }
+                let info: Info = try await store.request("POST", "/v1/library/assets/\(asset.id)/download-info", body: ["virtual_job": job])
+                guard store.server == server, info.etag != item.revision, let reuse = info.reuse,
+                      ["mp4", "m4v", "mov"].contains(item.fileExtension.lowercased()),
+                      (DownloadStorage.fileSize(storage.mediaURL(item)) ?? 0) >= reuse.prefix else { updates[item.id] = nil; continue }
+                updates[item.id] = DownloadStorage.Update(virtualJob: job, revision: info.etag, size: info.size,
+                                                          prefix: reuse.prefix, patchAt: reuse.patchAt, probes: reuse.probes)
+            } catch { continue /* Not being able to check is not a problem to show. */ }
+        }
+    }
+    /// Every title with a finished download here, as when the Downloads page opens.
+    func checkForUpdates(library: MediaLibrary) async {
+        guard let store else { return }
+        let wanted = Set(items.filter { $0.server == store.server && $0.state == .ready }.map(\.titleID))
+        for title in library.titles where wanted.contains(title.id) { await checkForUpdates(title: title) }
+    }
+    /// Fetch what changed and rewrite the downloaded file in place; the video is not fetched again.
+    func applyUpdate(_ id: UUID) async {
+        guard let store, let storage, let update = updates[id], !updating.contains(id),
+              let item = items.first(where: { $0.id == id && $0.state == .ready }) else { return }
+        updating.insert(id); defer { updating.remove(id) }
+        do {
+            let file = storage.mediaURL(item)
+            let same = await Task.detached { DownloadStorage.matches(update, file: file) }.value
+            guard same else { throw APIError(message: "This download can't be updated in place. Delete it and download it again.") }
+            var request = URLRequest(url: try store.endpoint("/v1/library/assets/\(item.assetID)/download?virtual=" + update.virtualJob))
+            request.setValue("Bearer " + store.token, forHTTPHeaderField: "Authorization")
+            request.setValue(update.revision, forHTTPHeaderField: "If-Match")
+            request.setValue("bytes=\(update.prefix)-", forHTTPHeaderField: "Range")
+            let (tail, response) = try await URLSession.shared.download(for: request)
+            defer { try? FileManager.default.removeItem(at: tail) }
+            guard (response as? HTTPURLResponse)?.statusCode == 206 else { throw APIError(message: "Download failed. Reconnect and try again.") }
+            guard items.first(where: { $0.id == id })?.state == .ready else { return }
+            try storage.applyUpdate(id, update, tail: tail)
+            updates[id] = nil
+            reload()
+            store.notify("Download updated")
+        } catch { report(error) }
+    }
     func resume(_ id: UUID) {
         guard tasks[id] == nil else { return }
         do { try storage?.queue(id); reload(); pump() }

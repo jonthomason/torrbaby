@@ -890,7 +890,23 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             if let Some(job)=body.get("virtual_job").and_then(Value::as_str) {
                 let reader=s.virtual_media.reader(job,id,&path).await?;
                 let name=path.with_extension("mp4").file_name().unwrap_or_default().to_string_lossy().into_owned();
-                return Ok(json!({"asset_id":id,"name":name,"size":reader.len(),"etag":format!("\"{job}\""),"content_type":"video/mp4","representation":"virtual-mp4"}));
+                // A device holding an earlier copy (other subtitles, or none) can keep the
+                // video and fetch only what follows `prefix`. The probes let it confirm
+                // that its copy really is the same source before it touches the file.
+                let reuse=tokio::task::spawn_blocking(move ||->Result<Value> {
+                    let Some((prefix,mask))=reader.reusable_prefix() else {return Ok(json!({"size":reader.len(),"reuse":null}))};
+                    let length=prefix.min(65_536);
+                    let mut probes=Vec::new();
+                    for at in [0,prefix/2,prefix-length] {
+                        let mut data=vec![0u8;length as usize];
+                        reader.read_at(at,&mut data)?;
+                        use sha2::Digest;
+                        let digest:String=sha2::Sha256::digest(&data).iter().map(|b|format!("{b:02x}")).collect();
+                        probes.push(json!({"at":at,"length":length,"sha256":digest}));
+                    }
+                    Ok(json!({"size":reader.len(),"reuse":{"prefix":prefix,"patch_at":mask,"probes":probes}}))
+                }).await??;
+                return Ok(json!({"asset_id":id,"name":name,"size":reuse["size"],"etag":format!("\"{job}\""),"content_type":"video/mp4","representation":"virtual-mp4","reuse":reuse["reuse"]}));
             }
             let file = tokio::fs::File::open(&path)
                 .await

@@ -747,3 +747,10 @@ This shared download needs a newer version of Torrbaby.	此共享下载需要更
 Not enough download storage for this title.	下载存储空间不足，无法保存此影片。
 AirDrop is not available on this Mac.	此 Mac 上无法使用隔空投送。
 Downloads are unavailable.	下载功能不可用。
+Updated subtitles are available for this download.	此下载有更新的字幕可用。
+Update download	更新下载
+Update %lld downloads	更新 %lld 个下载
+Updating…	正在更新…
+Download updated	下载已更新
+This download can't be updated in place. Delete it and download it again.	此下载无法就地更新。请删除后重新下载。
+Updated subtitles are available for %lld downloads.	有 %lld 个下载可更新字幕。

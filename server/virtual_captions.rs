@@ -404,6 +404,12 @@ impl Reader {
     pub fn len(&self) -> u64 {
         self.base + self.append.len() as u64
     }
+    /// What an earlier copy of the same source can keep: the first `base` bytes, once the
+    /// four bytes at `mask` (the source's own movie box type) read "free". Everything
+    /// after that is this representation's caption data and movie box.
+    pub fn reusable_prefix(&self) -> Option<(u64, u64)> {
+        self.mask.map(|mask| (self.base, mask))
+    }
     pub fn validate_source(&self) -> std::io::Result<()> {
         self.source.validate()
     }

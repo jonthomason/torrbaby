@@ -30,6 +30,7 @@ struct DownloadsView: View {
                     Spacer()
                     Button { settings = true } label: { Image(systemName: "slider.horizontal.3") }.help("Download settings").accessibilityLabel("Download settings")
                 }
+                DownloadUpdateOffer(ids: queue.items.filter { $0.server == store.server && $0.state == .ready }.map(\.id))
                 #if os(iOS)
                 if queue.waitingForWiFi && queue.items.contains(where: { $0.state == .queued || $0.state == .transferring }) {
                     HStack {
@@ -124,6 +125,9 @@ struct DownloadsView: View {
                 }
             }
         }.listStyle(.plain).scrollContentBackground(.hidden).background(Theme.canvas)
+        // Opening this page is one of the two moments downloads are checked for updates
+        // (the other is a title's own page). Nothing checks in the background.
+        .task { if let library = store.library { await queue.checkForUpdates(library: library) } }
         .task(id: queue.items.first(where: { $0.state != .removed })?.id) {
             guard !swipeHintSeen, let first = queue.items.first(where: { $0.state != .removed }) else { return }
             guard !reduceMotion else { swipeHintSeen = true; return }
@@ -282,6 +286,9 @@ struct DownloadAssetControl: View {
         queue.items.first { $0.assetID == asset.id && $0.server == store.server && $0.state != .removed }
     }
     var body: some View {
+        content.task(id: title.id) { await queue.checkForUpdates(title: title) }
+    }
+    private var content: some View {
         Group {
             if compact { compactControl }
             else if let item {
@@ -297,6 +304,7 @@ struct DownloadAssetControl: View {
                     .confirmationDialog("Delete this download?", isPresented: $confirmDelete, titleVisibility: .visible) {
                         Button("Delete download", role: .destructive) { queue.remove(item.id) }
                     }
+                    DownloadUpdateOffer(ids: [item.id])
                 } else {
                     let got = queue.received[item.id] ?? item.received
                     let moving = item.state == .transferring || item.state == .queued
@@ -393,6 +401,34 @@ struct EpisodeDownloadProgress: View {
     }
 }
 
+/// Shown beside finished downloads when the server now has subtitles they lack: one tap
+/// fetches only those, not the video again.
+struct DownloadUpdateOffer: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @ObservedObject private var queue = DownloadQueue.shared
+    let ids: [UUID]
+    var body: some View {
+        let pending = ids.filter { queue.updates[$0] != nil }
+        if !pending.isEmpty {
+            let busy = pending.contains { queue.updating.contains($0) }
+            let size = pending.reduce(Int64(0)) { $0 + (queue.updates[$1]?.bytes ?? 0) }
+            VStack(alignment: .leading, spacing: 6) {
+                Text(pending.count == 1 ? L10n.text("Updated subtitles are available for this download.") : L10n.format("Updated subtitles are available for %lld downloads.", pending.count)).font(.caption).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    Task { for id in pending { await queue.applyUpdate(id) } }
+                } label: {
+                    if busy { Label("Updating…", systemImage: "arrow.triangle.2.circlepath") }
+                    else {
+                        Label(pending.count == 1 ? L10n.text("Update download") : L10n.format("Update %lld downloads", pending.count), systemImage: "arrow.triangle.2.circlepath")
+                        Text(verbatim: bytes(size)).font(.caption).foregroundStyle(Theme.muted)
+                    }
+                }.buttonStyle(MonoButtonStyle()).disabled(busy)
+            }
+        }
+    }
+}
+
 struct DownloadSeasonControl: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
@@ -435,6 +471,7 @@ struct DownloadSeasonControl: View {
                 Text(bytes(items.reduce(0) { $0 + $1.size })).font(.caption).foregroundStyle(Theme.muted)
             }.padding(.horizontal, 20).frame(minHeight: 48).frame(maxWidth: fullWidth ? .infinity : nil)
                 .background(Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius))
+            DownloadUpdateOffer(ids: items.map(\.id))
         } else { button }
     }
     private var button: some View {

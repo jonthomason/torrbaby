@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// Durable ownership and space accounting for device-local media, separate from torrents.
 /// All mutations are serialized by the download coordinator on the main actor.
@@ -56,8 +57,8 @@ final class DownloadStorage {
         let name: String
         let season: Int?
         let episode: Int?
-        let revision: String
-        let size: Int64
+        var revision: String
+        var size: Int64
         let fileExtension: String
         var virtualJob: String? = nil
         var episodeOrder: [EpisodeNumber]?
@@ -136,6 +137,8 @@ final class DownloadStorage {
         for item in items where item.progressNeedsSync && item.progressEventID == nil {
             try update(item.id) { $0.progressEventID = UUID(); $0.progressRecordedAt = item.updated }
         }
+        // An in-place update that was interrupted is finished before files are checked.
+        finishInterruptedUpdates()
         // A durable removal intent is safe to replay after interruption.
         for item in manifest.items where item.state == .removing { try finishRemoval(item.id) }
         try reconcileFiles()
@@ -278,6 +281,76 @@ final class DownloadStorage {
     }
     func resumeContextURL(_ id: UUID) -> URL {
         root.appendingPathComponent("partial").appendingPathComponent(id.uuidString + ".context")
+    }
+    // MARK: Updating a finished download in place
+    /// The server's current version of a finished download when only what follows the
+    /// video differs (new or changed subtitles): the video bytes are kept.
+    struct Update: Codable, Equatable {
+        struct Probe: Codable, Equatable { let at: Int64; let length: Int64; let sha256: String }
+        let virtualJob: String
+        let revision: String
+        let size: Int64
+        /// Bytes of the existing file that stay.
+        let prefix: Int64
+        /// Where the four bytes "free" go: the source's own movie box is retired.
+        let patchAt: Int64
+        let probes: [Probe]
+        /// What has to be fetched.
+        var bytes: Int64 { max(0, size - prefix) }
+    }
+    func updatePlanURL(_ id: UUID) -> URL { root.appendingPathComponent("partial").appendingPathComponent(id.uuidString + ".update") }
+    func updateTailURL(_ id: UUID) -> URL { root.appendingPathComponent("partial").appendingPathComponent(id.uuidString + ".tail") }
+    /// Whether this device's copy is the same source the update was made from.
+    nonisolated static func matches(_ update: Update, file: URL) -> Bool {
+        guard let size = fileSize(file), size >= update.prefix, !update.probes.isEmpty,
+              let handle = try? FileHandle(forReadingFrom: file) else { return false }
+        defer { try? handle.close() }
+        for probe in update.probes {
+            guard probe.at >= 0, probe.length > 0, probe.length <= 1 << 20, probe.at + probe.length <= update.prefix,
+                  (try? handle.seek(toOffset: UInt64(probe.at))) != nil,
+                  var data = try? handle.read(upToCount: Int(probe.length)), data.count == Int(probe.length) else { return false }
+            // The server hashes the bytes as they will be once the patch is in.
+            for (index, byte) in Array("free".utf8).enumerated() {
+                let at = update.patchAt + Int64(index) - probe.at
+                if at >= 0 && at < probe.length { data[Int(at)] = byte }
+            }
+            guard SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == probe.sha256 else { return false }
+        }
+        return true
+    }
+    /// Record the plan beside its fetched tail, then rewrite the file. If the app stops
+    /// part-way, launch finishes the job from the same two files; every step can be repeated.
+    func applyUpdate(_ id: UUID, _ update: Update, tail: URL) throws {
+        guard let item = items.first(where: { $0.id == id }), item.state == .ready else { throw StorageError(message: "This download can't be updated in place. Delete it and download it again.") }
+        guard Self.fileSize(tail) == update.bytes, update.patchAt >= 0, update.patchAt + 4 <= update.prefix,
+              (Self.fileSize(mediaURL(item)) ?? 0) >= update.prefix else { throw StorageError(message: "The download is incomplete.") }
+        try? fm.removeItem(at: updateTailURL(id))
+        try fm.moveItem(at: tail, to: updateTailURL(id))
+        try JSONEncoder().encode(update).write(to: updatePlanURL(id), options: .atomic)
+        try finishUpdate(id)
+    }
+    private func finishUpdate(_ id: UUID) throws {
+        let update = try JSONDecoder().decode(Update.self, from: Data(contentsOf: updatePlanURL(id)))
+        guard let item = items.first(where: { $0.id == id }), item.state == .ready, Self.fileSize(updateTailURL(id)) == update.bytes else {
+            throw StorageError(message: "The download is incomplete.")
+        }
+        let output = try FileHandle(forUpdating: mediaURL(item)); defer { try? output.close() }
+        let input = try FileHandle(forReadingFrom: updateTailURL(id)); defer { try? input.close() }
+        try output.seek(toOffset: UInt64(update.prefix))
+        while let chunk = try input.read(upToCount: 4 << 20), !chunk.isEmpty { try output.write(contentsOf: chunk) }
+        try output.truncate(atOffset: UInt64(update.size))
+        try output.seek(toOffset: UInt64(update.patchAt)); try output.write(contentsOf: Data("free".utf8))
+        try output.synchronize()
+        try self.update(id) { $0.revision = update.revision; $0.size = update.size; $0.received = update.size; $0.virtualJob = update.virtualJob; $0.error = nil }
+        try? fm.removeItem(at: updatePlanURL(id)); try? fm.removeItem(at: updateTailURL(id))
+    }
+    private func finishInterruptedUpdates() {
+        let partial = root.appendingPathComponent("partial")
+        for file in (try? fm.contentsOfDirectory(at: partial, includingPropertiesForKeys: nil)) ?? [] where file.pathExtension == "update" {
+            guard let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent) else { continue }
+            // Without its tail nothing was written yet (the tail is removed last), so the plan is simply dropped.
+            if (try? finishUpdate(id)) == nil, !fm.fileExists(atPath: updateTailURL(id).path) { try? fm.removeItem(at: file) }
+        }
     }
     /// Where in the file the running request began: the kept bytes at the time it started.
     func baseURL(_ id: UUID) -> URL {
@@ -483,7 +556,7 @@ final class DownloadStorage {
     private func finishRemoval(_ id: UUID) throws {
         guard let item = items.first(where: { $0.id == id }) else { return }
         // Only UUID-derived paths owned by this store can be removed. No server paths.
-        for file in [mediaURL(item), partialURL(id), resumeURL(id), resumeContextURL(id), baseURL(id)] where fm.fileExists(atPath: file.path) {
+        for file in [mediaURL(item), partialURL(id), resumeURL(id), resumeContextURL(id), baseURL(id), updatePlanURL(id), updateTailURL(id)] where fm.fileExists(atPath: file.path) {
             try fm.removeItem(at: file)
         }
         // Retain watch progress until it has synced, independently of the media file.

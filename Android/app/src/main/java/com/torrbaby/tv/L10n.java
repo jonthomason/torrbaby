@@ -198,6 +198,7 @@ final class L10n {
     IDS.put("Download settings", R.string.ui_4b3aafa26849);
     IDS.put("Download storage", R.string.ui_2d4ee79253e4);
     IDS.put("Download to this device", R.string.ui_2a18b6447c5a);
+    IDS.put("Download updated", R.string.ui_1c2b219a8a65);
     IDS.put("Downloaded", R.string.ui_c61970292546);
     IDS.put("Downloaded file is missing or incomplete. Download it again.", R.string.ui_06a34e14fcd4);
     IDS.put("Downloading", R.string.ui_9b4592f9ae45);
@@ -614,6 +615,7 @@ final class L10n {
     IDS.put("This code has expired.", R.string.ui_1d3888fca6b7);
     IDS.put("This device", R.string.ui_fa5a6dd9d249);
     IDS.put("This device could not decode the video or audio format.", R.string.ui_6aacdc553205);
+    IDS.put("This download can't be updated in place. Delete it and download it again.", R.string.ui_63f0d417cbbf);
     IDS.put("This episode is not yet available on the server.", R.string.ui_f85d694d9581);
     IDS.put("This file couldn’t play", R.string.ui_f71f96454e21);
     IDS.put("This media file is not yet available on the server.", R.string.ui_6ca3d776fe97);
@@ -668,6 +670,9 @@ final class L10n {
     IDS.put("Unlimited", R.string.ui_b8bef37b7153);
     IDS.put("Unsupported media container for processing", R.string.ui_e50bad848e4a);
     IDS.put("Up next", R.string.ui_567bfc4dad37);
+    IDS.put("Update download", R.string.ui_1b0fb105245e);
+    IDS.put("Updated subtitles are available for this download.", R.string.ui_fcb0f4dbd866);
+    IDS.put("Updating…", R.string.ui_3ab0d73100de);
     IDS.put("Upload", R.string.ui_8bdf057f91e7);
     IDS.put("Upload & Seeding", R.string.ui_50bda393938a);
     IDS.put("Use Torrbaby for magnet links", R.string.ui_2fb6cfd6c7df);
