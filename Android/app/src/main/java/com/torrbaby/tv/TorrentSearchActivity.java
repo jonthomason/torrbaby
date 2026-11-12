@@ -148,7 +148,7 @@ public final class TorrentSearchActivity extends Activity {
   }
   /** A share's title without its season, edition and quality, since it names the library folder. */
   private static String libraryName(String title) {
-    String trimmed=title.replaceAll("\\s*(?:第[一二三四五六七八九十百\\d]+[季部]|[Ss]\\d{1,2}\\b|Season\\s*\\d|全\\d+集|\\d{3,4}[pP]\\b|4[Kk]\\b|特别版|未删减|完结|更新至).*$","").trim();
+    String trimmed=title.replaceAll("\\s*(?:第[一二三四五六七八九十百\\d]+[季部]|[Ss]\\d{1,2}\\b|Season\\s*\\d|全\\d+集|\\d{3,4}[pP]\\b|4[Kk]\\b|特别版|未删减|完结|更新至|国剧|全集|合集|完整版|蓝光|高清).*$","").trim();
     return trimmed.isEmpty()?title:trimmed;
   }
   /** The season a share's title names ("第二季", "S02", "Season 2"), for files that do not say; 0 when none. */

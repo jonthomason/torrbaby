@@ -1496,7 +1496,7 @@ struct CloudShareView: View {
     /// A share's title without its season, edition and quality ("庆余年 第一季 特别版 4K" → "庆余年"),
     /// since it names the library folder.
     static func libraryName(_ title: String) -> String {
-        let trimmed = title.replacingOccurrences(of: #"\s*(?:第[一二三四五六七八九十百\d]+[季部]|[Ss]\d{1,2}\b|Season\s*\d|全\d+集|\d{3,4}[pP]\b|4[Kk]\b|特别版|未删减|完结|更新至).*$"#, with: "", options: .regularExpression)
+        let trimmed = title.replacingOccurrences(of: #"\s*(?:第[一二三四五六七八九十百\d]+[季部]|[Ss]\d{1,2}\b|Season\s*\d|全\d+集|\d{3,4}[pP]\b|4[Kk]\b|特别版|未删减|完结|更新至|国剧|全集|合集|完整版|蓝光|高清).*$"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? title : trimmed
     }
