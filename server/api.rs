@@ -1312,7 +1312,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         let operations = db.library_operations()?;
         return Ok(library_issues(crate::library_files::annotate_torrents(torrents, &operations), &db.state()?));
     }
-    let effective = if path == "/v1/status" {
+    let effective = if path == "/v1/status" || path == "/v1/storage" {
         Some(s.effective_config()?)
     } else {
         None
