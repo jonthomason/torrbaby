@@ -687,6 +687,34 @@ impl Cloud {
         assets.into_iter().filter(|asset| asset["entity_id"] == entity && asset["role"] != "extra" && asset["episode"].as_u64() == Some(number)
             && asset["season"].as_u64().unwrap_or(1) == season.unwrap_or(1) && asset["path"].as_str().is_some_and(|path| Path::new(path) != destination)).collect()
     }
+    /// Torrents that are trying to fetch episodes this job has delivered, found by name.
+    /// A torrent that has barely started has no files the library could map to an
+    /// episode, so the database does not know it; its name ("Pursuit of Jade S01E21 …")
+    /// does. Only unfinished torrents whose name gives the show and an explicit SxxEyy
+    /// are taken, and they are marked like any other bettered copy.
+    async fn supersede_named(&self, s: &Service, entity: Option<&str>, job: &Job) {
+        static NUMBERED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:^|[^a-z0-9])s(\d{1,2})[ ._-]?e(\d{1,3})(?:[^0-9]|$)").expect("valid regex"));
+        let Some(entity) = entity else { return };
+        let fold = |text: &str| text.chars().map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { ' ' }).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ");
+        let titles: Vec<String> = s.db.lock().ok().and_then(|db| db.documents("entities").ok()).into_iter().flatten().filter(|e| e["id"] == entity)
+            .flat_map(|e| [e["title"].as_str().map(fold), e["original_title"].as_str().map(fold)]).flatten().filter(|title| title.chars().count() >= 2).collect();
+        if titles.is_empty() { return; }
+        // The episodes this job now holds in the library.
+        let held: Vec<(u64, u64)> = self.jobs.lock().ok().and_then(|jobs| jobs.iter().find(|j| j.id == job.id).map(|j| j.files.iter()
+            .filter(|f| f.done && f.outcome.as_deref() != Some("discarded")).filter_map(|f| { let (season, number) = episode(f.destination.file_name()?.to_str()?); Some((season.unwrap_or(1), number?)) }).collect())).unwrap_or_default();
+        if held.is_empty() { return; }
+        let Ok(torrents) = crate::organizer::torrents(s).await else { return };
+        for torrent in &torrents {
+            if torrent["percent_done"].as_f64().unwrap_or(1.0) >= 1.0 { continue; }
+            let (Some(hash), Some(name)) = (torrent["hash_string"].as_str(), torrent["name"].as_str()) else { continue };
+            let Some(found) = NUMBERED.captures(name) else { continue };
+            let (Ok(season), Ok(number)) = (found[1].parse::<u64>(), found[2].parse::<u64>()) else { continue };
+            if !held.contains(&(season, number)) { continue; }
+            let named = fold(name);
+            if !titles.iter().any(|title| named.contains(title.as_str())) { continue; }
+            self.supersede(hash, "", false);
+        }
+    }
     fn supersede(&self, hash: &str, path: &str, outclassed: bool) {
         let Ok(mut all) = self.superseded.lock() else { return };
         let entry = all.entry(hash.to_ascii_lowercase()).or_default();
@@ -1054,6 +1082,9 @@ impl Cloud {
         self.update(&job.id, |j| j.state = "downloading".into());
         self.progress.store(0, Ordering::Relaxed);
         let entity = self.entity(s, job).await;
+        // Episodes delivered before a pause or restart may have torrents the database never knew.
+        self.supersede_named(s, entity.as_deref(), job).await;
+        self.reap(s).await;
         for file in &pending {
             if self.overtaken(&job.id) { return Ok(false); }
             let name = file.path.rsplit('/').next().unwrap_or(&file.path);
@@ -1102,6 +1133,7 @@ impl Cloud {
                     tracing::info!(kept = %file.destination.display(), removed = %rival.display(), "A better copy of an episode replaced a lesser one");
                     let _ = tokio::fs::remove_file(rival).await;
                 }
+                self.supersede_named(s, entity.as_deref(), job).await;
                 self.reap(s).await;
             }
             let present = present || outcome == "discarded";
