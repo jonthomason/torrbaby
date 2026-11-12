@@ -1886,7 +1886,8 @@ struct CloudJobsSection: View {
             }
             if let current = job.current, !current.isEmpty { Text(verbatim: current).font(.caption).foregroundStyle(.secondary).lineLimit(1).textSelectionIfAvailable() }
             if let error = job.error, !error.isEmpty { Text(verbatim: error).font(.caption).foregroundStyle(.orange) }
-        }.padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+        }.textSelectionIfAvailable()   // every line of the card can be selected and copied
+            .padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
             #if !os(tvOS)
             .contextMenu { Button { Clipboard.copy(job.title) } label: { Label("Copy name", systemImage: "doc.on.doc") } }
             #endif
