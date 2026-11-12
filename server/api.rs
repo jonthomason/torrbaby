@@ -316,6 +316,7 @@ pub async fn serve(
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
                 .expect("Install termination handler");
         tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
+        crate::processing::SHUTTING_DOWN.store(true, std::sync::atomic::Ordering::SeqCst);
     })
     .await?;
     if let Some(task) = lan_task {

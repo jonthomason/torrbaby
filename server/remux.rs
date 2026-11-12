@@ -1142,12 +1142,22 @@ fn aac_configuration(data: &[u8]) -> Result<(u32, u32, u8)> {
     }
     ensure!((2..=8).contains(&data.len()), "AAC configuration needs additional support");
     let mut b = Bits {bytes: data, at: 0};
-    ensure!(b.read(5)? == 2, "AAC object type needs additional support");
+    let object = b.read(5)?;
     let core = b.rate()?;
     let channels = b.read(4)? as u8;
     ensure!((1..=6).contains(&channels), "AAC channel layout needs additional support");
+    // HE-AAC with explicit (hierarchical) signalling: object type 5 (SBR), the output rate,
+    // then the AAC-LC core. Parametric stereo (29) stays unsupported.
+    let explicit = if object == 5 {
+        let output = b.rate()?;
+        ensure!(b.read(5)? == 2, "AAC object type needs additional support");
+        Some(output)
+    } else {
+        ensure!(object == 2, "AAC object type needs additional support");
+        None
+    };
     ensure!(b.read(3)? == 0, "AAC frame length or extension needs additional support");
-    let mut output = core;
+    let mut output = explicit.unwrap_or(core);
     if data.len()*8-b.at >= 16 {
         ensure!(b.read(11)? == 0x2b7 && b.read(5)? == 5, "Unsupported AAC sync extension");
         if b.read(1)? == 1 { output = b.rate()?; }
@@ -1171,6 +1181,10 @@ mod aac_tests {
         assert!(parse(&[0x13,0x30,0x56,0xe5,0x98]).is_ok());
         assert!(parse(&[0x13,0x30,0x56,0xe5]).is_err());
         assert!(parse(&[0x13,0x30,0x56,0xe5,0x9d,0x48,0x80]).is_err());
+        // Explicit HE-AAC: SBR (5), 24 kHz core, 5.1, 48 kHz output, AAC-LC core (Heroes S01).
+        assert_eq!(parse(&[0x2b,0x31,0x88,0x00]).unwrap(), (24000,48000,6));
+        // Explicit parametric stereo (29) is still refused.
+        assert!(parse(&[0xeb,0x31,0x88,0x00]).is_err());
     }
 }
 

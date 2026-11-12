@@ -159,6 +159,9 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
             let package_complete = package_complete(files) && files.iter().all(|file| {
                 let Some(name) = file["name"].as_str() else { return false; };
                 let relative = Path::new(name);
+                // A sidecar renamed or removed after download (a subtitle given its language,
+                // say) must not hold the videos back; Transmission already has every byte.
+                if !video(relative) { return true; }
                 if !relative.components().all(|p|matches!(p,std::path::Component::Normal(_))) { return false; }
                 let mut full = PathBuf::from(root);
                 for part in relative.components() {

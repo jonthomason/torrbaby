@@ -36,6 +36,8 @@ fn sign_off(db:&Database,id:&str,revision:&str)->Result<bool> {
     if complete {db.connection.execute("UPDATE processing_failures SET resolved_at=? WHERE asset_id=? AND revision=? AND resolved_at IS NULL",rusqlite::params![now(),id,revision])?;}
     Ok(complete)
 }
+/// Set when the server begins shutting down, so work its helpers lose is requeued without an error.
+pub static SHUTTING_DOWN:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 fn fail(db:&Database,id:&str,revision:&str,error:&str)->Result<()> {
     db.connection.execute("INSERT INTO processing_failures(asset_id,revision,stage,error,first_seen,last_seen) SELECT asset_id,revision,stage,?,?,? FROM media_processing WHERE asset_id=? AND revision=? ON CONFLICT(asset_id,revision,stage,error) DO UPDATE SET occurrences=occurrences+1,last_seen=excluded.last_seen,resolved_at=NULL",rusqlite::params![error,now(),now(),id,revision])?;
     db.connection.execute("UPDATE media_processing SET state='failed',error=?,retry_after=?,updated=?,attempts=attempts+1 WHERE asset_id=? AND revision=?",rusqlite::params![error,now()+3600.0,now(),id,revision])?;Ok(())
@@ -285,7 +287,11 @@ async fn process_file(s:&Service,mut asset:Value)->Result<()> {
     if let Err(error)=result {
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
         let message=error.to_string();
-        if !Path::new(&path).exists() {
+        if SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst) {
+            // The server is stopping and took the helpers with it: not the file's fault.
+            db.connection.execute("UPDATE media_processing SET state='queued',retry_after=0,updated=? WHERE asset_id=?",rusqlite::params![now(),id])?;
+            tracing::info!(asset=id,"Processing stopped for shutdown");
+        } else if !Path::new(&path).exists() {
             // Moved mid-stage (its package finished, or it was filed): pick it up at its new path.
             db.connection.execute("UPDATE media_processing SET state='queued',retry_after=?,updated=? WHERE asset_id=?",rusqlite::params![now()+15.0,now(),id])?;
             tracing::info!(asset=id,"Processing paused while its file moves");
@@ -327,12 +333,14 @@ async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()>
         if !done && !external {return Ok(());}
     }
     if !finished(prior["credits_state"].as_str().unwrap_or("")) {
-        let not_applicable=asset["role"]=="extra" || path.extension().is_some_and(|e|e.eq_ignore_ascii_case("webm"));
+        // Specials list as extras (except a watch-first pilot), so no Next Episode offer needs their credits.
+        let special=asset["season"]==0 && asset["watch_first"]!=true;
+        let not_applicable=asset["role"]=="extra" || special || path.extension().is_some_and(|e|e.eq_ignore_ascii_case("webm"));
         {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
             db.connection.execute("UPDATE media_processing SET stage='credits',detail='{}' WHERE asset_id=? AND revision=?",rusqlite::params![id,revision])?;}
         if !not_applicable {crate::credits::process(s,asset).await?;}
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
-        let credits=if not_applicable {json!({"state":"not_applicable","reason":"Credits analysis does not apply to extras or WebM"})}else{crate::credits::cached(&db,id)?};
+        let credits=if not_applicable {json!({"state":"not_applicable","reason":"Credits analysis does not apply to extras, specials or WebM"})}else{crate::credits::cached(&db,id)?};
         let state=credits["state"].as_str().unwrap_or("pending");
         db.connection.execute("UPDATE media_processing SET stage='credits',credits_state=?,detail=?,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![state,credits.to_string(),now(),id,revision])?;
         anyhow::ensure!(!matches!(state,"failed"|"incomplete"),"{}",credits["error"].as_str().unwrap_or("Credits analysis incomplete"));
