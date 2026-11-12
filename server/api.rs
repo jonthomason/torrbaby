@@ -37,7 +37,7 @@ pub struct Service {
     pub(crate) hls: Arc<crate::hls::Manager>,
     pub(crate) virtual_media: Arc<crate::virtual_media::Manager>,
     lan_limiter: crate::lan::Limiter,
-    torrent_search: crate::torrent_search::Search,
+    pub(crate) torrent_search: crate::torrent_search::Search,
 }
 
 // Keep unimplemented routes explicit during the port; never silently report success.
@@ -114,7 +114,8 @@ pub async fn serve(
         .context("Another Torrbaby server owns this database")?;
     let service = Arc::new(Service {
         lan_limiter: crate::lan::Limiter::default(),
-        torrent_search: crate::torrent_search::Search::new()?.with_cache_dir(database.parent().context("Database needs a parent directory")?.join("search-cache"))?,
+        torrent_search: crate::torrent_search::Search::new()?.with_cache_dir(database.parent().context("Database needs a parent directory")?.join("search-cache"))?
+            .with_private_site(database.parent().context("Database needs a parent directory")?.join("private-site.json")),
         token: config.token()?,
         rpc: Transmission::new(&config)?,
         db: Mutex::new(Database::open(&database, None)?),
@@ -1187,6 +1188,19 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             let (id, variant) = route.rsplit_once('/').context("Missing artwork variant")?;
             return artwork(s, id, variant).await;
         }
+    }
+    if path == "/v1/private-site" {
+        // The member's private site. The passkey can be set or removed, never read back.
+        let file = s.torrent_search.private_site_path().context("Private sites are unavailable")?.to_owned();
+        if method == Method::PUT {
+            crate::torrent_search::PrivateSite::new(text(&body, "base_url")?, text(&body, "passkey")?)?.save(&file)?;
+            s.torrent_search.private_site_changed();
+        } else if method == Method::DELETE {
+            match std::fs::remove_file(&file) { Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()), _ => {} }
+            s.torrent_search.private_site_changed();
+        } else if method != Method::GET { bail!("Unsupported method") }
+        let site = s.torrent_search.private_site();
+        return Ok(json!({"configured": site.is_some(), "base_url": site.map(|s| s.base_url)}));
     }
     if path == "/v1/seeding" {
         if method == Method::PATCH {

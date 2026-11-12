@@ -754,3 +754,16 @@ Updating…	正在更新…
 Download updated	下载已更新
 This download can't be updated in place. Delete it and download it again.	此下载无法就地更新。请删除后重新下载。
 Updated subtitles are available for %lld downloads.	有 %lld 个下载可更新字幕。
+Private Site	私有站点
+Private site	私有站点
+Site address	站点地址
+Passkey	密钥（Passkey）
+Set up	已设置
+Not set up	未设置
+Unchanged	未更改
+Save private site	保存私有站点
+Remove private site	移除私有站点
+For a private site you are a member of. Its results appear in Find under China. The passkey is kept on your server and is used only to search the site and to fetch the torrents you add.	用于你已加入的私有站点。其结果会显示在“查找”的中国来源中。密钥保存在你的服务器上，仅用于搜索该站点和获取你添加的种子。
+The private site timed out	私有站点请求超时
+The private site could not be reached	无法连接私有站点
+Add your private site and passkey in Settings	请在设置中添加私有站点和密钥

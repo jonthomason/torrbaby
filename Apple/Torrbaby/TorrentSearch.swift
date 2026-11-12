@@ -5,7 +5,7 @@ struct TorrentSearchSource: Decodable {
     let id: String
     let url: String
     var label: String { Self.label(provider) }
-    static func label(_ provider: String) -> String { ["1lou":"BT之家", "tpb":"The Pirate Bay", "csv":"Torrent CSV", "nyaa":"Nyaa", "dmhy":"动漫花园", "mikan":"蜜柑计划"][provider] ?? provider }
+    static func label(_ provider: String) -> String { ["1lou":"BT之家", "tpb":"The Pirate Bay", "csv":"Torrent CSV", "nyaa":"Nyaa", "dmhy":"动漫花园", "mikan":"蜜柑计划", "pt": L10n.text("Private site")][provider] ?? provider }
 }
 struct TorrentReleaseHints: Decodable {
     let year: Int?
@@ -514,6 +514,7 @@ struct TorrentSearchView: View {
                         Text("BT之家").tag("1lou")
                         Text("动漫花园").tag("dmhy")
                         Text("蜜柑计划").tag("mikan")
+                        Text("Private site").tag("pt")
                     } else {
                         Text("The Pirate Bay").tag("tpb")
                         Text("Torrent CSV").tag("csv")

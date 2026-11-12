@@ -44,7 +44,7 @@ public final class TorrentSearchActivity extends Activity {
   private final Set<String> added = new HashSet<>();
   private static final String[] SOURCE_NAMES = {"Recommended", "The Pirate Bay", "Nyaa", "Torrent CSV"};
 
-  private String[] sourceNames() { return china ? new String[]{"Recommended", "BT之家", "动漫花园", "蜜柑计划"} : SOURCE_NAMES; }
+  private String[] sourceNames() { return china ? new String[]{"Recommended", "BT之家", "动漫花园", "蜜柑计划", "Private site"} : SOURCE_NAMES; }
   public void onCreate(Bundle state) {
     super.onCreate(state);
     try { api = new SecureStore(this).load(); } catch (Exception ignored) {}
@@ -120,7 +120,7 @@ public final class TorrentSearchActivity extends Activity {
     ((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(query.getWindowToken(),0);
     io.execute(() -> {
       try {
-        JSONArray sources=new JSONArray(); if(provider>0)sources.put(requestChina ? (provider==1?"1lou":provider==2?"dmhy":"mikan") : (provider==1?"tpb":provider==2?"nyaa":"csv"));
+        JSONArray sources=new JSONArray(); if(provider>0)sources.put(requestChina ? (provider==1?"1lou":provider==2?"dmhy":provider==3?"mikan":"pt") : (provider==1?"tpb":provider==2?"nyaa":"csv"));
         JSONObject body = new JSONObject().put("query",value).put("market",requestChina?"china":"world").put("sources",sources);
         // Context applies only while searching the original library title.
         if(value.equals(getIntent().getStringExtra("query"))) {
@@ -141,7 +141,7 @@ public final class TorrentSearchActivity extends Activity {
       } catch(Exception error) {runOnUiThread(() -> {if(!isDestroyed()&&request==generation){search.setEnabled(true);list.setEnabled(true);status.setText(MainActivity.message(error));}});}
     });
   }
-  private static String label(String provider) {return provider.equals("1lou")?"BT之家":provider.equals("dmhy")?"动漫花园":provider.equals("mikan")?"蜜柑计划":provider.equals("tpb")?"The Pirate Bay":provider.equals("csv")?"Torrent CSV":"Nyaa";}
+  private static String label(String provider) {return provider.equals("1lou")?"BT之家":provider.equals("dmhy")?"动漫花园":provider.equals("mikan")?"蜜柑计划":provider.equals("pt")?L10n.t("Private site"):provider.equals("tpb")?"The Pirate Bay":provider.equals("csv")?"Torrent CSV":"Nyaa";}
   private String summary(JSONObject item) {
     List<String> parts=new ArrayList<>(); if(!item.isNull("size_bytes"))parts.add(android.text.format.Formatter.formatFileSize(this,item.optLong("size_bytes")));
     else if(!item.isNull("size_label") && !item.optString("size_label").isEmpty())parts.add(item.optString("size_label"));

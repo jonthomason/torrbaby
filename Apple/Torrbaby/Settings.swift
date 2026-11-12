@@ -88,7 +88,7 @@ struct AutomationView: View {
 enum SettingsPage: String, CaseIterable, Identifiable {
     case user = "User", general = "General", notifications = "Notifications", playback = "Playback", downloads = "Downloads"
     case connection = "Connection", devices = "Devices"
-    case library = "Library & Organizing", seeding = "Upload & Seeding", subtitles = "Subtitles & Translation"
+    case library = "Library & Organizing", seeding = "Upload & Seeding", subtitles = "Subtitles & Translation", privateSite = "Private Site"
     case about = "About"
     var id: String { rawValue }
     var symbol: String {
@@ -103,6 +103,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .library: "folder.fill"
         case .seeding: "arrow.up.circle.fill"
         case .subtitles: "captions.bubble.fill"
+        case .privateSite: "key.fill"
         case .about: "info.circle.fill"
         }
     }
@@ -115,6 +116,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .downloads, .seeding: .green
         case .library: .orange
         case .subtitles: .purple
+        case .privateSite: .indigo
         }
     }
     /// Groups as they appear in the list; Downloads exists only where the app keeps offline copies.
@@ -122,7 +124,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         [(nil, nil, [.user]),
          (nil, nil, [.general, .notifications, .playback] + (downloadsAvailable ? [.downloads] : [])),
          (nil, nil, [.connection, .devices]),
-         ("Server", "These settings apply to everyone who uses this server.", [.library, .seeding, .subtitles]),
+         ("Server", "These settings apply to everyone who uses this server.", [.library, .seeding, .subtitles, .privateSite]),
          (nil, nil, [.about])]
     }
     static var downloadsAvailable: Bool {
@@ -261,6 +263,7 @@ struct SettingsPageView: View {
             case .devices: DeviceSettings()
             case .library: LibrarySettings()
             case .seeding: SeedingSettings()
+            case .privateSite: PrivateSiteSettings()
             case .subtitles: SwiftUI.Section { BackgroundSubtitlesView() } footer: { Text("Prepares English and Chinese subtitles for new titles on your server, on the server itself.") }
             case .about: AboutSettings()
             }
@@ -491,6 +494,55 @@ struct SeedingSettings: View {
         }
         .onChange(of: enabled) { _, _ in saved = false }
         .onChange(of: ratio) { _, _ in saved = false }
+    }
+}
+
+/// A private site the user is a member of (the NexusPHP kind most Chinese private trackers
+/// run). The passkey is sent to the user's own server and never shown again.
+struct PrivateSiteSettings: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    @State private var loaded = false
+    @State private var configured = false
+    @State private var address = ""
+    @State private var passkey = ""
+    struct Site: Decodable { let configured: Bool; let baseUrl: String? }
+    private func show(_ site: Site) { configured = site.configured; address = site.baseUrl ?? address; passkey = ""; loaded = true }
+    var body: some View {
+        Group {
+            if !loaded {
+                SwiftUI.Section { HStack { Spacer(); ProgressView(); Spacer() } }
+            } else {
+                SwiftUI.Section {
+                    LabeledContent("Status") { Text(LocalizedStringKey(configured ? "Set up" : "Not set up")) }
+                    LabeledContent("Site address") {
+                        TextField("https://", text: $address).labelsHidden().multilineTextAlignment(.trailing).autocorrectionDisabled()
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never).keyboardType(.URL)
+                            #endif
+                    }
+                    LabeledContent("Passkey") {
+                        SecureField(configured ? L10n.text("Unchanged") : "", text: $passkey).labelsHidden().multilineTextAlignment(.trailing)
+                    }
+                } footer: {
+                    Text("For a private site you are a member of. Its results appear in Find under China. The passkey is kept on your server and is used only to search the site and to fetch the torrents you add.")
+                }
+                SwiftUI.Section {
+                    Button("Save private site") {
+                        store.perform { show(try await store.request("PUT", "/v1/private-site", body: ["base_url": address, "passkey": passkey])) }
+                    }.disabled(store.busy || !store.connected || address.isEmpty || passkey.isEmpty)
+                    if configured {
+                        Button("Remove private site", role: .destructive) {
+                            store.perform { let site: Site = try await store.request("DELETE", "/v1/private-site"); address = ""; show(site) }
+                        }.disabled(store.busy || !store.connected)
+                    }
+                }
+            }
+        }
+        .task(id: store.server) {
+            if let site: Site = try? await store.request("GET", "/v1/private-site") { show(site) }
+            else { loaded = true }   // offline or an older server: the form still shows; saving reports why it failed
+        }
     }
 }
 

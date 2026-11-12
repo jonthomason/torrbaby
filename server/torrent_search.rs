@@ -17,7 +17,36 @@ pub enum Market { World, China }
 impl Default for Market { fn default() -> Self { Self::World } }
 impl Market {
     fn defaults(&self) -> Vec<String> { let sources: &[&str] = match self { Self::World => &["tpb", "csv"], Self::China => &["1lou"] }; sources.iter().map(|v| (*v).into()).collect() }
-    fn allowed(&self) -> &[&str] { match self { Self::World => &["tpb", "csv", "nyaa"], Self::China => &["1lou", "dmhy", "mikan"] } }
+    fn allowed(&self) -> &[&str] { match self { Self::World => &["tpb", "csv", "nyaa"], Self::China => &["1lou", "dmhy", "mikan", "pt"] } }
+}
+/// A private site the user belongs to, of the NexusPHP kind most Chinese private
+/// trackers run: its address and the member's passkey. The passkey authenticates the
+/// site's search feed and torrent downloads; it stays on this server and is never
+/// returned to a client, logged, or placed in a result.
+#[derive(Clone, Deserialize, Serialize)]
+pub struct PrivateSite { pub base_url: String, passkey: String }
+impl PrivateSite {
+    pub fn new(base_url: &str, passkey: &str) -> Result<Self> {
+        let mut url = reqwest::Url::parse(base_url.trim()).context("Enter the site's address, starting with https://")?;
+        ensure!(url.scheme() == "https" && url.host_str().is_some_and(|h| h.contains('.')), "Enter the site's address, starting with https://");
+        ensure!(url.username().is_empty() && url.password().is_none() && url.query().is_none() && url.fragment().is_none(), "Enter only the site's address");
+        if !url.path().ends_with('/') { let path = format!("{}/", url.path()); url.set_path(&path); }
+        let passkey = passkey.trim();
+        ensure!((16..=64).contains(&passkey.len()) && passkey.bytes().all(|b| b.is_ascii_alphanumeric()), "That does not look like a passkey");
+        Ok(Self { base_url: url.to_string(), passkey: passkey.to_owned() })
+    }
+    pub fn load(path: &std::path::Path) -> Option<Self> {
+        let saved: Self = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+        Self::new(&saved.base_url, &saved.passkey).ok()
+    }
+    pub fn save(&self, path: &std::path::Path) -> Result<()> {
+        use std::os::unix::fs::OpenOptionsExt; use std::io::Write;
+        let staged = path.with_extension("json.new");
+        let mut file = std::fs::OpenOptions::new().create(true).truncate(true).write(true).mode(0o600).open(&staged)?;
+        file.write_all(&serde_json::to_vec(self)?)?; file.sync_all()?;
+        Ok(std::fs::rename(staged, path)?)
+    }
+    fn page(&self, name: &str) -> Result<reqwest::Url> { Ok(reqwest::Url::parse(&self.base_url)?.join(name)?) }
 }
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Query {
@@ -107,6 +136,7 @@ pub struct Search {
     lou: tokio::sync::Mutex<(Instant, HashMap<String, (Instant, Vec<Item>)>)>,
     http: reqwest::Client,
     cache_dir: Option<std::path::PathBuf>,
+    private_site: Option<std::path::PathBuf>,
     cache: Mutex<HashMap<String, (Instant, SearchResult)>>,
     details: Mutex<HashMap<String, (Instant, Value)>>,
     reads: Mutex<HashMap<String, Arc<tokio::sync::Mutex<Option<(Instant, Vec<u8>)>>>>>,
@@ -120,6 +150,7 @@ impl Search {
         }
         Ok(Self {
             cache_dir: None,
+            private_site: None,
             lou: tokio::sync::Mutex::new((Instant::now(), HashMap::new())),
             http: builder
                 .user_agent("Torrbaby/0.3 (personal media library)")
@@ -137,6 +168,47 @@ impl Search {
         self.cache_dir=Some(dir);
         self.trim_disk_cache();
         Ok(self)
+    }
+    /// Where the member's private site and passkey are kept.
+    pub fn with_private_site(mut self, path: std::path::PathBuf) -> Self { self.private_site = Some(path); self }
+    pub fn private_site_path(&self) -> Option<&std::path::Path> { self.private_site.as_deref() }
+    pub fn private_site(&self) -> Option<PrivateSite> { PrivateSite::load(self.private_site.as_deref()?) }
+    /// Forget cached results after the site or passkey changes.
+    pub fn private_site_changed(&self) { if let Ok(mut cache) = self.cache.lock() { cache.clear(); } }
+    /// One request to the private site. Errors never carry the address: it holds the passkey.
+    async fn read_private(&self, url: reqwest::Url) -> Result<Vec<u8>> {
+        let failed = |e: reqwest::Error| {
+            let kind = if e.is_timeout() { "timed out" } else if e.is_connect() { "could not be reached" } else { "did not answer as expected" };
+            anyhow::anyhow!("The private site {kind}")
+        };
+        let response = self.http.get(url).send().await.map_err(failed)?;
+        ensure!(response.status().is_success(), "The private site refused the request ({}). Check the passkey in Settings.", response.status().as_u16());
+        let mut response = response;
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(failed)? {
+            ensure!(bytes.len() + chunk.len() <= 4_194_304, "The private site's answer was too large");
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
+    }
+    async fn search_private(&self, terms: &str) -> Result<Vec<Item>> {
+        let site = self.private_site().context("Add your private site and passkey in Settings")?;
+        // NexusPHP's own search, through the member's feed: one request, no page scraping.
+        let mut url = site.page("torrentrss.php")?;
+        url.query_pairs_mut().append_pair("passkey", &site.passkey).append_pair("rows", "50").append_pair("linktype", "dl")
+            .append_pair("isize", "1").append_pair("search", terms).append_pair("search_mode", "0");
+        parse_private_feed(&String::from_utf8(self.read_private(url).await?).context("The private site's answer could not be read")?, &site)
+    }
+    /// The .torrent for one of the site's listings, fetched with the passkey at Add time.
+    pub async fn private_metainfo(&self, id: &str) -> Result<Vec<u8>> {
+        ensure!(!id.is_empty() && id.len() <= 12 && id.bytes().all(|b| b.is_ascii_digit()), "Invalid listing ID");
+        let site = self.private_site().context("Add your private site and passkey in Settings")?;
+        let mut url = site.page("download.php")?;
+        url.query_pairs_mut().append_pair("id", id).append_pair("passkey", &site.passkey);
+        let bytes = self.read_private(url).await?;
+        // A login page or an error message instead of a torrent must not reach Transmission.
+        chinese::torrent(&bytes, id, "").map_err(|_| anyhow::anyhow!("The private site did not return a torrent. Check the passkey in Settings."))?;
+        Ok(bytes)
     }
     fn trim_disk_cache(&self) {
         let Some(dir)=&self.cache_dir else {return};
@@ -259,6 +331,8 @@ impl Search {
         );
         if query.sources.is_empty() {
             query.sources = query.market.defaults();
+            // A member's private site is searched by default alongside the public index.
+            if matches!(query.market, Market::China) && self.private_site().is_some() { query.sources.push("pt".into()); }
         }
         query.sources.sort();
         query.sources.dedup();
@@ -309,6 +383,8 @@ impl Search {
                     }
                 } else if provider == "1lou" {
                     self.search_lou(terms).await
+                } else if provider == "pt" {
+                    self.search_private(terms).await
                 } else if provider == "dmhy" || provider == "mikan" {
                     let (base, key) = if provider == "dmhy" {
                         ("https://share.dmhy.org/topics/rss/rss.xml", "keyword")
@@ -344,7 +420,7 @@ impl Search {
                     // one) with their list of popular torrents. A result sharing no word
                     // with the query is not a result. The Chinese forum is searched in its
                     // own language by its own engine, so its matches are kept as given.
-                    let items: Vec<Item> = if provider == "1lou" { items } else {
+                    let items: Vec<Item> = if provider == "1lou" || provider == "pt" { items } else {
                         items.into_iter().filter(|item| relevant(&item.name, &query.query)).collect()
                     };
                     providers.push(ProviderStatus {
@@ -741,6 +817,58 @@ fn parse_chinese_feed(raw: &str, provider: &str) -> Result<Vec<Item>> {
         Some(row)
     }).collect())
 }
+#[derive(Deserialize)]
+struct PrivateFeed { channel: PrivateChannel }
+#[derive(Deserialize)]
+struct PrivateChannel { #[serde(default, rename="item")] items: Vec<PrivateRow> }
+#[derive(Deserialize)]
+struct PrivateRow {
+    title: String,
+    #[serde(default)] link: Option<String>,
+    #[serde(default)] enclosure: Option<Enclosure>,
+    #[serde(default)] guid: Option<PrivateGuid>,
+    #[serde(default, rename="pubDate")] added: Option<String>,
+}
+#[derive(Deserialize)]
+struct PrivateGuid { #[serde(default, rename="$text")] value: String }
+/// A NexusPHP member feed. Each row is a listing on the member's own site; the download
+/// address in the feed (which carries the passkey) is read only for its listing number.
+fn parse_private_feed(raw: &str, site: &PrivateSite) -> Result<Vec<Item>> {
+    static SIZE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\s*\[\s*([0-9]+(?:\.[0-9]+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB)\s*\]\s*$").expect("valid regex"));
+    let feed: PrivateFeed = quick_xml::de::from_str(raw).context("The private site did not return a search feed. Check the passkey in Settings.")?;
+    let host = reqwest::Url::parse(&site.base_url)?.host_str().map(str::to_owned);
+    let listing = |address: &str| -> Option<String> {
+        let url = reqwest::Url::parse(address).ok()?;
+        if url.host_str().map(str::to_owned) != host { return None; }
+        let id = url.query_pairs().find(|(k, _)| k == "id")?.1.into_owned();
+        (!id.is_empty() && id.len() <= 12 && id.bytes().all(|b| b.is_ascii_digit())).then_some(id)
+    };
+    Ok(feed.channel.items.into_iter().take(100).filter_map(|row| {
+        let id = row.link.as_deref().and_then(listing).or_else(|| row.enclosure.as_ref().and_then(|e| listing(&e.url)))?;
+        let mut name = row.title.trim().to_owned();
+        let size_label = SIZE.captures(&name).map(|c| format!("{} {}", &c[1], c[2].to_ascii_uppercase().replace("IB", "iB")));
+        if let Some(found) = SIZE.find(&name) { name.truncate(found.start()); }
+        if name.is_empty() || name.len() > 4096 { return None; }
+        let info_hash = row.guid.as_ref().and_then(|g| hash(g.value.trim())).unwrap_or_default();
+        let details = site.page("details.php").ok().map(|mut url| { url.query_pairs_mut().append_pair("id", &id); url.to_string() })?;
+        let mut item = item(name.clone(), info_hash.clone(), Source { provider: "pt".into(), id: id.clone(), url: details });
+        // A private torrent cannot be added from its hash alone. The marker tells this
+        // server to fetch the listing's .torrent, with the passkey, when it is added.
+        let mut link = reqwest::Url::parse("magnet:?").expect("valid URL");
+        link.query_pairs_mut().append_pair("dn", &name).append_pair("x.pt", &id);
+        item.magnet = if info_hash.is_empty() { link.to_string() } else { format!("magnet:?xt=urn:btih:{info_hash}&{}", link.query().unwrap_or("")) };
+        item.size_bytes = row.enclosure.as_ref().and_then(|e| e.length).filter(|n| *n > 0);
+        item.size_label = size_label;
+        item.added = row.added;
+        Some(item)
+    }).collect())
+}
+/// The listing number carried by a private site's result, if this link is one.
+pub fn private_listing(magnet: &str) -> Option<String> {
+    let url = reqwest::Url::parse(magnet).ok()?;
+    if url.scheme() != "magnet" { return None; }
+    url.query_pairs().find(|(k, _)| k == "x.pt").map(|(_, v)| v.into_owned())
+}
 fn html_text(raw: &str) -> String {
     let raw = raw.replace("&nbsp;", " ");
     quick_xml::escape::unescape(&raw)
@@ -1063,6 +1191,36 @@ mod tests {
         restarted.http=reqwest::Client::builder().proxy(reqwest::Proxy::all("http://127.0.0.1:9").unwrap()).build().unwrap();
         assert_eq!(restarted.read_bytes(url).await.unwrap(),b"saved fixture page");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn private_site_results_never_carry_the_passkey() {
+        let site = PrivateSite::new("https://pt.example.org", "0123456789abcdef0123456789abcdef").unwrap();
+        assert_eq!(site.base_url, "https://pt.example.org/");
+        assert!(PrivateSite::new("http://pt.example.org", "0123456789abcdef0123456789abcdef").is_err());
+        assert!(PrivateSite::new("https://pt.example.org/?x=1", "0123456789abcdef0123456789abcdef").is_err());
+        assert!(PrivateSite::new("https://pt.example.org", "short").is_err());
+        let raw = r#"<?xml version="1.0" encoding="utf-8"?><rss version="2.0"><channel><title>PT</title>
+            <item><title><![CDATA[流浪地球2 The Wandering Earth II 2023 2160p WEB-DL H265 DDP5.1[18.52 GB]]]></title>
+              <link>https://pt.example.org/details.php?id=12345</link>
+              <enclosure url="https://pt.example.org/download.php?id=12345&amp;passkey=0123456789abcdef0123456789abcdef" length="19885482393" type="application/x-bittorrent" />
+              <guid isPermaLink="false">0123456789abcdef0123456789abcdef01234567</guid>
+              <pubDate>Thu, 12 Nov 2026 02:00:00 +0000</pubDate></item>
+            <item><title>Elsewhere</title><link>https://other.example.org/details.php?id=9</link>
+              <enclosure url="https://other.example.org/download.php?id=9" length="1" type="application/x-bittorrent" /></item>
+            </channel></rss>"#;
+        let rows = parse_private_feed(raw, &site).unwrap();
+        assert_eq!(rows.len(), 1, "listings from another host are dropped");
+        let row = &rows[0];
+        assert_eq!(row.name, "流浪地球2 The Wandering Earth II 2023 2160p WEB-DL H265 DDP5.1");
+        assert_eq!((row.size_bytes, row.size_label.as_deref()), (Some(19885482393), Some("18.52 GB")));
+        assert_eq!(row.info_hash, "0123456789abcdef0123456789abcdef01234567");
+        assert_eq!((row.sources[0].provider.as_str(), row.sources[0].id.as_str()), ("pt", "12345"));
+        assert_eq!(private_listing(&row.magnet).as_deref(), Some("12345"));
+        assert!(row.magnet.starts_with("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&"));
+        assert!(!serde_json::to_string(row).unwrap().contains("0123456789abcdef0123456789abcdef\""), "no passkey in a result");
+        assert!(!serde_json::to_string(row).unwrap().contains("passkey"));
+        assert_eq!(private_listing("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=x"), None);
+        assert!(Market::China.allowed().contains(&"pt") && !Market::World.allowed().contains(&"pt"));
     }
     #[test]
     fn chinese_release_hints_distinguish_complete_and_partial_packs() {

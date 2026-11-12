@@ -35,6 +35,7 @@ final class L10n {
     IDS.put("Add paused", R.string.ui_dbe5ad51cb48);
     IDS.put("Add to trial", R.string.ui_abe7e96d75c0);
     IDS.put("Add torrent", R.string.ui_ebf1fd2504e7);
+    IDS.put("Add your private site and passkey in Settings", R.string.ui_e4884bb6064a);
     IDS.put("Added", R.string.ui_b68734c25910);
     IDS.put("Added to Downloads", R.string.ui_f9b608af67f4);
     IDS.put("Added to Transmission", R.string.ui_a98648e9368b);
@@ -260,6 +261,7 @@ final class L10n {
     IDS.put("Folders on your server", R.string.ui_b2b163a7935b);
     IDS.put("Follow system language", R.string.ui_ddc61f82d863);
     IDS.put("Font", R.string.ui_b97c4d4cddf2);
+    IDS.put("For a private site you are a member of. Its results appear in Find under China. The passkey is kept on your server and is used only to search the site and to fetch the torrents you add.", R.string.ui_ec5de681708d);
     IDS.put("Forced", R.string.ui_6f1b97e4c290);
     IDS.put("Forward", R.string.ui_ba4e72261283);
     IDS.put("General", R.string.ui_9239ee2cda84);
@@ -376,6 +378,7 @@ final class L10n {
     IDS.put("Not downloaded", R.string.ui_5fe04f57e34d);
     IDS.put("Not enough download storage for this title.", R.string.ui_d93783e0c5db);
     IDS.put("Not progressing", R.string.ui_0008c8375b5d);
+    IDS.put("Not set up", R.string.ui_be8f2e94e7b3);
     IDS.put("Not yet available", R.string.ui_5a28f15df569);
     IDS.put("Nothing to add", R.string.ui_602f15feebf4);
     IDS.put("Notifications", R.string.ui_753a22b2eb61);
@@ -397,6 +400,7 @@ final class L10n {
     IDS.put("Original quality · Native player", R.string.ui_7a38047cc7f2);
     IDS.put("Other episodes", R.string.ui_c9d98984ac76);
     IDS.put("PEERS", R.string.ui_ca07ceefc22c);
+    IDS.put("Passkey", R.string.ui_e35828da748d);
     IDS.put("Paste your server token", R.string.ui_7039298d0ff9);
     IDS.put("Path", R.string.ui_519e39132bb9);
     IDS.put("Pause", R.string.ui_781961bc81c2);
@@ -427,6 +431,8 @@ final class L10n {
     IDS.put("Preparing…", R.string.ui_0b1d6c0b1a56);
     IDS.put("Prioritize processing", R.string.ui_109a00c0bd39);
     IDS.put("Prioritize subtitles", R.string.ui_5af3161d2251);
+    IDS.put("Private Site", R.string.ui_15a245fc958e);
+    IDS.put("Private site", R.string.ui_10e7daf10ff1);
     IDS.put("Process library automatically", R.string.ui_fffc6e1a0c19);
     IDS.put("Processing", R.string.ui_e63451d3cf90);
     IDS.put("Processing failed", R.string.ui_7cd54dae216c);
@@ -459,6 +465,7 @@ final class L10n {
     IDS.put("Release tags", R.string.ui_e1490e4ce2b7);
     IDS.put("Remove", R.string.ui_e963907dac5c);
     IDS.put("Remove from Continue Watching", R.string.ui_b589f73a82dc);
+    IDS.put("Remove private site", R.string.ui_280bb327e41f);
     IDS.put("Remove torrent", R.string.ui_63db985f6027);
     IDS.put("Remove torrent and delete files", R.string.ui_41b8f0cd711e);
     IDS.put("Remove torrent, keep files", R.string.ui_e512d90885bf);
@@ -493,6 +500,7 @@ final class L10n {
     IDS.put("SERVER ADDRESS", R.string.ui_0b25507fa566);
     IDS.put("Sans serif", R.string.ui_ecc39dc53993);
     IDS.put("Save", R.string.ui_efc007a393f6);
+    IDS.put("Save private site", R.string.ui_23b24c3c8910);
     IDS.put("Save profile", R.string.ui_f597c0e8201d);
     IDS.put("Save seeding settings", R.string.ui_3b36f730de5c);
     IDS.put("Save settings", R.string.ui_913aba9f96cf);
@@ -529,6 +537,7 @@ final class L10n {
     IDS.put("Server transfers", R.string.ui_fad23a8672e6);
     IDS.put("Server updated", R.string.ui_ed99436dccac);
     IDS.put("Server version", R.string.ui_2546318d7620);
+    IDS.put("Set up", R.string.ui_a5041fdaa241);
     IDS.put("Settings", R.string.ui_c7f73bb54d92);
     IDS.put("Settings saved", R.string.ui_aef97bb06af4);
     IDS.put("Settings → Link a device", R.string.ui_c0f6e98ebf63);
@@ -539,6 +548,7 @@ final class L10n {
     IDS.put("Show torrent", R.string.ui_3437b8727d9f);
     IDS.put("Showing the first 150 cast entries.", R.string.ui_56b7696a10e7);
     IDS.put("Single episodes", R.string.ui_c150b0bcf05d);
+    IDS.put("Site address", R.string.ui_392df6e0ef56);
     IDS.put("Size", R.string.ui_b7152342a267);
     IDS.put("Size unavailable", R.string.ui_336d9bdb4d4c);
     IDS.put("Size…", R.string.ui_b5eedcf44417);
@@ -601,6 +611,8 @@ final class L10n {
     IDS.put("The entire package will be hidden from everyone, continue seeding, and be permanently deleted when seeding finishes.", R.string.ui_9a212ea4c5bb);
     IDS.put("The entire package will be hidden now, continue seeding, and be permanently deleted when seeding finishes.", R.string.ui_fa9822b1acbe);
     IDS.put("The file changed. Remove this download and add it again.", R.string.ui_b540d8e8df09);
+    IDS.put("The private site could not be reached", R.string.ui_3d6b1dc8c59c);
+    IDS.put("The private site timed out", R.string.ui_a2745523e072);
     IDS.put("The saved connection could not be opened.", R.string.ui_d3fdb91c3f77);
     IDS.put("The server did not supply this torrent's identity.", R.string.ui_9b8b91a1710b);
     IDS.put("The server is deleting this package.", R.string.ui_03a02769fe24);
@@ -666,6 +678,7 @@ final class L10n {
     IDS.put("UPLOAD HISTORY", R.string.ui_9241930fa68d);
     IDS.put("UPLOADING", R.string.ui_c096eba0f2ba);
     IDS.put("Unable to play", R.string.ui_e7010042ce25);
+    IDS.put("Unchanged", R.string.ui_51ed65113221);
     IDS.put("Undo", R.string.ui_39fc72124884);
     IDS.put("Unlimited", R.string.ui_b8bef37b7153);
     IDS.put("Unsupported media container for processing", R.string.ui_e50bad848e4a);

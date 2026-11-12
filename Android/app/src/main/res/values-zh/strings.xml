@@ -24,6 +24,7 @@
     <string name="ui_dbe5ad51cb48" formatted="false">添加后暂停</string>
     <string name="ui_abe7e96d75c0" formatted="false">加入试下载</string>
     <string name="ui_ebf1fd2504e7" formatted="false">添加种子</string>
+    <string name="ui_e4884bb6064a" formatted="false">请在设置中添加私有站点和密钥</string>
     <string name="ui_b68734c25910" formatted="false">已添加</string>
     <string name="ui_f9b608af67f4" formatted="false">已添加到下载</string>
     <string name="ui_a98648e9368b" formatted="false">已添加到 Transmission</string>
@@ -249,6 +250,7 @@
     <string name="ui_b2b163a7935b" formatted="false">服务器上的文件夹</string>
     <string name="ui_ddc61f82d863" formatted="false">跟随系统语言</string>
     <string name="ui_b97c4d4cddf2" formatted="false">字体</string>
+    <string name="ui_ec5de681708d" formatted="false">用于你已加入的私有站点。其结果会显示在“查找”的中国来源中。密钥保存在你的服务器上，仅用于搜索该站点和获取你添加的种子。</string>
     <string name="ui_6f1b97e4c290" formatted="false">强制字幕</string>
     <string name="ui_ba4e72261283" formatted="false">前进</string>
     <string name="ui_9239ee2cda84" formatted="false">通用</string>
@@ -365,6 +367,7 @@
     <string name="ui_5fe04f57e34d" formatted="false">未下载</string>
     <string name="ui_d93783e0c5db" formatted="false">下载存储空间不足，无法保存此影片。</string>
     <string name="ui_0008c8375b5d" formatted="false">无进展</string>
+    <string name="ui_be8f2e94e7b3" formatted="false">未设置</string>
     <string name="ui_5a28f15df569" formatted="false">暂不可用</string>
     <string name="ui_602f15feebf4" formatted="false">没有可添加的内容</string>
     <string name="ui_753a22b2eb61" formatted="false">通知</string>
@@ -386,6 +389,7 @@
     <string name="ui_7a38047cc7f2" formatted="false">原始画质 · 原生播放器</string>
     <string name="ui_c9d98984ac76" formatted="false">其他剧集</string>
     <string name="ui_ca07ceefc22c" formatted="false">节点</string>
+    <string name="ui_e35828da748d" formatted="false">密钥（Passkey）</string>
     <string name="ui_7039298d0ff9" formatted="false">粘贴服务器令牌</string>
     <string name="ui_519e39132bb9" formatted="false">路径</string>
     <string name="ui_781961bc81c2" formatted="false">暂停</string>
@@ -416,6 +420,8 @@
     <string name="ui_0b1d6c0b1a56" formatted="false">正在准备…</string>
     <string name="ui_109a00c0bd39" formatted="false">优先处理</string>
     <string name="ui_5af3161d2251" formatted="false">优先处理字幕</string>
+    <string name="ui_15a245fc958e" formatted="false">私有站点</string>
+    <string name="ui_10e7daf10ff1" formatted="false">私有站点</string>
     <string name="ui_fffc6e1a0c19" formatted="false">自动处理媒体库</string>
     <string name="ui_e63451d3cf90" formatted="false">媒体处理</string>
     <string name="ui_7cd54dae216c" formatted="false">处理失败</string>
@@ -448,6 +454,7 @@
     <string name="ui_e1490e4ce2b7" formatted="false">资源标签</string>
     <string name="ui_e963907dac5c" formatted="false">移除</string>
     <string name="ui_b589f73a82dc" formatted="false">从继续观看中移除</string>
+    <string name="ui_280bb327e41f" formatted="false">移除私有站点</string>
     <string name="ui_63db985f6027" formatted="false">移除种子</string>
     <string name="ui_41b8f0cd711e" formatted="false">移除种子并删除文件</string>
     <string name="ui_e512d90885bf" formatted="false">移除种子，保留文件</string>
@@ -482,6 +489,7 @@
     <string name="ui_0b25507fa566" formatted="false">服务器地址</string>
     <string name="ui_ecc39dc53993" formatted="false">无衬线字体</string>
     <string name="ui_efc007a393f6" formatted="false">保存</string>
+    <string name="ui_23b24c3c8910" formatted="false">保存私有站点</string>
     <string name="ui_f597c0e8201d" formatted="false">保存用户</string>
     <string name="ui_3b36f730de5c" formatted="false">保存做种设置</string>
     <string name="ui_913aba9f96cf" formatted="false">保存设置</string>
@@ -518,6 +526,7 @@
     <string name="ui_fad23a8672e6" formatted="false">服务器传输</string>
     <string name="ui_ed99436dccac" formatted="false">服务器已更新</string>
     <string name="ui_2546318d7620" formatted="false">服务器版本</string>
+    <string name="ui_a5041fdaa241" formatted="false">已设置</string>
     <string name="ui_c7f73bb54d92" formatted="false">设置</string>
     <string name="ui_aef97bb06af4" formatted="false">设置已保存</string>
     <string name="ui_c0f6e98ebf63" formatted="false">设置 → 关联设备</string>
@@ -528,6 +537,7 @@
     <string name="ui_3437b8727d9f" formatted="false">查看种子</string>
     <string name="ui_56b7696a10e7" formatted="false">仅显示前 150 条演员记录。</string>
     <string name="ui_c150b0bcf05d" formatted="false">单集</string>
+    <string name="ui_392df6e0ef56" formatted="false">站点地址</string>
     <string name="ui_b7152342a267" formatted="false">大小</string>
     <string name="ui_336d9bdb4d4c" formatted="false">大小不可用</string>
     <string name="ui_b5eedcf44417" formatted="false">大小…</string>
@@ -590,6 +600,8 @@
     <string name="ui_9a212ea4c5bb" formatted="false">整个下载包将对所有用户隐藏，继续做种，并在做种完成后永久删除。</string>
     <string name="ui_fa9822b1acbe" formatted="false">整个下载包将立即隐藏，继续做种，并在做种完成后永久删除。</string>
     <string name="ui_b540d8e8df09" formatted="false">文件已更改，请移除此下载后重新添加。</string>
+    <string name="ui_3d6b1dc8c59c" formatted="false">无法连接私有站点</string>
+    <string name="ui_a2745523e072" formatted="false">私有站点请求超时</string>
     <string name="ui_d3fdb91c3f77" formatted="false">无法打开已保存的连接。</string>
     <string name="ui_9b8b91a1710b" formatted="false">服务器未提供此种子的标识。</string>
     <string name="ui_03a02769fe24" formatted="false">服务器正在删除此下载包。</string>
@@ -655,6 +667,7 @@
     <string name="ui_9241930fa68d" formatted="false">上传历史</string>
     <string name="ui_c096eba0f2ba" formatted="false">上传中</string>
     <string name="ui_e7010042ce25" formatted="false">无法播放</string>
+    <string name="ui_51ed65113221" formatted="false">未更改</string>
     <string name="ui_39fc72124884" formatted="false">撤销</string>
     <string name="ui_b8bef37b7153" formatted="false">不限量</string>
     <string name="ui_e50bad848e4a" formatted="false">不支持处理此媒体容器</string>

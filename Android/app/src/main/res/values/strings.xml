@@ -24,6 +24,7 @@
     <string name="ui_dbe5ad51cb48" formatted="false">Add paused</string>
     <string name="ui_abe7e96d75c0" formatted="false">Add to trial</string>
     <string name="ui_ebf1fd2504e7" formatted="false">Add torrent</string>
+    <string name="ui_e4884bb6064a" formatted="false">Add your private site and passkey in Settings</string>
     <string name="ui_b68734c25910" formatted="false">Added</string>
     <string name="ui_f9b608af67f4" formatted="false">Added to Downloads</string>
     <string name="ui_a98648e9368b" formatted="false">Added to Transmission</string>
@@ -249,6 +250,7 @@
     <string name="ui_b2b163a7935b" formatted="false">Folders on your server</string>
     <string name="ui_ddc61f82d863" formatted="false">Follow system language</string>
     <string name="ui_b97c4d4cddf2" formatted="false">Font</string>
+    <string name="ui_ec5de681708d" formatted="false">For a private site you are a member of. Its results appear in Find under China. The passkey is kept on your server and is used only to search the site and to fetch the torrents you add.</string>
     <string name="ui_6f1b97e4c290" formatted="false">Forced</string>
     <string name="ui_ba4e72261283" formatted="false">Forward</string>
     <string name="ui_9239ee2cda84" formatted="false">General</string>
@@ -365,6 +367,7 @@
     <string name="ui_5fe04f57e34d" formatted="false">Not downloaded</string>
     <string name="ui_d93783e0c5db" formatted="false">Not enough download storage for this title.</string>
     <string name="ui_0008c8375b5d" formatted="false">Not progressing</string>
+    <string name="ui_be8f2e94e7b3" formatted="false">Not set up</string>
     <string name="ui_5a28f15df569" formatted="false">Not yet available</string>
     <string name="ui_602f15feebf4" formatted="false">Nothing to add</string>
     <string name="ui_753a22b2eb61" formatted="false">Notifications</string>
@@ -386,6 +389,7 @@
     <string name="ui_7a38047cc7f2" formatted="false">Original quality · Native player</string>
     <string name="ui_c9d98984ac76" formatted="false">Other episodes</string>
     <string name="ui_ca07ceefc22c" formatted="false">PEERS</string>
+    <string name="ui_e35828da748d" formatted="false">Passkey</string>
     <string name="ui_7039298d0ff9" formatted="false">Paste your server token</string>
     <string name="ui_519e39132bb9" formatted="false">Path</string>
     <string name="ui_781961bc81c2" formatted="false">Pause</string>
@@ -416,6 +420,8 @@
     <string name="ui_0b1d6c0b1a56" formatted="false">Preparing…</string>
     <string name="ui_109a00c0bd39" formatted="false">Prioritize processing</string>
     <string name="ui_5af3161d2251" formatted="false">Prioritize subtitles</string>
+    <string name="ui_15a245fc958e" formatted="false">Private Site</string>
+    <string name="ui_10e7daf10ff1" formatted="false">Private site</string>
     <string name="ui_fffc6e1a0c19" formatted="false">Process library automatically</string>
     <string name="ui_e63451d3cf90" formatted="false">Processing</string>
     <string name="ui_7cd54dae216c" formatted="false">Processing failed</string>
@@ -448,6 +454,7 @@
     <string name="ui_e1490e4ce2b7" formatted="false">Release tags</string>
     <string name="ui_e963907dac5c" formatted="false">Remove</string>
     <string name="ui_b589f73a82dc" formatted="false">Remove from Continue Watching</string>
+    <string name="ui_280bb327e41f" formatted="false">Remove private site</string>
     <string name="ui_63db985f6027" formatted="false">Remove torrent</string>
     <string name="ui_41b8f0cd711e" formatted="false">Remove torrent and delete files</string>
     <string name="ui_e512d90885bf" formatted="false">Remove torrent, keep files</string>
@@ -482,6 +489,7 @@
     <string name="ui_0b25507fa566" formatted="false">SERVER ADDRESS</string>
     <string name="ui_ecc39dc53993" formatted="false">Sans serif</string>
     <string name="ui_efc007a393f6" formatted="false">Save</string>
+    <string name="ui_23b24c3c8910" formatted="false">Save private site</string>
     <string name="ui_f597c0e8201d" formatted="false">Save profile</string>
     <string name="ui_3b36f730de5c" formatted="false">Save seeding settings</string>
     <string name="ui_913aba9f96cf" formatted="false">Save settings</string>
@@ -518,6 +526,7 @@
     <string name="ui_fad23a8672e6" formatted="false">Server transfers</string>
     <string name="ui_ed99436dccac" formatted="false">Server updated</string>
     <string name="ui_2546318d7620" formatted="false">Server version</string>
+    <string name="ui_a5041fdaa241" formatted="false">Set up</string>
     <string name="ui_c7f73bb54d92" formatted="false">Settings</string>
     <string name="ui_aef97bb06af4" formatted="false">Settings saved</string>
     <string name="ui_c0f6e98ebf63" formatted="false">Settings → Link a device</string>
@@ -528,6 +537,7 @@
     <string name="ui_3437b8727d9f" formatted="false">Show torrent</string>
     <string name="ui_56b7696a10e7" formatted="false">Showing the first 150 cast entries.</string>
     <string name="ui_c150b0bcf05d" formatted="false">Single episodes</string>
+    <string name="ui_392df6e0ef56" formatted="false">Site address</string>
     <string name="ui_b7152342a267" formatted="false">Size</string>
     <string name="ui_336d9bdb4d4c" formatted="false">Size unavailable</string>
     <string name="ui_b5eedcf44417" formatted="false">Size…</string>
@@ -590,6 +600,8 @@
     <string name="ui_9a212ea4c5bb" formatted="false">The entire package will be hidden from everyone, continue seeding, and be permanently deleted when seeding finishes.</string>
     <string name="ui_fa9822b1acbe" formatted="false">The entire package will be hidden now, continue seeding, and be permanently deleted when seeding finishes.</string>
     <string name="ui_b540d8e8df09" formatted="false">The file changed. Remove this download and add it again.</string>
+    <string name="ui_3d6b1dc8c59c" formatted="false">The private site could not be reached</string>
+    <string name="ui_a2745523e072" formatted="false">The private site timed out</string>
     <string name="ui_d3fdb91c3f77" formatted="false">The saved connection could not be opened.</string>
     <string name="ui_9b8b91a1710b" formatted="false">The server did not supply this torrent\'s identity.</string>
     <string name="ui_03a02769fe24" formatted="false">The server is deleting this package.</string>
@@ -655,6 +667,7 @@
     <string name="ui_9241930fa68d" formatted="false">UPLOAD HISTORY</string>
     <string name="ui_c096eba0f2ba" formatted="false">UPLOADING</string>
     <string name="ui_e7010042ce25" formatted="false">Unable to play</string>
+    <string name="ui_51ed65113221" formatted="false">Unchanged</string>
     <string name="ui_39fc72124884" formatted="false">Undo</string>
     <string name="ui_b8bef37b7153" formatted="false">Unlimited</string>
     <string name="ui_e50bad848e4a" formatted="false">Unsupported media container for processing</string>

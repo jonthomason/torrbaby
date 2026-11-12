@@ -228,7 +228,11 @@ pub(crate) async fn add_at(s: &Service, body: &Value, directory:Option<&Path>) -
         if !magnet.starts_with("magnet:?") {
             bail!("Expected a magnet link");
         }
-        params["filename"] = json!(magnet);
+        if let Some(listing) = crate::torrent_search::private_listing(magnet) {
+            // A private site's result: its .torrent is fetched here, with the member's passkey.
+            let bytes = s.torrent_search.private_metainfo(&listing).await?;
+            params["metainfo"] = json!(base64::engine::general_purpose::STANDARD.encode(bytes));
+        } else { params["filename"] = json!(magnet); }
     } else if let Some(raw) = torrent_url {
         let url=reqwest::Url::parse(raw)?;
         let attachment=url.path().strip_prefix("/attach-download-").and_then(|s|s.strip_suffix(".htm"));
