@@ -106,3 +106,34 @@ channels/preview programs. Its carousel is fed by JMGO's servers and by a few
 hard-coded partner content providers (CIBN, Mango TV, Coocaa), so a third-party
 app such as Torrbaby cannot put cards on it. Showing Torrbaby titles on the home
 screen would need a replacement launcher.
+
+A replacement launcher is blocked while `com.jmgo.launcher` is installed: JMGO's
+`JmgoWmHook` in `services.jar` sends every Home press to a launcher listed in
+`/vendor/etc/launcher.cfg` (`com.jmgo.launcher`, `com.jmgo.arwen`) and ignores
+`cmd package set-home-activity`. It falls back to Android's normal choice only
+when no listed launcher is installed for the user.
+
+### Torrbaby in JMGO's watch history (观影记录), tested 2026-11-12
+
+The launcher's watch history accepts records only from partner apps, and opens
+each record with a link template built into the launcher for that partner. Mango
+TV (`com.starcor.mango`) is not installed, so a small bridge app can take its
+place:
+
+- The bridge uses the package name `com.starcor.mango` and serves
+  `content://com.starcor.mango.playhistory/history`. The launcher starts
+  watching that provider when the package is installed, and queries it
+  (`updateTime ASC`) whenever the bridge calls `notifyChange`.
+- Columns: `videoType` (must be 1), `pid` (int; becomes the launch id),
+  `pType`, `serialno` (episode number), `watchTime` and `duration` (ms),
+  `updateTime` (ms; only rows newer than the last sync are taken), `pName`,
+  `pImage`, `vName`, `vImage`. The card title comes from `vName` and the
+  picture from `vImage`. `android.resource://com.starcor.mango/drawable/…`
+  images work, so posters do not need to be reachable over the network.
+- Choosing the card launches
+  `mgtvapp://vod/player?partId=&clipId=<pid>&…` in `com.starcor.mango`; the
+  bridge's VIEW activity reads `clipId` and opens Torrbaby. On Android 11 the
+  bridge needs a `<queries>` entry for Torrbaby's package to find it.
+- The card shows a small Mango TV badge. Installing the real Mango TV app would
+  replace the bridge.
+- Test APK source: the session scratchpad `mangoshim/` (not yet a project).
