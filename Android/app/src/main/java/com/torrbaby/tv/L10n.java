@@ -78,6 +78,7 @@ final class L10n {
     IDS.put("Audio", R.string.ui_acdac205f5e2);
     IDS.put("Automatic", R.string.ui_ac9041e76816);
     IDS.put("Automatic Episode Downloader", R.string.ui_0ddea6dade5e);
+    IDS.put("Automatic download limit (GB)", R.string.ui_eebe284845b2);
     IDS.put("Automatic processing paused", R.string.ui_dd3f305b9367);
     IDS.put("Automatic subtitles paused", R.string.ui_6f3eae86037f);
     IDS.put("Automation", R.string.ui_a15fde5173db);
@@ -250,6 +251,7 @@ final class L10n {
     IDS.put("Episode", R.string.ui_8669aa56ebc3);
     IDS.put("Episode order", R.string.ui_4d9e959a49a6);
     IDS.put("Episodes", R.string.ui_49d641ba8893);
+    IDS.put("Episodes to keep per show", R.string.ui_1300ab995b0b);
     IDS.put("Estimating…", R.string.ui_e8642ee5ad7e);
     IDS.put("Exit", R.string.ui_f83b6fe3aebf);
     IDS.put("Explore", R.string.ui_b965ae66fcc4);
@@ -302,6 +304,7 @@ final class L10n {
     IDS.put("Import connection file…", R.string.ui_8ed49e014b77);
     IDS.put("In Junk · delete after seeding", R.string.ui_9ea8b1168411);
     IDS.put("In Junk · finishing seeding", R.string.ui_1590b4aa625e);
+    IDS.put("In use", R.string.ui_20716e9262a7);
     IDS.put("In your library", R.string.ui_00cc7207a45e);
     IDS.put("Incompatible movie or TV show", R.string.ui_32c0f7a837e9);
     IDS.put("Individual torrent limits take precedence.", R.string.ui_fc2d046feac3);
@@ -312,6 +315,7 @@ final class L10n {
     IDS.put("Keep file extensions and episode numbers.", R.string.ui_44d9c7e94283);
     IDS.put("Keep files on server", R.string.ui_0ecad4174400);
     IDS.put("Keep free (GB)", R.string.ui_ed7e27d64487);
+    IDS.put("Keep new episodes on this device", R.string.ui_9583e0e2e974);
     IDS.put("Keep this release", R.string.ui_d2c87390fe7a);
     IDS.put("Keeping best release", R.string.ui_d9e4b6487684);
     IDS.put("Language", R.string.ui_89b86ab0e66f);
@@ -376,6 +380,8 @@ final class L10n {
     IDS.put("New Tab", R.string.ui_bbeec6fc8b45);
     IDS.put("New Tab (⌘T)", R.string.ui_dfdde1f46ede);
     IDS.put("New code", R.string.ui_6499c7afe865);
+    IDS.put("New episode downloaded", R.string.ui_008dfac2c12f);
+    IDS.put("New episodes", R.string.ui_5478cfd5b4d6);
     IDS.put("New name", R.string.ui_9e627c7b1aec);
     IDS.put("Next Episode", R.string.ui_834ae0b1f228);
     IDS.put("Next episode", R.string.ui_882f1a46548e);
@@ -596,6 +602,7 @@ final class L10n {
     IDS.put("Show download and upload rates", R.string.ui_4589080623ff);
     IDS.put("Show torrent", R.string.ui_3437b8727d9f);
     IDS.put("Showing the first 150 cast entries.", R.string.ui_56b7696a10e7);
+    IDS.put("Shows you turn this on for keep their next unwatched episodes on this device. They arrive by themselves, a few times a day and overnight while charging, and only on Wi‑Fi.", R.string.ui_b1c78091f5f2);
     IDS.put("Signed in", R.string.ui_1b6c524ffb71);
     IDS.put("Signed out — enter a new login cookie", R.string.ui_9fc1773eba4d);
     IDS.put("Single episodes", R.string.ui_c150b0bcf05d);

@@ -827,3 +827,11 @@ Copy name	复制名称
 %d DOWNLOADS	%d 个下载
 Replaced with better: %d	已替换为更好的版本：%d
 Already had as good: %d	已有同样好的版本：%d
+Keep new episodes on this device	在此设备上保留新剧集
+Episodes to keep per show	每部剧保留的集数
+Automatic download limit (GB)	自动下载上限（GB）
+In use	已使用
+New episodes	新剧集
+Shows you turn this on for keep their next unwatched episodes on this device. They arrive by themselves, a few times a day and overnight while charging, and only on Wi‑Fi.	开启此功能的剧集会在此设备上保留接下来未观看的几集。它们会自动下载：每天数次，以及夜间充电时，且仅使用 Wi‑Fi。
+New episode downloaded	新剧集已下载
+New episodes: %@ of %@	新剧集：%@ / %@

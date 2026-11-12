@@ -14454,6 +14454,142 @@
           }
         }
       }
+    },
+    "Keep new episodes on this device": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep new episodes on this device"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在此设备上保留新剧集"
+          }
+        }
+      }
+    },
+    "Episodes to keep per show": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Episodes to keep per show"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每部剧保留的集数"
+          }
+        }
+      }
+    },
+    "Automatic download limit (GB)": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatic download limit (GB)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动下载上限（GB）"
+          }
+        }
+      }
+    },
+    "In use": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In use"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已使用"
+          }
+        }
+      }
+    },
+    "New episodes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New episodes"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新剧集"
+          }
+        }
+      }
+    },
+    "Shows you turn this on for keep their next unwatched episodes on this device. They arrive by themselves, a few times a day and overnight while charging, and only on Wi‑Fi.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shows you turn this on for keep their next unwatched episodes on this device. They arrive by themselves, a few times a day and overnight while charging, and only on Wi‑Fi."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "开启此功能的剧集会在此设备上保留接下来未观看的几集。它们会自动下载：每天数次，以及夜间充电时，且仅使用 Wi‑Fi。"
+          }
+        }
+      }
+    },
+    "New episode downloaded": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New episode downloaded"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新剧集已下载"
+          }
+        }
+      }
+    },
+    "New episodes: %@ of %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New episodes: %@ of %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新剧集：%@ / %@"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

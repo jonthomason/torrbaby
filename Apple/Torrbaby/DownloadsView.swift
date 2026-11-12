@@ -31,6 +31,13 @@ struct DownloadsView: View {
                     Button { settings = true } label: { Image(systemName: "slider.horizontal.3") }.help("Download settings").accessibilityLabel("Download settings")
                 }
                 #if os(iOS)
+                // What the episodes fetched by themselves take, against their own limit.
+                if !AutoDownload.followed.isEmpty {
+                    Label(L10n.format("New episodes: %@ of %@", bytes(AutoDownload.usedBytes), bytes(AutoDownload.limitBytes)), systemImage: "arrow.down.circle")
+                        .font(.subheadline.monospacedDigit()).foregroundStyle(Theme.muted)
+                }
+                #endif
+                #if os(iOS)
                 if queue.waitingForWiFi && queue.items.contains(where: { $0.state == .queued || $0.state == .transferring }) {
                     HStack {
                         Label("Downloads are waiting for Wi-Fi", systemImage: "wifi.exclamationmark").font(.subheadline)
@@ -253,6 +260,7 @@ struct DownloadPolicySettings: View {
                 Toggle("Delete after playback", isOn: Binding(get: { queue.policy.deleteAfterPlayback }, set: { value in update { $0.deleteAfterPlayback = value } }))
             }
             #if os(iOS)
+            AutoDownloadSettings()
             SwiftUI.Section {
                 if queue.meteredAllowed, let until = queue.policy.meteredUntil {
                     LabeledContent(L10n.text("Cellular downloads allowed until"), value: Date(timeIntervalSince1970: until).formatted(date: .omitted, time: .shortened))

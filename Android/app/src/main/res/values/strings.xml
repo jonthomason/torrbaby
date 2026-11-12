@@ -67,6 +67,7 @@
     <string name="ui_acdac205f5e2" formatted="false">Audio</string>
     <string name="ui_ac9041e76816" formatted="false">Automatic</string>
     <string name="ui_0ddea6dade5e" formatted="false">Automatic Episode Downloader</string>
+    <string name="ui_eebe284845b2" formatted="false">Automatic download limit (GB)</string>
     <string name="ui_dd3f305b9367" formatted="false">Automatic processing paused</string>
     <string name="ui_6f3eae86037f" formatted="false">Automatic subtitles paused</string>
     <string name="ui_a15fde5173db" formatted="false">Automation</string>
@@ -239,6 +240,7 @@
     <string name="ui_8669aa56ebc3" formatted="false">Episode</string>
     <string name="ui_4d9e959a49a6" formatted="false">Episode order</string>
     <string name="ui_49d641ba8893" formatted="false">Episodes</string>
+    <string name="ui_1300ab995b0b" formatted="false">Episodes to keep per show</string>
     <string name="ui_e8642ee5ad7e" formatted="false">Estimating…</string>
     <string name="ui_f83b6fe3aebf" formatted="false">Exit</string>
     <string name="ui_b965ae66fcc4" formatted="false">Explore</string>
@@ -291,6 +293,7 @@
     <string name="ui_8ed49e014b77" formatted="false">Import connection file…</string>
     <string name="ui_9ea8b1168411" formatted="false">In Junk · delete after seeding</string>
     <string name="ui_1590b4aa625e" formatted="false">In Junk · finishing seeding</string>
+    <string name="ui_20716e9262a7" formatted="false">In use</string>
     <string name="ui_00cc7207a45e" formatted="false">In your library</string>
     <string name="ui_32c0f7a837e9" formatted="false">Incompatible movie or TV show</string>
     <string name="ui_fc2d046feac3" formatted="false">Individual torrent limits take precedence.</string>
@@ -301,6 +304,7 @@
     <string name="ui_44d9c7e94283" formatted="false">Keep file extensions and episode numbers.</string>
     <string name="ui_0ecad4174400" formatted="false">Keep files on server</string>
     <string name="ui_ed7e27d64487" formatted="false">Keep free (GB)</string>
+    <string name="ui_9583e0e2e974" formatted="false">Keep new episodes on this device</string>
     <string name="ui_d2c87390fe7a" formatted="false">Keep this release</string>
     <string name="ui_d9e4b6487684" formatted="false">Keeping best release</string>
     <string name="ui_89b86ab0e66f" formatted="false">Language</string>
@@ -365,6 +369,8 @@
     <string name="ui_bbeec6fc8b45" formatted="false">New Tab</string>
     <string name="ui_dfdde1f46ede" formatted="false">New Tab (⌘T)</string>
     <string name="ui_6499c7afe865" formatted="false">New code</string>
+    <string name="ui_008dfac2c12f" formatted="false">New episode downloaded</string>
+    <string name="ui_5478cfd5b4d6" formatted="false">New episodes</string>
     <string name="ui_9e627c7b1aec" formatted="false">New name</string>
     <string name="ui_834ae0b1f228" formatted="false">Next Episode</string>
     <string name="ui_882f1a46548e" formatted="false">Next episode</string>
@@ -585,6 +591,7 @@
     <string name="ui_4589080623ff" formatted="false">Show download and upload rates</string>
     <string name="ui_3437b8727d9f" formatted="false">Show torrent</string>
     <string name="ui_56b7696a10e7" formatted="false">Showing the first 150 cast entries.</string>
+    <string name="ui_b1c78091f5f2" formatted="false">Shows you turn this on for keep their next unwatched episodes on this device. They arrive by themselves, a few times a day and overnight while charging, and only on Wi‑Fi.</string>
     <string name="ui_1b6c524ffb71" formatted="false">Signed in</string>
     <string name="ui_9fc1773eba4d" formatted="false">Signed out — enter a new login cookie</string>
     <string name="ui_c150b0bcf05d" formatted="false">Single episodes</string>

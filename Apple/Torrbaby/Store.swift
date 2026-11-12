@@ -339,6 +339,7 @@ final class Store: ObservableObject {
         DownloadQueue.shared.attach(self)
         #endif
         #if os(iOS)
+        AutoDownload.store = self
         UNUserNotificationCenter.current().delegate = NotificationPresenter.shared
         #endif
         #if os(macOS)
@@ -558,6 +559,9 @@ final class Store: ObservableObject {
             await flushProgress()
             #if !os(tvOS)
             await DownloadQueue.shared.syncProgress()
+            #if os(iOS)
+            await AutoDownload.run(store: self)
+            #endif
             #endif
             let receivedHistory: [PlaybackHistory] = try await request("GET", "/v1/playback")
             guard identity == profileIdentity else { return }
