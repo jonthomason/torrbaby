@@ -22,7 +22,9 @@ const BROWSER: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebK
 const DESKTOP: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch";
 /// Folder in the member's drive that holds files on their way to the library.
 const STAGING: &str = "Torrbaby";
-const CONNECTIONS: u64 = 8;
+/// Pieces fetched at once. The drive's own client keeps to a few; many long-running
+/// connections are what it throttles.
+const CONNECTIONS: u64 = 4;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct JobFile {
@@ -893,76 +895,85 @@ impl Cloud {
         let made = self.call("/file", &[], Some(json!({"pdir_fid": parent, "file_name": name, "dir_path": "", "dir_init_lock": false})), Some(cookie), false).await?;
         made["data"]["fid"].as_str().map(str::to_owned).context("Quark did not create the folder")
     }
-    /// Fetch one file over several connections, each writing its own stretch straight
-    /// into the file at its place: nothing is stitched together afterwards. The file is
-    /// kept under a working name until it is whole. How far each stretch has come is
-    /// noted beside it every few seconds, after the data is safely on disk, so a restart
-    /// or a retry carries on from there.
+    /// Fetch one file the way the drive's own desktop client does: in pieces of the size
+    /// the drive names (about 20 MB), a few at a time, each written straight into the
+    /// file at its place. Asking for long open-ended stretches instead is throttled by
+    /// the drive to a crawl after a while. The file is kept under a working name until it
+    /// is whole; which pieces are had is noted beside it every few seconds, after the
+    /// data is safely on disk, so a restart or a retry carries on from there.
     async fn fetch(&self, cookie: &str, fid: &str, size: u64, destination: &Path) -> Result<()> {
         use tokio::io::{AsyncSeekExt, AsyncWriteExt};
         let link = self.call("/file/download", &[], Some(json!({"fids": [fid]})), Some(cookie), true).await?;
         let url = link["data"][0]["download_url"].as_str().context("Quark gave no download link")?.to_owned();
+        let piece = link["data"][0]["range_size"].as_u64().filter(|n| (1 << 20..=1 << 30).contains(n)).unwrap_or(20_485_760);
         let parent = destination.parent().context("Invalid destination")?;
         tokio::fs::create_dir_all(parent).await?;
-        // Pieces left by the earlier way of downloading are of no use to this one.
-        for i in 0..CONNECTIONS { let _ = tokio::fs::remove_file(format!("{}.part{i:02}", destination.display())).await; }
+        // Pieces left by the earlier ways of downloading are of no use to this one.
+        for i in 0..8u64 { let _ = tokio::fs::remove_file(format!("{}.part{i:02}", destination.display())).await; }
         let _ = tokio::fs::remove_file(format!("{}.joining", destination.display())).await;
         let (working, notes) = (PathBuf::from(format!("{}.partial", destination.display())), PathBuf::from(format!("{}.progress", destination.display())));
-        let step = size.div_ceil(CONNECTIONS).max(1);
-        let ranges: Vec<(usize, u64, u64)> = (0..CONNECTIONS).map(|i| (i as usize, i * step, ((i + 1) * step).min(size))).filter(|(_, start, end)| start < end).collect();
-        // What an earlier attempt noted, if it was for a file of this size and the working file is still there.
-        let known: Vec<u64> = match (tokio::fs::read(&notes).await.ok().and_then(|raw| serde_json::from_slice::<Value>(&raw).ok()), tokio::fs::metadata(&working).await) {
-            (Some(noted), Ok(file)) if noted["size"].as_u64() == Some(size) && file.len() == size =>
-                ranges.iter().map(|&(i, start, end)| noted["done"][i].as_u64().unwrap_or(0).min(end - start)).collect(),
-            _ => vec![0; ranges.len()],
+        let count = size.div_ceil(piece).max(1);
+        let span = |index: u64| (index * piece, ((index + 1) * piece).min(size));
+        // What an earlier attempt noted, if it was for this file cut the same way and the working file is still there.
+        let had: std::collections::BTreeSet<u64> = match (tokio::fs::read(&notes).await.ok().and_then(|raw| serde_json::from_slice::<Value>(&raw).ok()), tokio::fs::metadata(&working).await) {
+            (Some(noted), Ok(file)) if noted["size"].as_u64() == Some(size) && noted["piece"].as_u64() == Some(piece) && file.len() == size =>
+                noted["pieces"].as_array().into_iter().flatten().filter_map(Value::as_u64).filter(|index| *index < count).collect(),
+            _ => Default::default(),
         };
-        if known.iter().all(|done| *done == 0) {
+        if had.is_empty() {
             let file = tokio::fs::File::create(&working).await?;
             file.set_len(size).await?;
         }
-        let done: Arc<Vec<AtomicU64>> = Arc::new(known.iter().map(|have| AtomicU64::new(*have)).collect());
-        let total = || done.iter().map(|d| d.load(Ordering::Relaxed)).sum::<u64>();
-        self.progress.store(total(), Ordering::Relaxed);
-        let pieces = ranges.iter().map(|&(i, start, end)| {
-            let (url, working, done) = (url.clone(), working.clone(), done.clone());
+        let wanted: Vec<u64> = (0..count).filter(|index| !had.contains(index)).collect();
+        let done = Arc::new(Mutex::new(had));
+        let bytes = |pieces: &std::collections::BTreeSet<u64>| pieces.iter().map(|index| { let (start, end) = span(*index); end - start }).sum::<u64>();
+        self.progress.store(done.lock().map(|d| bytes(&d)).unwrap_or(0), Ordering::Relaxed);
+        let next = AtomicU64::new(0);
+        let workers = (0..CONNECTIONS.min(wanted.len() as u64)).map(|_| {
+            let (url, working, done, wanted, next) = (url.clone(), working.clone(), done.clone(), &wanted, &next);
             async move {
-                for _attempt in 0..6u32 {
-                    let have = done[i].load(Ordering::Relaxed);
-                    if have == end - start { return Ok(()); }
-                    let sent = self.http.get(&url).header("User-Agent", DESKTOP).header("Referer", "https://pan.quark.cn/").header("Cookie", cookie)
-                        .header("Range", format!("bytes={}-{}", start + have, end - 1)).send().await;
-                    let Ok(mut response) = sent else { tokio::time::sleep(Duration::from_secs(3)).await; continue };
-                    if !response.status().is_success() { tokio::time::sleep(Duration::from_secs(3)).await; continue; }
-                    let mut file = tokio::fs::OpenOptions::new().write(true).open(&working).await?;
-                    file.seek(std::io::SeekFrom::Start(start + have)).await?;
-                    let mut room = end - start - have;
-                    while let Ok(Some(chunk)) = response.chunk().await {
-                        let take = (chunk.len() as u64).min(room) as usize;
-                        file.write_all(&chunk[..take]).await?;
-                        room -= take as u64;
-                        done[i].fetch_add(take as u64, Ordering::Relaxed);
-                        self.progress.fetch_add(take as u64, Ordering::Relaxed);
-                        if room == 0 { break; }
+                let mut file = tokio::fs::OpenOptions::new().write(true).open(&working).await?;
+                while let Some(index) = wanted.get(next.fetch_add(1, Ordering::Relaxed) as usize).copied() {
+                    let (start, end) = span(index);
+                    let mut whole = false;
+                    for _attempt in 0..6u32 {
+                        let sent = self.http.get(&url).header("User-Agent", DESKTOP).header("Referer", "https://pan.quark.cn/").header("Cookie", cookie)
+                            .header("Range", format!("bytes={start}-{}", end - 1)).send().await;
+                        let Ok(mut response) = sent else { tokio::time::sleep(Duration::from_secs(3)).await; continue };
+                        if !response.status().is_success() { tokio::time::sleep(Duration::from_secs(3)).await; continue; }
+                        file.seek(std::io::SeekFrom::Start(start)).await?;
+                        let mut got = 0u64;
+                        while let Ok(Some(chunk)) = response.chunk().await {
+                            let take = (chunk.len() as u64).min(end - start - got) as usize;
+                            file.write_all(&chunk[..take]).await?;
+                            got += take as u64;
+                            self.progress.fetch_add(take as u64, Ordering::Relaxed);
+                            if got == end - start { break; }
+                        }
+                        file.flush().await?;
+                        if got == end - start { whole = true; break; }
+                        // A piece cut short is fetched again from its start.
+                        self.progress.fetch_sub(got, Ordering::Relaxed);
+                        tokio::time::sleep(Duration::from_secs(2)).await;
                     }
-                    file.flush().await?;
+                    ensure!(whole, "The download kept stopping");
+                    if let Ok(mut done) = done.lock() { done.insert(index); }
                 }
-                ensure!(done[i].load(Ordering::Relaxed) == end - start, "The download kept stopping");
                 Ok(())
             }
         });
-        // Beside the connections, one note-taker: every several seconds it has the file
-        // put safely on disk, then records how far each stretch had come before that.
-        // One sync for the whole file, not one per connection, so the disk is not kept busy syncing.
+        // Beside the connections, one note-taker: every several seconds it lists the pieces
+        // had, has the file put safely on disk, and only then records that list.
         let noting = async {
             let Ok(file) = tokio::fs::OpenOptions::new().write(true).open(&working).await else { return std::future::pending::<()>().await };
             loop {
                 tokio::time::sleep(Duration::from_secs(10)).await;
-                let reached: Vec<u64> = done.iter().map(|d| d.load(Ordering::Relaxed)).collect();
-                if file.sync_data().await.is_ok() { let _ = tokio::fs::write(&notes, serde_json::to_vec(&json!({"size": size, "done": reached})).unwrap_or_default()).await; }
+                let reached: Vec<u64> = done.lock().map(|d| d.iter().copied().collect()).unwrap_or_default();
+                if file.sync_data().await.is_ok() { let _ = tokio::fs::write(&notes, serde_json::to_vec(&json!({"size": size, "piece": piece, "pieces": reached})).unwrap_or_default()).await; }
             }
         };
-        tokio::select! { fetched = futures_util::future::try_join_all(pieces) => { fetched?; }, _ = noting => {} }
-        ensure!(tokio::fs::metadata(&working).await?.len() == size && total() == size, "The downloaded file is the wrong size");
+        tokio::select! { fetched = futures_util::future::try_join_all(workers) => { fetched?; }, _ = noting => {} }
+        ensure!(tokio::fs::metadata(&working).await?.len() == size && done.lock().is_ok_and(|d| d.len() as u64 == count), "The downloaded file is incomplete");
         tokio::fs::rename(&working, destination).await?;
         let _ = tokio::fs::remove_file(&notes).await;
         Ok(())
