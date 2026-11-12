@@ -177,6 +177,7 @@
     <string name="ui_20aeeeb840f5" formatted="false">Download interrupted. Tap resume.</string>
     <string name="ui_c6cf3bcf805a" formatted="false">Download limit (GB)</string>
     <string name="ui_f3c236f285e4" formatted="false">Download paused: not enough available storage.</string>
+    <string name="ui_cfa51b7aec7b" formatted="false">Download pieces do not line up.</string>
     <string name="ui_9c8fe84bfbc4" formatted="false">Download progress</string>
     <string name="ui_4b3aafa26849" formatted="false">Download settings</string>
     <string name="ui_2d4ee79253e4" formatted="false">Download storage</string>
@@ -571,6 +572,7 @@
     <string name="ui_1c7a30e57131" formatted="false">Text color</string>
     <string name="ui_83e097038017" formatted="false">Text opacity</string>
     <string name="ui_17640422b43a" formatted="false">The connection to Transmission was interrupted. Please try again.</string>
+    <string name="ui_ceaf21e9d02f" formatted="false">The download is incomplete.</string>
     <string name="ui_9a212ea4c5bb" formatted="false">The entire package will be hidden from everyone, continue seeding, and be permanently deleted when seeding finishes.</string>
     <string name="ui_fa9822b1acbe" formatted="false">The entire package will be hidden now, continue seeding, and be permanently deleted when seeding finishes.</string>
     <string name="ui_b540d8e8df09" formatted="false">The file changed. Remove this download and add it again.</string>

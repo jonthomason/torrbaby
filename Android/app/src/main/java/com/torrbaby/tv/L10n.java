@@ -188,6 +188,7 @@ final class L10n {
     IDS.put("Download interrupted. Tap resume.", R.string.ui_20aeeeb840f5);
     IDS.put("Download limit (GB)", R.string.ui_c6cf3bcf805a);
     IDS.put("Download paused: not enough available storage.", R.string.ui_f3c236f285e4);
+    IDS.put("Download pieces do not line up.", R.string.ui_cfa51b7aec7b);
     IDS.put("Download progress", R.string.ui_9c8fe84bfbc4);
     IDS.put("Download settings", R.string.ui_4b3aafa26849);
     IDS.put("Download storage", R.string.ui_2d4ee79253e4);
@@ -582,6 +583,7 @@ final class L10n {
     IDS.put("Text color", R.string.ui_1c7a30e57131);
     IDS.put("Text opacity", R.string.ui_83e097038017);
     IDS.put("The connection to Transmission was interrupted. Please try again.", R.string.ui_17640422b43a);
+    IDS.put("The download is incomplete.", R.string.ui_ceaf21e9d02f);
     IDS.put("The entire package will be hidden from everyone, continue seeding, and be permanently deleted when seeding finishes.", R.string.ui_9a212ea4c5bb);
     IDS.put("The entire package will be hidden now, continue seeding, and be permanently deleted when seeding finishes.", R.string.ui_fa9822b1acbe);
     IDS.put("The file changed. Remove this download and add it again.", R.string.ui_b540d8e8df09);

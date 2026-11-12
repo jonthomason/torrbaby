@@ -12535,6 +12535,40 @@
           }
         }
       }
+    },
+    "Download pieces do not line up.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download pieces do not line up."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下载的分段无法衔接。"
+          }
+        }
+      }
+    },
+    "The download is incomplete.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The download is incomplete."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下载不完整。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
