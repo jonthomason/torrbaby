@@ -53,7 +53,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     func allowMeteredForAWhile() {
         guard var next = storage?.policy else { return }
         next.meteredUntil = Date().addingTimeInterval(Self.meteredAllowance).timeIntervalSince1970
-        do { try storage?.setPolicy(next); reload() } catch { self.error = error.localizedDescription; return }
+        do { try storage?.setPolicy(next); reload() } catch { self.report(error); return }
         for (id, task) in tasks where (task.originalRequest?.allowsCellularAccess ?? true) == false { pause(id, requeue: true) }
         scheduleMeteredExpiry(); connectionChanged()
     }
@@ -63,7 +63,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         meteredExpiry?.invalidate(); meteredExpiry = nil
         guard var next = storage?.policy, next.meteredUntil != nil else { return }
         next.meteredUntil = nil
-        do { try storage?.setPolicy(next); reload() } catch { self.error = error.localizedDescription; return }
+        do { try storage?.setPolicy(next); reload() } catch { self.report(error); return }
         connectionChanged()
     }
     private func scheduleMeteredExpiry() {
@@ -86,7 +86,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         staging = root.appendingPathComponent("partial", isDirectory: true)
         super.init()
         do { storage = try DownloadStorage(root: root); reload() }
-        catch { self.error = error.localizedDescription }
+        catch { self.report(error) }
         let config = configuration ?? URLSessionConfiguration.background(withIdentifier: Self.sessionID)
         config.isDiscretionary = false
         config.sessionSendsLaunchEvents = true
@@ -146,7 +146,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     func reload() {
         guard let storage else { return }
         items = storage.items.map { $0.forProfile(store?.activeProfile?.id ?? "") }; policy = storage.policy
-        do { used = try storage.accountedBytes(received: received) } catch { self.error = error.localizedDescription }
+        do { used = try storage.accountedBytes(received: received) } catch { self.report(error) }
     }
     func setPolicy(_ next: DownloadStorage.Policy) {
         do {
@@ -154,7 +154,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             // Re-admit active requests under the new limits and network policy; a plain pause
             // left the transfer stopped until it was tapped again.
             for id in Array(tasks.keys) { pause(id, requeue: true) }
-        } catch { self.error = error.localizedDescription }
+        } catch { self.report(error) }
     }
     func enqueue(_ asset: LibraryAsset, title: LibraryTitle) async {
         guard let store, store.connected, let storage else { return }
@@ -178,7 +178,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
                                        watched: asset.watched, recordedAt: Date(timeIntervalSince1970: asset.lastPlayed))
             reload(); pump()
             await cachePoster(for: item)
-        } catch { self.error = error.localizedDescription }
+        } catch { self.report(error) }
     }
     func artworkURL(_ id: UUID) -> URL? {
         guard let storage, let key = items.first(where: { $0.id == id })?.posterKey else { return nil }
@@ -209,9 +209,24 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             reload()
         } catch { /* Artwork is optional; the media transfer continues independently. */ }
     }
+    /// A request dropped because the route or profile changed under it is not a failure
+    /// to show: the queue re-issues it. Only real errors reach the Downloads page.
+    private func report(_ error: Error) {
+        if error is CancellationError { return }
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled { return }
+        self.error = error.localizedDescription
+    }
+    /// Transfers at once. Several small files finish sooner together, and one slow
+    /// file no longer holds the rest; more than this mostly splits the same bandwidth.
+    static let simultaneous = 3
     private func pump() {
-        guard restored, tasks.isEmpty, !waitingForWiFi, let store, store.connected, let storage else { return }
-        guard let item = items.first(where: { $0.state == .queued && $0.server == store.server }) else { return }
+        // Each start marks its item as transferring, so the next pass picks the next one.
+        for _ in 0..<Self.simultaneous { if !startNext() { return } }
+    }
+    private func startNext() -> Bool {
+        guard restored, tasks.count < Self.simultaneous, !waitingForWiFi, let store, store.connected, let storage else { return false }
+        guard let item = items.first(where: { $0.state == .queued && $0.server == store.server && tasks[$0.id] == nil }) else { return false }
         do {
             try storage.markTransferring(item.id)
             let suffix = item.virtualJob.map { "?virtual=" + $0 } ?? ""
@@ -238,16 +253,18 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             try context.write(to: storage.resumeContextURL(item.id), options: .atomic)
             task.taskDescription = item.id.uuidString
             tasks[item.id] = task; reload(); task.resume()
+            return true
         } catch {
             try? storage.pause(item.id, received: item.received, error: error.localizedDescription)
             reload()
+            return true
         }
     }
     func pause(_ id: UUID, requeue: Bool = false) {
         if requeue { rerouting.insert(id) } else { rerouting.remove(id) }
         guard let storage, let item = items.first(where: { $0.id == id }) else { return }
         do { try storage.pause(id, received: received[id] ?? item.received) }
-        catch { self.error = error.localizedDescription; return }
+        catch { self.report(error); return }
         reload()
         guard let task = tasks[id] else {
             if rerouting.remove(id) != nil { try? storage.queue(id); reload(); pump() }
@@ -258,7 +275,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
                 guard let self, let storage = self.storage else { return }
                 if let data, self.items.first(where: { $0.id == id })?.state == .paused {
                     do { try data.write(to: storage.resumeURL(id), options: .atomic) }
-                    catch { self.error = error.localizedDescription }
+                    catch { self.report(error) }
                 }
                 if self.tasks[id] === task { self.tasks.removeValue(forKey: id) }
                 if self.rerouting.remove(id) != nil { try? storage.queue(id) }
@@ -269,19 +286,19 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     func resume(_ id: UUID) {
         guard tasks[id] == nil else { return }
         do { try storage?.queue(id); reload(); pump() }
-        catch { self.error = error.localizedDescription }
+        catch { self.report(error) }
     }
     func remove(_ id: UUID) {
         rerouting.remove(id)
         guard let storage else { return }
         // Persist removal before cancelling so late delegate callbacks cannot restore it.
         do { try storage.remove(id) }
-        catch { self.error = error.localizedDescription; return }
+        catch { self.report(error); return }
         tasks[id]?.cancel(); tasks.removeValue(forKey: id); received.removeValue(forKey: id)
         reload(); pump()
     }
     func pin(_ id: UUID, keep: Bool) {
-        do { try storage?.pin(id, keep); reload() } catch { self.error = error.localizedDescription }
+        do { try storage?.pin(id, keep); reload() } catch { self.report(error) }
     }
     func playback(_ id: UUID) -> Playback? {
         guard let storage, let item = items.first(where: { $0.id == id && $0.state == .ready }),
@@ -381,7 +398,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             reload()
             Task { await syncProgress() }
             return true
-        } catch { self.error = error.localizedDescription; return false }
+        } catch { self.report(error); return false }
     }
     /// Refresh downloaded copies before the device leaves the network, including
     /// episodes never opened locally. Timestamp checks preserve newer offline work.
@@ -399,7 +416,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
                                            watched: asset.watched, recordedAt: Date(timeIntervalSince1970: asset.lastPlayed))
             }
             reload()
-        } catch { self.error = error.localizedDescription }
+        } catch { self.report(error) }
     }
     func syncProgress() async {
         guard !syncingProgress, let store, store.configured, store.connected, let storage else { return }
@@ -437,7 +454,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         // Shared files remain until an explicit removal when several people use this library.
         guard let store, store.profiles.count == 1, let profile = store.activeProfile?.id else { return }
         do { try storage?.removeAfterPlayback(id, profile: profile); reload(); pump() }
-        catch { self.error = error.localizedDescription }
+        catch { self.report(error) }
     }
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                 didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
@@ -454,7 +471,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
                     if try storage.availableBytes() < self.policy.freeSpaceBytes || !self.policy.permits(used: self.used) {
                         self.pause(id)
                     }
-                } catch { self.error = error.localizedDescription; self.pause(id) }
+                } catch { self.report(error); self.pause(id) }
             }
         }
     }
