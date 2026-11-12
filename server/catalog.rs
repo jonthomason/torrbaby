@@ -343,6 +343,10 @@ fn extra_name(asset: &Value) -> String {
     if let Some(name) = asset["display_name"].as_str().filter(|n| !n.trim().is_empty()) {
         return name.to_owned();
     }
+    // A variety show's bonus video, under the label from its file name ("第3期纯享上集").
+    if let Some(label) = asset["label"].as_str().filter(|n| !n.trim().is_empty()) {
+        return label.to_owned();
+    }
     static NUMBER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(r"(?i)^.*?\bs\d{1,2}e\d{1,3}(?:-?e\d{1,3})*\s*-\s*").expect("valid regex")
     });

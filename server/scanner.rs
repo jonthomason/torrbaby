@@ -51,6 +51,76 @@ pub fn resolve_episode_title(asset: &mut Value, entity: &Value) {
     }
 }
 
+static ISSUE_PART: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"第\s*(\d{1,3})\s*期\s*[(（]\s*([一二三四五六七八九十]|\d{1,2})\s*[)）]").expect("valid regex")
+});
+static ISSUE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"第\s*\d{1,3}\s*期").expect("valid regex"));
+static DATED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:19|20)\d{2}[.\-_]\d{1,2}[.\-_]\d{1,2}").expect("valid regex"));
+static BONUS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"纯享|高分舞台|衍生|抢先|花絮|加更|特辑|合集|先导|通告|彩蛋|幕后|预告").expect("valid regex")
+});
+
+/// Whether a file name carries a variety show's part or bonus label ("第3期(二)", "第3期纯享上集",
+/// "2026.07.21-通告日"). Such a label must stay in the file's name: it is all that tells the
+/// part or the bonus video apart.
+pub fn variety_labelled(stem: &str) -> bool {
+    ISSUE_PART.is_match(stem) || ((ISSUE.is_match(stem) || DATED.is_match(stem)) && BONUS.is_match(stem))
+}
+
+/// Variety shows publish each weekly issue ("第3期") in parts, "第3期(一)" to "第3期(四)", which
+/// TMDB numbers one after another through the season ("Episode 3 (Part 1)" is S03E10). Around
+/// them come bonus videos: performance cuts, high-score stages, spin-offs, previews ("纯享",
+/// "高分舞台", "衍生", "超长抢先", "先导片"). A part keeps its issue and part number for
+/// `resolve_issue_part`; a bonus video is a special, listed with the extras under its label.
+pub fn variety(asset: &mut Value, path: &Path, roots: &[&str]) {
+    let Some(object) = asset.as_object_mut() else { return };
+    for key in ["issue", "issue_part", "label"] { object.remove(key); }
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { return };
+    if let Some(found) = ISSUE_PART.captures(stem) {
+        let numeral = &found[2];
+        let part = numeral.parse::<u64>().ok()
+            .or_else(|| "一二三四五六七八九十".chars().position(|c| numeral.starts_with(c)).map(|i| i as u64 + 1));
+        if let (Ok(issue), Some(part)) = (found[1].parse::<u64>(), part) {
+            object.insert("issue".into(), json!(issue));
+            object.insert("issue_part".into(), json!(part));
+        }
+        return;
+    }
+    if !variety_labelled(stem) { return; }
+    // The show's folder names the show; a library root does not.
+    let folder = path.parent().filter(|parent| !roots.iter().any(|root| *parent == Path::new(root)))
+        .and_then(|parent| parent.file_name()).and_then(|name| name.to_str());
+    static NUMBERED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^.*?\bs\d{1,2}e\d{1,3}\s*-\s*").expect("valid regex"));
+    let mut label = NUMBERED.replace(stem, "").into_owned();
+    if let Some(rest) = folder.and_then(|folder| label.strip_prefix(folder)).map(|rest| rest.trim_start_matches([' ', '-'])) {
+        label = rest.to_owned();
+    }
+    let label = label.trim_matches([' ', '-']).to_owned();
+    if !EPISODE.is_match(stem) {
+        // Without an episode number the name alone would not find the show.
+        let Some(folder) = folder else { return };
+        object.insert("series_name".into(), json!(folder));
+    }
+    object.insert("season".into(), json!(0));
+    object.insert("episode".into(), Value::Null);
+    if !label.is_empty() { object.insert("label".into(), json!(label)); }
+}
+
+/// The provider's episode number for a variety show's part ("第3期(二)"), when the provider
+/// names the season's episodes by issue and part ("Episode 3 (Part 2)"). Otherwise the
+/// file's own number stands.
+pub fn resolve_issue_part(asset: &mut Value, entity: &Value) {
+    if entity["kind"] != "tv" { return; }
+    let (Some(issue), Some(part), Some(season)) = (asset["issue"].as_u64(), asset["issue_part"].as_u64(), asset["season"].as_u64()) else { return };
+    static TITLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^episode\s+(\d+)\s*\(\s*part\s*(\d+)\s*\)$").expect("valid regex"));
+    let found: Vec<&Value> = entity["episodes"].as_array().into_iter().flatten()
+        .filter(|e| e["season"].as_u64() == Some(season))
+        .filter(|e| e["title"].as_str().and_then(|t| TITLE.captures(t.trim()))
+            .is_some_and(|c| c[1].parse::<u64>().ok() == Some(issue) && c[2].parse::<u64>().ok() == Some(part)))
+        .collect();
+    if let [episode] = found.as_slice() { asset["episode"] = episode["episode"].clone(); }
+}
+
 pub fn video(path: &Path) -> bool {
     path.extension()
         .and_then(|x| x.to_str())
@@ -353,6 +423,9 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
             asset["season"] = json!(season);
             asset["episode"] = json!(episode);
         }
+        if asset["confirmed"] != true {
+            variety(&mut asset, &path, &[&config.source, &config.movies, &config.tv]);
+        }
         let extra = path
             .components()
             .filter_map(|p| p.as_os_str().to_str())
@@ -404,6 +477,47 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn variety_parts_take_the_providers_numbers_and_bonus_videos_become_extras() {
+        let folder = "/TV/喜剧之王单口季";
+        let roots = ["/Downloads", "/Movies", "/TV"];
+        // TMDB: 第1期 has five parts (E01–E05), later issues four (第2期 is E06–E09).
+        let mut episodes: Vec<Value> = (1..=5).map(|part| json!({"season":3,"episode":part,"title":format!("Episode 1 (Part {part})")})).collect();
+        episodes.extend((1..=4).map(|part| json!({"season":3,"episode":5 + part,"title":format!("Episode 2 (Part {part})")})));
+        episodes.push(json!({"season":0,"episode":61,"title":"S3 Stage EP1-1"}));
+        let entity = json!({"kind":"tv","episodes":episodes});
+        let scan = |name: &str| {
+            let path = PathBuf::from(format!("{folder}/{name}"));
+            let mut asset = json!({});
+            if let Some(found) = EPISODE.captures(name) {
+                asset["season"] = json!(found[1].parse::<u64>().unwrap());
+                asset["episode"] = json!(found[2].parse::<u64>().unwrap());
+            }
+            variety(&mut asset, &path, &roots);
+            resolve_issue_part(&mut asset, &entity);
+            asset
+        };
+        let part = scan("喜剧之王单口季 - S03E01 - 2026.07.04-第1期(四).mp4");
+        assert_eq!((part["season"].clone(), part["episode"].clone()), (json!(3), json!(4)));
+        let part = scan("喜剧之王单口季 - S03E02 - 2026.07.11--第2期(三).mp4");
+        assert_eq!(part["episode"], json!(8));
+        assert_eq!(scan("喜剧之王单口季 - S03E02 - 2026.07.11-第2期（四）.mp4")["episode"], json!(9));
+        // An issue the provider has not split keeps the file's own number.
+        assert_eq!(scan("喜剧之王单口季 - S03E06 - 2026.08.07-第6期(一).mp4")["episode"], json!(6));
+        let bonus = scan("喜剧之王单口季 - S03E03 - 2026.07.17-第3期纯享上集.mp4");
+        assert_eq!((bonus["season"].clone(), bonus["episode"].clone()), (json!(0), Value::Null));
+        assert_eq!(bonus["label"], "2026.07.17-第3期纯享上集");
+        assert!(bonus["series_name"].is_null());
+        // A dated bonus video without a number is found through its show's folder.
+        let loose = scan("喜剧之王单口季 - 2026.07.21-通告日.mp4");
+        assert_eq!((loose["season"].clone(), loose["series_name"].clone(), loose["label"].clone()),
+            (json!(0), json!("喜剧之王单口季"), json!("2026.07.21-通告日")));
+        // Ordinary episodes and plain films are left alone.
+        let plain = scan("Friends - S01E02.mkv");
+        assert_eq!((plain["season"].clone(), plain["episode"].clone(), plain["label"].clone()), (json!(1), json!(2), Value::Null));
+        assert!(!variety_labelled("The Pilot (2020)"));
+        assert!(variety_labelled("2026.08.21-第8期(一)-4K.高码率"));
+    }
     #[test]
     fn pending_package_keeps_identity_and_matches_through_completion_and_move() {
         let root = std::env::temp_dir().join(format!("torrbaby-pending-{}",uuid::Uuid::new_v4()));

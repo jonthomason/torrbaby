@@ -936,7 +936,8 @@ impl Cloud {
             let leaf = visible(path.rsplit('/').next().unwrap_or(&path));
             let stem = clean(leaf.rsplit_once('.').map_or(leaf.as_str(), |(stem, _)| stem));
             let name = match number {
-                Some(number) if !film && shared.get(&(stated.unwrap_or(season), number)).copied().unwrap_or(0) > 1 =>
+                // A part or bonus video keeps its label even alone: "第7期(二)" is not 第7期.
+                Some(number) if !film && (shared.get(&(stated.unwrap_or(season), number)).copied().unwrap_or(0) > 1 || crate::scanner::variety_labelled(&stem)) =>
                     format!("{title} - S{:02}E{number:02} - {stem}.{extension}", stated.unwrap_or(season)),
                 Some(number) if !film => format!("{title} - S{:02}E{number:02}.{extension}", stated.unwrap_or(season)),
                 _ if film => format!("{title}.{extension}"),
