@@ -40,6 +40,7 @@
     <string name="ui_abe7e96d75c0" formatted="false">Add to trial</string>
     <string name="ui_ebf1fd2504e7" formatted="false">Add torrent</string>
     <string name="ui_b68734c25910" formatted="false">Added</string>
+    <string name="ui_4cd8e93b5b16" formatted="false">Added automatically</string>
     <string name="ui_f9b608af67f4" formatted="false">Added to Downloads</string>
     <string name="ui_a98648e9368b" formatted="false">Added to Transmission</string>
     <string name="ui_3d3eaa50eab2" formatted="false">Added to downloads</string>
@@ -47,6 +48,7 @@
     <string name="ui_9295ef6a9cf8" formatted="false">Adding download…</string>
     <string name="ui_ffb2e628b0e9" formatted="false">Adding…</string>
     <string name="ui_706a6ccef282" formatted="false">AirDrop is not available on this Mac.</string>
+    <string name="ui_ee610954e11d" formatted="false">Airing now</string>
     <string name="ui_6a72085653e4" formatted="false">All</string>
     <string name="ui_45133f937e3e" formatted="false">All %d aired episodes</string>
     <string name="ui_360e1182021a" formatted="false">All clear</string>
@@ -349,6 +351,7 @@
     <string name="ui_2f28e570a801" formatted="false">Menu bar</string>
     <string name="ui_9188f98eea10" formatted="false">Metadata is being gathered on Diamond</string>
     <string name="ui_92185dc52f71" formatted="false">Missing</string>
+    <string name="ui_deff765b3671" formatted="false">Missing episodes are looked for around midday and in the evening.</string>
     <string name="ui_c5c5533844c5" formatted="false">Mono</string>
     <string name="ui_216fcddff2f9" formatted="false">Monospace</string>
     <string name="ui_4bab2d8fe13f" formatted="false">More</string>
@@ -390,6 +393,7 @@
     <string name="ui_6fd4ab12ee28" formatted="false">No releases found</string>
     <string name="ui_4c57e22bd419" formatted="false">No reported seeds</string>
     <string name="ui_74cd1304973c" formatted="false">No server found</string>
+    <string name="ui_f7dca3322c11" formatted="false">No shows are being watched</string>
     <string name="ui_3e36b40ea99d" formatted="false">No subtitle jobs</string>
     <string name="ui_55b63277f6b3" formatted="false">No supported subtitle source</string>
     <string name="ui_34649c3ae595" formatted="false">No titles match your search.</string>
@@ -471,6 +475,7 @@
     <string name="ui_fd97ceed201e" formatted="false">Queued for verification</string>
     <string name="ui_71e9c73be501" formatted="false">Queued to download</string>
     <string name="ui_3280edae54c2" formatted="false">Queued to seed</string>
+    <string name="ui_6784cd8fbcc7" formatted="false">Queued: %d</string>
     <string name="ui_90d650a94e13" formatted="false">Queuing…</string>
     <string name="ui_bd84fa7fc4ce" formatted="false">Quit Torrbaby</string>
     <string name="ui_034f14206811" formatted="false">RATIO</string>
@@ -591,6 +596,7 @@
     <string name="ui_4589080623ff" formatted="false">Show download and upload rates</string>
     <string name="ui_3437b8727d9f" formatted="false">Show torrent</string>
     <string name="ui_56b7696a10e7" formatted="false">Showing the first 150 cast entries.</string>
+    <string name="ui_1ffd0a65c08f" formatted="false">Shows that are airing now are added by themselves. Turn on Watch for new episodes on any show’s page to add another.</string>
     <string name="ui_b1c78091f5f2" formatted="false">Shows you turn this on for keep their next unwatched episodes on this device. They arrive by themselves, a few times a day and overnight while charging, and only on Wi‑Fi.</string>
     <string name="ui_1b6c524ffb71" formatted="false">Signed in</string>
     <string name="ui_9fc1773eba4d" formatted="false">Signed out — enter a new login cookie</string>
@@ -601,6 +607,7 @@
     <string name="ui_adc4e96a478b" formatted="false">Sort</string>
     <string name="ui_a2a5bdeca939" formatted="false">Sort by</string>
     <string name="ui_b4e3efeba10e" formatted="false">Sound</string>
+    <string name="ui_6da13addb000" formatted="false">Source</string>
     <string name="ui_454237aa01ec" formatted="false">Source details unavailable.</string>
     <string name="ui_2d37f6721074" formatted="false">Source languages</string>
     <string name="ui_2eb56be3c2d9" formatted="false">Sources</string>
@@ -624,6 +631,7 @@
     <string name="ui_76a8ecfbed37" formatted="false">Stop downloading first</string>
     <string name="ui_43719e09ba7f" formatted="false">Stop now</string>
     <string name="ui_8cf498a528c2" formatted="false">Stop tracking the torrent in Transmission. Keep all downloaded files on Diamond.</string>
+    <string name="ui_9e521ddf4692" formatted="false">Stop watching</string>
     <string name="ui_9e092dda4f0e" formatted="false">Storage</string>
     <string name="ui_3c3bc1c865fc" formatted="false">Streaming is unavailable on fallback. Download this title to watch it.</string>
     <string name="ui_99a0efc6cfd8" formatted="false">Style</string>
@@ -733,6 +741,7 @@
     <string name="ui_b8bef37b7153" formatted="false">Unlimited</string>
     <string name="ui_e50bad848e4a" formatted="false">Unsupported media container for processing</string>
     <string name="ui_567bfc4dad37" formatted="false">Up next</string>
+    <string name="ui_82fb1d5144a8" formatted="false">Up to date</string>
     <string name="ui_1b0fb105245e" formatted="false">Update download</string>
     <string name="ui_fcb0f4dbd866" formatted="false">Updated subtitles are available for this download.</string>
     <string name="ui_3ab0d73100de" formatted="false">Updating…</string>
@@ -761,8 +770,10 @@
     <string name="ui_0736f273254e" formatted="false">Waiting for peers</string>
     <string name="ui_83ed73bbc425" formatted="false">Waiting for playback to finish</string>
     <string name="ui_640215e9fe28" formatted="false">Waiting to verify</string>
+    <string name="ui_0a444233849c" formatted="false">Watch for new episodes</string>
     <string name="ui_e304f9d1f888" formatted="false">Watch your downloaded movies and episodes.</string>
     <string name="ui_de9a3242d1b8" formatted="false">Watched</string>
+    <string name="ui_96d9e027ee25" formatted="false">Watching</string>
     <string name="ui_7ab362f0a437" formatted="false">Welcome home</string>
     <string name="ui_046725d9aae7" formatted="false">When off, downloads wait for Wi-Fi and never use cellular data, a Personal Hotspot or a Low Data Mode network.</string>
     <string name="ui_abec97b96eea" formatted="false">Who\'s watching?</string>

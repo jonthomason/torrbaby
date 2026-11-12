@@ -1927,7 +1927,7 @@ struct CloudJobRow: View {
     }
 }
 
-private extension View {
+extension View {
     @ViewBuilder func textSelectionIfAvailable() -> some View {
         #if os(tvOS)
         self

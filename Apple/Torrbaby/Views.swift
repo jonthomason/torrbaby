@@ -3,11 +3,12 @@ import SwiftUI
 import Charts
 
 enum Section: String, CaseIterable, Identifiable {
-    case findTorrents = "Find", downloads = "Downloads", library = "Home", movies = "Movies", shows = "TV Shows", active = "Downloading", seeding = "Seeding", complete = "Complete", subtitles = "Processing", attention = "Needs attention", automation = "Automation", settings = "Settings"
+    case findTorrents = "Find", watching = "Watching", downloads = "Downloads", library = "Home", movies = "Movies", shows = "TV Shows", active = "Downloading", seeding = "Seeding", complete = "Complete", subtitles = "Processing", attention = "Needs attention", automation = "Automation", settings = "Settings"
     var id: String { rawValue }
     var icon: String {
         switch self {
         case .findTorrents: return "magnifyingglass"
+        case .watching: return "eye"
         case .downloads: return "arrow.down.circle"
         case .movies: return "film"
         case .shows: return "tv"
@@ -26,6 +27,7 @@ enum Section: String, CaseIterable, Identifiable {
         switch self {
         case .library: return ("play.rectangle.fill", .blue)
         case .findTorrents: return ("magnifyingglass", .indigo)
+        case .watching: return ("eye.fill", .cyan)
         case .movies: return ("film.fill", .red)
         case .shows: return ("tv.fill", .purple)
         case .downloads: return ("arrow.down.circle.fill", .green)
@@ -273,7 +275,7 @@ struct RootView: View {
         }
     }
     private static let menuGroups: [(title: String, sections: [Section])] = [
-        ("Library", [.library, .findTorrents, .movies, .shows, .downloads]),
+        ("Library", [.library, .findTorrents, .movies, .shows, .watching, .downloads]),
         ("Torrents", [.active, .seeding, .complete, .subtitles, .attention]),
         ("Server", [.automation, .settings])
     ]
@@ -359,6 +361,7 @@ struct RootView: View {
             NavigationStack(path: Binding(get: { location.path }, set: { navigate(Location(section: selection, path: $0)) })) {
                 Group {
                     if selection == .downloads { DownloadsView() }
+                    else if selection == .watching { WatchingView() }
                     else if selection == .findTorrents { TorrentSearchView(initialQuery: UserDefaults.standard.string(forKey: "initialQuery") ?? "") }
                     else if selection == .subtitles { SubtitleQueueView() }
                     else if selection == .automation { AutomationView() }

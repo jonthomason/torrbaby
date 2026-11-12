@@ -722,6 +722,10 @@ impl Cloud {
             self.persist(&jobs);
         }
     }
+    /// Whether a download for this library folder is waiting or under way.
+    pub fn busy_with(&self, title: &str) -> bool {
+        self.jobs.lock().is_ok_and(|jobs| jobs.iter().any(|job| job.title == title && matches!(job.state.as_str(), "queued" | "saving" | "downloading" | "retrying")))
+    }
     pub fn jobs(&self) -> Value {
         let jobs = self.jobs.lock().map(|j| j.clone()).unwrap_or_default();
         let running = self.progress.load(Ordering::Relaxed);

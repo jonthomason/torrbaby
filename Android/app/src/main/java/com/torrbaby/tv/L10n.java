@@ -51,6 +51,7 @@ final class L10n {
     IDS.put("Add to trial", R.string.ui_abe7e96d75c0);
     IDS.put("Add torrent", R.string.ui_ebf1fd2504e7);
     IDS.put("Added", R.string.ui_b68734c25910);
+    IDS.put("Added automatically", R.string.ui_4cd8e93b5b16);
     IDS.put("Added to Downloads", R.string.ui_f9b608af67f4);
     IDS.put("Added to Transmission", R.string.ui_a98648e9368b);
     IDS.put("Added to downloads", R.string.ui_3d3eaa50eab2);
@@ -58,6 +59,7 @@ final class L10n {
     IDS.put("Adding download…", R.string.ui_9295ef6a9cf8);
     IDS.put("Adding…", R.string.ui_ffb2e628b0e9);
     IDS.put("AirDrop is not available on this Mac.", R.string.ui_706a6ccef282);
+    IDS.put("Airing now", R.string.ui_ee610954e11d);
     IDS.put("All", R.string.ui_6a72085653e4);
     IDS.put("All %d aired episodes", R.string.ui_45133f937e3e);
     IDS.put("All clear", R.string.ui_360e1182021a);
@@ -360,6 +362,7 @@ final class L10n {
     IDS.put("Menu bar", R.string.ui_2f28e570a801);
     IDS.put("Metadata is being gathered on Diamond", R.string.ui_9188f98eea10);
     IDS.put("Missing", R.string.ui_92185dc52f71);
+    IDS.put("Missing episodes are looked for around midday and in the evening.", R.string.ui_deff765b3671);
     IDS.put("Mono", R.string.ui_c5c5533844c5);
     IDS.put("Monospace", R.string.ui_216fcddff2f9);
     IDS.put("More", R.string.ui_4bab2d8fe13f);
@@ -401,6 +404,7 @@ final class L10n {
     IDS.put("No releases found", R.string.ui_6fd4ab12ee28);
     IDS.put("No reported seeds", R.string.ui_4c57e22bd419);
     IDS.put("No server found", R.string.ui_74cd1304973c);
+    IDS.put("No shows are being watched", R.string.ui_f7dca3322c11);
     IDS.put("No subtitle jobs", R.string.ui_3e36b40ea99d);
     IDS.put("No supported subtitle source", R.string.ui_55b63277f6b3);
     IDS.put("No titles match your search.", R.string.ui_34649c3ae595);
@@ -482,6 +486,7 @@ final class L10n {
     IDS.put("Queued for verification", R.string.ui_fd97ceed201e);
     IDS.put("Queued to download", R.string.ui_71e9c73be501);
     IDS.put("Queued to seed", R.string.ui_3280edae54c2);
+    IDS.put("Queued: %d", R.string.ui_6784cd8fbcc7);
     IDS.put("Queuing…", R.string.ui_90d650a94e13);
     IDS.put("Quit Torrbaby", R.string.ui_bd84fa7fc4ce);
     IDS.put("RATIO", R.string.ui_034f14206811);
@@ -602,6 +607,7 @@ final class L10n {
     IDS.put("Show download and upload rates", R.string.ui_4589080623ff);
     IDS.put("Show torrent", R.string.ui_3437b8727d9f);
     IDS.put("Showing the first 150 cast entries.", R.string.ui_56b7696a10e7);
+    IDS.put("Shows that are airing now are added by themselves. Turn on Watch for new episodes on any show’s page to add another.", R.string.ui_1ffd0a65c08f);
     IDS.put("Shows you turn this on for keep their next unwatched episodes on this device. They arrive by themselves, a few times a day and overnight while charging, and only on Wi‑Fi.", R.string.ui_b1c78091f5f2);
     IDS.put("Signed in", R.string.ui_1b6c524ffb71);
     IDS.put("Signed out — enter a new login cookie", R.string.ui_9fc1773eba4d);
@@ -612,6 +618,7 @@ final class L10n {
     IDS.put("Sort", R.string.ui_adc4e96a478b);
     IDS.put("Sort by", R.string.ui_a2a5bdeca939);
     IDS.put("Sound", R.string.ui_b4e3efeba10e);
+    IDS.put("Source", R.string.ui_6da13addb000);
     IDS.put("Source details unavailable.", R.string.ui_454237aa01ec);
     IDS.put("Source languages", R.string.ui_2d37f6721074);
     IDS.put("Sources", R.string.ui_2eb56be3c2d9);
@@ -635,6 +642,7 @@ final class L10n {
     IDS.put("Stop downloading first", R.string.ui_76a8ecfbed37);
     IDS.put("Stop now", R.string.ui_43719e09ba7f);
     IDS.put("Stop tracking the torrent in Transmission. Keep all downloaded files on Diamond.", R.string.ui_8cf498a528c2);
+    IDS.put("Stop watching", R.string.ui_9e521ddf4692);
     IDS.put("Storage", R.string.ui_9e092dda4f0e);
     IDS.put("Streaming is unavailable on fallback. Download this title to watch it.", R.string.ui_3c3bc1c865fc);
     IDS.put("Style", R.string.ui_99a0efc6cfd8);
@@ -744,6 +752,7 @@ final class L10n {
     IDS.put("Unlimited", R.string.ui_b8bef37b7153);
     IDS.put("Unsupported media container for processing", R.string.ui_e50bad848e4a);
     IDS.put("Up next", R.string.ui_567bfc4dad37);
+    IDS.put("Up to date", R.string.ui_82fb1d5144a8);
     IDS.put("Update download", R.string.ui_1b0fb105245e);
     IDS.put("Updated subtitles are available for this download.", R.string.ui_fcb0f4dbd866);
     IDS.put("Updating…", R.string.ui_3ab0d73100de);
@@ -772,8 +781,10 @@ final class L10n {
     IDS.put("Waiting for peers", R.string.ui_0736f273254e);
     IDS.put("Waiting for playback to finish", R.string.ui_83ed73bbc425);
     IDS.put("Waiting to verify", R.string.ui_640215e9fe28);
+    IDS.put("Watch for new episodes", R.string.ui_0a444233849c);
     IDS.put("Watch your downloaded movies and episodes.", R.string.ui_e304f9d1f888);
     IDS.put("Watched", R.string.ui_de9a3242d1b8);
+    IDS.put("Watching", R.string.ui_96d9e027ee25);
     IDS.put("Welcome home", R.string.ui_7ab362f0a437);
     IDS.put("When off, downloads wait for Wi-Fi and never use cellular data, a Personal Hotspot or a Low Data Mode network.", R.string.ui_046725d9aae7);
     IDS.put("Who's watching?", R.string.ui_abec97b96eea);

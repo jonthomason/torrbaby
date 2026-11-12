@@ -40,6 +40,7 @@
     <string name="ui_abe7e96d75c0" formatted="false">加入试下载</string>
     <string name="ui_ebf1fd2504e7" formatted="false">添加种子</string>
     <string name="ui_b68734c25910" formatted="false">已添加</string>
+    <string name="ui_4cd8e93b5b16" formatted="false">自动添加</string>
     <string name="ui_f9b608af67f4" formatted="false">已添加到下载</string>
     <string name="ui_a98648e9368b" formatted="false">已添加到 Transmission</string>
     <string name="ui_3d3eaa50eab2" formatted="false">已加入下载</string>
@@ -47,6 +48,7 @@
     <string name="ui_9295ef6a9cf8" formatted="false">正在添加下载…</string>
     <string name="ui_ffb2e628b0e9" formatted="false">正在添加…</string>
     <string name="ui_706a6ccef282" formatted="false">此 Mac 上无法使用隔空投送。</string>
+    <string name="ui_ee610954e11d" formatted="false">正在播出</string>
     <string name="ui_6a72085653e4" formatted="false">全部</string>
     <string name="ui_45133f937e3e" formatted="false">已播出的 %d 集齐全</string>
     <string name="ui_360e1182021a" formatted="false">一切正常</string>
@@ -349,6 +351,7 @@
     <string name="ui_2f28e570a801" formatted="false">菜单栏</string>
     <string name="ui_9188f98eea10" formatted="false">正在 Diamond 上获取影片信息</string>
     <string name="ui_92185dc52f71" formatted="false">缺少</string>
+    <string name="ui_deff765b3671" formatted="false">每天中午和晚上各查找一次缺少的剧集。</string>
     <string name="ui_c5c5533844c5" formatted="false">单声道</string>
     <string name="ui_216fcddff2f9" formatted="false">等宽字体</string>
     <string name="ui_4bab2d8fe13f" formatted="false">更多</string>
@@ -390,6 +393,7 @@
     <string name="ui_6fd4ab12ee28" formatted="false">未找到资源</string>
     <string name="ui_4c57e22bd419" formatted="false">暂无做种信息</string>
     <string name="ui_74cd1304973c" formatted="false">未找到服务器</string>
+    <string name="ui_f7dca3322c11" formatted="false">没有正在追更的剧集</string>
     <string name="ui_3e36b40ea99d" formatted="false">暂无字幕任务</string>
     <string name="ui_55b63277f6b3" formatted="false">没有支持的字幕来源</string>
     <string name="ui_34649c3ae595" formatted="false">未找到匹配的影片。</string>
@@ -471,6 +475,7 @@
     <string name="ui_fd97ceed201e" formatted="false">等待校验</string>
     <string name="ui_71e9c73be501" formatted="false">等待下载</string>
     <string name="ui_3280edae54c2" formatted="false">等待做种</string>
+    <string name="ui_6784cd8fbcc7" formatted="false">已加入下载：%d</string>
     <string name="ui_90d650a94e13" formatted="false">正在加入队列…</string>
     <string name="ui_bd84fa7fc4ce" formatted="false">退出 Torrbaby</string>
     <string name="ui_034f14206811" formatted="false">分享率</string>
@@ -591,6 +596,7 @@
     <string name="ui_4589080623ff" formatted="false">显示下载和上传速度</string>
     <string name="ui_3437b8727d9f" formatted="false">查看种子</string>
     <string name="ui_56b7696a10e7" formatted="false">仅显示前 150 条演员记录。</string>
+    <string name="ui_1ffd0a65c08f" formatted="false">正在播出的剧集会自动加入。在任意剧集页面打开“追更新剧集”即可添加。</string>
     <string name="ui_b1c78091f5f2" formatted="false">开启此功能的剧集会在此设备上保留接下来未观看的几集。它们会自动下载：每天数次，以及夜间充电时，且仅使用 Wi‑Fi。</string>
     <string name="ui_1b6c524ffb71" formatted="false">已登录</string>
     <string name="ui_9fc1773eba4d" formatted="false">已退出登录——请输入新的登录 Cookie</string>
@@ -601,6 +607,7 @@
     <string name="ui_adc4e96a478b" formatted="false">排序</string>
     <string name="ui_a2a5bdeca939" formatted="false">排序方式</string>
     <string name="ui_b4e3efeba10e" formatted="false">声音</string>
+    <string name="ui_6da13addb000" formatted="false">来源</string>
     <string name="ui_454237aa01ec" formatted="false">来源详情不可用。</string>
     <string name="ui_2d37f6721074" formatted="false">源语言</string>
     <string name="ui_2eb56be3c2d9" formatted="false">来源</string>
@@ -624,6 +631,7 @@
     <string name="ui_76a8ecfbed37" formatted="false">取消优先下载</string>
     <string name="ui_43719e09ba7f" formatted="false">立即停止</string>
     <string name="ui_8cf498a528c2" formatted="false">停止在 Transmission 中跟踪此种子，保留 Diamond 上所有已下载的文件。</string>
+    <string name="ui_9e521ddf4692" formatted="false">停止追更</string>
     <string name="ui_9e092dda4f0e" formatted="false">存储</string>
     <string name="ui_3c3bc1c865fc" formatted="false">备用连接不支持在线播放。请下载此影片后观看。</string>
     <string name="ui_99a0efc6cfd8" formatted="false">样式</string>
@@ -733,6 +741,7 @@
     <string name="ui_b8bef37b7153" formatted="false">不限量</string>
     <string name="ui_e50bad848e4a" formatted="false">不支持处理此媒体容器</string>
     <string name="ui_567bfc4dad37" formatted="false">接下来播放</string>
+    <string name="ui_82fb1d5144a8" formatted="false">已是最新</string>
     <string name="ui_1b0fb105245e" formatted="false">更新下载</string>
     <string name="ui_fcb0f4dbd866" formatted="false">此下载有更新的字幕可用。</string>
     <string name="ui_3ab0d73100de" formatted="false">正在更新…</string>
@@ -761,8 +770,10 @@
     <string name="ui_0736f273254e" formatted="false">等待节点</string>
     <string name="ui_83ed73bbc425" formatted="false">等待播放结束</string>
     <string name="ui_640215e9fe28" formatted="false">等待校验</string>
+    <string name="ui_0a444233849c" formatted="false">追更新剧集</string>
     <string name="ui_e304f9d1f888" formatted="false">观看已下载的电影和剧集。</string>
     <string name="ui_de9a3242d1b8" formatted="false">已看</string>
+    <string name="ui_96d9e027ee25" formatted="false">追更</string>
     <string name="ui_7ab362f0a437" formatted="false">欢迎回来</string>
     <string name="ui_046725d9aae7" formatted="false">关闭时，下载会等待 Wi-Fi，不会使用蜂窝数据、个人热点或低数据模式网络。</string>
     <string name="ui_abec97b96eea" formatted="false">谁在观看？</string>
