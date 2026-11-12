@@ -54,6 +54,9 @@ pub struct Config {
 pub struct DriveConfig {
     /// Stable identity, recorded on the drive; never derived from its mount path.
     pub id: String,
+    /// Shown in Settings and Needs attention; default the volume's name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// The drive's `Media` folder, holding `Downloads`, `Movies` and `TV`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media: Option<String>,

@@ -462,9 +462,14 @@ pub async fn tick(s: &Service) -> Result<()> {
         state["last_poll"] = json!(now());
         state["last_error"] = Value::Null;
     })?;
+    let drives = Drives::of(&config);
+    let online = drives.online();
     for t in &all {
         if crate::trials::trial_path(t["download_dir"].as_str().unwrap_or("")) {continue;}
         let hash = text(t, "hash_string")?;
+        // A torrent on a drive that is not connected waits for it, untouched.
+        if drives.offline(Path::new(t["download_dir"].as_str().unwrap_or("")), &online) { continue; }
+        reconnect(s, t).await;
         if s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.hidden_package(hash)? { continue; }
         let previous = job(s, hash)?;
         if previous["phase"] == "ignored" {
@@ -531,6 +536,29 @@ mod identification_tests {
         // A genuine video advert is far smaller than the episodes and does not block either.
         let sized = vec![json!({"name":"Show/Show.S01E01.mkv","length":900_000_000u64}), json!({"name":"Show/promo.mp4","length":8_000_000u64})];
         assert!(identified("h", &sized, &[episode]));
+    }
+}
+
+/// Transmission stops a torrent whose data vanished with its drive ("No data found") and
+/// does not try again when the drive returns. Once the drive is back, check the data,
+/// which resumes it. At most every ten minutes per torrent.
+async fn reconnect(s: &Service, t: &Value) {
+    static TRIED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, f64>>> = std::sync::LazyLock::new(Default::default);
+    if t["error"].as_u64() != Some(3) || !t["error_string"].as_str().is_some_and(|e| e.contains("No data found")) { return; }
+    let Some(hash) = t["hash_string"].as_str() else { return };
+    // Only when its data is back: checking a torrent whose files were deleted would download it all again.
+    let present = t["download_dir"].as_str().is_some_and(|dir| files(t).is_ok_and(|files| files.iter().any(|f|
+        f["bytes_completed"].as_u64().unwrap_or(0) > 0 && f["name"].as_str().and_then(|n| checked_path(Path::new(dir), n).ok()).is_some_and(|p| p.is_file()))));
+    if !present { return; }
+    {
+        let Ok(mut tried) = TRIED.lock() else { return };
+        if tried.get(hash).is_some_and(|at| now() - at < 600.0) { return; }
+        tried.insert(hash.to_owned(), now());
+    }
+    let ids = json!({"ids":[hash]});
+    match s.rpc.call("torrent_verify", ids.clone()).await.and(Ok(())) {
+        Ok(()) => { let _ = s.rpc.call("torrent_start", ids).await; tracing::info!(hash, "Drive is back: checking and resuming a torrent"); }
+        Err(error) => tracing::warn!(hash, %error, "Could not resume a torrent after its drive returned"),
     }
 }
 

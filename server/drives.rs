@@ -25,6 +25,10 @@ impl Role {
 pub struct Drive {
     /// Stable identity, never derived from where the drive is mounted.
     pub id: String,
+    /// What administrators call it: the configured name, else the volume's name.
+    pub name: String,
+    /// The folder holding the drive's marker (its `Media` folder).
+    pub media: PathBuf,
     pub downloads: PathBuf,
     pub movies: PathBuf,
     pub tv: PathBuf,
@@ -41,7 +45,75 @@ impl Drive {
     pub fn roots(&self) -> [(Role, &Path); 3] { Role::ALL.map(|role| (role, self.root(role))) }
     /// The finished-library root for a film or a series on this drive.
     pub fn library(&self, tv: bool) -> &Path { if tv { &self.tv } else { &self.movies } }
+
+    /// Whether this drive is connected: its marker is there and names it. A configured drive
+    /// whose folders are present on their own volume but carry no marker yet (Alpha, before
+    /// drives existed) is given one. Folders that are present without a marker on a path
+    /// whose volume is not mounted are never adopted: they are on the startup disk.
+    pub fn status(&self) -> Status {
+        let marker = self.media.join(MARKER);
+        let status = match std::fs::read(&marker) {
+            Ok(raw) => match serde_json::from_slice::<Value>(&raw).ok().and_then(|v| v["id"].as_str().map(str::to_owned)) {
+                Some(id) if id == self.id => Status::Online,
+                Some(id) => Status::Foreign(id),
+                None => Status::Foreign(String::new()),
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && self.adoptable() => match write_marker(&self.media, &self.id) {
+                Ok(()) => { tracing::info!(drive = self.id, media = %self.media.display(), "Marked a configured drive"); Status::Online }
+                Err(error) => { tracing::warn!(drive = self.id, %error, "Could not mark a configured drive"); Status::Missing }
+            },
+            Err(_) => Status::Missing,
+        };
+        if status == Status::Online {
+            // The marker proves this is the drive, so its folders can safely be created here.
+            for (_, root) in self.roots() { if !root.is_dir() { let _ = std::fs::create_dir_all(root); } }
+            if let Ok(mut dismissed) = DISMISSED.lock() { dismissed.remove(&self.id); }
+        }
+        status
+    }
+    pub fn online(&self) -> bool { self.status() == Status::Online }
+    fn adoptable(&self) -> bool {
+        self.media.is_dir() && self.roots().iter().any(|(_, root)| root.is_dir()) && on_its_volume(&self.media)
+    }
 }
+
+/// Whether a drive is connected. Never a reason to treat its files as deleted.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Status {
+    Online,
+    /// Not mounted, or its folders are gone.
+    Missing,
+    /// Another drive (with this id, or an unreadable marker) is where this one belongs.
+    Foreign(String),
+}
+
+/// The file on each drive that says which drive it is.
+pub const MARKER: &str = ".torrbaby-drive.json";
+
+pub fn write_marker(media: &Path, id: &str) -> std::io::Result<()> {
+    let staged = media.join(format!("{MARKER}.new"));
+    std::fs::write(&staged, serde_json::to_vec_pretty(&json!({"id": id,
+        "about": "Torrbaby recognises this drive by this file. Keep it; it is not needed by anything else."}))?)?;
+    std::fs::rename(staged, media.join(MARKER))
+}
+
+/// A path under `/Volumes/<name>` is only on its drive while that volume is mounted;
+/// otherwise the folders are on the startup disk.
+fn on_its_volume(path: &Path) -> bool {
+    let mut parts = path.components();
+    let (Some(std::path::Component::RootDir), Some(first), Some(name)) = (parts.next(), parts.next(), parts.next()) else { return true };
+    if first.as_os_str() != "Volumes" { return true; }
+    let volume = Path::new("/Volumes").join(name.as_os_str());
+    match (std::fs::metadata(&volume), std::fs::metadata("/Volumes")) {
+        (Ok(volume), Ok(parent)) => volume.dev() != parent.dev(),
+        _ => false,
+    }
+}
+
+/// Missing drives whose Needs attention item has been dismissed, until they return.
+static DISMISSED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::LazyLock::new(Default::default);
+/// Drive items in Needs attention use ids from here up, clear of processing rows.
+pub const ATTENTION_BASE: i64 = 1 << 40;
 
 /// The level the clients already show in orange.
 pub const DEFAULT_RESERVE_BYTES: u64 = 50_000_000_000;
@@ -56,22 +128,29 @@ impl Drives {
     /// The configured drives; with no `drives` list, the `source`/`movies`/`tv` folders are drive 1.
     pub fn of(config: &Config) -> Self {
         if config.drives.is_empty() {
+            let (downloads, movies, tv) = (PathBuf::from(&config.source), PathBuf::from(&config.movies), PathBuf::from(&config.tv));
+            // The marker goes in the folder holding all three, when there is one.
+            let media = match downloads.parent() {
+                Some(parent) if movies.parent() == Some(parent) && tv.parent() == Some(parent) => parent.to_path_buf(),
+                _ => downloads.clone(),
+            };
             return Drives(vec![Drive {
-                id: LEGACY_DRIVE_ID.into(), downloads: config.source.clone().into(), movies: config.movies.clone().into(),
-                tv: config.tv.clone().into(), accept_new: true, reserve_bytes: DEFAULT_RESERVE_BYTES,
+                id: LEGACY_DRIVE_ID.into(), name: volume_name(&media).unwrap_or_else(|| LEGACY_DRIVE_ID.into()), media,
+                downloads, movies, tv, accept_new: true, reserve_bytes: DEFAULT_RESERVE_BYTES,
             }]);
         }
         Drives(config.drives.iter().map(|d| {
             let media = d.media.as_deref().map(Path::new);
             let root = |explicit: &Option<String>, folder: &str| explicit.as_ref().map(PathBuf::from)
                 .or_else(|| media.map(|m| m.join(folder))).unwrap_or_default();
+            let media = media.map(Path::to_path_buf).unwrap_or_else(|| root(&d.downloads, "Downloads"));
             Drive {
+                name: d.name.clone().or_else(|| volume_name(&media)).unwrap_or_else(|| d.id.clone()), media,
                 id: d.id.clone(), downloads: root(&d.downloads, "Downloads"), movies: root(&d.movies, "Movies"),
                 tv: root(&d.tv, "TV"), accept_new: d.accept_new, reserve_bytes: d.reserve_bytes.unwrap_or(DEFAULT_RESERVE_BYTES),
             }
         }).collect())
     }
-    #[allow(dead_code)] // Used once every drive is scanned (phase 2).
     pub fn all(&self) -> &[Drive] { &self.0 }
     /// Where new downloads go until placement chooses among drives.
     pub fn primary(&self) -> &Drive { &self.0[0] }
@@ -86,7 +165,6 @@ impl Drives {
         self.all_roots().find(|(_, _, root)| path.starts_with(root))
     }
     /// Which drive `path` is on, if it is inside a managed root.
-    #[allow(dead_code)] // Used once every drive is scanned (phase 2).
     pub fn drive_of(&self, path: &Path) -> Option<&Drive> { self.root_of(path).map(|(d, _, _)| d) }
     /// Whether `path` is inside (or is) a managed root.
     #[allow(dead_code)] // Used once every drive is scanned (phase 2).
@@ -99,6 +177,37 @@ impl Drives {
     pub fn in_library(&self, path: &Path) -> bool {
         self.root_of(path).is_some_and(|(_, role, _)| role != Role::Downloads)
     }
+    /// The ids of the drives connected now.
+    pub fn online(&self) -> std::collections::HashSet<String> {
+        self.0.iter().filter(|d| d.online()).map(|d| d.id.clone()).collect()
+    }
+    /// Whether `path` is on a configured drive that is not connected now. A path on no
+    /// drive at all is not offline: it is simply outside the library.
+    pub fn offline(&self, path: &Path, online: &std::collections::HashSet<String>) -> bool {
+        self.drive_of(path).is_some_and(|d| !online.contains(&d.id))
+    }
+    /// One Needs attention item per drive that is not connected, unless dismissed.
+    pub fn attention(&self) -> Vec<Value> {
+        let dismissed = DISMISSED.lock().map(|d| d.clone()).unwrap_or_default();
+        self.0.iter().enumerate().filter(|(_, d)| !dismissed.contains(&d.id)).filter_map(|(index, d)| {
+            let error = match d.status() {
+                Status::Online => return None,
+                Status::Missing => "Its titles return when it is connected again. Nothing has been removed.",
+                Status::Foreign(_) => "Another drive is connected where this one belongs. Nothing has been removed.",
+            };
+            let now = crate::storage::now();
+            Some(json!({"id":ATTENTION_BASE + index as i64,"asset_id":"","title":d.name,"stage":"drive","severity":"error",
+                "summary":"Drive not connected","error":error,"occurrences":1,"first_seen":now,"last_seen":now}))
+        }).collect()
+    }
+    /// Dismiss drive items by attention id, or all of them; they come back if the drive
+    /// returns and goes missing again.
+    pub fn dismiss(&self, ids: &[i64], all: bool) {
+        let Ok(mut dismissed) = DISMISSED.lock() else { return };
+        for (index, d) in self.0.iter().enumerate() {
+            if (all || ids.contains(&(ATTENTION_BASE + index as i64))) && !d.online() { dismissed.insert(d.id.clone()); }
+        }
+    }
     /// For clients: every volume, plus the totals across them.
     pub fn report(&self) -> Value {
         let roots: Vec<(&str, &Path)> = self.all_roots().map(|(_, role, root)| (role.name(), root)).collect();
@@ -109,6 +218,12 @@ impl Drives {
             "volumes": volumes.iter().map(|v| json!({"name":v.name,"mount":v.mount,"total_bytes":v.total_bytes,"free_bytes":v.free_bytes,"roles":v.roles,"available":v.total_bytes > 0})).collect::<Vec<_>>(),
         })
     }
+}
+
+/// `/Volumes/Beta/Media` is on "Beta".
+fn volume_name(path: &Path) -> Option<String> {
+    let relative = path.strip_prefix("/Volumes").ok()?;
+    relative.components().next().map(|c| c.as_os_str().to_string_lossy().into_owned())
 }
 
 /// One mounted volume holding at least one library root.

@@ -692,9 +692,14 @@ impl Cloud {
         if waiting.is_empty() { return; }
         let Ok(torrents) = crate::organizer::torrents(s).await else { return };
         let Some(assets) = s.db.lock().ok().and_then(|db| db.documents("assets").ok()) else { return };
+        let Ok(config) = s.effective_config() else { return };
+        let drives = crate::drives::Drives::of(&config);
+        let online = drives.online();
         let mut settled: Vec<String> = Vec::new();
         for (hash, entry) in &waiting {
             let Some(torrent) = torrents.iter().find(|t| t["hash_string"].as_str().is_some_and(|h| h.eq_ignore_ascii_case(hash))) else { settled.push(hash.clone()); continue };
+            // Stopped because its drive is away, not because it finished: wait for the drive.
+            if drives.offline(Path::new(torrent["download_dir"].as_str().unwrap_or("")), &online) { continue; }
             let whole = assets.iter().filter(|asset| asset["torrent_hash"].as_str().is_some_and(|h| h.eq_ignore_ascii_case(hash)) && asset["role"] != "extra")
                 .all(|asset| asset["path"].as_str().is_some_and(|path| entry.paths.iter().any(|known| known == path)));
             if !whole { continue; }

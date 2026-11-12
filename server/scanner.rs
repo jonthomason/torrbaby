@@ -144,6 +144,8 @@ pub fn inventory(config: &Config, old: Vec<Value>, torrents: Vec<Value>) -> Inve
 pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, incomplete: Option<&Path>) -> Inventory {
     // A misconfigured incomplete directory must never hide a library root.
     let drives = crate::drives::Drives::of(config);
+    // A drive that is not connected is skipped whole: its files are not gone, only away.
+    let online = drives.online();
     let incomplete = incomplete.filter(|dir| dir.is_absolute() && dir.components().count() > 2
         && !drives.all_roots().any(|(_, _, root)| root.starts_with(dir)));
     let mut candidates: HashMap<PathBuf, Value> = HashMap::new();
@@ -155,6 +157,7 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
             continue;
         };
         if crate::trials::trial_path(root) {continue;}
+        if drives.offline(Path::new(root), &online) { continue; }
         if drives.all_roots().any(|(_, _, managed)|Path::new(root).starts_with(managed.join("Junk"))) { continue; }
         if let Some(files) = torrent["files"].as_array() {
             let package_complete = package_complete(files) && files.iter().all(|file| {
@@ -206,7 +209,7 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
     // Library roots first, then Downloads, drive by drive.
     use crate::drives::Role;
     let walk: Vec<(&Path, Role)> = [Role::Movies, Role::Tv, Role::Downloads].into_iter()
-        .flat_map(|role| drives.roots(role).map(move |root| (root, role))).collect();
+        .flat_map(|role| drives.all().iter().filter(|d| online.contains(&d.id)).map(move |d| (d.root(role), role))).collect();
     for (root, role) in walk {
         let complete = role != Role::Downloads;
         let mut pending = vec![root.to_path_buf()];
@@ -265,7 +268,8 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
     let mut seen = HashSet::new();
     for (path, info) in candidates {
         let valid_root = drives.all_roots()
-            .any(|(_, _, root)| {
+            .any(|(drive, _, root)| {
+                if !online.contains(&drive.id) { return false; }
                 let Ok(relative) = path.strip_prefix(root) else {
                     return false;
                 };
@@ -311,6 +315,7 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
             asset["complete"] = json!(false);
         }
         asset["path"] = json!(name);
+        asset.as_object_mut().unwrap().remove("offline");
         asset["library_ready"] = json!(drives.in_library(&path));
         asset["inode"] = json!(inode);
         asset["available"] = json!(metadata.is_some());
@@ -379,6 +384,13 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
         if seen.contains(asset["id"].as_str().unwrap_or("")) {
             continue;
         }
+        // On a drive that is not connected: kept exactly as last seen, only marked away.
+        if asset["path"].as_str().is_some_and(|path| drives.offline(Path::new(path), &online)) {
+            asset["available"] = json!(false);
+            asset["offline"] = json!(true);
+            assets.push(asset);
+            continue;
+        }
         // An explicit user match is kept even on a duplicate record. Once a torrent's file
         // is in place, only a record whose own file has gone can be its earlier copy.
         if asset["torrent_hash"].is_null() && asset["confirmed"] != true
@@ -405,6 +417,51 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_drive_that_goes_away_keeps_its_files_and_returns_without_any_action() {
+        let root = std::env::temp_dir().join(format!("torrbaby-drives-{}",uuid::Uuid::new_v4()));
+        let media = |drive: &str| root.join(drive).join("Media");
+        for drive in ["Alpha", "Beta"] { for folder in ["Downloads", "Movies", "TV"] { fs::create_dir_all(media(drive).join(folder)).unwrap(); } }
+        fs::write(media("Alpha").join("Movies/Film.mkv"), vec![0u8; 100]).unwrap();
+        fs::create_dir_all(media("Beta").join("TV/Show")).unwrap();
+        fs::write(media("Beta").join("TV/Show/Show S01E01.mkv"), vec![0u8; 100]).unwrap();
+        // A torrent seeding on Beta: its file must not be taken for a new one, or lost.
+        fs::write(media("Beta").join("Downloads/Seed.mkv"), vec![0u8; 100]).unwrap();
+        let seeding = json!({"hash_string":"seed","download_dir":media("Beta").join("Downloads"),"name":"Seed.mkv",
+            "files":[{"name":"Seed.mkv","length":100,"bytes_completed":100}]});
+        let config: Config = serde_json::from_value(json!({
+            "listen_host":"127.0.0.1","listen_port":8765,"token_file":"unused","state_file":"unused",
+            "transmission_url":"http://127.0.0.1:9091","transmission_auth_file":null,"poll_seconds":30,
+            "drives":[{"id":"alpha","media":media("Alpha")},{"id":"beta","media":media("Beta")}]})).unwrap();
+        config.validate().unwrap();
+        let first = inventory(&config, vec![], vec![seeding.clone()]);
+        assert_eq!(first.assets.len(), 3, "every drive is scanned");
+        assert!(first.assets.iter().all(|a| a["available"] == true && a["offline"].is_null()));
+        for drive in ["Alpha", "Beta"] { assert!(media(drive).join(crate::drives::MARKER).is_file(), "configured drives are marked"); }
+        let id_of = |assets: &[Value], name: &str| assets.iter().find(|a| a["path"].as_str().unwrap().ends_with(name)).unwrap()["id"].clone();
+        // Unplugged: its folder is gone. Nothing is dropped and nothing on Beta looks deleted.
+        fs::rename(root.join("Beta"), root.join("Beta-away")).unwrap();
+        let away = inventory(&config, first.assets.clone(), vec![seeding.clone()]);
+        assert!(away.superseded.is_empty() && away.assets.len() == 3);
+        let show = away.assets.iter().find(|a| a["path"].as_str().unwrap().ends_with("Show S01E01.mkv")).unwrap();
+        assert_eq!((show["available"].clone(), show["offline"].clone(), show["complete"].clone()), (json!(false), json!(true), json!(true)));
+        let film = away.assets.iter().find(|a| a["path"].as_str().unwrap().ends_with("Film.mkv")).unwrap();
+        assert_eq!((film["available"].clone(), film["offline"].clone()), (json!(true), Value::Null), "the other drive is unaffected");
+        assert!(!media("Beta").exists(), "a missing drive's folders are never recreated on the startup disk");
+        // A different drive where Beta belongs is not Beta.
+        for folder in ["Downloads", "Movies", "TV"] { fs::create_dir_all(media("Beta").join(folder)).unwrap(); }
+        crate::drives::write_marker(&media("Beta"), "gamma").unwrap();
+        let foreign = inventory(&config, away.assets.clone(), vec![seeding.clone()]);
+        assert!(foreign.assets.iter().filter(|a| a["path"].as_str().unwrap().contains("/Beta/")).all(|a| a["offline"] == true));
+        fs::remove_dir_all(root.join("Beta")).unwrap();
+        // Plugged back in: everything returns with the same identities.
+        fs::rename(root.join("Beta-away"), root.join("Beta")).unwrap();
+        let back = inventory(&config, foreign.assets, vec![seeding]);
+        assert_eq!(back.assets.len(), 3);
+        assert!(back.assets.iter().all(|a| a["available"] == true && a["offline"].is_null()));
+        for name in ["Film.mkv", "Show S01E01.mkv", "Seed.mkv"] { assert_eq!(id_of(&back.assets, name), id_of(&first.assets, name)); }
+        fs::remove_dir_all(root).ok();
+    }
     #[test]
     fn pending_package_keeps_identity_and_matches_through_completion_and_move() {
         let root = std::env::temp_dir().join(format!("torrbaby-pending-{}",uuid::Uuid::new_v4()));

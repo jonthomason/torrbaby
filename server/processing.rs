@@ -162,7 +162,7 @@ fn assets(db:&Database)->Result<Vec<Value>> {
     let mut assets=crate::media_inventory::queue_assets(db)?;
     // Finished files of a package still downloading are prepared where they sit.
     for a in &mut assets {
-        if a["complete"]==true {continue;}
+        if a["offline"]==true || a["complete"]==true {continue;}
         if let Some(path)=crate::scanner::work_path(a) {
             a["path"]=json!(path.to_string_lossy());a["available"]=json!(true);a["complete"]=json!(true);a["early"]=json!(true);
         }
@@ -202,6 +202,9 @@ static ENROLLED:std::sync::Mutex<Option<(String,f64)>>=std::sync::Mutex::new(Non
 pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
     let limit=refresh_capacity(s)?;
     let imported=s.subtitle_jobs.import_external()?;
+    // Before the database lock: reading the settings takes it.
+    let drives=crate::drives::Drives::of(&s.effective_config()?);
+    let online=drives.online();
     let (selected,excess)={
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
         for id in &imported {
@@ -223,6 +226,8 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
                 let revision=crate::subtitle_jobs::revision(Path::new(path));
                 // An early file that has just moved keeps its work until the next scan finds it.
                 if revision.is_err() && a["early"]==true {continue;}
+                // Its drive went away before the scan noticed: not a failure, and its finished work stays.
+                if revision.is_err() && drives.offline(Path::new(path),&online) {continue;}
                 if let Ok(revision)=&revision {
                     if carry_over(&db,id,revision)? {
                         let moved=s.subtitle_jobs.relocate(id,Path::new(path));

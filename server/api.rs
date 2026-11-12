@@ -1378,7 +1378,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         let operations = db.library_operations()?;
         return Ok(library_issues(crate::library_files::annotate_torrents(torrents, &operations), &db.state()?));
     }
-    let effective = if path == "/v1/status" || path == "/v1/storage" {
+    let effective = if path == "/v1/status" || path == "/v1/storage" || path.starts_with("/v1/attention") {
         Some(s.effective_config()?)
     } else {
         None
@@ -1438,8 +1438,22 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             "patterns":db.rows("SELECT stage,error,COUNT(*) AS affected_files,SUM(occurrences) AS occurrences FROM processing_failures WHERE resolved_at IS NULL GROUP BY stage,error ORDER BY affected_files DESC",[])?
         })),
         ("POST","/v1/processing/rescan") => crate::processing::rescan(&db,&body),
-        ("GET","/v1/attention") => crate::processing::attention(&db),
-        ("POST","/v1/attention/dismiss") => crate::processing::dismiss_attention(&db,&body),
+        ("GET","/v1/attention") => {
+            let mut list = crate::processing::attention(&db)?;
+            if let (Some(config), Some(items)) = (effective.as_ref(), list["items"].as_array_mut()) {
+                // A missing drive is one item, ahead of everything else.
+                let drives = crate::drives::Drives::of(config).attention();
+                items.splice(0..0, drives);
+            }
+            Ok(list)
+        },
+        ("POST","/v1/attention/dismiss") => {
+            if let Some(config) = effective.as_ref() {
+                let ids: Vec<i64> = body["ids"].as_array().into_iter().flatten().filter_map(Value::as_i64).collect();
+                crate::drives::Drives::of(config).dismiss(&ids, body["all"] == true);
+            }
+            crate::processing::dismiss_attention(&db,&body)
+        },
         ("GET","/v1/credits") => crate::credits::summary(&db),
         ("GET","/v1/library") => {
             let mut catalog = db.catalog(profile)?;
@@ -1544,6 +1558,9 @@ pub(crate) async fn media_file(s: &Service, hash: &str, index: u64) -> Result<Pa
             s.db.lock()
                 .map_err(|_| anyhow::anyhow!("Database lock failed"))?
                 .asset(hash)?;
+        if asset["offline"] == true {
+            bail!("This title is on a drive that is not connected");
+        }
         if asset["complete"] != true {
             bail!("Download is not complete");
         }
@@ -2134,7 +2151,7 @@ async fn cached_artwork(s: &Service, url: &str) -> Result<Vec<u8>> {
 
 fn library_artwork_urls(assets: &[Value], entities: &[Value]) -> std::collections::BTreeSet<String> {
     let mut urls = std::collections::BTreeSet::new();
-    for asset in assets.iter().filter(|a| a["available"] == true || a["torrent_present"] == true) {
+    for asset in assets.iter().filter(|a| a["available"] == true || a["offline"] == true || a["torrent_present"] == true) {
         let Some(entity) = entities.iter().find(|e|e["id"] == asset["entity_id"] && e["id"].is_string()) else { continue; };
         for field in ["thumbnail", "backdrop", "logo"] {
             if let Some(url) = entity[field].as_str().filter(|url|url.starts_with("https://")) { urls.insert(url.to_owned()); }

@@ -46,7 +46,7 @@ impl Database {
         static NUMBER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"\d+").expect("valid regex"));
         let mut present = std::collections::HashSet::<(u64, u64)>::new();
         for asset in self.visible_assets()? {
-            if asset["entity_id"] != title || asset["available"] != true || asset["role"] == "extra" { continue; }
+            if asset["entity_id"] != title || (asset["available"] != true && asset["offline"] != true) || asset["role"] == "extra" { continue; }
             let (Some(season), Some(episode)) = (asset["season"].as_u64(), asset["episode"].as_u64()) else { continue };
             present.insert((season, episode));
             let name = asset["path"].as_str().and_then(|p| std::path::Path::new(p).file_name()?.to_str()).unwrap_or("");
@@ -130,7 +130,9 @@ impl Database {
         let hidden: std::collections::HashSet<String> = self.rows("SELECT title_id FROM profile_hidden_titles WHERE profile_id=?",[profile])?.iter().filter_map(|v|v["title_id"].as_str().map(str::to_owned)).collect();
         let mut titles = BTreeMap::<String, Value>::new();
         let assets = self.visible_assets()?;
-        let listed = |asset: &Value| !(asset["available"] != true || asset["complete"] != true || asset["role"] == "extra"
+        // A file on a drive that is not connected stays listed, marked offline.
+        let present = |asset: &Value| asset["available"] == true || asset["offline"] == true;
+        let listed = |asset: &Value| !(!present(asset) || asset["complete"] != true || asset["role"] == "extra"
             || asset["library_ready"] == false || asset["status"] != "matched" || !asset["entity_id"].as_str().is_some_and(|id|entities.contains_key(id)));
         let package = |asset: &Value| asset["torrent_hash"].as_str().or(asset["id"].as_str()).unwrap_or("").to_owned();
         // A movie downloaded more than once is listed once per download, so each copy
@@ -213,7 +215,7 @@ impl Database {
                     "id":id,"media_info":crate::media_inventory::cached(self,id)?,"role":"extra","name":extra_name(asset),"season":null,"episode":null,
                     "summary":"","thumbnail":null,"complete":asset["complete"],"size":asset["size"],"position":progress["position"].as_f64().unwrap_or(0.0),
                     "duration":progress["duration"].as_f64().unwrap_or(0.0),"watched":progress["watched"].as_bool().unwrap_or(false),
-                    "last_played":progress["last_played"].as_f64().unwrap_or(0.0),"torrent_hash":asset["torrent_hash"]
+                    "last_played":progress["last_played"].as_f64().unwrap_or(0.0),"torrent_hash":asset["torrent_hash"],"offline":asset["offline"] == true
                 }));
                 continue;
             }
@@ -223,12 +225,12 @@ impl Database {
                 "airdate":episode["airdate"],"thumbnail":episode["thumbnail"],"duration_minutes":episode.get("duration_minutes").unwrap_or(&entity["duration_minutes"]),
                 "complete":asset["complete"],"size":asset["size"],"position":progress["position"].as_f64().unwrap_or(0.0),
                 "duration":progress["duration"].as_f64().unwrap_or(0.0),"watched":progress["watched"].as_bool().unwrap_or(false),
-                "last_played":progress["last_played"].as_f64().unwrap_or(0.0),"torrent_hash":asset["torrent_hash"]
+                "last_played":progress["last_played"].as_f64().unwrap_or(0.0),"torrent_hash":asset["torrent_hash"],"offline":asset["offline"] == true
             }));
         }
         for asset in assets
             .iter()
-            .filter(|a| a["available"] == true && a["complete"] == true && a["role"] == "extra")
+            .filter(|a| present(a) && a["complete"] == true && a["role"] == "extra")
         {
             let Some(parent) = asset["parent_title_id"].as_str() else {
                 continue;
@@ -248,10 +250,15 @@ impl Database {
                 "id":id,"role":"extra","name":name,"season":null,"episode":null,"summary":"","thumbnail":null,
                 "complete":asset["complete"],"size":asset["size"],"position":progress["position"].as_f64().unwrap_or(0.0),
                 "duration":progress["duration"].as_f64().unwrap_or(0.0),"watched":progress["watched"].as_bool().unwrap_or(false),
-                "last_played":progress["last_played"].as_f64().unwrap_or(0.0),"torrent_hash":asset["torrent_hash"]
+                "last_played":progress["last_played"].as_f64().unwrap_or(0.0),"torrent_hash":asset["torrent_hash"],"offline":asset["offline"] == true
             }));
         }
         let mut titles: Vec<_> = titles.into_values().collect();
+        // A title is offline when none of its files can be played now.
+        for title in &mut titles {
+            let offline = title["assets"].as_array().is_some_and(|a| !a.is_empty() && a.iter().all(|a| a["offline"] == true));
+            title["offline"] = json!(offline);
+        }
         titles.sort_by_key(|v| v["title"].as_str().unwrap_or("").to_lowercase());
         let state = self.state()?;
         let scan = &state["library_scan"];
@@ -290,7 +297,7 @@ impl Database {
                 // Matched files decide the parent; a stray unmatched file in the package
                 // (a featurette outside its folder) must not leave every extra orphaned.
                 let mains: Vec<_> = assets.iter().filter(|a| {
-                    a["available"] == true && a["role"] != "extra" && a["torrent_hash"] == hash
+                    (a["available"] == true || a["offline"] == true) && a["role"] != "extra" && a["torrent_hash"] == hash
                 }).collect();
                 let matched: Vec<_> = mains.iter().filter_map(|m| m["entity_id"].as_str()).collect();
                 if matched.is_empty() {
@@ -303,7 +310,7 @@ impl Database {
                 if let Some(anchor) = anchor {
                     for main in assets
                         .iter()
-                        .filter(|a| a["available"] == true && a["role"] != "extra")
+                        .filter(|a| (a["available"] == true || a["offline"] == true) && a["role"] != "extra")
                     {
                         if std::path::Path::new(main["path"].as_str().unwrap_or(""))
                             .starts_with(anchor)
