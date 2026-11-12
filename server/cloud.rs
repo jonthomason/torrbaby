@@ -284,6 +284,69 @@ pub fn preference(copy: &Value) -> impl Ord + use<> {
     // Native rate before sharpness: an interpolated copy is never the one wanted.
     std::cmp::Reverse((copy["complete"] == true, copy["beyond"] != true, covered, copy["fps"].as_u64().is_none_or(|fps| fps < 49), picture, sound, copy["total_bytes"].as_u64().unwrap_or(0)))
 }
+/// Make an MP4's HEVC video playable on Apple devices: retag its sample entry from
+/// "hev1" to "hvc1". The two name the same video; "hev1" only allows the parameter sets
+/// to sit in the stream instead of the description, and Apple's players show nothing
+/// for it (the sound plays over black). The tag is changed, four bytes in place, only
+/// when the description does hold the VPS, SPS and PPS, so "hvc1" is true of the file.
+/// Returns how many tracks were retagged.
+pub fn retag_hev1(path: &Path) -> Result<usize> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    let mut file = std::fs::OpenOptions::new().read(true).write(true).open(path)?;
+    let length = file.metadata()?.len();
+    // The boxes directly inside a span: (kind, body start, end).
+    fn boxes(file: &mut std::fs::File, start: u64, end: u64) -> Result<Vec<([u8; 4], u64, u64)>> {
+        let (mut found, mut at) = (Vec::new(), start);
+        while at + 8 <= end && found.len() < 4096 {
+            let mut head = [0u8; 16];
+            file.seek(SeekFrom::Start(at))?;
+            file.read_exact(&mut head[..8])?;
+            let mut size = u32::from_be_bytes(head[..4].try_into()?) as u64;
+            let mut body = at + 8;
+            if size == 1 { file.read_exact(&mut head[8..])?; size = u64::from_be_bytes(head[8..].try_into()?); body = at + 16; }
+            else if size == 0 { size = end - at; }
+            if size < body - at || at + size > end { break; }
+            found.push((head[4..8].try_into()?, body, at + size));
+            at += size;
+        }
+        Ok(found)
+    }
+    let mut spans = vec![(0u64, length)];
+    for kind in [b"moov", b"trak", b"mdia", b"minf", b"stbl", b"stsd"] {
+        let mut next = Vec::new();
+        for (start, end) in spans { for (found, body, stop) in boxes(&mut file, start, end)? { if &found == kind { next.push((body, stop)); } } }
+        spans = next;
+    }
+    let mut retagged = 0;
+    for (body, stop) in spans {
+        // stsd: version and flags, entry count, then the entries.
+        for (kind, entry, end) in boxes(&mut file, body + 8, stop)? {
+            if &kind != b"hev1" { continue; }
+            let mut sets = std::collections::BTreeSet::new();
+            for (inner, config, config_end) in boxes(&mut file, entry + 78, end)? {
+                if &inner != b"hvcC" || config_end - config < 23 || config_end - config > 1 << 20 { continue; }
+                let mut record = vec![0u8; (config_end - config) as usize];
+                file.seek(SeekFrom::Start(config))?;
+                file.read_exact(&mut record)?;
+                let mut at = 23;
+                for _ in 0..record[22] {
+                    if at + 3 > record.len() { break; }
+                    sets.insert(record[at] & 0x3f);
+                    let count = u16::from_be_bytes([record[at + 1], record[at + 2]]);
+                    at += 3;
+                    for _ in 0..count { if at + 2 > record.len() { break; } at += 2 + u16::from_be_bytes([record[at], record[at + 1]]) as usize; }
+                }
+            }
+            if [32u8, 33, 34].iter().all(|kind| sets.contains(kind)) {
+                file.seek(SeekFrom::Start(entry - 4))?;
+                file.write_all(b"hvc1")?;
+                retagged += 1;
+            }
+        }
+    }
+    if retagged > 0 { file.sync_all()?; }
+    Ok(retagged)
+}
 /// Whether a job holds several videos for the episode this one belongs to.
 fn in_parts_of(job: &Job, file: &JobFile) -> bool {
     let number = |f: &JobFile| f.destination.file_name().and_then(|n| n.to_str()).map(episode).filter(|e| e.1.is_some());
@@ -922,6 +985,16 @@ impl Cloud {
         }
         json!({"removed": removed, "cancelling": cancelling})
     }
+    /// Put right the MP4s that earlier downloads left tagged "hev1", which Apple devices
+    /// show as black. Run by the server itself over every video its downloads delivered,
+    /// so files from before the downloader did this are covered without anyone's help.
+    /// Checking a file reads only its index; one already right is left untouched.
+    async fn retag_delivered(&self) -> usize {
+        let delivered: Vec<PathBuf> = self.jobs.lock().map(|jobs| jobs.iter().flat_map(|job| job.files.iter().filter(|f| f.done).map(|f| f.destination.clone())).collect()).unwrap_or_default();
+        tokio::task::spawn_blocking(move || delivered.iter()
+            .filter(|path| path.extension().and_then(|e| e.to_str()).is_some_and(|e| ["mp4", "mov", "m4v"].contains(&e.to_ascii_lowercase().as_str())) && path.is_file())
+            .filter(|path| retag_hev1(path).is_ok_and(|count| count > 0)).count()).await.unwrap_or(0)
+    }
     /// Clear the staging folder on the member's drive of anything that belongs to no
     /// download still in hand: a track read cut short by a restart, a job long gone.
     async fn sweep(&self) {
@@ -1042,6 +1115,15 @@ impl Cloud {
         ensure!(tokio::fs::metadata(&working).await?.len() == size && done.lock().is_ok_and(|d| d.len() as u64 == count), "The downloaded file is incomplete");
         tokio::fs::rename(&working, destination).await?;
         let _ = tokio::fs::remove_file(&notes).await;
+        // An MP4 whose video is tagged "hev1" is black on Apple devices; the file is ours, so it is put right.
+        if destination.extension().and_then(|e| e.to_str()).is_some_and(|e| ["mp4", "mov", "m4v"].contains(&e.to_ascii_lowercase().as_str())) {
+            let target = destination.to_owned();
+            match tokio::task::spawn_blocking(move || retag_hev1(&target)).await {
+                Ok(Ok(count)) if count > 0 => tracing::info!(file = %destination.display(), "Retagged HEVC video from hev1 to hvc1 for Apple players"),
+                Ok(Err(error)) => tracing::warn!(file = %destination.display(), %error, "Could not check an MP4's video tag"),
+                _ => {}
+            }
+        }
         Ok(())
     }
     /// Whether a waiting download has been put ahead of this one ("Download next").
@@ -1163,6 +1245,9 @@ impl Cloud {
     async fn downloads(&self, s: &Service) {
         // The first tidy comes a minute after starting, once any interrupted job has been taken up again.
         let mut swept = Instant::now() - Duration::from_secs(3540);
+        // Videos delivered before the downloader retagged them itself are put right at start.
+        let fixed = self.retag_delivered().await;
+        if fixed > 0 { tracing::info!(fixed, "Retagged earlier downloads from hev1 to hvc1"); self.rescan.notify_one(); }
         loop {
             let next = self.jobs.lock().ok().and_then(|jobs| jobs.iter().find(|j| j.state == "queued").cloned());
             let Some(job) = next else {
@@ -1297,6 +1382,36 @@ mod tests {
         assert!(better((&uhd, 2_000), (&copy(3840, 25.0, "Dolby Atmos", 6), 1_000)));
         assert!(better((&copy(3840, 25.0, "Dolby Atmos", 6), 1_000), (&uhd, 1_100)));
         assert!(!better((&uhd, 1_000), (&uhd, 1_000)));
+    }
+    #[test]
+    fn hev1_video_is_retagged_only_when_its_description_holds_the_parameter_sets() -> Result<()> {
+        fn atom(kind: &[u8; 4], body: &[u8]) -> Vec<u8> { let mut out = ((body.len() + 8) as u32).to_be_bytes().to_vec(); out.extend(kind); out.extend(body); out }
+        let build = |sets: &[u8]| {
+            let mut config = vec![0u8; 22];
+            config.push(sets.len() as u8);
+            for kind in sets { config.extend([*kind, 0, 1, 0, 2, 0xAA, 0xBB]); }
+            let mut entry = vec![0u8; 78];
+            entry.extend(atom(b"hvcC", &config));
+            let mut stsd = vec![0, 0, 0, 0, 0, 0, 0, 1];
+            stsd.extend(atom(b"hev1", &entry));
+            let mut file = atom(b"ftyp", b"isom");
+            file.extend(atom(b"moov", &atom(b"trak", &atom(b"mdia", &atom(b"minf", &atom(b"stbl", &atom(b"stsd", &stsd)))))));
+            file.extend(atom(b"mdat", &[1, 2, 3, 4]));
+            file
+        };
+        let path = std::env::temp_dir().join(format!("torrbaby-retag-{}.mp4", uuid::Uuid::new_v4()));
+        std::fs::write(&path, build(&[32, 33, 34]))?;
+        assert_eq!(retag_hev1(&path)?, 1);
+        let fixed = std::fs::read(&path)?;
+        assert!(fixed.windows(4).any(|w| w == b"hvc1") && !fixed.windows(4).any(|w| w == b"hev1"));
+        assert_eq!(fixed.len(), build(&[32, 33, 34]).len());
+        assert_eq!(retag_hev1(&path)?, 0);
+        // Without the sets in the description the tag stays as it is.
+        std::fs::write(&path, build(&[33, 34]))?;
+        assert_eq!(retag_hev1(&path)?, 0);
+        assert!(std::fs::read(&path)?.windows(4).any(|w| w == b"hev1"));
+        std::fs::remove_file(&path)?;
+        Ok(())
     }
     #[test]
     fn seasons_are_read_from_titles() {
