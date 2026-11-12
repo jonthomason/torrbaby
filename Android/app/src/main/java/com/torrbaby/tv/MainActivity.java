@@ -733,7 +733,7 @@ public class MainActivity extends Activity {
 
   private boolean continueWatchingMenu(Library.Title title) {
     if(!title.isContinuing())return false;
-    new AlertDialog.Builder(this).setTitle(title.title)
+    new AppDialog(this).setTitle(title.title)
         .setItems(new String[]{L10n.t("Remove from Continue Watching")},(dialog,which)->setContinueWatchingHidden(title,true)).show();
     return true;
   }
@@ -836,7 +836,7 @@ public class MainActivity extends Activity {
             () -> {
               List<String> gs = library.genres(kind);
               gs.add(0, "All genres");
-              new AlertDialog.Builder(this)
+              new AppDialog(this)
                   .setTitle(L10n.t("Genre"))
                   .setItems(
                       gs.toArray(new String[0]),
@@ -857,7 +857,7 @@ public class MainActivity extends Activity {
             this,
             sorts[sort],
             () ->
-                new AlertDialog.Builder(this)
+                new AppDialog(this)
                     .setTitle(L10n.t("Sort by"))
                     .setSingleChoiceItems(
                         sorts,
@@ -1101,7 +1101,7 @@ public class MainActivity extends Activity {
         boolean error = item.optString("severity").equals("error");
         Ui.add(row, Ui.text(this, L10n.t(item.optString("summary")), 14, error ? 0xffffb74d : Ui.MUTED), -1, -2);
         Ui.add(row, Ui.text(this, L10n.t(item.optString("error")), 12, Ui.MUTED), -1, -2);
-        row.setOnClickListener(v -> new AlertDialog.Builder(this)
+        row.setOnClickListener(v -> new AppDialog(this)
             .setTitle(item.optString("title"))
             .setMessage(L10n.t(item.optString("error")))
             .setPositiveButton(L10n.t("Dismiss"), (d, w) -> dismissAttention(new JSONObject(), item.optLong("id")))
@@ -1351,7 +1351,7 @@ public class MainActivity extends Activity {
       if (!error.isEmpty()) Ui.add(row, Ui.text(this, error, 12, Ui.MUTED), -1, -2);
       String id = job.optString("id");
       row.setOnClickListener(v -> {
-        AlertDialog.Builder dialog = new AlertDialog.Builder(this).setTitle(job.optString("title")).setMessage(error.isEmpty() ? label : error)
+        AlertDialog.Builder dialog = new AppDialog(this).setTitle(job.optString("title")).setMessage(error.isEmpty() ? label : error)
             .setNegativeButton(L10n.t(active ? "Close" : "Cancel"), null);
         // Stops the download and clears what it had fetched of unfinished videos.
         if (active) dialog.setNeutralButton(L10n.t("Cancel download"), (d, w) -> cloudJobAction("DELETE", "/v1/cloud/jobs/" + id));
@@ -1426,7 +1426,7 @@ public class MainActivity extends Activity {
       if (!problem.isEmpty()) Ui.add(row, Ui.text(this, problem, 12, 0xffffb74d), -1, -2);
       String shown = name;
       // Where its episodes are looked for can be switched, and the show taken off the list.
-      row.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle(shown)
+      row.setOnClickListener(v -> new AppDialog(this).setTitle(shown)
           .setPositiveButton(L10n.t(market.equals("china") ? "World" : "China"), (d, w) -> watchAction("POST", "/v1/watch/" + id, market.equals("china") ? "world" : "china"))
           .setNeutralButton(L10n.t("Stop watching"), (d, w) -> watchAction("DELETE", "/v1/watch/" + id, null))
           .setNegativeButton(L10n.t("Close"), null).show());
@@ -1860,7 +1860,7 @@ public class MainActivity extends Activity {
     labels.add(L10n.t(preferred.watched ? "Mark as Unwatched" : "Mark as Watched")); actions.add(() -> mark(preferred));
     if (preferred.complete) { labels.add(L10n.t("Manage files")); actions.add(() -> new LibraryFileActions(this, api, io, preferred.id, this::load).show()); }
     if (t.isContinuing()) { labels.add(L10n.t("Remove from Continue Watching")); actions.add(() -> setContinueWatchingHidden(t, true)); }
-    new AlertDialog.Builder(this).setTitle(t.title)
+    new AppDialog(this).setTitle(t.title)
         .setItems(labels.toArray(new String[0]), (dialog, which) -> actions.get(which).run())
         .setNegativeButton(L10n.t("Cancel"), null).show();
   }
@@ -1992,7 +1992,7 @@ public class MainActivity extends Activity {
 
   private void assetOptions(Library.Title t, Library.Asset a) {
     if (a == null) {
-      new AlertDialog.Builder(this)
+      new AppDialog(this)
           .setTitle(L10n.t("Not yet available"))
           .setMessage(L10n.t("This title has no complete media files on the server."))
           .setPositiveButton(L10n.t("OK"), null)
@@ -2006,7 +2006,7 @@ public class MainActivity extends Activity {
     }
     labels.add(a.watched ? "Mark as Unwatched" : "Mark as Watched");
     if (a.complete) labels.add("Manage Files");
-    new AlertDialog.Builder(this)
+    new AppDialog(this)
         .setTitle(a.name)
         .setItems(
             L10n.labels(labels.toArray(new String[0])),
@@ -2213,7 +2213,7 @@ public class MainActivity extends Activity {
   /** Settings in the same categories as the Apple apps: User, General, Playback, Connection, About. */
   private void settings() {
     String[] pages = {"User", "General", "Playback", "Connection", "About"};
-    new AlertDialog.Builder(this)
+    new AppDialog(this)
         // The build is what Settings is most often opened for, so it sits in the title.
         .setTitle(L10n.t("Settings") + " · " + BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")")
         .setItems(L10n.labels(pages), (d, w) -> {
@@ -2228,10 +2228,10 @@ public class MainActivity extends Activity {
           else if (w == 3) settingsPage("Connection", new String[] {"Change server connection", "Disconnect this TV"}, i -> {
             if (i == 0) discover(""); else disconnect();
           });
-          else new AlertDialog.Builder(this)
+          else new AppDialog(this)
               .setTitle(L10n.t("About"))
               .setMessage(L10n.t("Version") + " " + BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")")
-              .setNeutralButton(L10n.t("Startup diagnostics"), (x, y) -> new AlertDialog.Builder(this)
+              .setNeutralButton(L10n.t("Startup diagnostics"), (x, y) -> new AppDialog(this)
                   .setTitle(L10n.t("Startup timings")).setMessage(StartupTrace.text()).setPositiveButton(L10n.t("Close"), null).show())
               .setPositiveButton(L10n.t("Close"), null)
               .show();
@@ -2240,7 +2240,7 @@ public class MainActivity extends Activity {
   }
 
   private void settingsPage(String title, String[] items, java.util.function.IntConsumer action) {
-    new AlertDialog.Builder(this)
+    new AppDialog(this)
         .setTitle(L10n.t(title))
         .setItems(L10n.labels(items), (d, w) -> action.accept(w))
         .setNegativeButton(L10n.t("Back"), (d, w) -> settings())
@@ -2250,7 +2250,7 @@ public class MainActivity extends Activity {
   }
 
   private void disconnect() {
-    new AlertDialog.Builder(this)
+    new AppDialog(this)
         .setTitle(L10n.t("Disconnect this TV?"))
         .setMessage(L10n.t("Your library and viewing history stay on the server."))
         .setNegativeButton(L10n.t("Cancel"), null)
@@ -2470,7 +2470,7 @@ public class MainActivity extends Activity {
   }
 
   private void error(String s) {
-    new AlertDialog.Builder(this)
+    new AppDialog(this)
         .setTitle("Torrbaby")
         .setMessage(s)
         .setPositiveButton(L10n.t("OK"), null)
@@ -2523,7 +2523,7 @@ public class MainActivity extends Activity {
       restoreId = "";
       render();
     } else
-      new AlertDialog.Builder(this)
+      new AppDialog(this)
           .setTitle(L10n.t("Leave Torrbaby?"))
           .setNegativeButton(L10n.t("Stay"), null)
           .setPositiveButton(L10n.t("Exit"), (d, w) -> finish())

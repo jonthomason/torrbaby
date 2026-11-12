@@ -523,7 +523,7 @@ public class PlaybackActivity extends Activity {
 
   private void failure(String message) {
     if (isFinishing() || isDestroyed()) return;
-    new AlertDialog.Builder(this)
+    new AppDialog(this)
         .setTitle(L10n.t("Unable to play"))
         .setMessage(message)
         .setPositiveButton(L10n.t("Retry"), (d, w) -> restart(false))

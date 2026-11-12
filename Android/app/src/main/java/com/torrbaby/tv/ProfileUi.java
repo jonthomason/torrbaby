@@ -86,7 +86,7 @@ final class ProfileUi {
     }public void afterTextChanged(Editable e){}};
     for(EditText input:new EditText[]{name,symbol,foreground,background})input.addTextChangedListener(change);
     ScrollView scroll=new ScrollView(a);scroll.addView(form);
-    AlertDialog dialog=new AlertDialog.Builder(a).setTitle(L10n.t(creating?"Create user":"Edit profile")).setView(scroll)
+    AlertDialog dialog=new AppDialog(a).setTitle(L10n.t(creating?"Create user":"Edit profile")).setView(scroll)
       .setNegativeButton(L10n.t("Cancel"),null).setPositiveButton(L10n.t("Save profile"),null).create();
     dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
       if(name.getText().toString().trim().isEmpty()){name.setError(L10n.t("Enter a name"));return;}

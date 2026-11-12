@@ -120,7 +120,7 @@ final class Subtitles {
       L10n.t("Background opacity") + ": " + p.optInt("background_opacity") + "%"
     };
     AlertDialog.Builder dialog =
-        new AlertDialog.Builder(a)
+        new AppDialog(a)
             .setTitle(L10n.t("Subtitles on this TV"))
             .setItems(
                 L10n.labels(labels),
@@ -151,7 +151,7 @@ final class Subtitles {
                   }
                   if (which == 0) names = new String[] {"Off", "On"};
                   if (which == 1) names = new String[] {"Original", "English", "Chinese (Simplified)"};
-                  new AlertDialog.Builder(a)
+                  new AppDialog(a)
                       .setTitle(labels[which])
                       .setSingleChoiceItems(
                           L10n.labels(names),
@@ -190,7 +190,7 @@ final class Subtitles {
     a.runOnUiThread(
         () -> {
           if (!a.isFinishing())
-            new AlertDialog.Builder(a)
+            new AppDialog(a)
                 .setTitle(L10n.t("Subtitle preferences"))
                 .setMessage(MainActivity.message(e))
                 .setPositiveButton(L10n.t("OK"), null)

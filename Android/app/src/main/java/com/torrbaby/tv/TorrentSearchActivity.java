@@ -84,7 +84,7 @@ public final class TorrentSearchActivity extends Activity {
     controls.addView(query, new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1));
     search = Ui.button(this, L10n.t("Search"), this::search); Ui.add(controls, search, 120, 46);
     Ui.gap(controls, 12);
-    sourceButton = Ui.button(this, L10n.t(SOURCE_NAMES[0]), () -> new AlertDialog.Builder(this).setTitle(L10n.t("Sources"))
+    sourceButton = Ui.button(this, L10n.t(SOURCE_NAMES[0]), () -> new AppDialog(this).setTitle(L10n.t("Sources"))
         .setSingleChoiceItems(L10n.labels(sourceNames()), source, (dialog, which) -> { source=which; sourceButton.setText(L10n.t(sourceNames()[which])); dialog.dismiss(); }).show());
     Ui.add(controls, sourceButton, 180, 46); Ui.add(resultsRoot, controls, -1, 48);
     // China is searched as Quark Drive shares, which have no source choice.
@@ -93,7 +93,7 @@ public final class TorrentSearchActivity extends Activity {
     resolution=getPreferences(MODE_PRIVATE).getString("resolution","all");
     resolutionButton=Ui.button(this,L10n.t("Resolution")+": "+resolutionLabel(),()->{
       String[] labels={L10n.t("All resolutions"),"2160p","1080p","720p"};String[] values={"all","2160p","1080p","720p"};
-      new AlertDialog.Builder(this).setTitle(L10n.t("Resolution")).setSingleChoiceItems(labels,Arrays.asList(values).indexOf(resolution),(d,which)->{
+      new AppDialog(this).setTitle(L10n.t("Resolution")).setSingleChoiceItems(labels,Arrays.asList(values).indexOf(resolution),(d,which)->{
         resolution=values[which];getPreferences(MODE_PRIVATE).edit().putString("resolution",resolution).apply();
         resolutionButton.setText(L10n.t("Resolution")+": "+resolutionLabel());enrichmentGeneration++;applyResolution();if(!searchedQuery.isEmpty()&&search.isEnabled())showCount();d.dismiss();
       }).show();
@@ -366,7 +366,7 @@ public final class TorrentSearchActivity extends Activity {
             :had>0?String.format(L10n.locale(),L10n.t("%d of %d videos are already in your library; the rest will download."),had,all):null;
           runOnUiThread(()->{if(isDestroyed())return;add.setText(L10n.t(nothing?"Add":"Added to downloads"));add.setEnabled(nothing);Toast.makeText(this,warning!=null?warning:L10n.t("Follow its progress in Downloading."),Toast.LENGTH_LONG).show();});
         }catch(Exception error){runOnUiThread(()->{if(isDestroyed())return;add.setEnabled(true);add.setText(L10n.t("Add"));
-          new AlertDialog.Builder(this).setTitle(L10n.t("Couldn’t add torrent")).setMessage(MainActivity.message(error)).setPositiveButton(L10n.t("Close"),null).show();});}});
+          new AppDialog(this).setTitle(L10n.t("Couldn’t add torrent")).setMessage(MainActivity.message(error)).setPositiveButton(L10n.t("Close"),null).show();});}});
       }catch(JSONException ignored){}
     });
     String url=shareUrl(item);
@@ -459,7 +459,7 @@ public final class TorrentSearchActivity extends Activity {
       else throw new Exception(L10n.t("This release has no downloadable torrent."));
       JSONObject response=api.request("POST","/v1/torrents",payload);
       runOnUiThread(()->{if(isDestroyed())return;added.add(item.optString("info_hash").isEmpty()?item.optString("name"):item.optString("info_hash"));button.setText(L10n.t("Added"));Toast.makeText(this,response.has("torrent_duplicate")?L10n.t("Already in your torrents"):L10n.t("Torrent added"),Toast.LENGTH_LONG).show();});
-    }catch(Exception error){runOnUiThread(()->{if(!isDestroyed()){button.setTag(false);button.setEnabled(true);button.setText(L10n.t("Add torrent"));new AlertDialog.Builder(this).setTitle(L10n.t("Couldn’t add torrent")).setMessage(MainActivity.message(error)).setPositiveButton(L10n.t("Close"),null).show();}});}});
+    }catch(Exception error){runOnUiThread(()->{if(!isDestroyed()){button.setTag(false);button.setEnabled(true);button.setText(L10n.t("Add torrent"));new AppDialog(this).setTitle(L10n.t("Couldn’t add torrent")).setMessage(MainActivity.message(error)).setPositiveButton(L10n.t("Close"),null).show();}});}});
   }
   public void onBackPressed(){if(inDetail){inDetail=false;generation++;setContentView(resultsRoot);list.requestFocus();}else super.onBackPressed();}
   protected void onDestroy(){generation++;io.shutdownNow();super.onDestroy();}
