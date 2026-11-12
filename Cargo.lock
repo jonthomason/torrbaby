@@ -1874,7 +1874,7 @@ dependencies = [
 
 [[package]]
 name = "torrbaby"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "axum",

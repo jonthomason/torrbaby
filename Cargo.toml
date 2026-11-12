@@ -1,6 +1,6 @@
 [package]
 name = "torrbaby"
-version = "0.3.0"
+version = "1.0.0"
 edition = "2024"
 license = "MIT"
 description = "A standalone private media server and Transmission manager"

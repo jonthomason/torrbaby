@@ -135,7 +135,7 @@
 				<key>MACOSX_DEPLOYMENT_TARGET</key>
 				<string>15.0</string>
 				<key>MARKETING_VERSION</key>
-				<string>0.2.0</string>
+				<string>1.0</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>com.jonthomason.torrbaby.ios</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER[sdk=appletv*]</key>
@@ -403,7 +403,7 @@
 				<key>MACOSX_DEPLOYMENT_TARGET</key>
 				<string>15.0</string>
 				<key>MARKETING_VERSION</key>
-				<string>0.2.0</string>
+				<string>1.0</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>com.jonthomason.torrbaby.ios</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER[sdk=appletv*]</key>
@@ -703,7 +703,7 @@
 				<key>LD_RUNPATH_SEARCH_PATHS</key>
 				<string>$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks</string>
 				<key>MARKETING_VERSION</key>
-				<string>0.2.0</string>
+				<string>1.0</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>org.torrbaby.tv.topshelf</string>
 				<key>PRODUCT_NAME</key>
@@ -936,7 +936,7 @@
 				<key>LD_RUNPATH_SEARCH_PATHS</key>
 				<string>$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks</string>
 				<key>MARKETING_VERSION</key>
-				<string>0.2.0</string>
+				<string>1.0</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>org.torrbaby.tv.topshelf</string>
 				<key>PRODUCT_NAME</key>
