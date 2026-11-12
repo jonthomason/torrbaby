@@ -105,6 +105,7 @@ final class L10n {
     IDS.put("Check the year and episodes before applying.", R.string.ui_8e6b214072c4);
     IDS.put("Checking files…", R.string.ui_07369df4cdcc);
     IDS.put("Checking languages…", R.string.ui_80b0becd67a4);
+    IDS.put("Checking sound and subtitles…", R.string.ui_508db4dbd17a);
     IDS.put("Checking the share’s files…", R.string.ui_c31f3333882a);
     IDS.put("China", R.string.ui_d2eaf2aa1512);
     IDS.put("Chinese", R.string.ui_15dc18865567);
@@ -397,6 +398,7 @@ final class L10n {
     IDS.put("No trial made progress", R.string.ui_0180f27718d1);
     IDS.put("No trials yet", R.string.ui_d839d62a2b1e);
     IDS.put("None", R.string.ui_6eef6648406c);
+    IDS.put("None in the file", R.string.ui_98070d393c9e);
     IDS.put("None of them match the resolution or other filters you have chosen.", R.string.ui_2d4f57f93a15);
     IDS.put("None of them match the resolution you have chosen.", R.string.ui_fadae5312047);
     IDS.put("Not configured", R.string.ui_811931bba8d1);
@@ -436,6 +438,7 @@ final class L10n {
     IDS.put("Permanently delete these files?", R.string.ui_eed277a1aa9d);
     IDS.put("Permanently delete this torrent’s downloaded files, including partial downloads.", R.string.ui_e9e82aac397b);
     IDS.put("Personal watch history and downloaded copies on other devices are kept.", R.string.ui_01b2675f9904);
+    IDS.put("Picture", R.string.ui_61852524b8f8);
     IDS.put("Play", R.string.ui_5d12bd53552c);
     IDS.put("Play again", R.string.ui_576766d387ec);
     IDS.put("Play or resume original file", R.string.ui_dc3b71c61700);
@@ -596,6 +599,7 @@ final class L10n {
     IDS.put("Size…", R.string.ui_b5eedcf44417);
     IDS.put("Sort", R.string.ui_adc4e96a478b);
     IDS.put("Sort by", R.string.ui_a2a5bdeca939);
+    IDS.put("Sound", R.string.ui_b4e3efeba10e);
     IDS.put("Source details unavailable.", R.string.ui_454237aa01ec);
     IDS.put("Source languages", R.string.ui_2d37f6721074);
     IDS.put("Sources", R.string.ui_2eb56be3c2d9);
@@ -724,6 +728,7 @@ final class L10n {
     IDS.put("Unable to play", R.string.ui_e7010042ce25);
     IDS.put("Unchanged", R.string.ui_51ed65113221);
     IDS.put("Undo", R.string.ui_39fc72124884);
+    IDS.put("Unknown", R.string.ui_bc7819b34ff8);
     IDS.put("Unlimited", R.string.ui_b8bef37b7153);
     IDS.put("Unsupported media container for processing", R.string.ui_e50bad848e4a);
     IDS.put("Up next", R.string.ui_567bfc4dad37);

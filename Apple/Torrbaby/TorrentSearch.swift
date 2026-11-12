@@ -36,6 +36,24 @@ struct TorrentReleaseHints: Decodable {
     }
     var summary: String { ([resolution, videoCodec, releaseSource].compactMap { $0 } + audio + languages).joined(separator: " · ") }
 }
+/// The tracks the server read from a copy's first episode, without downloading it.
+struct CloudMeasured: Decodable {
+    struct Track: Decodable {
+        var format: String? = nil; var layout: String? = nil; var language: String? = nil; var channels: Int? = nil
+        /// "Dolby Atmos 5.1", "AAC Stereo".
+        var label: String {
+            let shape = layout == "stereo" ? L10n.text("Stereo") : layout == "mono" ? L10n.text("Mono") : layout ?? ""
+            return [format ?? "", shape].filter { !$0.isEmpty }.joined(separator: " ")
+        }
+    }
+    struct Video: Decodable { var resolution: String? = nil; var width: Int? = nil; var height: Int? = nil; var codec: String? = nil; var hdr: String? = nil }
+    var audio: [Track]? = nil
+    var video: Video? = nil
+    var subtitles: [String]? = nil
+    /// The fullest sound track, which is the one a player picks.
+    var bestTrack: Track? { audio?.max { ($0.channels ?? 0, $0.format?.contains("Atmos") == true ? 1 : 0) < ($1.channels ?? 0, $1.format?.contains("Atmos") == true ? 1 : 0) } }
+    static func language(_ code: String) -> String { code == "und" ? L10n.text("Unknown") : L10n.language(code) }
+}
 /// One copy of a series inside a cloud share, as the server measured it: sharers often
 /// bundle the same episodes in several qualities, and each is its own search result.
 struct CloudCopy: Decodable {
@@ -67,6 +85,8 @@ struct CloudCopy: Decodable {
     var beyond: Bool? = nil
     /// The series' own title.
     var show: String? = nil
+    /// Its tracks, once the server has read them.
+    var measured: CloudMeasured? = nil
 
     /// "E01–E11 E13–E34": runs of consecutive episodes.
     static func ranges(_ numbers: [Int], limit: Int = 5) -> String {
@@ -105,15 +125,19 @@ struct CloudCopy: Decodable {
         var parts: [String] = []
         if let pictures, pictures.count > 1 { parts.append(pictures.map { "\($0.resolution) ×\($0.count)" }.joined(separator: ", ")) }
         else if let resolution { parts.append(resolution) }
-        if let hdr { parts.append(hdr) }
+        if let hdr = measured?.video?.hdr ?? hdr { parts.append(hdr) }
         if let fps, fps >= 49 { parts.append("\(fps) fps") }
-        switch audio {
-        case "atmos": parts.append(L10n.text("Dolby Atmos"))
-        case "stereo": parts.append(L10n.text("Stereo"))
-        case let layout?: parts.append(L10n.text("Surround") + " " + layout)
-        default: break
+        // Sound as read from the file when it has been; otherwise as the share's names claim.
+        if let track = measured?.bestTrack { parts.append(track.label) }
+        else {
+            switch audio {
+            case "atmos": parts.append(L10n.text("Dolby Atmos"))
+            case "stereo": parts.append(L10n.text("Stereo"))
+            case let layout?: parts.append(L10n.text("Surround") + " " + layout)
+            default: break
+            }
         }
-        if let codec { parts.append(codec) }
+        if let codec = measured?.video?.codec ?? codec { parts.append(codec) }
         if let totalBytes, let count = videoCount, count > 1 {
             parts.append(L10n.text("Per episode") + " " + ByteCountFormatter.string(fromByteCount: totalBytes / Int64(count), countStyle: .file))
         }
@@ -1152,7 +1176,7 @@ private struct TorrentSearchRow: View {
                     Button { Task { await addCloud() } } label: {
                         if compactRow { Image(systemName: "icloud.and.arrow.down").frame(width: 22, height: 22) }
                         else { Label("Download", systemImage: "icloud.and.arrow.down").labelStyle(.titleAndIcon) }
-                    }.buttonStyle(MonoButtonStyle(compact: true)).fixedSize().accessibilityLabel("Download")
+                    }.buttonStyle(MonoButtonStyle(prominent: true, compact: true)).fixedSize().accessibilityLabel("Download").pointingHandOnHover()
                 }
                 #endif
             }
@@ -1605,6 +1629,14 @@ struct CloudShareView: View {
     @State private var adding = false
     @State private var message: String?
     @State private var added = false
+    @State private var measured: CloudMeasured?
+    @State private var measuring = false
+    /// This copy with its tracks as read just now, when the search had not read them yet.
+    private var copy: CloudCopy? {
+        guard var copy = item.cloud else { return nil }
+        if let measured { copy.measured = measured }
+        return copy
+    }
     /// The videos of this result's copy; a share may hold the series several times over.
     private var files: [CloudShare.File] {
         guard let share else { return [] }
@@ -1616,10 +1648,30 @@ struct CloudShareView: View {
         List {
             SwiftUI.Section {
                 Text(item.title).font(.title2.bold()).textSelectionIfAvailable()
-                if let cloud = item.cloud {
+                if let cloud = copy {
                     Text(verbatim: cloud.episodesLine).font(.headline).monospacedDigit()
                         .foregroundStyle(cloud.complete == true ? Theme.accent : cloud.aired == nil ? Color.primary : Color.orange)
                     if !cloud.qualityLine.isEmpty { Text(verbatim: cloud.qualityLine).font(.subheadline).foregroundStyle(.secondary) }
+                    if let tracks = cloud.measured {
+                        // Every sound track, the picture as encoded, and any subtitles inside the file.
+                        LabeledContent("Sound") {
+                            VStack(alignment: .trailing, spacing: 2) {
+                                ForEach(Array((tracks.audio ?? []).enumerated()), id: \.offset) { _, track in
+                                    Text(verbatim: [track.label, track.language.map(CloudMeasured.language) ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))
+                                }
+                            }
+                        }
+                        if let video = tracks.video {
+                            LabeledContent("Picture") {
+                                Text(verbatim: [video.width.flatMap { w in video.height.map { "\(w)×\($0)" } } ?? "", video.codec ?? "", video.hdr ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))
+                            }
+                        }
+                        LabeledContent("Subtitles") {
+                            Text(verbatim: (tracks.subtitles ?? []).isEmpty ? L10n.text("None in the file") : (tracks.subtitles ?? []).map(CloudMeasured.language).joined(separator: " · "))
+                        }
+                    } else if measuring {
+                        HStack(spacing: 10) { ProgressView().controlSize(.small); Text("Checking sound and subtitles…").foregroundStyle(.secondary) }
+                    }
                 }
                 if !item.cloudSummary.isEmpty { Text(item.cloudSummary).font(.subheadline).foregroundStyle(.secondary) }
                 Text(item.name).font(.caption).foregroundStyle(.secondary).textSelectionIfAvailable()
@@ -1675,6 +1727,15 @@ struct CloudShareView: View {
             share = found?.shares.first { $0.url == item.shareURL }
             // Trailers and extras are listed but not chosen for you.
             chosen = Set(files.filter { $0.episode != nil || item.cloud?.episodes?.isEmpty != false }.map(\.path))
+        }
+        .task(id: item.id) {
+            // The first episode's tracks are read from the drive; a few seconds, once per copy.
+            measured = nil
+            guard item.cloud?.measured == nil, let url = item.shareURL, let key = item.cloud?.key else { return }
+            measuring = true
+            defer { measuring = false }
+            let found: CloudMeasured? = try? await store.request("POST", "/v1/cloud/probe", body: ["url": url, "copy": key], timeout: 60)
+            if !Task.isCancelled { measured = found }
         }
     }
     /// A share's title without its season, edition and quality ("庆余年 第一季 特别版 4K" → "庆余年"),
@@ -1908,4 +1969,15 @@ struct MediaDriveSpace: View {
         volume.freeBytes < 50_000_000_000 || volume.freeBytes * 20 < volume.totalBytes
     }
     private func bytes(_ value: Int64) -> String { ByteCountFormatter.string(fromByteCount: value, countStyle: .file) }
+}
+
+extension View {
+    /// A pointing hand over a control in a list, where the cursor otherwise stays as it was.
+    @ViewBuilder func pointingHandOnHover() -> some View {
+        #if os(macOS)
+        onHover { inside in if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
+        #else
+        self
+        #endif
+    }
 }

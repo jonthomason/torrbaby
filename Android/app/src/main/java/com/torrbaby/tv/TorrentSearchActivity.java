@@ -208,6 +208,27 @@ public final class TorrentSearchActivity extends Activity {
     if(cloud.optInt("extras")>0)parts.add(String.format(L10n.locale(),L10n.t("Extras: %d"),cloud.optInt("extras")));
     return String.join(" · ",parts);
   }
+  /** "Dolby Atmos 5.1", "AAC Stereo". */
+  private static String trackLabel(JSONObject track){
+    String layout=track.isNull("layout")?"":track.optString("layout");
+    String shape=layout.equals("stereo")?L10n.t("Stereo"):layout.equals("mono")?L10n.t("Mono"):layout;
+    return (track.optString("format")+" "+shape).trim();
+  }
+  /** Every sound track, the picture as encoded and any subtitles inside the file, as the server read them. */
+  private static String tracksText(JSONObject measured){
+    List<String> lines=new ArrayList<>(),sound=new ArrayList<>();JSONArray tracks=measured.optJSONArray("audio");
+    for(int i=0;tracks!=null&&i<tracks.length();i++){JSONObject track=tracks.optJSONObject(i);
+      sound.add(trackLabel(track)+(track.isNull("language")?"":" ("+new Locale(track.optString("language")).getDisplayLanguage(L10n.locale())+")"));}
+    if(!sound.isEmpty())lines.add(L10n.t("Sound")+": "+String.join(" · ",sound));
+    JSONObject video=measured.optJSONObject("video");
+    if(video!=null){List<String> picture=new ArrayList<>();if(video.optInt("width")>0)picture.add(video.optInt("width")+"×"+video.optInt("height"));
+      if(!video.isNull("codec"))picture.add(video.optString("codec"));if(!video.isNull("hdr"))picture.add(video.optString("hdr"));
+      lines.add(L10n.t("Picture")+": "+String.join(" · ",picture));}
+    JSONArray subtitles=measured.optJSONArray("subtitles");List<String> languages=new ArrayList<>();
+    for(int i=0;subtitles!=null&&i<subtitles.length();i++)languages.add(subtitles.optString(i).equals("und")?L10n.t("Unknown"):new Locale(subtitles.optString(i)).getDisplayLanguage(L10n.locale()));
+    lines.add(L10n.t("Subtitles")+": "+(languages.isEmpty()?L10n.t("None in the file"):String.join(" · ",languages)));
+    return String.join("\n",lines);
+  }
   /** A cloud copy's picture, sound and size per episode. */
   private String cloudQuality(JSONObject cloud){
     List<String> parts=new ArrayList<>();JSONArray pictures=cloud.optJSONArray("pictures");
@@ -215,8 +236,13 @@ public final class TorrentSearchActivity extends Activity {
     else if(!cloud.isNull("resolution"))parts.add(cloud.optString("resolution"));
     if(!cloud.isNull("hdr"))parts.add(cloud.optString("hdr"));
     if(cloud.optInt("fps")>=49)parts.add(cloud.optInt("fps")+" fps");
-    String audio=cloud.isNull("audio")?"":cloud.optString("audio");
-    if(audio.equals("atmos"))parts.add(L10n.t("Dolby Atmos"));else if(audio.equals("stereo"))parts.add(L10n.t("Stereo"));else if(!audio.isEmpty())parts.add(L10n.t("Surround")+" "+audio);
+    // Sound as read from the file when it has been; otherwise as the share's names claim.
+    JSONObject measured=cloud.optJSONObject("measured");JSONArray tracks=measured==null?null:measured.optJSONArray("audio");JSONObject best=null;
+    for(int i=0;tracks!=null&&i<tracks.length();i++){JSONObject track=tracks.optJSONObject(i);
+      if(best==null||track.optInt("channels")>best.optInt("channels")||(track.optInt("channels")==best.optInt("channels")&&track.optString("format").contains("Atmos")&&!best.optString("format").contains("Atmos")))best=track;}
+    String audio=best!=null?"":cloud.isNull("audio")?"":cloud.optString("audio");
+    if(best!=null)parts.add(trackLabel(best));
+    else if(audio.equals("atmos"))parts.add(L10n.t("Dolby Atmos"));else if(audio.equals("stereo"))parts.add(L10n.t("Stereo"));else if(!audio.isEmpty())parts.add(L10n.t("Surround")+" "+audio);
     if(!cloud.isNull("codec"))parts.add(cloud.optString("codec"));
     if(cloud.optInt("video_count")>1&&cloud.optLong("total_bytes")>0)parts.add(L10n.t("Per episode")+" "+android.text.format.Formatter.formatFileSize(this,cloud.optLong("total_bytes")/cloud.optInt("video_count")));
     double mbps=cloud.optDouble("mbps",0);if(mbps>0)parts.add(String.format(Locale.ROOT,mbps>=9.95?"%.0f Mb/s":"%.1f Mb/s",mbps));
@@ -301,7 +327,13 @@ public final class TorrentSearchActivity extends Activity {
     LinearLayout root=page();TextView name=Ui.title(this,title(item),24);name.setMaxLines(3);Ui.add(root,name,-1,-2);
     Ui.gap(root,8);Ui.add(root,Ui.text(this,summary(item),14,Ui.MUTED),-1,30);
     JSONObject copy=item.optJSONObject("cloud");String copyKey=copy==null||copy.isNull("key")?"":copy.optString("key");
-    if(copy!=null){Ui.add(root,Ui.text(this,cloudQuality(copy),13,Ui.MUTED),-1,-2);Ui.add(root,Ui.text(this,item.optString("name"),12,Ui.MUTED),-1,-2);Ui.gap(root,6);}
+    if(copy!=null){Ui.add(root,Ui.text(this,cloudQuality(copy),13,Ui.MUTED),-1,-2);Ui.add(root,Ui.text(this,item.optString("name"),12,Ui.MUTED),-1,-2);
+      // The first episode's tracks are read from the drive; a few seconds, once per copy.
+      TextView tracks=Ui.text(this,copy.optJSONObject("measured")!=null?tracksText(copy.optJSONObject("measured")):copyKey.isEmpty()?"":L10n.t("Checking sound and subtitles…"),13,Ui.TEXT);Ui.add(root,tracks,-1,-2);
+      if(copy.optJSONObject("measured")==null&&!copyKey.isEmpty())io.execute(()->{JSONObject read=null;
+        try{read=api.request("POST","/v1/cloud/probe",new JSONObject().put("url",shareUrl(item)).put("copy",copyKey));}catch(Exception ignored){}
+        JSONObject measured=read;runOnUiThread(()->{if(isDestroyed()||request!=generation)return;tracks.setText(measured!=null&&measured.has("audio")?tracksText(measured):"");});});
+      Ui.gap(root,6);}
     LinearLayout actions=Ui.row(this);Ui.add(actions,Ui.button(this,L10n.t("Back"),this::onBackPressed),100,44);Ui.gap(actions,12);
     EditText saveAs=new EditText(this);saveAs.setSingleLine(true);saveAs.setText(libraryName(title(item)));saveAs.setTextColor(Ui.TEXT);saveAs.setHint(L10n.t("Save as"));saveAs.setHintTextColor(Ui.MUTED);
     actions.addView(saveAs,new LinearLayout.LayoutParams(0,Ui.dp(this,46),1));Ui.gap(actions,12);

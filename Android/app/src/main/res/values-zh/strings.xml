@@ -94,6 +94,7 @@
     <string name="ui_8e6b214072c4" formatted="false">应用前请确认年份和集数。</string>
     <string name="ui_07369df4cdcc" formatted="false">正在检查文件…</string>
     <string name="ui_80b0becd67a4" formatted="false">正在检查语言…</string>
+    <string name="ui_508db4dbd17a" formatted="false">正在检查声音和字幕…</string>
     <string name="ui_c31f3333882a" formatted="false">正在检查分享中的文件…</string>
     <string name="ui_d2eaf2aa1512" formatted="false">中国</string>
     <string name="ui_15dc18865567" formatted="false">中文</string>
@@ -386,6 +387,7 @@
     <string name="ui_0180f27718d1" formatted="false">所有试下载均无进展</string>
     <string name="ui_d839d62a2b1e" formatted="false">暂无试下载</string>
     <string name="ui_6eef6648406c" formatted="false">无</string>
+    <string name="ui_98070d393c9e" formatted="false">文件内没有</string>
     <string name="ui_2d4f57f93a15" formatted="false">它们都不符合你选择的分辨率或其他筛选条件。</string>
     <string name="ui_fadae5312047" formatted="false">它们都不符合你选择的分辨率。</string>
     <string name="ui_811931bba8d1" formatted="false">未配置</string>
@@ -425,6 +427,7 @@
     <string name="ui_eed277a1aa9d" formatted="false">永久删除这些文件？</string>
     <string name="ui_e9e82aac397b" formatted="false">永久删除此种子已下载的文件，包括尚未完成的部分。</string>
     <string name="ui_01b2675f9904" formatted="false">保留个人观看记录和其他设备上的下载副本。</string>
+    <string name="ui_61852524b8f8" formatted="false">画面</string>
     <string name="ui_5d12bd53552c" formatted="false">播放</string>
     <string name="ui_576766d387ec" formatted="false">重新播放</string>
     <string name="ui_dc3b71c61700" formatted="false">播放或续播原始文件</string>
@@ -585,6 +588,7 @@
     <string name="ui_b5eedcf44417" formatted="false">大小…</string>
     <string name="ui_adc4e96a478b" formatted="false">排序</string>
     <string name="ui_a2a5bdeca939" formatted="false">排序方式</string>
+    <string name="ui_b4e3efeba10e" formatted="false">声音</string>
     <string name="ui_454237aa01ec" formatted="false">来源详情不可用。</string>
     <string name="ui_2d37f6721074" formatted="false">源语言</string>
     <string name="ui_2eb56be3c2d9" formatted="false">来源</string>
@@ -713,6 +717,7 @@
     <string name="ui_e7010042ce25" formatted="false">无法播放</string>
     <string name="ui_51ed65113221" formatted="false">未更改</string>
     <string name="ui_39fc72124884" formatted="false">撤销</string>
+    <string name="ui_bc7819b34ff8" formatted="false">未知</string>
     <string name="ui_b8bef37b7153" formatted="false">不限量</string>
     <string name="ui_e50bad848e4a" formatted="false">不支持处理此媒体容器</string>
     <string name="ui_567bfc4dad37" formatted="false">接下来播放</string>

@@ -94,6 +94,7 @@
     <string name="ui_8e6b214072c4" formatted="false">Check the year and episodes before applying.</string>
     <string name="ui_07369df4cdcc" formatted="false">Checking files…</string>
     <string name="ui_80b0becd67a4" formatted="false">Checking languages…</string>
+    <string name="ui_508db4dbd17a" formatted="false">Checking sound and subtitles…</string>
     <string name="ui_c31f3333882a" formatted="false">Checking the share’s files…</string>
     <string name="ui_d2eaf2aa1512" formatted="false">China</string>
     <string name="ui_15dc18865567" formatted="false">Chinese</string>
@@ -386,6 +387,7 @@
     <string name="ui_0180f27718d1" formatted="false">No trial made progress</string>
     <string name="ui_d839d62a2b1e" formatted="false">No trials yet</string>
     <string name="ui_6eef6648406c" formatted="false">None</string>
+    <string name="ui_98070d393c9e" formatted="false">None in the file</string>
     <string name="ui_2d4f57f93a15" formatted="false">None of them match the resolution or other filters you have chosen.</string>
     <string name="ui_fadae5312047" formatted="false">None of them match the resolution you have chosen.</string>
     <string name="ui_811931bba8d1" formatted="false">Not configured</string>
@@ -425,6 +427,7 @@
     <string name="ui_eed277a1aa9d" formatted="false">Permanently delete these files?</string>
     <string name="ui_e9e82aac397b" formatted="false">Permanently delete this torrent’s downloaded files, including partial downloads.</string>
     <string name="ui_01b2675f9904" formatted="false">Personal watch history and downloaded copies on other devices are kept.</string>
+    <string name="ui_61852524b8f8" formatted="false">Picture</string>
     <string name="ui_5d12bd53552c" formatted="false">Play</string>
     <string name="ui_576766d387ec" formatted="false">Play again</string>
     <string name="ui_dc3b71c61700" formatted="false">Play or resume original file</string>
@@ -585,6 +588,7 @@
     <string name="ui_b5eedcf44417" formatted="false">Size…</string>
     <string name="ui_adc4e96a478b" formatted="false">Sort</string>
     <string name="ui_a2a5bdeca939" formatted="false">Sort by</string>
+    <string name="ui_b4e3efeba10e" formatted="false">Sound</string>
     <string name="ui_454237aa01ec" formatted="false">Source details unavailable.</string>
     <string name="ui_2d37f6721074" formatted="false">Source languages</string>
     <string name="ui_2eb56be3c2d9" formatted="false">Sources</string>
@@ -713,6 +717,7 @@
     <string name="ui_e7010042ce25" formatted="false">Unable to play</string>
     <string name="ui_51ed65113221" formatted="false">Unchanged</string>
     <string name="ui_39fc72124884" formatted="false">Undo</string>
+    <string name="ui_bc7819b34ff8" formatted="false">Unknown</string>
     <string name="ui_b8bef37b7153" formatted="false">Unlimited</string>
     <string name="ui_e50bad848e4a" formatted="false">Unsupported media container for processing</string>
     <string name="ui_567bfc4dad37" formatted="false">Up next</string>
