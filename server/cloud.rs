@@ -820,6 +820,8 @@ impl Cloud {
             let Some(torrent) = torrents.iter().find(|t| t["hash_string"].as_str().is_some_and(|h| h.eq_ignore_ascii_case(hash))) else { settled.push(hash.clone()); continue };
             // Stopped because its drive is away, not because it finished: wait for the drive.
             if drives.offline(Path::new(torrent["download_dir"].as_str().unwrap_or("")), &online) { continue; }
+            // Being moved to another drive, or stopped by Torrbaby until its drive returned.
+            if crate::drive_moves::moving_torrent(s, hash) || held_for_drive(s, hash) { continue; }
             let whole = assets.iter().filter(|asset| asset["torrent_hash"].as_str().is_some_and(|h| h.eq_ignore_ascii_case(hash)) && asset["role"] != "extra")
                 .all(|asset| asset["path"].as_str().is_some_and(|path| entry.paths.iter().any(|known| known == path)));
             if !whole { continue; }
@@ -1204,6 +1206,9 @@ impl Cloud {
             // fetched only when it beats all that play, and then the lesser copies go. This
             // is how a download fills a show's gaps and raises its quality without duplicates.
             let mapped = if present || in_parts_of(job, file) { Vec::new() } else { Self::mapped(s, entity.as_deref(), &file.destination) };
+            // A copy on a drive that is not connected cannot be compared, so it is neither a
+            // rival nor bettered: both are kept, and the user chooses later.
+            let mapped: Vec<Value> = mapped.into_iter().filter(|asset| asset["offline"] != true).collect();
             // The job's own videos are parts or siblings, never rivals of one another; and an
             // episode that comes in parts is not weighed against a whole copy, whose size says nothing about it.
             let key = |f: &JobFile| f.destination.file_name().and_then(|n| n.to_str()).map(|n| (episode(n), crate::scanner::part(n)));
@@ -1487,4 +1492,10 @@ mod tests {
         assert_eq!(clean("  逐玉: 第一季 / 4K  "), "逐玉 第一季 4K");
         assert_eq!(clean("a\\b*c?.."), "a b c");
     }
+}
+
+/// Stopped by the organizer while its drive was away, and not yet started again.
+fn held_for_drive(s: &Service, hash: &str) -> bool {
+    s.db.lock().ok().and_then(|db| db.state().ok())
+        .is_some_and(|state| state["held_for_drive"].as_array().is_some_and(|list| list.iter().any(|h| h.as_str().is_some_and(|h| h.eq_ignore_ascii_case(hash)))))
 }

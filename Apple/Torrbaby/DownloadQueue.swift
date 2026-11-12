@@ -604,7 +604,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             return .local(next.id)
         }
         guard let store, store.canStream, store.server == server, let title,
-              let asset = title.assets.first(where: { $0.role != "extra" && $0.season == number.season && $0.episode == number.episode && $0.complete }) else { return nil }
+              let asset = title.assets.first(where: { $0.role != "extra" && $0.season == number.season && $0.episode == number.episode && $0.complete && $0.offline != true }) else { return nil }
         return .stream(title, asset)
     }
     func nextPlayback(after currentPlayback: Playback) async throws -> Playback? {

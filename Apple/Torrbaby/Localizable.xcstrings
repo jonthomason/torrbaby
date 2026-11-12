@@ -16137,6 +16137,57 @@
           }
         }
       }
+    },
+    "These files are already moving": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "These files are already moving"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这些文件正在移动"
+          }
+        }
+      }
+    },
+    "Waiting for the drive to be connected": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for the drive to be connected"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待连接硬盘"
+          }
+        }
+      }
+    },
+    "Wait until moves to this drive have finished": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wait until moves to this drive have finished"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请等待移到此硬盘的操作完成"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

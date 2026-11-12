@@ -69,7 +69,7 @@ enum AutoDownload {
         for title in library.titles where title.kind == "tv" && followed.contains(title.id) {
             var seen = Set<EpisodeNumber>()
             let next = title.playable.filter { asset in
-                guard !asset.watched, let season = asset.season, let episode = asset.episode, season > 0 else { return false }
+                guard !asset.watched, asset.offline != true, let season = asset.season, let episode = asset.episode, season > 0 else { return false }
                 return seen.insert(EpisodeNumber(season: season, episode: episode)).inserted
             }.prefix(keep)
             for asset in next where !queue.items.contains(where: { $0.server == store.server && $0.assetID == asset.id && $0.state != .removed }) {

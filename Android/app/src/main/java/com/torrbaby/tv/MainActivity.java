@@ -1557,7 +1557,7 @@ public class MainActivity extends Activity {
     if(!Objects.toString(a.cast,"").equals(Objects.toString(b.cast,""))||!a.title.equals(b.title)||!a.summary.equals(b.summary)||!a.poster.equals(b.poster)||!a.backdrop.equals(b.backdrop)||!a.metadata().equals(b.metadata())||a.assets.size()!=b.assets.size())return false;
     for(int i=0;i<a.assets.size();i++) {
       Library.Asset x=a.assets.get(i),y=b.assets.get(i);
-      if(!x.id.equals(y.id)||!x.name.equals(y.name)||!x.summary.equals(y.summary)||x.position!=y.position||x.duration!=y.duration||x.watched!=y.watched||x.complete!=y.complete||!Objects.toString(x.mediaInfo,"").equals(Objects.toString(y.mediaInfo,"")))return false;
+      if(!x.id.equals(y.id)||!x.name.equals(y.name)||!x.summary.equals(y.summary)||x.position!=y.position||x.duration!=y.duration||x.watched!=y.watched||x.complete!=y.complete||x.offline!=y.offline||!Objects.toString(x.mediaInfo,"").equals(Objects.toString(y.mediaInfo,"")))return false;
     }
     return true;
   }
@@ -1660,6 +1660,7 @@ public class MainActivity extends Activity {
 
   private String playbackLabel(Library.Title title, Library.Asset asset) {
     if (asset == null) return "▶  Start";
+    if (asset.offline) return L10n.t("Drive not connected");
     boolean resume = asset.position > 0 && !asset.watched;
     int minutes = resume && asset.duration > asset.position ? (int) Math.ceil((asset.duration - asset.position) / 60) : 0;
     if (!title.kind.equals("tv") || asset.episode <= 0) {
@@ -1954,7 +1955,7 @@ public class MainActivity extends Activity {
       summary.setEllipsize(android.text.TextUtils.TruncateAt.END);
       Ui.add(text, summary, -1, -2);
     }
-    if (!a.complete || a.watched || a.position > 0) {
+    if (!a.complete || a.offline || a.watched || a.position > 0) {
       Ui.gap(text, 6);
       Ui.add(text, Ui.text(this, a.status(), 12, Ui.MUTED), -1, -2);
     }

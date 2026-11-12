@@ -63,16 +63,19 @@ struct DrivesSettings: View {
     @State private var drives: [ServerDrive] = []
     @State private var moves: [DriveMove] = []
     @State private var loaded = false
+    /// Servers from before drives have no such route: the section stays hidden.
+    @State private var unavailable = false
     @State private var adding = false
     @State private var editing: ServerDrive?
     private func load() async {
         guard store.connected else { return }
-        if let list: ServerDrives = try? await store.request("GET", "/v1/drives") { drives = list.drives; loaded = true }
+        if let list: ServerDrives = try? await store.request("GET", "/v1/drives") { drives = list.drives; loaded = true; unavailable = false }
+        else if !loaded { unavailable = true }
         if let list: DriveMoves = try? await store.request("GET", "/v1/drives/moves") { moves = list.moves.filter(\.active) }
     }
     var body: some View {
         SwiftUI.Section {
-            if !loaded { HStack { Spacer(); ProgressView(); Spacer() } }
+            if !loaded && !unavailable { HStack { Spacer(); ProgressView(); Spacer() } }
             ForEach(drives) { drive in
                 Button { editing = drive } label: {
                     HStack(spacing: 12) {
@@ -98,8 +101,8 @@ struct DrivesSettings: View {
                 }
             }
             if loaded { Button("Add Drive…") { adding = true }.disabled(!store.connected) }
-        } header: { Text("Drives") } footer: {
-            Text("New episodes go to the drive that already has the show. Everything else goes to the drive with the most free space.")
+        } header: { if !unavailable { Text("Drives") } } footer: {
+            if !unavailable { Text("New episodes go to the drive that already has the show. Everything else goes to the drive with the most free space.") }
         }
         .task(id: store.server) {
             while !Task.isCancelled {
@@ -107,8 +110,8 @@ struct DrivesSettings: View {
                 do { try await Task.sleep(for: .seconds(moves.isEmpty ? 30 : 3)) } catch { return }
             }
         }
-        .sheet(isPresented: $adding) { AddDriveView { await load() } }
-        .sheet(item: $editing) { drive in DriveDetailView(drive: drive, count: drives.count) { await load() } }
+        .sheet(isPresented: $adding) { AddDriveView { await load(); await store.refreshStatus() } }
+        .sheet(item: $editing) { drive in DriveDetailView(drive: drive, count: drives.count) { await load(); await store.refreshStatus() } }
     }
 }
 
@@ -138,11 +141,11 @@ private struct DriveDetailView: View {
                         TextField("Name", text: $name).labelsHidden().multilineTextAlignment(.trailing)
                             .onSubmit { if name != drive.name { save(["name": name]) } }
                     }
-                    LabeledContent("Status") { Text(LocalizedStringKey(drive.state)).foregroundStyle(drive.connected && !drive.full ? Theme.muted : .orange) }
+                    LabeledContent("Status") { Text(LocalizedStringKey(drive.state)).foregroundStyle(drive.connected && !drive.full ? Theme.muted : .orange).selectableText() }
                     if drive.connected {
-                        LabeledContent("Space") { Text(L10n.format("%@ free of %@", bytes(drive.freeBytes), bytes(drive.totalBytes))).monospacedDigit() }
+                        LabeledContent("Space") { Text(L10n.format("%@ free of %@", bytes(drive.freeBytes), bytes(drive.totalBytes))).monospacedDigit().selectableText() }
                     }
-                    LabeledContent("On this drive") { Text(L10n.format("%@ · %lld files", bytes(drive.bytes), Int64(drive.files))).monospacedDigit() }
+                    LabeledContent("On this drive") { Text(L10n.format("%@ · %lld files", bytes(drive.bytes), Int64(drive.files))).monospacedDigit().selectableText() }
                 }
                 SwiftUI.Section {
                     Toggle("Use for new downloads", isOn: Binding(get: { drive.acceptNew }, set: { save(["accept_new": $0]) })).disabled(store.busy)
@@ -202,7 +205,7 @@ private struct AddDriveView: View {
                         ForEach(candidates) { candidate in
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(verbatim: candidate.name)
+                                    Text(verbatim: candidate.name).selectableText()
                                     Text(L10n.format("%@ free of %@", bytes(candidate.freeBytes), bytes(candidate.totalBytes))).font(.caption).foregroundStyle(Theme.muted).monospacedDigit()
                                     if candidate.usedBefore { Text("Used by Torrbaby before").font(.caption).foregroundStyle(Theme.muted) }
                                     if !candidate.writable { Text("This drive is read-only").font(.caption).foregroundStyle(.orange) }
@@ -292,7 +295,7 @@ struct DriveMoveSection: View {
             do {
                 preview = try await store.request("POST", "/v1/drives/moves/preview", body: ["asset_ids": assetIDs])
                 if preview?.moving == true { await poll() }
-            } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+            } catch { preview = nil }
         }
         .task(id: move?.id) { if move?.active == true { await poll() } }
     }
@@ -315,5 +318,16 @@ struct DriveMoveSection: View {
             let started: DriveMoveStarted = try await store.request("POST", "/v1/drives/moves", body: ["asset_ids": assetIDs, "drive": choice.id], timeout: 30)
             move = DriveMove(id: started.id, drive: choice.id, assetIds: assetIDs, state: "queued", bytes: choice.bytes, doneBytes: 0, error: nil, waiting: nil)
         }
+    }
+}
+
+extension View {
+    /// Selectable where the platform allows it (tvOS has no text selection).
+    @ViewBuilder func selectableText() -> some View {
+        #if os(tvOS)
+        self
+        #else
+        textSelection(.enabled)
+        #endif
     }
 }

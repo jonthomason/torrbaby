@@ -736,6 +736,7 @@
     <string name="ui_1bab38b72a4a" formatted="false">服务器将自动重试。</string>
     <string name="ui_6ddf94adca4b" formatted="false">种子仍在列表中，请稍后刷新以确认是否已移除。</string>
     <string name="ui_196686e4c2fc" formatted="false">视频流已中断，请检查服务器和网络连接。</string>
+    <string name="ui_02b324383658" formatted="false">这些文件正在移动</string>
     <string name="ui_6315e169d054" formatted="false">这些设置适用于使用此服务器的所有人。</string>
     <string name="ui_a3594939d5f3" formatted="false">此操作影响整个下载包及所有用户的媒体库。</string>
     <string name="ui_1d3888fca6b7" formatted="false">此代码已过期。</string>
@@ -831,6 +832,7 @@
     <string name="ui_a67bba005296" formatted="false">视频会先存入你的夸克网盘，下载到媒体库后再从网盘删除。</string>
     <string name="ui_31a7604a3c74" formatted="false">查看来源</string>
     <string name="ui_f22eadf74236" formatted="false">语音转写</string>
+    <string name="ui_78b913663c6c" formatted="false">请等待移到此硬盘的操作完成</string>
     <string name="ui_c672990b0948" formatted="false">请等待下载完成</string>
     <string name="ui_33d30632848d" formatted="false">等待中</string>
     <string name="ui_819ba5c9dca6" formatted="false">等待 Wi-Fi</string>
@@ -841,6 +843,7 @@
     <string name="ui_83ed73bbc425" formatted="false">等待播放结束</string>
     <string name="ui_64189e6dc1d9" formatted="false">正在等待播放停止</string>
     <string name="ui_d9852df62ffb" formatted="false">正在等待处理完成</string>
+    <string name="ui_d8c33d5a3be9" formatted="false">正在等待连接硬盘</string>
     <string name="ui_640215e9fe28" formatted="false">等待校验</string>
     <string name="ui_f1184cd6731c" formatted="false">等待中 · 排第 %d 位</string>
     <string name="ui_0a444233849c" formatted="false">追更新剧集</string>

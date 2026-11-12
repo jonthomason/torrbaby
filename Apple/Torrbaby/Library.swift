@@ -1171,7 +1171,7 @@ struct LibraryFileManagement: View {
                 }
                 // Moving between drives does not depend on the removal check above.
                 if operation == nil {
-                    DriveMoveSection(assetIDs: store.library?.titles.first(where: { $0.assets.contains { $0.id == assetID } })?.assets.map(\.id) ?? [assetID])
+                    DriveMoveSection(assetIDs: store.library?.titles.first(where: { $0.assets.contains { $0.id == assetID } })?.assets.filter { $0.complete && $0.offline != true }.map(\.id) ?? [assetID])
                         .padding(.top, 8)
                 }
                 #if os(tvOS)

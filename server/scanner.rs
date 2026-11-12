@@ -475,6 +475,8 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
         assets.push(asset);
     }
     let mut superseded = Vec::new();
+    // A drive that went away during the walk is away for these records too.
+    let online: HashSet<String> = online.intersection(&drives.online()).cloned().collect();
     for mut asset in old {
         if seen.contains(asset["id"].as_str().unwrap_or("")) {
             continue;
@@ -486,6 +488,7 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
             assets.push(asset);
             continue;
         }
+        if let Some(object) = asset.as_object_mut() { object.remove("offline"); }
         // An explicit user match is kept even on a duplicate record. Once a torrent's file
         // is in place, only a record whose own file has gone can be its earlier copy.
         if asset["torrent_hash"].is_null() && asset["confirmed"] != true

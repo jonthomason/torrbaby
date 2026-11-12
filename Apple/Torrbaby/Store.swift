@@ -407,7 +407,11 @@ final class Store: ObservableObject {
             if let resume = title.resume, isDownloaded(resume) { return resume }
             if let local = title.playable.first(where: isDownloaded) { return local }
         }
-        return title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first
+        let chosen = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first
+        // Another copy of the same film or episode, when this one is on a drive that is away.
+        if let chosen, onMissingDrive(chosen),
+           let copy = title.playable.first(where: { $0.season == chosen.season && $0.episode == chosen.episode && canPlay($0) }) { return copy }
+        return chosen
     }
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()

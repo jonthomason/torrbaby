@@ -747,6 +747,7 @@ final class L10n {
     IDS.put("The server will retry automatically.", R.string.ui_1bab38b72a4a);
     IDS.put("The torrent is still listed. Refresh in a moment to check whether removal finished.", R.string.ui_6ddf94adca4b);
     IDS.put("The video stream was interrupted. Check the server and network connection.", R.string.ui_196686e4c2fc);
+    IDS.put("These files are already moving", R.string.ui_02b324383658);
     IDS.put("These settings apply to everyone who uses this server.", R.string.ui_6315e169d054);
     IDS.put("This affects the entire download package and everyone’s library.", R.string.ui_a3594939d5f3);
     IDS.put("This code has expired.", R.string.ui_1d3888fca6b7);
@@ -842,6 +843,7 @@ final class L10n {
     IDS.put("Videos are saved to your Quark Drive, downloaded into your library, then removed from the drive.", R.string.ui_a67bba005296);
     IDS.put("View source", R.string.ui_31a7604a3c74);
     IDS.put("Voice Transcribed", R.string.ui_f22eadf74236);
+    IDS.put("Wait until moves to this drive have finished", R.string.ui_78b913663c6c);
     IDS.put("Wait until the download has finished", R.string.ui_c672990b0948);
     IDS.put("Waiting", R.string.ui_33d30632848d);
     IDS.put("Waiting for Wi-Fi", R.string.ui_819ba5c9dca6);
@@ -852,6 +854,7 @@ final class L10n {
     IDS.put("Waiting for playback to finish", R.string.ui_83ed73bbc425);
     IDS.put("Waiting for playback to stop", R.string.ui_64189e6dc1d9);
     IDS.put("Waiting for processing to finish", R.string.ui_d9852df62ffb);
+    IDS.put("Waiting for the drive to be connected", R.string.ui_d8c33d5a3be9);
     IDS.put("Waiting to verify", R.string.ui_640215e9fe28);
     IDS.put("Waiting · %d in line", R.string.ui_f1184cd6731c);
     IDS.put("Watch for new episodes", R.string.ui_0a444233849c);

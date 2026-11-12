@@ -431,7 +431,7 @@ private struct TVMediaDetail: View {
                             Text(title.title).font(.system(size: 56, weight: .bold)).lineLimit(2)
                             Text(LocalizedStringKey(([title.yearLabel, title.contentRating ?? ""] + title.genres.prefix(3)).filter { !$0.isEmpty }.joined(separator: " · ")))
                                 .font(.headline).foregroundStyle(.white.opacity(0.8))
-                            if let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
+                            if let asset = store.preferredLibraryAsset(title) {
                                 // TV shows keep the episode guide directly below the hero, so their
                                 // secondary actions live in one compact menu beside Play.
                                 HStack(spacing: 14) {
@@ -580,7 +580,7 @@ private struct TVMediaDetail: View {
         }
     }
     private func play(_ asset: LibraryAsset, title: LibraryTitle, fromBeginning: Bool = false) {
-        guard !loading else { return }
+        guard !loading, asset.offline != true else { return }
         loading = true; preparation = ""
         playbackTask = Task {
             defer { loading = false; playbackTask = nil }

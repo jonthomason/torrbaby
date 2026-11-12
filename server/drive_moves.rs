@@ -7,7 +7,9 @@
 //! sidecars. Each unit goes copying → switched (the library and Transmission point at the
 //! copy) → done (the originals are gone). The step is saved after each, so a restart
 //! resumes where it was. Copies are written beside their destination as `….torrbaby-moving`
-//! and renamed into place only once verified.
+//! and renamed into place only once every file of the unit is verified, together with the
+//! switch, under the lock library scans take, so a scan never sees a copy the library
+//! does not yet use, nor an original it no longer does.
 //!
 //! POST /v1/drives/moves/preview  {"asset_ids": [...]}                where they are, what fits
 //! POST /v1/drives/moves          {"asset_ids": [...], "drive": "beta"}
@@ -54,9 +56,16 @@ fn load(s: &Service) -> Vec<Move> {
     let mut moves = MOVES.lock().unwrap_or_else(|e| e.into_inner());
     moves.get_or_insert_with(|| {
         let all: Vec<Move> = std::fs::read(file(s)).ok().and_then(|raw| serde_json::from_slice(&raw).ok()).unwrap_or_default();
-        // After a restart, originals of switched units are still on their way out.
+        // After a restart: originals of switched units are still on their way out, and
+        // copies of units not yet switched are not the library's yet.
         if let Ok(mut leaving) = LEAVING.lock() {
-            for unit in all.iter().flat_map(|m| &m.units).filter(|u| u.step == "switched") { leaving.extend(unit.files.iter().map(|(n, _)| unit.from.join(n))); }
+            for unit in all.iter().filter(|m| active(m)).flat_map(|m| &m.units) {
+                match unit.step.as_str() {
+                    "switched" => leaving.extend(unit.files.iter().map(|(n, _)| unit.from.join(n))),
+                    "copying" => leaving.extend(unit.files.iter().map(|(n, _)| unit.to.join(n))),
+                    _ => {}
+                }
+            }
         }
         all
     }).clone()
@@ -68,10 +77,30 @@ fn store(s: &Service, all: &[Move]) -> Result<()> {
     *MOVES.lock().unwrap_or_else(|e| e.into_inner()) = Some(all.to_vec());
     Ok(())
 }
+/// Held across a read, change and save of the list, so two writers do not lose either's change.
+static SAVING: Mutex<()> = Mutex::new(());
 fn update(s: &Service, id: &str, change: impl FnOnce(&mut Move)) -> Result<()> {
+    let _saving = SAVING.lock().unwrap_or_else(|e| e.into_inner());
     let mut all = load(s);
     if let Some(m) = all.iter_mut().find(|m| m.id == id) { change(m); }
     store(s, &all)
+}
+fn active(m: &Move) -> bool { matches!(m.state.as_str(), "queued" | "running") }
+/// Whether a torrent's files are being moved: the organizer and cleanup leave it alone.
+pub fn moving_torrent(s: &Service, hash: &str) -> bool {
+    load(s).iter().filter(|m| active(m)).flat_map(|m| &m.units)
+        .any(|u| u.step != "done" && u.torrent.as_deref().is_some_and(|h| h.eq_ignore_ascii_case(hash)))
+}
+/// Whether a move onto `drive` has not finished.
+pub fn moving_to(s: &Service, drive: &str) -> bool { load(s).iter().any(|m| active(m) && m.drive == drive) }
+/// Bytes still to be copied onto a drive by moves already queued.
+fn incoming(s: &Service, drive: &str) -> u64 {
+    load(s).iter().filter(|m| active(m) && m.drive == drive).flat_map(|m| &m.units).filter(|u| u.step == "copying")
+        .flat_map(|u| u.files.iter().map(|(_, size)| size)).sum()
+}
+/// Room for `bytes` more on `drive`, keeping its reserve and what other moves will bring.
+fn fits(s: &Service, drive: &Drive, bytes: u64) -> bool {
+    crate::drives::space(drive).1 > bytes.saturating_add(incoming(s, &drive.id)).saturating_add(drive.reserve_bytes)
 }
 
 pub async fn route(s: &Service, method: &str, path: &str, body: &Value) -> Option<Result<Value>> {
@@ -122,7 +151,10 @@ async fn plan(s: &Service, drives: &Drives, assets: &[Value], target: Option<&Dr
             if units.iter().any(|u| u.torrent.as_deref() == Some(hash.as_str())) { continue; }
             ensure!(crate::organizer::complete(t), "Wait until the download has finished");
             let dir = PathBuf::from(t["download_dir"].as_str().unwrap_or_default());
-            let (_, role, root) = drives.root_of(&dir).filter(|(_, _, r)| *r == dir).context("A download is outside the library folders")?;
+            let (from, role, root) = drives.root_of(&dir).filter(|(_, _, r)| *r == dir).context("A download is outside the library folders")?;
+            // Transmission already uses the target (an earlier move stopped part-way): the
+            // next scan puts the records there; copying onto itself would delete the files.
+            if from.id == target.id { continue; }
             let files = t["files"].as_array().into_iter().flatten()
                 .map(|f| Ok((f["name"].as_str().context("Invalid torrent file")?.to_owned(), f["length"].as_u64().unwrap_or(0)))).collect::<Result<Vec<_>>>()?;
             units.push(Unit { torrent: Some(hash), from: root.to_path_buf(), to: target.root(role).to_path_buf(), files, step: "copying".into(), error: None });
@@ -133,11 +165,16 @@ async fn plan(s: &Service, drives: &Drives, assets: &[Value], target: Option<&Dr
             let stem = path.file_stem().and_then(|s| s.to_str()).context("Invalid file name")?.to_owned();
             let mut files = vec![(relative.to_string_lossy().into_owned(), std::fs::metadata(&path)?.len())];
             if let Some(parent) = path.parent() {
-                for entry in std::fs::read_dir(parent)?.flatten() {
+                let entries: Vec<_> = std::fs::read_dir(parent)?.flatten().collect();
+                // "Film.2160p.en.srt" belongs to "Film.2160p.mkv", not to "Film.mkv".
+                let longer: Vec<String> = entries.iter().map(|e| e.path()).filter(|p| *p != path && crate::scanner::video(p))
+                    .filter_map(|p| p.file_stem().and_then(|s| s.to_str()).map(str::to_owned))
+                    .filter(|other| other.len() > stem.len() && other.starts_with(&format!("{stem}."))).collect();
+                for entry in entries {
                     let other = entry.path();
                     let name = entry.file_name().to_string_lossy().into_owned();
                     if other == path || !entry.file_type().is_ok_and(|t| t.is_file()) || !(name.starts_with(&format!("{stem}.")) ) { continue; }
-                    if crate::scanner::video(&other) { continue; }
+                    if crate::scanner::video(&other) || longer.iter().any(|l| name.starts_with(&format!("{l}."))) { continue; }
                     files.push((other.strip_prefix(root)?.to_string_lossy().into_owned(), entry.metadata()?.len()));
                 }
             }
@@ -158,7 +195,7 @@ async fn preview(s: &Service, body: &Value) -> Result<Value> {
         let (units, _) = if online { plan(s, &drives, &assets, Some(drive)).await? } else { (Vec::new(), Vec::new()) };
         let bytes: u64 = units.iter().flat_map(|u| u.files.iter().map(|(_, size)| size)).sum();
         let free = if online { crate::drives::space(drive).1 } else { 0 };
-        choices.push(json!({"id":drive.id,"name":drive.name,"online":online,"free_bytes":free,"bytes":bytes,"fits":online && free > bytes + 2_000_000_000}));
+        choices.push(json!({"id":drive.id,"name":drive.name,"online":online,"free_bytes":free,"bytes":bytes,"fits":online && fits(s, drive, bytes)}));
     }
     Ok(json!({"on":on,"choices":choices,"moving":load(s).iter().any(|m| matches!(m.state.as_str(), "queued" | "running") && m.asset_ids.iter().any(|id| assets.iter().any(|a| a["id"] == id.as_str())))}))
 }
@@ -174,11 +211,12 @@ async fn start(s: &Service, body: &Value) -> Result<Value> {
     let (units, _) = plan(s, &drives, &assets, Some(target)).await?;
     ensure!(!units.is_empty(), "Already on that drive");
     let bytes: u64 = units.iter().flat_map(|u| u.files.iter().map(|(_, size)| size)).sum();
-    ensure!(crate::drives::space(target).1 > bytes + 2_000_000_000, "Not enough free space on that drive");
+    ensure!(fits(s, target, bytes), "Not enough free space on that drive");
     let m = Move { id: uuid::Uuid::new_v4().simple().to_string(), drive: target.id.clone(), asset_ids: ids, units, state: "queued".into(),
         created: now(), bytes, done_bytes: 0, error: None };
+    let _saving = SAVING.lock().unwrap_or_else(|e| e.into_inner());
     let mut all = load(s);
-    all.retain(|m| now() - m.created < 30.0 * 86400.0 || matches!(m.state.as_str(), "queued" | "running"));
+    all.retain(|m| now() - m.created < 30.0 * 86400.0 || active(m));
     all.push(m.clone());
     store(s, &all)?;
     s.event("drive_move_queued", json!({"id":m.id,"drive":m.drive,"bytes":bytes}))?;
@@ -215,17 +253,21 @@ fn stopped(s: &Service, m: &Move, index: usize, unit: &Unit, stop: Stop) -> Resu
     match stop {
         Wait(reason) => update(s, &m.id, |m| m.units[index].error = Some(reason)),
         Fail(error) => {
-            // The originals are untouched until a unit is switched; a failed copy only leaves its partial file, removed here.
-            if unit.step == "copying" { discard_partials(&unit); }
-            set_moving(s, &unit, false).ok();
+            // The originals are untouched until a unit is switched: a unit that fails before
+            // that leaves only its partial files and unused copies, removed here.
+            if unit.step == "copying" { discard_copies(unit); }
+            if let Ok(mut leaving) = LEAVING.lock() {
+                for (name, _) in &unit.files { leaving.remove(&unit.to.join(name)); if unit.step == "copying" { leaving.remove(&unit.from.join(name)); } }
+            }
+            set_moving(s, unit, false).ok();
             s.event("drive_move_failed", json!({"id":m.id,"error":error.to_string()}))?;
             update(s, &m.id, |m| { m.state = "failed".into(); m.error = Some(error.to_string()); })
         }
     }
 }
 
-/// Originals whose copies the library already uses, until they are removed. The scanner
-/// must not take one for a new file.
+/// Files in transit: originals whose copies the library already uses, until they are
+/// removed, and copies it does not use yet. The scanner must not take one for a new file.
 static LEAVING: std::sync::LazyLock<Mutex<std::collections::HashSet<PathBuf>>> = std::sync::LazyLock::new(Default::default);
 pub fn leaving(path: &Path) -> bool { LEAVING.lock().is_ok_and(|l| l.contains(path)) }
 
@@ -234,13 +276,32 @@ use Stop::{Fail, Wait};
 impl<E: Into<anyhow::Error>> From<E> for Stop { fn from(error: E) -> Self { Fail(error.into()) } }
 
 fn staged(path: &Path) -> PathBuf { PathBuf::from(format!("{}.torrbaby-moving", path.display())) }
-fn discard_partials(unit: &Unit) {
-    for (name, _) in &unit.files { let _ = std::fs::remove_file(staged(&unit.to.join(name))); }
+/// Remove a unit's partial files and copies the library never used. A copy is removed
+/// only while its original is still there and is a different file.
+fn discard_copies(unit: &Unit) {
+    for (name, _) in &unit.files {
+        let copy = unit.to.join(name);
+        let _ = std::fs::remove_file(staged(&copy));
+        if !same_file(&copy, &unit.from.join(name)).unwrap_or(true) { let _ = std::fs::remove_file(&copy); }
+    }
+}
+/// Whether two paths are one file; None when either is not there.
+fn same_file(a: &Path, b: &Path) -> Option<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let (a, b) = (std::fs::metadata(a).ok()?, std::fs::metadata(b).ok()?);
+    Some(a.dev() == b.dev() && a.ino() == b.ino())
+}
+/// Both drives of a unit connected, or a reason to wait.
+fn drives_present(s: &Service, unit: &Unit) -> std::result::Result<(), Stop> {
+    let drives = Drives::of(&s.effective_config()?);
+    let connected = |path: &Path| drives.drive_of(path).is_some_and(Drive::online);
+    if connected(&unit.from) && connected(&unit.to) { Ok(()) } else { Err(Wait("Waiting for the drive to be connected".into())) }
 }
 
 /// The library records whose files are in this unit.
 fn unit_assets(s: &Service, unit: &Unit) -> Result<Vec<Value>> {
-    let files: Vec<PathBuf> = unit.files.iter().map(|(name, _)| unit.from.join(name)).collect();
+    // Where they were, or, once switched, where they are now.
+    let files: Vec<PathBuf> = unit.files.iter().flat_map(|(name, _)| [unit.from.join(name), unit.to.join(name)]).collect();
     let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
     Ok(db.documents("assets")?.into_iter().filter(|a| a["path"].as_str().is_some_and(|p| files.iter().any(|f| f == Path::new(p)))
         || unit.torrent.as_ref().is_some_and(|h| a["torrent_hash"] == h.as_str())).collect())
@@ -261,30 +322,61 @@ fn set_moving(s: &Service, unit: &Unit, moving: bool) -> Result<()> {
 async fn advance(s: &Service, unit: &Unit) -> std::result::Result<String, Stop> {
     match unit.step.as_str() {
         "copying" => {
-            let assets = unit_assets(s, unit)?;
-            busy(s, &assets)?;
-            set_moving(s, unit, true)?;
+            if unit.from == unit.to { return Err(Fail(anyhow::anyhow!("Already on that drive"))); }
+            {
+                let _scans = s.mutation_lock.lock().await;
+                drives_present(s, unit)?;
+                busy(s, &unit_assets(s, unit)?)?;
+                set_moving(s, unit, true)?;
+            }
+            // Its copies are not the library's until the switch.
+            if let Ok(mut leaving) = LEAVING.lock() { for (name, _) in &unit.files { leaving.insert(unit.to.join(name)); } }
             let copy = unit.clone();
             COPIED.store(0, std::sync::atomic::Ordering::Relaxed);
             tokio::task::spawn_blocking(move || copy_unit(&copy)).await.map_err(|e| Fail(e.into()))??;
             COPIED.store(0, std::sync::atomic::Ordering::Relaxed);
-            switch(s, unit, &assets).await?;
+            // Every copy is verified: put them in place and switch, with no scan in between.
+            let _scans = s.mutation_lock.lock().await;
+            drives_present(s, unit)?;
+            for (name, _) in &unit.files {
+                let copy = unit.to.join(name);
+                if staged(&copy).exists() { std::fs::rename(staged(&copy), &copy)?; }
+            }
+            let assets = unit_assets(s, unit)?;
+            if let Err(error) = switch(s, unit, &assets).await {
+                // Back to the originals, which are untouched.
+                if let Some(hash) = &unit.torrent {
+                    let _ = s.rpc.call("torrent_set_location", json!({"ids":[hash],"location":unit.from,"move":false})).await;
+                    s.invalidate_torrents();
+                }
+                return Err(Fail(error));
+            }
             Ok("switched".into())
         }
         "switched" => {
-            // The library and Transmission use the copies now; the originals can go,
-            // once nothing started playing them during the copy.
-            busy(s, &unit_assets(s, unit)?)?;
+            // The library and Transmission use the copies now; the originals can go, once
+            // nothing started playing them during the copy and both drives are here (a
+            // missing original is only taken for removed while its drive is connected).
+            let _scans = s.mutation_lock.lock().await;
+            drives_present(s, unit)?;
+            let assets = unit_assets(s, unit)?;
+            busy(s, &assets)?;
             for (name, size) in &unit.files {
                 let original = unit.from.join(name);
                 let copy = unit.to.join(name);
                 if !original.exists() { continue; }
-                if std::fs::metadata(&copy).map(|c| c.len()) .ok() != Some(*size) { return Err(Fail(anyhow::anyhow!("A copy on the new drive changed; the original is kept"))); }
+                if same_file(&original, &copy) != Some(false) || std::fs::metadata(&copy).map(|c| c.len()).ok() != Some(*size) {
+                    return Err(Fail(anyhow::anyhow!("A copy on the new drive changed; the original is kept")));
+                }
                 std::fs::remove_file(&original)?;
                 remove_empty_parents(&original, &unit.from);
             }
             set_moving(s, unit, false)?;
             if let Ok(mut leaving) = LEAVING.lock() { for (name, _) in &unit.files { leaving.remove(&unit.from.join(name)); } }
+            // With the originals gone, unfinished subtitle work follows its file.
+            for asset in &assets {
+                if let (Some(id), Some(path)) = (asset["id"].as_str(), asset["path"].as_str()) { s.subtitle_jobs.relocate(id, Path::new(path)); }
+            }
             Ok("done".into())
         }
         other => Err(Fail(anyhow::anyhow!("Unknown move step {other}"))),
@@ -306,7 +398,8 @@ fn busy(s: &Service, assets: &[Value]) -> std::result::Result<(), Stop> {
     Ok(())
 }
 
-/// Copy every file, read each copy back and compare, then put them in place.
+/// Copy every file beside its destination and read each copy back to compare. They are put
+/// in place by the caller, all together, at the switch.
 fn copy_unit(unit: &Unit) -> std::result::Result<(), Stop> {
     use sha2::Digest;
     use std::io::{Read, Write};
@@ -315,8 +408,8 @@ fn copy_unit(unit: &Unit) -> std::result::Result<(), Stop> {
         let meta = std::fs::metadata(&original)?;
         if meta.len() != *size { return Err(Fail(anyhow::anyhow!("A file changed since the move was planned"))); }
         if let Ok(existing) = std::fs::metadata(&copy) {
-            // Already copied before a restart, or a different file in the way.
-            if existing.len() == *size && digest(&copy)? == digest(&original)? { continue; }
+            // Put in place just before a restart, or a different file in the way.
+            if same_file(&copy, &original) == Some(false) && existing.len() == *size && digest(&copy)? == digest(&original)? { continue; }
             return Err(Fail(anyhow::anyhow!("A file with the same name is already on that drive")));
         }
         crate::drives::create_media_folder(copy.parent().context("Invalid destination")?)?;
@@ -343,7 +436,6 @@ fn copy_unit(unit: &Unit) -> std::result::Result<(), Stop> {
         // Same modification time, so finished subtitle work recognises the file.
         let mtime = meta.modified()?;
         std::fs::File::options().write(true).open(&partial)?.set_modified(mtime)?;
-        std::fs::rename(&partial, &copy)?;
     }
     Ok(())
 }
@@ -360,7 +452,9 @@ fn digest(path: &Path) -> Result<Vec<u8>> {
 
 /// Point the library, its finished processing, and Transmission at the copies.
 async fn switch(s: &Service, unit: &Unit, assets: &[Value]) -> Result<()> {
-    if let Ok(mut leaving) = LEAVING.lock() { for (name, _) in &unit.files { leaving.insert(unit.from.join(name)); } }
+    if let Ok(mut leaving) = LEAVING.lock() {
+        for (name, _) in &unit.files { leaving.insert(unit.from.join(name)); leaving.remove(&unit.to.join(name)); }
+    }
     if let Some(hash) = &unit.torrent {
         // Transmission reads the verified copies from now on; it moves nothing itself.
         s.rpc.call("torrent_set_location", json!({"ids":[hash],"location":unit.to,"move":false})).await?;
@@ -385,7 +479,6 @@ async fn switch(s: &Service, unit: &Unit, assets: &[Value]) -> Result<()> {
                 crate::processing::follow(&db, id, revision)?;
             }
         }
-        s.subtitle_jobs.relocate(id, &path);
     }
     Ok(())
 }

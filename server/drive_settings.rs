@@ -80,14 +80,19 @@ fn candidates(s: &Service) -> Result<Value> {
 /// The current drive list as it will be saved.
 fn configs(drives: &Drives) -> Vec<DriveConfig> { drives.all().iter().map(Drive::to_config).collect() }
 
-fn save(s: &Service, list: Vec<DriveConfig>) -> Result<()> {
-    let value = serde_json::to_value(&list)?;
-    // Refuse anything the server would not start with.
+/// Refuse anything the server would not start with.
+fn validate(s: &Service, list: &[DriveConfig]) -> Result<()> {
     let state = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.state()?;
     let mut settings = state["settings"].clone();
     if !settings.is_object() { settings = json!({}); }
-    settings["drives"] = value.clone();
+    settings["drives"] = serde_json::to_value(list)?;
     s.config.with_settings(&settings)?;
+    Ok(())
+}
+
+fn save(s: &Service, list: Vec<DriveConfig>) -> Result<()> {
+    validate(s, &list)?;
+    let value = serde_json::to_value(&list)?;
     s.change_state(|state| {
         if !state["settings"].is_object() { state["settings"] = json!({}); }
         state["settings"]["drives"] = value.clone();
@@ -97,7 +102,11 @@ fn save(s: &Service, list: Vec<DriveConfig>) -> Result<()> {
 
 fn add(s: &Service, body: &Value) -> Result<Value> {
     let mount = PathBuf::from(body["mount"].as_str().context("Choose a drive")?);
-    ensure!(mount.parent() == Some(Path::new("/Volumes")) && drives::is_mount(&mount), "Choose a connected drive");
+    let link = std::fs::symlink_metadata(&mount).map(|m| m.file_type().is_symlink()).unwrap_or(true);
+    ensure!(mount.parent() == Some(Path::new("/Volumes")) && !link && drives::is_mount(&mount), "Choose a connected drive");
+    // A part of the startup disk (Recovery, Preboot…) shares its space; it is not a drive.
+    ensure!(!drives::capacity_of(&mount).zip(drives::capacity_of(Path::new("/"))).is_some_and(|(this, startup)| this.0 == startup.0),
+        "Choose a connected drive");
     let drives = Drives::of(&s.effective_config()?);
     ensure!(!drives.all().iter().any(|d| d.media.starts_with(&mount) || mount.starts_with(&d.media)), "This drive is already in use");
     let media = mount.join("Media");
@@ -106,11 +115,13 @@ fn add(s: &Service, body: &Value) -> Result<Value> {
         Some(id) => { ensure!(!drives.all().iter().any(|d| d.id == id), "This drive is already in use"); id }
         None => new_id(mount.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default().as_str(), &drives),
     };
-    for folder in ["Downloads", "Movies", "TV"] { std::fs::create_dir_all(media.join(folder)).context("Could not create folders on this drive")?; }
-    drives::write_marker(&media, &id).context("Could not write to this drive")?;
     let mut list = configs(&drives);
     list.push(DriveConfig { id: id.clone(), name: None, media: Some(media.to_string_lossy().into_owned()), downloads: None, movies: None, tv: None,
         accept_new: body["accept_new"].as_bool().unwrap_or(true), reserve_bytes: None });
+    // Checked before anything is written to the drive.
+    validate(s, &list)?;
+    for folder in ["Downloads", "Movies", "TV"] { drives::create_media_folder(&media.join(folder)).context("Could not create folders on this drive")?; }
+    drives::write_marker(&media, &id).context("Could not write to this drive")?;
     save(s, list)?;
     list_one(s, &id)
 }
@@ -159,9 +170,10 @@ async fn remove(s: &Service, id: &str) -> Result<Value> {
     if holdings(&drives, &assets).get(id).is_some_and(|(files, _)| *files > 0) {
         bail!("Move this drive's titles to another drive first");
     }
+    ensure!(!crate::drive_moves::moving_to(s, id), "Wait until moves to this drive have finished");
     let torrents = crate::organizer::torrents(s).await?;
-    ensure!(!torrents.iter().any(|t| t["download_dir"].as_str().is_some_and(|dir| Path::new(dir).starts_with(&drive.media))),
-        "Torrents are still using this drive");
+    let on_drive = |dir: &str| drives.drive_of(Path::new(dir)).is_some_and(|d| d.id == id) || Path::new(dir).starts_with(&drive.media);
+    ensure!(!torrents.iter().any(|t| t["download_dir"].as_str().is_some_and(on_drive)), "Torrents are still using this drive");
     let list = configs(&drives).into_iter().filter(|d| d.id != id).collect();
     save(s, list)?;
     Ok(json!({"removed":id}))

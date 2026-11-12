@@ -736,6 +736,7 @@
     <string name="ui_1bab38b72a4a" formatted="false">The server will retry automatically.</string>
     <string name="ui_6ddf94adca4b" formatted="false">The torrent is still listed. Refresh in a moment to check whether removal finished.</string>
     <string name="ui_196686e4c2fc" formatted="false">The video stream was interrupted. Check the server and network connection.</string>
+    <string name="ui_02b324383658" formatted="false">These files are already moving</string>
     <string name="ui_6315e169d054" formatted="false">These settings apply to everyone who uses this server.</string>
     <string name="ui_a3594939d5f3" formatted="false">This affects the entire download package and everyone’s library.</string>
     <string name="ui_1d3888fca6b7" formatted="false">This code has expired.</string>
@@ -831,6 +832,7 @@
     <string name="ui_a67bba005296" formatted="false">Videos are saved to your Quark Drive, downloaded into your library, then removed from the drive.</string>
     <string name="ui_31a7604a3c74" formatted="false">View source</string>
     <string name="ui_f22eadf74236" formatted="false">Voice Transcribed</string>
+    <string name="ui_78b913663c6c" formatted="false">Wait until moves to this drive have finished</string>
     <string name="ui_c672990b0948" formatted="false">Wait until the download has finished</string>
     <string name="ui_33d30632848d" formatted="false">Waiting</string>
     <string name="ui_819ba5c9dca6" formatted="false">Waiting for Wi-Fi</string>
@@ -841,6 +843,7 @@
     <string name="ui_83ed73bbc425" formatted="false">Waiting for playback to finish</string>
     <string name="ui_64189e6dc1d9" formatted="false">Waiting for playback to stop</string>
     <string name="ui_d9852df62ffb" formatted="false">Waiting for processing to finish</string>
+    <string name="ui_d8c33d5a3be9" formatted="false">Waiting for the drive to be connected</string>
     <string name="ui_640215e9fe28" formatted="false">Waiting to verify</string>
     <string name="ui_f1184cd6731c" formatted="false">Waiting · %d in line</string>
     <string name="ui_0a444233849c" formatted="false">Watch for new episodes</string>

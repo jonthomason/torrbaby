@@ -31,7 +31,9 @@ pub async fn create(s:&Service,body:&Value)->Result<Value> {
   ensure!(source.get("magnet").and_then(Value::as_str).and_then(crate::torrent_search::private_listing).is_none(),"Private-site releases cannot be trialled: the site forbids leaving a torrent early");
  }
  let id=uuid::Uuid::new_v4().to_string();
- let root=crate::drives::Drives::of(&s.effective_config()?).place(None,0)?.downloads.join(".torrbaby-trials").join(&id);
+ // With the show's drive when the library has it, like any other download.
+ let (entities,assets)={let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;(db.documents("entities")?,db.documents("assets")?)};
+ let root=crate::drives::Drives::of(&s.effective_config()?).place_named(&entities,&assets,sources.first().and_then(|c|c["name"].as_str()),0)?.downloads.join(".torrbaby-trials").join(&id);
  let candidates:Vec<_>=sources.iter().enumerate().map(|(i,v)|json!({"name":v["name"],"source":v["source"],"listing_key":v["listing_key"],"directory":root.join(i.to_string()),"state":"pending","bytes":0,"speed":0,"peers":0,"sending":0})).collect();
  let v=json!({"id":id,"state":"starting","created":now(),"duration":SECONDS,"byte_limit":CAP,"candidates":candidates});
  save(s,&v)?;Ok(v)

@@ -68,7 +68,8 @@ impl Drive {
         };
         if status == Status::Online {
             // The marker proves this is the drive, so its folders can safely be created here.
-            for (_, root) in self.roots() { if !root.is_dir() { let _ = std::fs::create_dir_all(root); } }
+            // A root set on another volume is created only while that volume is mounted.
+            for (_, root) in self.roots() { if !root.is_dir() { let _ = create_media_folder(root); } }
             if let Ok(mut dismissed) = DISMISSED.lock() { dismissed.remove(&self.id); }
         }
         status

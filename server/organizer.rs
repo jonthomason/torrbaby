@@ -538,8 +538,12 @@ pub async fn tick(s: &Service) -> Result<()> {
     for t in &all {
         if crate::trials::trial_path(t["download_dir"].as_str().unwrap_or("")) {continue;}
         let hash = text(t, "hash_string")?;
-        // A torrent on a drive that is not connected waits for it, untouched.
-        if drives.offline(Path::new(t["download_dir"].as_str().unwrap_or("")), &online) { continue; }
+        // A torrent on a drive that is not connected waits for it, stopped: left running, it
+        // would finish into a folder Transmission creates on the startup disk.
+        if drives.offline(Path::new(t["download_dir"].as_str().unwrap_or("")), &online) { hold_for_drive(s, t).await; continue; }
+        // Its files are being copied to another drive: filing it now would leave a copy behind.
+        if crate::drive_moves::moving_torrent(s, hash) { continue; }
+        release_for_drive(s, t).await;
         reconnect(s, t).await;
         settle_placement(s, &drives, t).await;
         if s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.hidden_package(hash)? { continue; }
@@ -614,6 +618,42 @@ mod identification_tests {
 /// Transmission stops a torrent whose data vanished with its drive ("No data found") and
 /// does not try again when the drive returns. Once the drive is back, check the data,
 /// which resumes it. At most every ten minutes per torrent.
+/// Stop a torrent whose drive is away, remembering that Torrbaby stopped it.
+async fn hold_for_drive(s: &Service, t: &Value) {
+    let Some(hash) = t["hash_string"].as_str() else { return };
+    if t["status"].as_u64() == Some(0) { return; }
+    match s.rpc.call("torrent_stop", json!({"ids":[hash]})).await {
+        Ok(_) => {
+            tracing::info!(hash, "Stopped a torrent until its drive is connected");
+            let _ = s.change_state(|state| {
+                let held = &mut state["held_for_drive"];
+                if !held.is_array() { *held = json!([]); }
+                if let Some(list) = held.as_array_mut() { if !list.iter().any(|h| h == hash) { list.push(json!(hash)); } }
+            });
+        }
+        Err(error) => tracing::warn!(hash, %error, "Could not stop a torrent whose drive is away"),
+    }
+}
+
+/// Start a torrent Torrbaby stopped for its drive, now that the drive is back. Torrents
+/// the user stopped are left as they are.
+async fn release_for_drive(s: &Service, t: &Value) {
+    let Some(hash) = t["hash_string"].as_str() else { return };
+    let held = s.db.lock().ok().and_then(|db| db.state().ok())
+        .is_some_and(|state| state["held_for_drive"].as_array().is_some_and(|list| list.iter().any(|h| h == hash)));
+    if !held { return; }
+    // Files that did not come back show as "No data found", which reconnect() handles.
+    match s.rpc.call("torrent_start", json!({"ids":[hash]})).await {
+        Ok(_) => {
+            tracing::info!(hash, "Drive is back: resumed a torrent stopped for it");
+            let _ = s.change_state(|state| {
+                if let Some(list) = state["held_for_drive"].as_array_mut() { list.retain(|h| h != hash); }
+            });
+        }
+        Err(error) => tracing::warn!(hash, %error, "Could not resume a torrent after its drive returned"),
+    }
+}
+
 async fn reconnect(s: &Service, t: &Value) {
     static TRIED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, f64>>> = std::sync::LazyLock::new(Default::default);
     if t["error"].as_u64() != Some(3) || !t["error_string"].as_str().is_some_and(|e| e.contains("No data found")) { return; }
@@ -634,14 +674,17 @@ async fn reconnect(s: &Service, t: &Value) {
     }
 }
 
-/// A magnet's size and name arrive with its metadata, after it was placed. Before any
-/// data is written, move it once if its drive turns out to lack room, or if its show is
-/// on another drive with room. Moving an empty torrent is free.
+/// A magnet's size and name arrive with its metadata, after it was placed, and a .torrent
+/// link's name is not known when it is added. Before much data is written, move it once
+/// if its drive turns out to lack room, or if its show is on another drive with room.
+const SETTLE_BYTES: u64 = 2_000_000_000;
 async fn settle_placement(s: &Service, drives: &Drives, t: &Value) {
     static SETTLED: std::sync::LazyLock<std::sync::Mutex<HashSet<String>>> = std::sync::LazyLock::new(Default::default);
     let (Some(hash), Some(dir)) = (t["hash_string"].as_str(), t["download_dir"].as_str()) else { return };
-    if t["metadata_percent_complete"].as_f64() != Some(1.0) || t["downloaded_ever"].as_u64().unwrap_or(1) != 0
-        || t["percent_done"].as_f64().unwrap_or(1.0) > 0.0 { return; }
+    // A .torrent link (BT之家) starts at once, before the first look: a little data is
+    // cheap to carry, and with an incomplete folder it has not reached the drive at all.
+    if t["metadata_percent_complete"].as_f64() != Some(1.0) || t["downloaded_ever"].as_u64().unwrap_or(u64::MAX) > SETTLE_BYTES
+        || t["percent_done"].as_f64().unwrap_or(1.0) >= 1.0 { return; }
     let Some(current) = drives.downloading_into(Path::new(dir)) else { return };
     if !SETTLED.lock().is_ok_and(|mut settled| settled.insert(hash.to_owned())) { return; }
     if drives.all().len() < 2 { return; }
