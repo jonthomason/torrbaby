@@ -27,6 +27,8 @@ pub struct Drive {
     pub id: String,
     /// What administrators call it: the configured name, else the volume's name.
     pub name: String,
+    /// The name given in Settings, if any.
+    pub custom_name: Option<String>,
     /// The folder holding the drive's marker (its `Media` folder).
     pub media: PathBuf,
     pub downloads: PathBuf,
@@ -72,6 +74,15 @@ impl Drive {
         status
     }
     pub fn online(&self) -> bool { self.status() == Status::Online }
+    /// As saved in a drive list: folders given exactly only where they differ from `Media/…`.
+    pub fn to_config(&self) -> crate::config::DriveConfig {
+        let exact = |root: &Path, folder: &str| (root != self.media.join(folder)).then(|| root.to_string_lossy().into_owned());
+        crate::config::DriveConfig {
+            id: self.id.clone(), name: self.custom_name.clone(), media: Some(self.media.to_string_lossy().into_owned()),
+            downloads: exact(&self.downloads, "Downloads"), movies: exact(&self.movies, "Movies"), tv: exact(&self.tv, "TV"),
+            accept_new: self.accept_new, reserve_bytes: (self.reserve_bytes != DEFAULT_RESERVE_BYTES).then_some(self.reserve_bytes),
+        }
+    }
     /// This drive's Media folder on another mounted volume, found by its marker.
     fn elsewhere(&self) -> Option<PathBuf> {
         let relative = self.media.strip_prefix("/Volumes").ok()?.components().skip(1).collect::<PathBuf>();
@@ -100,6 +111,22 @@ pub enum Status {
 
 /// The file on each drive that says which drive it is.
 pub const MARKER: &str = ".torrbaby-drive.json";
+
+/// The id in a Media folder's marker, if it has one.
+pub fn read_marker(media: &Path) -> Option<String> {
+    let raw = std::fs::read(media.join(MARKER)).ok()?;
+    serde_json::from_slice::<Value>(&raw).ok()?["id"].as_str().map(str::to_owned)
+}
+/// Size and free space of a connected drive.
+pub fn space(drive: &Drive) -> (u64, u64) { capacity(&drive.media).unwrap_or((0, 0)) }
+pub fn capacity_of(path: &Path) -> Option<(u64, u64)> { capacity(path) }
+/// Whether `path` is where a volume is mounted.
+pub fn is_mount(path: &Path) -> bool {
+    match (std::fs::metadata(path), path.parent().map(std::fs::metadata)) {
+        (Ok(here), Some(Ok(parent))) => here.dev() != parent.dev(),
+        _ => false,
+    }
+}
 
 pub fn write_marker(media: &Path, id: &str) -> std::io::Result<()> {
     let staged = media.join(format!("{MARKER}.new"));
@@ -154,7 +181,7 @@ impl Drives {
                 _ => downloads.clone(),
             };
             return Drives(vec![Drive {
-                id: LEGACY_DRIVE_ID.into(), name: volume_name(&media).unwrap_or_else(|| LEGACY_DRIVE_ID.into()), media,
+                id: LEGACY_DRIVE_ID.into(), name: volume_name(&media).unwrap_or_else(|| LEGACY_DRIVE_ID.into()), custom_name: None, media,
                 downloads, movies, tv, accept_new: true, reserve_bytes: DEFAULT_RESERVE_BYTES,
             }]);
         }
@@ -164,7 +191,7 @@ impl Drives {
                 .or_else(|| media.map(|m| m.join(folder))).unwrap_or_default();
             let media = media.map(Path::to_path_buf).unwrap_or_else(|| root(&d.downloads, "Downloads"));
             Drive {
-                name: d.name.clone().or_else(|| volume_name(&media)).unwrap_or_else(|| d.id.clone()), media,
+                name: d.name.clone().or_else(|| volume_name(&media)).unwrap_or_else(|| d.id.clone()), custom_name: d.name.clone(), media,
                 id: d.id.clone(), downloads: root(&d.downloads, "Downloads"), movies: root(&d.movies, "Movies"),
                 tv: root(&d.tv, "TV"), accept_new: d.accept_new, reserve_bytes: d.reserve_bytes.unwrap_or(DEFAULT_RESERVE_BYTES),
             }

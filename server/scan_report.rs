@@ -13,14 +13,7 @@ pub async fn run(config: &Path, database: &Path, torrents: Option<&Path>, save_t
     let config = Config::load(config)?;
     let db = Database::open(database, None)?;
     // The same settings the running server applies over the file.
-    let mut effective = serde_json::to_value(&config)?;
-    let state = db.state()?;
-    for key in ["paused", "poll_seconds", "source", "movies", "tv", "background_subtitles"] {
-        if effective.get("drives").is_some_and(|d| d.as_array().is_some_and(|d| !d.is_empty())) && ["source", "movies", "tv"].contains(&key) { continue; }
-        if let Some(value) = state["settings"].get(key) { effective[key] = value.clone(); }
-    }
-    let config: Config = serde_json::from_value(effective)?;
-    config.validate()?;
+    let config = config.with_settings(&db.state()?["settings"])?;
     let snapshot = match torrents {
         Some(path) => serde_json::from_slice(&std::fs::read(path)?)?,
         None => {

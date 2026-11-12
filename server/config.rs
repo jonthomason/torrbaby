@@ -146,6 +146,21 @@ impl Config {
         Ok(())
     }
 
+    /// This configuration with the settings saved from clients applied over it. A drive
+    /// list saved from Settings replaces the single set of folders.
+    pub fn with_settings(&self, settings: &serde_json::Value) -> Result<Self> {
+        let mut config = serde_json::to_value(self)?;
+        for key in ["paused", "poll_seconds", "source", "movies", "tv", "background_subtitles", "drives"] {
+            if let Some(value) = settings.get(key) { config[key] = value.clone(); }
+        }
+        if config["drives"].as_array().is_some_and(|d| !d.is_empty()) {
+            for key in ["source", "movies", "tv"] { config[key] = serde_json::json!(""); }
+        }
+        let config: Self = serde_json::from_value(config)?;
+        config.validate()?;
+        Ok(config)
+    }
+
     pub fn token(&self) -> Result<String> {
         let token = fs::read_to_string(expand(&self.token_file)?).context("Read API token")?;
         let token = token.trim();

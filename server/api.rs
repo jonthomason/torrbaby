@@ -1049,6 +1049,10 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             return artwork(s, &format!("torrent:{hash}"), "poster").await;
         }
     }
+    // Drive changes only touch the settings in this server's database and each drive's marker.
+    if let Some(result) = crate::drive_settings::route(s, method.as_str(), path, &body).await {
+        return result;
+    }
     if path == "/v1/settings" && (method == Method::GET || method == Method::PATCH) {
         let _guard = s.mutation_lock.lock().await;
         let mut config = serde_json::to_value(s.effective_config()?)?;
@@ -2623,24 +2627,7 @@ impl Service {
             .lock()
             .map_err(|_| anyhow::anyhow!("Database lock failed"))?
             .state()?;
-        let mut config = serde_json::to_value(&self.config)?;
-        for key in [
-            "paused",
-            "poll_seconds",
-            "source",
-            "movies",
-            "tv",
-            "background_subtitles",
-        ] {
-            // Folders saved before a drives list was configured no longer apply.
-            if !self.config.drives.is_empty() && ["source", "movies", "tv"].contains(&key) { continue; }
-            if let Some(value) = state["settings"].get(key) {
-                config[key] = value.clone();
-            }
-        }
-        let config: Config = serde_json::from_value(config)?;
-        config.validate()?;
-        Ok(config)
+        self.config.with_settings(&state["settings"])
     }
     pub(crate) fn change_state(&self, change: impl FnOnce(&mut Value)) -> Result<()> {
         let mut db = self
