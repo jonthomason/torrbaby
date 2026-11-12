@@ -245,16 +245,15 @@ impl Cloud {
         if let Some((at, found)) = self.searches.lock().map_err(|_| anyhow::anyhow!("Search unavailable"))?.get(&query) {
             if at.elapsed() < Duration::from_secs(1800) { return Ok(found.clone()); }
         }
-        let started = Instant::now();
         let mut rows = Vec::new();
         let mut failure = None;
         // Listings for the title as typed come first; other spellings add to them.
-        for (index, words) in Self::spellings(&query).iter().enumerate() {
-            match self.listed(words).await {
-                Ok(found) => { let _ = index; rows.extend(found); }
-                Err(error) => failure = Some(error),
-            }
+        let spellings = Self::spellings(&query);
+        for found in futures_util::future::join_all(spellings.iter().map(|words| self.listed(words))).await {
+            match found { Ok(found) => rows.extend(found), Err(error) => failure = Some(error) }
         }
+        // The time limit covers opening the shares, not the wait for the listings.
+        let started = Instant::now();
         if rows.is_empty() { if let Some(error) = failure { return Err(error); } }
         let listed = rows.len();
         let mut seen = std::collections::HashSet::new();
@@ -266,8 +265,8 @@ impl Cloud {
         let mut opened = futures_util::stream::iter(rows.into_iter().map(|(url, posted, note)| async move { self.inspect(&url, &posted, &note).await })).buffer_unordered(8);
         let mut releases: Vec<Value> = Vec::new();
         let mut checked = 0usize;
-        while started.elapsed() < Duration::from_secs(18) {
-            let Ok(next) = tokio::time::timeout(Duration::from_secs(18).saturating_sub(started.elapsed()), opened.next()).await else { break };
+        while started.elapsed() < Duration::from_secs(20) {
+            let Ok(next) = tokio::time::timeout(Duration::from_secs(20).saturating_sub(started.elapsed()), opened.next()).await else { break };
             let Some(share) = next else { break };
             checked += 1;
             let Some(mut share) = share else { continue };
