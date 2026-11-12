@@ -177,7 +177,9 @@ pub fn refresh_capacity(s:&Service)->Result<usize> {
     let preparing=s.virtual_media.preparing();
     s.subtitle_jobs.set_urgent(preparing);
     let config=s.effective_config()?;
-    let limit=capacity(config.background_subtitles,preparing,playback_active(s)?,config.processing_concurrency);
+    // Many files at once only help when translation is external; on device it is serial.
+    let idle=if config.external_translation {config.processing_concurrency} else {config.on_device_processing_concurrency};
+    let limit=capacity(config.background_subtitles,preparing,playback_active(s)?,idle);
     s.subtitle_jobs.set_concurrency(limit);
     s.subtitle_jobs.set_external(config.external_translation);
     Ok(limit)
