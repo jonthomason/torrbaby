@@ -119,7 +119,10 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
                 received[id] = max(0, download.countOfBytesReceived)
             }
             for item in items where item.state == .transferring && tasks[item.id] == nil {
-                try? storage?.pause(item.id, received: item.received, error: "Transfer interrupted. Tap resume.")
+                // The system dropped the transfer (an app update, a restart, a force quit).
+                // It was running, so it goes back in the queue instead of waiting for a tap.
+                try? storage?.pause(item.id, received: item.received, error: nil)
+                try? storage?.queue(item.id)
             }
             restored = true; reload(); scheduleMeteredExpiry(); connectionChanged()
         }
