@@ -732,12 +732,14 @@ impl Cloud {
     pub fn jobs(&self) -> Value {
         let jobs = self.jobs.lock().map(|j| j.clone()).unwrap_or_default();
         let running = self.progress.load(Ordering::Relaxed);
-        // Speed over the last few seconds, from how far the running file has come since it was last asked.
+        // Speed over the last several seconds, from how far the running download as a whole
+        // has come since it was last asked. Measured across its videos, not within one:
+        // a video now takes seconds, and a figure reset at each one read far too low.
+        let fetched = jobs.iter().find(|job| job.state == "downloading").map_or(0, |job| job.files.iter().filter(|f| f.done).map(|f| f.size).sum::<u64>() + running);
         let speed = self.pace.lock().map(|mut pace| {
             let waited = pace.0.elapsed().as_secs_f64();
-            if running < pace.1 { *pace = (Instant::now(), running, pace.2); }
-            // Smoothed, so the time left does not lurch with every burst and pause.
-            else if waited >= 2.0 { let now = (running - pace.1) as f64 / waited; *pace = (Instant::now(), running, if pace.2 > 0.0 { pace.2 * 0.7 + now * 0.3 } else { now }); }
+            if fetched < pace.1 || waited > 120.0 { *pace = (Instant::now(), fetched, 0.0); }
+            else if waited >= 5.0 { let now = (fetched - pace.1) as f64 / waited; *pace = (Instant::now(), fetched, if pace.2 > 0.0 { pace.2 * 0.5 + now * 0.5 } else { now }); }
             pace.2
         }).unwrap_or(0.0);
         let waiting = jobs.iter().filter(|job| job.state == "queued").count();
