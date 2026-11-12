@@ -4,7 +4,9 @@
     <string name="ui_b909e7d6e8c9" formatted="false">剩余 %d 分钟</string>
     <string name="ui_66bd1c71457f" formatted="false">夸克网盘上有 %d 集缺失剧集</string>
     <string name="ui_24d1fa07b247" formatted="false">已下载 %d/%d</string>
+    <string name="ui_5f03e85d806c" formatted="false">%d / %d 个资源</string>
     <string name="ui_cf5dae5645db" formatted="false">%d / %d 个视频</string>
+    <string name="ui_b4d8b30e51a8" formatted="false">%d 个资源</string>
     <string name="ui_b295fde49b7b" formatted="false">已选 %d 个</string>
     <string name="ui_216e67233653" formatted="false">%d 集待添加</string>
     <string name="ui_81590928ad73" formatted="false">%d 个种子未能移除</string>
@@ -559,6 +561,7 @@
     <string name="ui_09ca55ca52d2" formatted="false">共享</string>
     <string name="ui_0fdbeb649276" formatted="false">通过隔空投送共享…</string>
     <string name="ui_d97d1ee339e4" formatted="false">显示</string>
+    <string name="ui_50a279de829f" formatted="false">显示全部</string>
     <string name="ui_4589080623ff" formatted="false">显示下载和上传速度</string>
     <string name="ui_3437b8727d9f" formatted="false">查看种子</string>
     <string name="ui_56b7696a10e7" formatted="false">仅显示前 150 条演员记录。</string>

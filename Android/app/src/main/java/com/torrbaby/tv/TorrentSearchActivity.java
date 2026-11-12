@@ -28,6 +28,14 @@ public final class TorrentSearchActivity extends Activity {
   private Button resolutionButton;
   private volatile int enrichmentGeneration;
   private String resolutionLabel(){return resolution.equals("all")?L10n.t("All resolutions"):resolution;}
+  /** Source errors from the last search, shown after the count. */
+  private final List<String> notes=new ArrayList<>();
+  /** "3 of 12 releases" when the resolution filter hides some of what was found. */
+  private void showCount(){
+    List<String> parts=new ArrayList<>(notes);int shown=results.length(),found=allResults.length();
+    if(parts.isEmpty()||shown>0||found>0)parts.add(0,shown<found?String.format(L10n.locale(),L10n.t("%d of %d releases"),shown,found):String.format(L10n.locale(),L10n.t("%d releases"),shown));
+    status.setText(String.join(" · ",parts));
+  }
   private void applyResolution(){
     results=new JSONArray();for(int i=0;i<allResults.length();i++){
       JSONObject item=allResults.optJSONObject(i), hints=item.optJSONObject("hints");
@@ -80,7 +88,7 @@ public final class TorrentSearchActivity extends Activity {
       String[] labels={L10n.t("All resolutions"),"2160p","1080p","720p"};String[] values={"all","2160p","1080p","720p"};
       new AlertDialog.Builder(this).setTitle(L10n.t("Resolution")).setSingleChoiceItems(labels,Arrays.asList(values).indexOf(resolution),(d,which)->{
         resolution=values[which];getPreferences(MODE_PRIVATE).edit().putString("resolution",resolution).apply();
-        resolutionButton.setText(L10n.t("Resolution")+": "+resolutionLabel());enrichmentGeneration++;applyResolution();d.dismiss();
+        resolutionButton.setText(L10n.t("Resolution")+": "+resolutionLabel());enrichmentGeneration++;applyResolution();if(!searchedQuery.isEmpty()&&search.isEnabled())showCount();d.dismiss();
       }).show();
     });Ui.add(resultsRoot,resolutionButton,240,44);
     resolutionButton.setVisibility(china?View.GONE:View.VISIBLE);
@@ -133,11 +141,10 @@ public final class TorrentSearchActivity extends Activity {
         runOnUiThread(() -> {
           if(isDestroyed() || request!=generation)return;
           search.setEnabled(true); list.setEnabled(true); searchedQuery=response.optString("query",value); allResults=response.optJSONArray("items"); if(allResults==null)allResults=new JSONArray();applyResolution();
-          List<String> messages=new ArrayList<>();
+          List<String> messages=notes; messages.clear();
           JSONArray providers=response.optJSONArray("providers");
           if(providers!=null) for(int i=0;i<providers.length();i++) {JSONObject p=providers.optJSONObject(i); if(p!=null&&!p.isNull("error"))messages.add(label(p.optString("provider"))+": "+p.optString("error"));}
-          if(messages.isEmpty() || results.length()>0)messages.add(0,results.length()+" results");
-          status.setText(String.join(" · ",messages)); ((BaseAdapter)list.getAdapter()).notifyDataSetChanged();
+          showCount(); ((BaseAdapter)list.getAdapter()).notifyDataSetChanged();
           if(results.length()>0)list.requestFocus();
         });
       } catch(Exception error) {runOnUiThread(() -> {if(!isDestroyed()&&request==generation){search.setEnabled(true);list.setEnabled(true);status.setText(MainActivity.message(error));}});}

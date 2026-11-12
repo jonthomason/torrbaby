@@ -15,7 +15,9 @@ final class L10n {
     IDS.put("%d min remaining", R.string.ui_b909e7d6e8c9);
     IDS.put("%d missing episodes on Quark Drive", R.string.ui_66bd1c71457f);
     IDS.put("%d of %d downloaded", R.string.ui_24d1fa07b247);
+    IDS.put("%d of %d releases", R.string.ui_5f03e85d806c);
     IDS.put("%d of %d videos", R.string.ui_cf5dae5645db);
+    IDS.put("%d releases", R.string.ui_b4d8b30e51a8);
     IDS.put("%d selected", R.string.ui_b295fde49b7b);
     IDS.put("%d to add", R.string.ui_216e67233653);
     IDS.put("%d torrents could not be removed", R.string.ui_81590928ad73);
@@ -570,6 +572,7 @@ final class L10n {
     IDS.put("Share", R.string.ui_09ca55ca52d2);
     IDS.put("Share with AirDrop…", R.string.ui_0fdbeb649276);
     IDS.put("Show", R.string.ui_d97d1ee339e4);
+    IDS.put("Show all", R.string.ui_50a279de829f);
     IDS.put("Show download and upload rates", R.string.ui_4589080623ff);
     IDS.put("Show torrent", R.string.ui_3437b8727d9f);
     IDS.put("Showing the first 150 cast entries.", R.string.ui_56b7696a10e7);

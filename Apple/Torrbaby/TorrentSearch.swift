@@ -370,6 +370,13 @@ struct TorrentSearchView: View {
                         if !response.providers.isEmpty && response.providers.allSatisfy({ $0.error != nil }) {
                             let limited = response.providers.contains { $0.error?.contains("rate limiting") == true }
                             ContentUnavailableView(limited ? "Search rate limited" : "Sources unavailable", systemImage: limited ? "clock" : "network.slash", description: Text(LocalizedStringKey(response.providers.compactMap(\.error).first ?? "Try again shortly.")))
+                        } else if !response.items.isEmpty {
+                            // Everything found is filtered out: say so, or it reads as a failed search.
+                            ContentUnavailableView {
+                                Label("\(response.items.count) releases hidden by filters", systemImage: "line.3.horizontal.decrease.circle")
+                            } actions: {
+                                Button("Show all") { resolution = "all"; scopeFilter = "all"; seasonFilter = nil; episodeFilter = nil; selectedID = visibleItems.first?.id }
+                            }
                         } else {
                             ContentUnavailableView("No releases found", systemImage: "magnifyingglass", description: Text("Try a shorter title or another source."))
                         }
@@ -562,7 +569,11 @@ struct TorrentSearchView: View {
         }.pickerStyle(.menu).fixedSize().searchFilterControl()
     }
     @ViewBuilder private var searchStatus: some View {
-                if response != nil && !searching { Text("\(visibleItems.count) releases").font(.caption).foregroundStyle(.secondary) }
+                if let response, !searching {
+                    // "3 of 12 releases" when filters hide some of what was found.
+                    let shown = visibleItems.count, found = response.items.count
+                    (shown < found ? Text("\(shown) of \(found) releases") : Text("\(shown) releases")).font(.caption).foregroundStyle(.secondary)
+                }
                 if searching {
                     ProgressView().controlSize(.small)
                     // Every share is opened to check its files, which takes a while.
