@@ -1907,7 +1907,12 @@ struct CloudJobRow: View {
                 }
             }.font(.caption).monospacedDigit()
             if let total = job.totalBytes, total > 0, job.state != "done" {
+                // The same gauge as a torrent's, so the two read alike in one list.
+                #if os(tvOS)
                 ProgressView(value: Double(job.doneBytes ?? 0), total: Double(total)).tint(job.state == "failed" ? .orange : Theme.accent)
+                #else
+                TorrentProgressGauge(value: job.fraction)
+                #endif
             }
             if !job.outcomeLine.isEmpty { Text(verbatim: job.outcomeLine).font(.caption).foregroundStyle(.secondary) }
             if let current = job.current, !current.isEmpty { Text(verbatim: current).font(.caption).foregroundStyle(.secondary).lineLimit(1).textSelectionIfAvailable() }
