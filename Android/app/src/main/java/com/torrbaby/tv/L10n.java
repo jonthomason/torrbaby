@@ -519,6 +519,7 @@ final class L10n {
     IDS.put("Retry", R.string.ui_9f5cd8a2e880);
     IDS.put("Retry artwork", R.string.ui_b053804a25ad);
     IDS.put("Retry organization", R.string.ui_c03d34373e3c);
+    IDS.put("Retrying shortly…", R.string.ui_df981c2af7a0);
     IDS.put("Review %d episodes", R.string.ui_6da47df663c4);
     IDS.put("Review a new name", R.string.ui_5f1f46e2112f);
     IDS.put("Revoke access", R.string.ui_094386f681e2);

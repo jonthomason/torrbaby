@@ -1735,8 +1735,14 @@ struct CloudJob: Decodable, Identifiable {
     var doneBytes: Int64? = nil
     var totalBytes: Int64? = nil
     var error: String? = nil
+    /// Bytes a second, seconds left, and the video being fetched, while downloading.
+    var rate: Int64? = nil
+    var eta: Int? = nil
+    var current: String? = nil
+    var isActive: Bool { ["queued", "saving", "downloading", "retrying"].contains(state) }
     var stateLabel: String {
         switch state {
+        case "retrying": return L10n.text("Retrying shortly…")
         case "queued": return L10n.text("Waiting")
         case "saving": return L10n.text("Saving to Quark Drive…")
         case "downloading": return L10n.text("Downloading")
@@ -1763,7 +1769,7 @@ struct CloudJobsSection: View {
         .task(id: store.server) {
             while !Task.isCancelled {
                 if let list: JobList = try? await store.request("GET", "/v1/cloud/jobs", timeout: 15) { jobs = list.jobs }
-                let active = jobs.contains { ["queued", "saving", "downloading"].contains($0.state) }
+                let active = jobs.contains(where: \.isActive)
                 try? await Task.sleep(for: .seconds(active ? 3 : 15))
             }
         }
@@ -1773,24 +1779,34 @@ struct CloudJobsSection: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(verbatim: job.title).font(.headline).lineLimit(2)
                 Spacer(minLength: 8)
-                if job.state == "failed" {
+                if job.state == "failed" || job.state == "retrying" {
                     Button("Retry") { act("POST", "/v1/cloud/jobs/\(job.id)/retry") }.buttonStyle(MonoButtonStyle(compact: true)).fixedSize()
+                }
+                if job.isActive {
+                    // Stops the download and clears what it had fetched of unfinished videos.
+                    Button("Cancel") { act("DELETE", "/v1/cloud/jobs/\(job.id)") }.buttonStyle(MonoButtonStyle(compact: true)).fixedSize()
                 }
                 if ["done", "failed"].contains(job.state) {
                     Button("Dismiss") { act("DELETE", "/v1/cloud/jobs/\(job.id)") }.buttonStyle(MonoButtonStyle(compact: true)).fixedSize()
                 }
             }
             HStack(spacing: 8) {
-                Text(verbatim: job.stateLabel).foregroundStyle(job.state == "failed" ? .orange : Theme.accent)
+                Text(verbatim: job.stateLabel).foregroundStyle(job.state == "failed" || job.state == "retrying" ? .orange : Theme.accent)
                 if let files = job.files, files > 1 { Text(L10n.format("%d of %d videos", job.filesDone ?? 0, files)).foregroundStyle(Theme.muted) }
                 if let total = job.totalBytes, total > 0 {
                     Text(L10n.format("%@ of %@", ByteCountFormatter.string(fromByteCount: job.doneBytes ?? 0, countStyle: .file), ByteCountFormatter.string(fromByteCount: total, countStyle: .file)))
                         .foregroundStyle(Theme.muted)
                 }
+                if let rate = job.rate, rate > 0 { Text(verbatim: Torrbaby.rate(rate)).foregroundStyle(Theme.muted) }
+                if let eta = job.eta, job.state == "downloading" {
+                    let minutes = max(1, (eta + 30) / 60)
+                    Text(minutes >= 60 ? L10n.format("%dh %dm left", minutes / 60, minutes % 60) : L10n.format("%dm left", minutes)).foregroundStyle(Theme.muted)
+                }
             }.font(.caption).monospacedDigit()
             if let total = job.totalBytes, total > 0, job.state != "done" {
                 ProgressView(value: Double(job.doneBytes ?? 0), total: Double(total)).tint(job.state == "failed" ? .orange : Theme.accent)
             }
+            if let current = job.current, !current.isEmpty { Text(verbatim: current).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
             if let error = job.error, !error.isEmpty { Text(verbatim: error).font(.caption).foregroundStyle(.orange) }
         }.padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
     }

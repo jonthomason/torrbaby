@@ -14267,6 +14267,23 @@
           }
         }
       }
+    },
+    "Retrying shortly…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retrying shortly…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "即将重试…"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

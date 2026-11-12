@@ -508,6 +508,7 @@
     <string name="ui_9f5cd8a2e880" formatted="false">重试</string>
     <string name="ui_b053804a25ad" formatted="false">重新获取图片</string>
     <string name="ui_c03d34373e3c" formatted="false">重新整理</string>
+    <string name="ui_df981c2af7a0" formatted="false">即将重试…</string>
     <string name="ui_6da47df663c4" formatted="false">查看 %d 集</string>
     <string name="ui_5f1f46e2112f" formatted="false">确认新名称</string>
     <string name="ui_094386f681e2" formatted="false">撤销访问权限</string>

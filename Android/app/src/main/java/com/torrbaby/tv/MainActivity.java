@@ -1308,19 +1308,28 @@ public class MainActivity extends Activity {
       Ui.pad(row, 16, 14);
       Ui.add(row, Ui.title(this, job.optString("title"), 16), -1, -2);
       Ui.gap(row, 6);
-      String label = state.equals("queued") ? L10n.t("Waiting") : state.equals("saving") ? L10n.t("Saving to Quark Drive…")
+      boolean active = state.equals("queued") || state.equals("saving") || state.equals("downloading") || state.equals("retrying");
+      String label = state.equals("retrying") ? L10n.t("Retrying shortly…") : state.equals("queued") ? L10n.t("Waiting") : state.equals("saving") ? L10n.t("Saving to Quark Drive…")
           : state.equals("downloading") ? L10n.t("Downloading") : state.equals("done") ? L10n.t("Downloaded") : L10n.t("Failed");
       String detail = L10n.t("Quark Drive") + " · " + label;
       if (job.optInt("files") > 1) detail += " · " + String.format(L10n.locale(), L10n.t("%d of %d videos"), job.optInt("files_done"), job.optInt("files"));
       if (job.optLong("total_bytes") > 0) detail += " · " + bytes(job.optLong("done_bytes")) + " / " + bytes(job.optLong("total_bytes"));
-      Ui.add(row, Ui.text(this, detail, 14, state.equals("failed") ? 0xffffb74d : Ui.ACCENT), -1, -2);
+      if (job.optLong("rate") > 0) detail += " · " + bytes(job.optLong("rate")) + "/s";
+      if (state.equals("downloading") && !job.isNull("eta")) {
+        int minutes = (int) Math.max(1, (job.optLong("eta") + 30) / 60);
+        detail += " · " + (minutes >= 60 ? String.format(L10n.locale(), L10n.t("%dh %dm left"), minutes / 60, minutes % 60) : String.format(L10n.locale(), L10n.t("%dm left"), minutes));
+      }
+      Ui.add(row, Ui.text(this, detail, 14, state.equals("failed") || state.equals("retrying") ? 0xffffb74d : Ui.ACCENT), -1, -2);
+      if (!job.isNull("current") && !job.optString("current").isEmpty()) Ui.add(row, Ui.text(this, job.optString("current"), 12, Ui.MUTED), -1, -2);
       String error = job.isNull("error") ? "" : job.optString("error");
       if (!error.isEmpty()) Ui.add(row, Ui.text(this, error, 12, Ui.MUTED), -1, -2);
       String id = job.optString("id");
       row.setOnClickListener(v -> {
         AlertDialog.Builder dialog = new AlertDialog.Builder(this).setTitle(job.optString("title")).setMessage(error.isEmpty() ? label : error)
-            .setNegativeButton(L10n.t("Cancel"), null);
-        if (state.equals("failed")) dialog.setPositiveButton(L10n.t("Retry"), (d, w) -> cloudJobAction("POST", "/v1/cloud/jobs/" + id + "/retry"));
+            .setNegativeButton(L10n.t(active ? "Close" : "Cancel"), null);
+        // Stops the download and clears what it had fetched of unfinished videos.
+        if (active) dialog.setNeutralButton(L10n.t("Cancel download"), (d, w) -> cloudJobAction("DELETE", "/v1/cloud/jobs/" + id));
+        if (state.equals("failed") || state.equals("retrying")) dialog.setPositiveButton(L10n.t("Retry"), (d, w) -> cloudJobAction("POST", "/v1/cloud/jobs/" + id + "/retry"));
         if (state.equals("failed") || state.equals("done")) dialog.setNeutralButton(L10n.t("Dismiss"), (d, w) -> cloudJobAction("DELETE", "/v1/cloud/jobs/" + id));
         dialog.show();
       });

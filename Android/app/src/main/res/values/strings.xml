@@ -508,6 +508,7 @@
     <string name="ui_9f5cd8a2e880" formatted="false">Retry</string>
     <string name="ui_b053804a25ad" formatted="false">Retry artwork</string>
     <string name="ui_c03d34373e3c" formatted="false">Retry organization</string>
+    <string name="ui_df981c2af7a0" formatted="false">Retrying shortly…</string>
     <string name="ui_6da47df663c4" formatted="false">Review %d episodes</string>
     <string name="ui_5f1f46e2112f" formatted="false">Review a new name</string>
     <string name="ui_094386f681e2" formatted="false">Revoke access</string>
