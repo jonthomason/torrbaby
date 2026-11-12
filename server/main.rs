@@ -37,6 +37,7 @@ mod subtitles;
 mod text_encoding;
 mod telemetry;
 mod torrent_search;
+mod cloud;
 mod transmission;
 mod video_metadata;
 mod volumes;

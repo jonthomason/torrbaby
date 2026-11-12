@@ -38,6 +38,7 @@ pub struct Service {
     pub(crate) virtual_media: Arc<crate::virtual_media::Manager>,
     lan_limiter: crate::lan::Limiter,
     pub(crate) torrent_search: crate::torrent_search::Search,
+    pub(crate) cloud: crate::cloud::Cloud,
 }
 
 // Keep unimplemented routes explicit during the port; never silently report success.
@@ -113,6 +114,7 @@ pub async fn serve(
         .try_lock()
         .context("Another Torrbaby server owns this database")?;
     let service = Arc::new(Service {
+        cloud: crate::cloud::Cloud::new(database.parent().context("Database needs a parent directory")?)?,
         lan_limiter: crate::lan::Limiter::default(),
         torrent_search: crate::torrent_search::Search::new()?.with_cache_dir(database.parent().context("Database needs a parent directory")?.join("search-cache"))?
             .with_private_site(database.parent().context("Database needs a parent directory")?.join("private-site.json")),
@@ -189,6 +191,8 @@ pub async fn serve(
     let mut workers = Vec::new();
     if !preview {
         let organizer = service.clone();
+        let cloud = service.clone();
+        workers.push(tokio::spawn(async move { cloud.cloud.work(&cloud).await; }));
         workers.push(tokio::spawn(async move {
             loop {
                 if let Err(error) = crate::organizer::tick(&organizer).await {
@@ -613,6 +617,20 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
     }
     if method==Method::POST {
         if let Some(id)=path.strip_prefix("/v1/trials/") {return crate::trials::action(s,id,&body).await;}
+    }
+    if method == Method::POST && path == "/v1/search/torrents" && body["market"] == "china" {
+        // Mainland titles are found as cloud-drive shares, not torrents. Every result
+        // has been opened and holds real video.
+        let query = text(&body, "query")?;
+        let found = s.cloud.search(query).await?;
+        let items: Vec<crate::torrent_search::Item> = found["shares"].as_array().into_iter().flatten().filter_map(|share| {
+            let url = share["url"].as_str()?;
+            let id = url.rsplit('/').next()?.split('?').next()?;
+            Some(crate::torrent_search::cloud_item(share["title"].as_str().filter(|t| !t.is_empty()).unwrap_or(query).to_owned(), id, url,
+                share["total_bytes"].as_u64(), share["posted"].as_str().filter(|p| !p.is_empty()).map(str::to_owned), share["video_count"].as_u64().unwrap_or(0), query))
+        }).collect();
+        return Ok(serde_json::to_value(crate::torrent_search::SearchResult {
+            query: query.to_owned(), providers: vec![crate::torrent_search::ProviderStatus { provider: "quark".into(), count: items.len(), error: None }], items, cached: false })?);
     }
     if method == Method::POST && path == "/v1/search/torrents" {
         let mut result=s.torrent_search.search(serde_json::from_value(body)?).await?;
@@ -1188,6 +1206,20 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             let (id, variant) = route.rsplit_once('/').context("Missing artwork variant")?;
             return artwork(s, id, variant).await;
         }
+    }
+    if path == "/v1/cloud/quark" {
+        // The member's Quark login. It can be set or removed, never read back.
+        if method == Method::PUT { s.cloud.set_cookie(text(&body, "cookie")?)?; }
+        else if method == Method::DELETE { s.cloud.clear_cookie()?; }
+        else if method != Method::GET { bail!("Unsupported method") }
+        return s.cloud.status().await;
+    }
+    if method == Method::POST && path == "/v1/cloud/search" { return s.cloud.search(text(&body, "query")?).await; }
+    if method == Method::POST && path == "/v1/cloud/add" { return s.cloud.add(s, &body).await; }
+    if method == Method::GET && path == "/v1/cloud/jobs" { return Ok(s.cloud.jobs()); }
+    if let Some(job) = path.strip_prefix("/v1/cloud/jobs/") {
+        if method == Method::DELETE { return Ok(s.cloud.dismiss(job)); }
+        if let (true, Some(job)) = (method == Method::POST, job.strip_suffix("/retry")) { return Ok(s.cloud.retry(job)); }
     }
     if path == "/v1/private-site" {
         // The member's private site. The passkey can be set or removed, never read back.
@@ -2127,7 +2159,7 @@ async fn prefetch_library_artwork(s: &Service) -> Result<()> {
     Ok(())
 }
 
-async fn scan_library(s: &Service) -> Result<()> {
+pub(crate) async fn scan_library(s: &Service) -> Result<()> {
     let Ok(_guard) = s.scan_lock.try_lock() else {
         return Ok(());
     };

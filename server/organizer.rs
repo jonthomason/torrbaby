@@ -213,6 +213,11 @@ pub(crate) async fn add_at(s: &Service, body: &Value, directory:Option<&Path>) -
         bail!("Allowed fields: magnet, metainfo, torrent_url, paused");
     }
     let magnet = body["magnet"].as_str().filter(|v| !v.is_empty());
+    // A cloud-drive result is not a torrent: its videos are queued as a cloud download.
+    if let Some((url, title)) = magnet.and_then(crate::torrent_search::cloud_listing) {
+        let queued = s.cloud.add(s, &json!({"url": url, "title": title})).await?;
+        return Ok(json!({"result": "success", "cloud_job": queued["job_id"]}));
+    }
     let metainfo = body["metainfo"].as_str().filter(|v| !v.is_empty());
     let torrent_url = body["torrent_url"].as_str().filter(|v| !v.is_empty());
     if [magnet.is_some(), metainfo.is_some(), torrent_url.is_some()].into_iter().filter(|v| *v).count() != 1 {

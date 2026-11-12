@@ -130,6 +130,9 @@ pub struct Item {
     pub hints: Hints,
     pub match_score: u16,
     pub match_notes: Vec<String>,
+    /// For a cloud-drive share: how many videos it holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video_count: Option<u64>,
 }
 #[derive(Clone, Serialize)]
 pub struct ProviderStatus {
@@ -680,7 +683,27 @@ fn item(name: String, info_hash: String, source: Source) -> Item {
         added: None,
         match_score: 0,
         match_notes: Vec::new(),
+        video_count: None,
     }
+}
+/// A cloud-drive share as a search result. It has no torrent behind it: its link is a
+/// marker that tells this server to queue the share's videos for the library.
+pub fn cloud_item(name: String, share: &str, url: &str, size: Option<u64>, posted: Option<String>, videos: u64, title: &str) -> Item {
+    let mut found = item(name.clone(), String::new(), Source { provider: "quark".into(), id: share.to_owned(), url: url.to_owned() });
+    let mut link = reqwest::Url::parse("magnet:?").expect("valid URL");
+    link.query_pairs_mut().append_pair("dn", &name).append_pair("x.quark", url).append_pair("x.title", title);
+    found.magnet = link.to_string();
+    found.size_bytes = size;
+    found.added = posted;
+    found.video_count = Some(videos);
+    found
+}
+/// The share link and library title carried by a cloud result's marker, if this is one.
+pub fn cloud_listing(magnet: &str) -> Option<(String, String)> {
+    let url = reqwest::Url::parse(magnet).ok()?;
+    if url.scheme() != "magnet" { return None; }
+    let field = |name: &str| url.query_pairs().find(|(k, _)| k == name).map(|(_, v)| v.into_owned());
+    Some((field("x.quark")?, field("x.title").or_else(|| field("dn"))?))
 }
 fn tpb_item(v: &Value) -> Option<Item> {
     let info_hash = hash(&field(v, "info_hash"))?;
