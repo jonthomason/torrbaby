@@ -845,6 +845,19 @@ impl Cloud {
                 && files.iter().all(|wanted| job.files.iter().any(|held| held.path == wanted.path)))
             .map(|job| job.id.clone()));
         if let Some(existing) = covered { return Ok(json!({"job_id": existing, "already_queued": true, "total": files.len()})); }
+        // More videos of a share whose download for the same title has not started yet join
+        // that download: one show is one row, not two with the same name.
+        {
+            let mut jobs = self.jobs.lock().map_err(|_| anyhow::anyhow!("Cloud downloads unavailable"))?;
+            if let Some(waiting) = jobs.iter_mut().find(|job| job.state == "queued" && job.title == title && job.files.iter().all(|f| !f.done)
+                && SHARE.captures(&job.url).map(|c| c[1].to_owned()) == SHARE.captures(url).map(|c| c[1].to_owned())) {
+                let before = waiting.files.len();
+                for file in &files { if !waiting.files.iter().any(|held| held.path == file.path) { waiting.files.push(file.clone()); } }
+                let (id, added) = (waiting.id.clone(), waiting.files.len() - before);
+                self.persist(&jobs);
+                return Ok(json!({"job_id": id, "merged": true, "added": added, "total": files.len()}));
+            }
+        }
         // Videos already in place, byte for byte the same length: there is nothing to fetch.
         // When that is all of them nothing is queued, and the member is told instead.
         let total = files.len();

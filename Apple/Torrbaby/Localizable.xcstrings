@@ -14964,6 +14964,23 @@
           }
         }
       }
+    },
+    "Added to the download already waiting for this show.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Added to the download already waiting for this show."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已加入该剧集正在等待的下载。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

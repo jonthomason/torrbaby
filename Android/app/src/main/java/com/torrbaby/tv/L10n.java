@@ -57,6 +57,7 @@ final class L10n {
     IDS.put("Added to Downloads", R.string.ui_f9b608af67f4);
     IDS.put("Added to Transmission", R.string.ui_a98648e9368b);
     IDS.put("Added to downloads", R.string.ui_3d3eaa50eab2);
+    IDS.put("Added to the download already waiting for this show.", R.string.ui_ac18c3c9f5d2);
     IDS.put("Adding download", R.string.ui_802e94122566);
     IDS.put("Adding download…", R.string.ui_9295ef6a9cf8);
     IDS.put("Adding…", R.string.ui_ffb2e628b0e9);

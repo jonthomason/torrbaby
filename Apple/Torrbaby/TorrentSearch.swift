@@ -1632,11 +1632,14 @@ struct CloudAdded: Decodable {
     /// How many of the videos asked for are in the library already, exactly the same, out of how many.
     var alreadyHave: Int? = nil
     var total: Int? = nil
+    /// The videos joined a download of this show that was already waiting.
+    var merged: Bool? = nil
     /// Nothing new was queued.
     var nothingNew: Bool { alreadyQueued == true || jobId == nil }
     /// What to tell the member, when it is not simply "added".
     var warning: String? {
         if alreadyQueued == true { return L10n.text("Already in the download queue.") }
+        if merged == true { return L10n.text("Added to the download already waiting for this show.") }
         guard let alreadyHave, alreadyHave > 0, let total else { return nil }
         return alreadyHave >= total ? L10n.format("Already in your library: all %d videos. Nothing to download.", total) : L10n.format("%d of %d videos are already in your library; the rest will download.", alreadyHave, total)
     }

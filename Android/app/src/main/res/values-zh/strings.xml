@@ -46,6 +46,7 @@
     <string name="ui_f9b608af67f4" formatted="false">已添加到下载</string>
     <string name="ui_a98648e9368b" formatted="false">已添加到 Transmission</string>
     <string name="ui_3d3eaa50eab2" formatted="false">已加入下载</string>
+    <string name="ui_ac18c3c9f5d2" formatted="false">已加入该剧集正在等待的下载。</string>
     <string name="ui_802e94122566" formatted="false">正在添加下载</string>
     <string name="ui_9295ef6a9cf8" formatted="false">正在添加下载…</string>
     <string name="ui_ffb2e628b0e9" formatted="false">正在添加…</string>
