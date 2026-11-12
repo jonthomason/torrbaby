@@ -103,7 +103,9 @@ pub fn visible(name: &str) -> String {
 }
 /// Season and episode a file name states, if any: "S01E02", "第12集", "EP12", "12.mkv".
 pub fn episode(name: &str) -> (Option<u64>, Option<u64>) {
-    let name = &visible(name);
+    // A date in the name ("2026.07.02-先导片") is not an episode number.
+    static DATE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:19|20)\d{2}[.\-_/年]\d{1,2}[.\-_/月]\d{1,2}日?").expect("valid regex"));
+    let name = &DATE.replace_all(&visible(name), " ").into_owned();
     static SEASONED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)s(\d{1,2})[ ._-]?e(\d{1,3})").expect("valid regex"));
     static NAMED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:第\s*(\d{1,3})\s*[集话話期]|\bep?[ ._-]?(\d{1,3})\b)").expect("valid regex"));
     static NOISE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(\d{3,4}p|\d{2,3}fps|[48]k|(19|20)\d{2}|[hx]\.?26[45]|ddp?\d\.\d|aac\d\.\d|\d+bit)").expect("valid regex"));
@@ -281,6 +283,11 @@ pub fn preference(copy: &Value) -> impl Ord + use<> {
     let sound = match copy["audio"].as_str() { Some("stereo") => 0, Some(_) => 2, None => 1 };
     // Native rate before sharpness: an interpolated copy is never the one wanted.
     std::cmp::Reverse((copy["complete"] == true, copy["beyond"] != true, covered, copy["fps"].as_u64().is_none_or(|fps| fps < 49), picture, sound, copy["total_bytes"].as_u64().unwrap_or(0)))
+}
+/// Whether a job holds several videos for the episode this one belongs to.
+fn in_parts_of(job: &Job, file: &JobFile) -> bool {
+    let number = |f: &JobFile| f.destination.file_name().and_then(|n| n.to_str()).map(episode).filter(|e| e.1.is_some());
+    number(file).is_some_and(|mine| job.files.iter().filter(|other| number(other) == Some(mine)).count() > 1)
 }
 /// Whether one copy of an episode is worth having over another, each given as its
 /// read tracks and its size. In order: a native frame rate beats an interpolated 50 or
@@ -811,13 +818,22 @@ impl Cloud {
         // One video without an episode number is a film; anything else is a series.
         let film = chosen.len() == 1 && episode(&chosen[0].0).1.is_none() && body["kind"] != "tv" || body["kind"] == "movie";
         let folder = PathBuf::from(if film { &config.movies } else { &config.tv }).join(&title);
+        // Several videos for one episode are its parts and extras (a variety show's
+        // "第1期(一)", "第1期纯享"…), not copies of it: each keeps its own label in its name,
+        // or they would all be filed as the one episode and replace each other.
+        let mut shared: HashMap<(u64, u64), usize> = HashMap::new();
+        for (path, _) in &chosen { let (stated, number) = episode(path); if let Some(number) = number { *shared.entry((stated.unwrap_or(season), number)).or_default() += 1; } }
         let files = chosen.into_iter().map(|(path, size)| {
             let extension = path.rsplit('.').next().unwrap_or("mkv").to_ascii_lowercase();
             let (stated, number) = episode(&path);
+            let leaf = visible(path.rsplit('/').next().unwrap_or(&path));
+            let stem = clean(leaf.rsplit_once('.').map_or(leaf.as_str(), |(stem, _)| stem));
             let name = match number {
+                Some(number) if !film && shared.get(&(stated.unwrap_or(season), number)).copied().unwrap_or(0) > 1 =>
+                    format!("{title} - S{:02}E{number:02} - {stem}.{extension}", stated.unwrap_or(season)),
                 Some(number) if !film => format!("{title} - S{:02}E{number:02}.{extension}", stated.unwrap_or(season)),
                 _ if film => format!("{title}.{extension}"),
-                _ => clean(path.rsplit('/').next().unwrap_or(&path)),
+                _ => format!("{title} - {stem}.{extension}"),
             };
             JobFile { destination: folder.join(name), path, size, done: false, outcome: None }
         }).collect();
@@ -1026,8 +1042,12 @@ impl Cloud {
             // every copy mapped to this episode lives, in a torrent or loose; a newcomer is
             // fetched only when it beats all that play, and then the lesser copies go. This
             // is how a download fills a show's gaps and raises its quality without duplicates.
-            let mapped = if present { Vec::new() } else { Self::mapped(s, entity.as_deref(), &file.destination) };
-            let exists = |path: &PathBuf| path.is_file() && *path != file.destination;
+            let mapped = if present || in_parts_of(job, file) { Vec::new() } else { Self::mapped(s, entity.as_deref(), &file.destination) };
+            // The job's own videos are parts or siblings, never rivals of one another; and an
+            // episode that comes in parts is not weighed against a whole copy, whose size says nothing about it.
+            let in_parts = file.destination.file_name().and_then(|n| n.to_str()).map(episode).is_some_and(|mine| mine.1.is_some()
+                && job.files.iter().filter(|other| other.destination.file_name().and_then(|n| n.to_str()).map(episode) == Some(mine)).count() > 1);
+            let exists = |path: &PathBuf| path.is_file() && *path != file.destination && !in_parts && !job.files.iter().any(|other| other.destination == *path);
             let mut rivals: Vec<PathBuf> = if present { Vec::new() } else { Self::rivals(&file.destination) };
             rivals.extend(mapped.iter().filter(|asset| asset["available"] == true && asset["complete"] != false).filter_map(|asset| asset["path"].as_str().map(PathBuf::from)));
             rivals.retain(exists);
@@ -1173,6 +1193,10 @@ mod tests {
         assert_eq!(episode("S\u{200b}1\u{200c}|2160p|/\u{200c}/3\u{200b}\u{200b}\u{200c}\u{200d}8\u{200c}\u{200d}.mkv"), (None, Some(38)));
         assert_eq!(episode("0\u{200b}\u{feff}1.mkv"), (None, Some(1)));
         assert_eq!(visible("逐\u{200d}玉"), "逐玉");
+        // Dates are not episodes; a variety show's parts all belong to their episode.
+        assert_eq!(episode("X/2026.07.02-先导片.mp4"), (None, None));
+        assert_eq!(episode("X/2026.07.04-第1期(五).mp4"), (None, Some(1)));
+        assert_eq!(episode("X/2026.08.21-第8期(一)-4K.高码率.mp4"), (None, Some(8)));
         assert_eq!(episode("28.4k.mp4"), (None, Some(28)));
         assert_eq!(episode("01 4K.mp4"), (None, Some(1)));
         assert_eq!(episode("12.5.1.mkv"), (None, Some(12)));
