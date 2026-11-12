@@ -1,7 +1,8 @@
 //! Read-only report of what a library scan would record and what the organizer would
 //! move, for comparing two server builds on the same library (docs/disk-aggregation.md,
-//! phase acceptance). Writes nothing to the library or to Transmission; open a copy of
-//! the database, never the live one.
+//! phase acceptance). Changes nothing in Transmission or the database it is given (open a
+//! copy, never the live one). The only write is the one any scan makes: a drive's marker
+//! file, the first time its folders are seen (drives.rs).
 use crate::{config::Config, storage::Database, transmission::Transmission};
 use anyhow::Result;
 use serde_json::{Value, json};
