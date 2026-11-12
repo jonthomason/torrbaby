@@ -30,6 +30,7 @@ final class PreparedSubtitles {
         sdh.add(track.optInt("track"));
     }
     JSONArray prepared = info.optJSONArray("prepared");
+    picture = picture(prepared);
     Set<String> paths = new HashSet<>();
     if (prepared == null) return result;
     for (int i = 0; i < prepared.length(); i++) {
@@ -46,6 +47,25 @@ final class PreparedSubtitles {
           .put("name", MediaLanguages.trackName(language, kind, job.optBoolean("sdh"))));
     }
     return result;
+  }
+
+  /** Whether the title last asked about carries subtitles printed in its picture. */
+  static volatile boolean picture;
+
+  /**
+   * Subtitles made from ones printed in the picture (as Chinese dramas carry them). Servers
+   * that do not say so are recognised by how such a track is recorded: read as images, from
+   * a text file.
+   */
+  static boolean picture(JSONArray prepared) {
+    if (prepared == null) return false;
+    for (int i = 0; i < prepared.length(); i++) {
+      JSONObject job = prepared.optJSONObject(i);
+      if (job == null) continue;
+      if (job.has("picture") ? job.optBoolean("picture")
+          : job.optString("extraction_method").equals("ocr") && !job.isNull("sidecar")) return true;
+    }
+    return false;
   }
 
   private static void check(BooleanSupplier cancelled) {

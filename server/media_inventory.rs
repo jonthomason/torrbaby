@@ -32,6 +32,9 @@ fn normalize_prepared(info:&mut Value) {
     if let Some(prepared)=info["prepared"].as_array_mut() {
         for job in prepared {
             job["generated"]=json!(generated(job));
+            // Read from subtitles printed in the picture (its source is the server's own
+            // transcript file): players put an opaque box behind anything shown over them.
+            job["picture"]=json!(job["extraction_method"]=="ocr" && !job["sidecar"].is_null());
             job["kind"]=json!(crate::subtitle_jobs::kind(job["extraction_method"].as_str(),job["target"].as_str()));
             if job["state"]=="ready" && job["sidecar"].is_null() {
                 if let (Some(track),Some(source))=(job["track"].as_u64(),job["source"].as_str()) {

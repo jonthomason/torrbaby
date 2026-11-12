@@ -275,7 +275,16 @@ struct MediaTrackInfo: Decodable {
         }
     }
     var video: Video? = nil
-    struct Prepared: Decodable { let id: String; let language: String?; let generated: Bool; let state: String; var kind: String? = nil; var sdh: Bool? = nil }
+    struct Prepared: Decodable {
+        let id: String; let language: String?; let generated: Bool; let state: String; var kind: String? = nil; var sdh: Bool? = nil
+        var picture: Bool? = nil; var extractionMethod: String? = nil; var sidecar: String? = nil
+        /// Made from subtitles printed in the picture. Servers that do not say so are
+        /// recognised by how such a track is recorded: read as images, from a text file.
+        var fromPicture: Bool { picture ?? (extractionMethod == "ocr" && sidecar != nil) }
+    }
+    /// The picture itself carries subtitles (as Chinese dramas do), so subtitles the
+    /// player draws land on top of them and need an opaque box to be read.
+    var hasPictureSubtitles: Bool { prepared.contains { $0.fromPicture } }
     let state: String
     let audioTracks: [Track]
     let subtitleTracks: [Track]

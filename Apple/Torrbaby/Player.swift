@@ -141,7 +141,8 @@ final class PlaybackModel: ObservableObject {
                 Task { @MainActor [weak self] in
                     guard let self, self.player.currentItem === item else { return }
                     if self.subtitleController == nil {
-                        self.subtitleController = SubtitlePlaybackController(item: item, store: self.store)
+                        let info = self.playback.libraryAssetID.flatMap { id in self.store.library?.titles.lazy.flatMap(\.assets).first { $0.id == id }?.mediaInfo }
+                        self.subtitleController = SubtitlePlaybackController(item: item, store: self.store, overPictureSubtitles: info?.hasPictureSubtitles == true)
                     }
                     self.start()
                 }
@@ -578,7 +579,9 @@ final class SubtitlePlaybackController {
     private var preferences = SubtitlePreferences()
     private var stopped = false
     private let logger = Logger(subsystem: "org.torrbaby", category: "Subtitles")
-    init(item: AVPlayerItem, store: Store) {
+    /// Subtitles drawn over ones printed in the picture sit on a box at least this opaque.
+    static let coveringOpacity = 90
+    init(item: AVPlayerItem, store: Store, overPictureSubtitles: Bool = false) {
         task = Task { [weak self, weak item] in
             guard let self, let item else { return }
             let path = store.deviceSubtitlePath
@@ -604,7 +607,7 @@ final class SubtitlePlaybackController {
                     kCMTextMarkupAttribute_RelativeFontSize as String: p.sizePercent,
                     kCMTextMarkupAttribute_GenericFontFamilyName as String: fonts[p.font] ?? kCMTextMarkupGenericFontName_Default,
                     kCMTextMarkupAttribute_ForegroundColorARGB as String: [Double(p.textOpacity) / 100, 1, 1, 1],
-                    kCMTextMarkupAttribute_BackgroundColorARGB as String: [Double(p.backgroundOpacity) / 100, 0, 0, 0]
+                    kCMTextMarkupAttribute_BackgroundColorARGB as String: [Double(overPictureSubtitles ? max(p.backgroundOpacity, Self.coveringOpacity) : p.backgroundOpacity) / 100, 0, 0, 0]
                 ]
                 if let rule = AVTextStyleRule(textMarkupAttributes: attributes) { item.textStyleRules = [rule] }
                 guard let group = try await item.asset.loadMediaSelectionGroup(for: .legible), !self.stopped else { return }
