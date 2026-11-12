@@ -21,6 +21,23 @@ enum Section: String, CaseIterable, Identifiable {
         case .settings: return "slider.horizontal.3"
         }
     }
+    /// Filled symbol and colour for the iPhone menu's icon squares, as in iOS Settings.
+    var badge: (symbol: String, tint: Color) {
+        switch self {
+        case .library: return ("play.rectangle.fill", .blue)
+        case .findTorrents: return ("magnifyingglass", .indigo)
+        case .movies: return ("film.fill", .red)
+        case .shows: return ("tv.fill", .purple)
+        case .downloads: return ("arrow.down.circle.fill", .green)
+        case .active: return ("waveform.path", .teal)
+        case .seeding: return ("arrow.up.circle.fill", .mint)
+        case .complete: return ("checkmark.circle.fill", .gray)
+        case .subtitles: return ("captions.bubble.fill", .pink)
+        case .attention: return ("exclamationmark.circle.fill", .orange)
+        case .automation: return ("sparkles", .yellow)
+        case .settings: return ("gearshape.fill", .gray)
+        }
+    }
 
 }
 
@@ -255,6 +272,48 @@ struct RootView: View {
             }
         }
     }
+    private static let menuGroups: [(title: String, sections: [Section])] = [
+        ("Library", [.library, .findTorrents, .movies, .shows, .downloads]),
+        ("Torrents", [.active, .seeding, .complete, .subtitles, .attention]),
+        ("Server", [.automation, .settings])
+    ]
+    /// The sidebar of the Mac and iPad.
+    private var sidebarMenu: some View {
+        GeometryReader { geometry in
+            let rowHeight = mobileSidebar ? min(52, max(40, (geometry.size.height - 120) / 11)) : 34
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(Self.menuGroups, id: \.title) { group in
+                        menuSection(LocalizedStringKey(group.title), sections: group.sections, rowHeight: rowHeight)
+                    }
+                }.padding(.horizontal, 12).padding(.vertical, 6)
+            }
+        }
+    }
+    #if os(iOS)
+    /// iPhone: the menu is a whole screen, so it is a standard grouped list with coloured
+    /// icon squares, like iOS Settings.
+    private var phoneMenu: some View {
+        List {
+            ForEach(Self.menuGroups, id: \.title) { group in
+                SwiftUI.Section {
+                    ForEach(group.sections) { section in
+                        Button { navigate(Location(section: section)) } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: section.badge.symbol).font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                                    .frame(width: 29, height: 29).background(section.badge.tint.gradient, in: RoundedRectangle(cornerRadius: 7))
+                                    .accessibilityHidden(true)
+                                Text(LocalizedStringKey(section.rawValue)).foregroundStyle(Color.primary)
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary).accessibilityHidden(true)
+                            }.contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                    }
+                } header: { Text(LocalizedStringKey(group.title)) }
+            }
+        }.listStyle(.insetGrouped).scrollContentBackground(.hidden)
+    }
+    #endif
     @State private var showConnect = false
     @State private var torrentDraft: TorrentDraft?
     var body: some View {
@@ -262,16 +321,11 @@ struct RootView: View {
             VStack(alignment: .leading, spacing: sidebarSpacing) {
                 // On iPad the wordmark shares the bar row with the sidebar button instead.
                 if !brandInBar { sidebarBrand.padding(.horizontal, mobileSidebar ? 20 : 24).padding(.vertical, 12) }
-                GeometryReader { geometry in
-                    let rowHeight = mobileSidebar ? min(52, max(40, (geometry.size.height - 120) / 11)) : 34
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 14) {
-                            menuSection("Library", sections: [.library, .findTorrents, .movies, .shows, .downloads], rowHeight: rowHeight)
-                            menuSection("Torrents", sections: [.active, .seeding, .complete, .subtitles, .attention], rowHeight: rowHeight)
-                            menuSection("Server", sections: [.automation, .settings], rowHeight: rowHeight)
-                        }.padding(.horizontal, 12).padding(.vertical, 6)
-                    }
-                }
+                #if os(iOS)
+                if sizeClass == .compact { phoneMenu } else { sidebarMenu }
+                #else
+                sidebarMenu
+                #endif
                 HStack(spacing: 7) {
                     Circle().fill(store.connectionColor).frame(width: 7, height: 7)
                     Text(LocalizedStringKey(store.connectionLabel))
