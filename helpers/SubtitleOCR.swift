@@ -136,7 +136,14 @@ struct TextCue: Codable {let start_ms:Int;let end_ms:Int;let text:String}
   guard !cues.isEmpty,unreadable <= max(3,manifest.cues.count/100) else {throw NSError(domain:"Too many unreadable subtitle images",code:1)}
   let recognizer=NLLanguageRecognizer();recognizer.processString(String(cues.map(\.text).joined(separator:" ").prefix(30000)))
   let tag=recognizer.dominantLanguage?.rawValue ?? ""
-  let language=tag == "en" ? "en" : tag.hasPrefix("zh") ? "zh-Hans" : ""
+  var language=tag == "en" ? "en" : tag.hasPrefix("zh") ? "zh-Hans" : ""
+  // A short track full of names ("Husker, Banzai") can read as Polish. When the container
+  // labels it, accept that label if the recognizer finds it plausible: among its top three
+  // guesses at 15% or more. A track mislabelled as another language still fails.
+  if hint != "auto" && language != hint {
+   let ranked=recognizer.languageHypotheses(withMaximum:3).sorted {$0.value>$1.value}
+   if ranked.contains(where: {(hint == "en" ? $0.key.rawValue == "en" : $0.key.rawValue.hasPrefix("zh")) && $0.value >= 0.15}) {language=hint}
+  }
   guard !language.isEmpty, hint == "auto" || hint == language else {throw NSError(domain:"Subtitle language could not be verified",code:1)}
   let result=try JSONEncoder().encode(Output(language:language,method:"ocr",unreadableCues:unreadable,cues:cues))
   guard result.count<=16_777_216 else {throw NSError(domain:"Large OCR output",code:1)}
