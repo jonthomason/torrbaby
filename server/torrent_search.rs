@@ -1099,6 +1099,8 @@ fn audio_summary(name: &str) -> (Option<String>, Option<String>) {
     match best { Some((_, kind, layout)) => (Some(kind.to_owned()), layout), None => (None, None) }
 }
 
+/// The picture size a release's name states ("2160p", "1080p"…), if it states one.
+pub fn stated_resolution(name: &str) -> Option<String> { hints(name).resolution }
 fn hints(name: &str) -> Hints {
     static YEAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b((?:19|20)\d{2})\b").expect("valid regex"));
     static EPISODE: LazyLock<Regex> =

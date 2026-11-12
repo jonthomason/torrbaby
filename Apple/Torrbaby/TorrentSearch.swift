@@ -1814,6 +1814,13 @@ struct CloudJob: Decodable, Identifiable {
     var current: String? = nil
     /// When it was added, in seconds since 1970.
     var created: Double? = nil
+    /// Episodes that took the place of a lesser copy, and ones skipped because the library's copy was as good.
+    var replaced: Int? = nil
+    var discarded: Int? = nil
+    var outcomeLine: String {
+        [(replaced ?? 0) > 0 ? L10n.format("Replaced with better: %d", replaced ?? 0) : "", (discarded ?? 0) > 0 ? L10n.format("Already had as good: %d", discarded ?? 0) : ""]
+            .filter { !$0.isEmpty }.joined(separator: " · ")
+    }
     var fraction: Double { (totalBytes ?? 0) > 0 ? Double(doneBytes ?? 0) / Double(totalBytes ?? 1) : 0 }
     var isActive: Bool { ["queued", "saving", "downloading", "retrying"].contains(state) }
     var stateLabel: String {
@@ -1902,6 +1909,7 @@ struct CloudJobRow: View {
             if let total = job.totalBytes, total > 0, job.state != "done" {
                 ProgressView(value: Double(job.doneBytes ?? 0), total: Double(total)).tint(job.state == "failed" ? .orange : Theme.accent)
             }
+            if !job.outcomeLine.isEmpty { Text(verbatim: job.outcomeLine).font(.caption).foregroundStyle(.secondary) }
             if let current = job.current, !current.isEmpty { Text(verbatim: current).font(.caption).foregroundStyle(.secondary).lineLimit(1).textSelectionIfAvailable() }
             if let error = job.error, !error.isEmpty { Text(verbatim: error).font(.caption).foregroundStyle(.orange) }
         }.textSelectionIfAvailable()   // every line of the card can be selected and copied
@@ -1919,7 +1927,7 @@ struct CloudJobRow: View {
     }
 }
 
-private extension View {
+extension View {
     @ViewBuilder func textSelectionIfAvailable() -> some View {
         #if os(tvOS)
         self

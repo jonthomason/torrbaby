@@ -774,6 +774,10 @@ struct LibraryDetail: View {
                         }.scrollIndicators(.hidden)
                         #if !os(tvOS)
                         MissingEpisodesBar(title: title, season: selectedSeason)
+                        WatchToggle(title: title)
+                        #endif
+                        #if os(iOS)
+                        AutoDownloadToggle(title: title)
                         #endif
                         if selectedSeason == LibraryTitle.extrasTab {
                             ForEach(extras) { asset in episodeRow(asset, title: title) }

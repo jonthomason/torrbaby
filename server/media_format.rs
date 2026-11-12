@@ -177,6 +177,11 @@ pub fn outline(path: &Path) -> Result<Value> {
     let spoken: Vec<Option<String>> = streams.iter().filter(|s| s["codec_type"] == "audio").map(language).collect();
     for (track, spoken) in described["audio"].as_array_mut().into_iter().flatten().zip(spoken) { track["language"] = json!(spoken); }
     ensure!(described["video"].is_object() || described["audio"].as_array().is_some_and(|a| !a.is_empty()), "No tracks could be read");
+    // Frames a second, to tell a native-rate picture from an interpolated 50 or 60.
+    let rate = streams.iter().find(|s| s["codec_type"] == "video" && s["disposition"]["attached_pic"] != 1)
+        .and_then(|s| s["avg_frame_rate"].as_str().filter(|r| *r != "0/0").or(s["r_frame_rate"].as_str()))
+        .and_then(|r| { let (n, d) = r.split_once('/')?; let (n, d) = (n.parse::<f64>().ok()?, d.parse::<f64>().ok()?); (d > 0.0).then(|| n / d) });
+    if described["video"].is_object() { described["video"]["fps"] = json!(rate.map(|r| (r * 100.0).round() / 100.0)); }
     described["subtitles"] = json!(streams.iter().filter(|s| s["codec_type"] == "subtitle").map(|s| language(s).unwrap_or_else(|| "und".into())).collect::<Vec<_>>());
     Ok(described)
 }

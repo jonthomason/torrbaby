@@ -30,7 +30,7 @@ pub struct Service {
     pub(crate) data_dir: PathBuf,
     http: reqwest::Client,
     scan_lock: tokio::sync::Mutex<()>,
-    metadata: crate::metadata::Metadata,
+    pub(crate) metadata: crate::metadata::Metadata,
     metadata_lock: tokio::sync::Mutex<()>,
     pub(crate) mutation_lock: tokio::sync::Mutex<()>,
     pub(crate) subtitle_jobs: Arc<crate::subtitle_jobs::Manager>,
@@ -39,6 +39,7 @@ pub struct Service {
     lan_limiter: crate::lan::Limiter,
     pub(crate) torrent_search: crate::torrent_search::Search,
     pub(crate) cloud: crate::cloud::Cloud,
+    pub(crate) watcher: crate::watcher::Watcher,
 }
 
 // Keep unimplemented routes explicit during the port; never silently report success.
@@ -115,6 +116,7 @@ pub async fn serve(
         .context("Another Torrbaby server owns this database")?;
     let service = Arc::new(Service {
         cloud: crate::cloud::Cloud::new(database.parent().context("Database needs a parent directory")?)?,
+        watcher: crate::watcher::Watcher::new(database.parent().context("Database needs a parent directory")?),
         lan_limiter: crate::lan::Limiter::default(),
         torrent_search: crate::torrent_search::Search::new()?.with_cache_dir(database.parent().context("Database needs a parent directory")?.join("search-cache"))?
             .with_private_site(database.parent().context("Database needs a parent directory")?.join("private-site.json")),
@@ -193,6 +195,8 @@ pub async fn serve(
         let organizer = service.clone();
         let cloud = service.clone();
         workers.push(tokio::spawn(async move { cloud.cloud.work(&cloud).await; }));
+        let watching = service.clone();
+        workers.push(tokio::spawn(async move { watching.watcher.work(&watching).await; }));
         workers.push(tokio::spawn(async move {
             loop {
                 if let Err(error) = crate::organizer::tick(&organizer).await {
@@ -559,7 +563,7 @@ async fn dispatch(
 }
 /// Cloud shares for a title, each copy set against the series' episodes when the
 /// metadata service knows the series. A failed lookup only leaves the totals out.
-async fn cloud_search(s: &Service, query: &str) -> Result<Value> {
+pub(crate) async fn cloud_search(s: &Service, query: &str) -> Result<Value> {
     let mut found = s.cloud.search(query).await?;
     let (title, season) = crate::cloud::title_and_season(query);
     let show = match s.metadata.series_episodes(&title).await {
@@ -1266,6 +1270,16 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         return s.cloud.status().await;
     }
     if method == Method::POST && path == "/v1/cloud/search" { return cloud_search(s, text(&body, "query")?).await; }
+    // Shows watched for new episodes.
+    if path == "/v1/watch" {
+        if method == Method::POST { s.watcher.add(s, text(&body, "id")?, body["market"].as_str())?; }
+        return Ok(s.watcher.list(s));
+    }
+    if method == Method::POST && path == "/v1/watch/check" { return Ok(s.watcher.check_now()); }
+    if let Some(id) = path.strip_prefix("/v1/watch/") {
+        if method == Method::DELETE { s.watcher.remove(id)?; return Ok(s.watcher.list(s)); }
+        if method == Method::POST { s.watcher.add(s, id, body["market"].as_str())?; return Ok(s.watcher.list(s)); }
+    }
     if method == Method::POST && path == "/v1/cloud/probe" { return s.cloud.probe(text(&body, "url")?, body["copy"].as_str().unwrap_or("")).await; }
     if method == Method::POST && path == "/v1/cloud/add" { return s.cloud.add(s, &body).await; }
     if method == Method::GET && path == "/v1/cloud/jobs" { return Ok(s.cloud.jobs()); }

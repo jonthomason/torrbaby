@@ -734,6 +734,10 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
                 self.finishing -= 1
                 if self.tasks[id] === downloadTask { self.tasks.removeValue(forKey: id) }
                 self.reload(); self.pump(); self.completeBackgroundEvents()
+                #if os(iOS)
+                // An episode queued by itself announces its arrival.
+                if let item = self.items.first(where: { $0.id == id && $0.state == .ready }) { AutoDownload.arrived(item) }
+                #endif
             }
             // The kept bytes survive every failure here; only this request's piece is given up.
             let fail = { (error: Error, keep: Bool) in
@@ -847,6 +851,15 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
 
 #if os(iOS)
 final class DownloadAppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        // New episodes of chosen shows are fetched without the app being opened.
+        AutoDownload.register()
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
+            Task { @MainActor in AutoDownload.schedule() }
+        }
+        Task { @MainActor in AutoDownload.schedule() }
+        return true
+    }
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
         PhoneOrientation.allowed
     }
