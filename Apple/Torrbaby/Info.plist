@@ -51,6 +51,8 @@
 	<string>public.app-category.utilities</string>
 	<key>LSMultipleInstancesProhibited</key>
 	<true/>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
