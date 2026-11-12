@@ -5,7 +5,7 @@ struct TorrentSearchSource: Decodable {
     let id: String
     let url: String
     var label: String { Self.label(provider) }
-    static func label(_ provider: String) -> String { ["1lou":"BT之家", "tpb":"The Pirate Bay", "csv":"Torrent CSV", "nyaa":"Nyaa", "dmhy":"动漫花园", "mikan":"蜜柑计划", "pt": L10n.text("Private site")][provider] ?? provider }
+    static func label(_ provider: String) -> String { ["tpb":"The Pirate Bay", "csv":"Torrent CSV", "nyaa":"Nyaa", "quark": L10n.text("Quark Drive")][provider] ?? provider }
 }
 struct TorrentReleaseHints: Decodable {
     let year: Int?
@@ -48,6 +48,16 @@ struct TorrentSearchItem: Decodable, Identifiable {
     let hints: TorrentReleaseHints
     let matchScore: Int
     let matchNotes: [String]
+    /// A cloud-drive share (China): how many videos it holds, and when it was posted.
+    var videoCount: Int? = nil
+    var added: String? = nil
+    var isCloud: Bool { sources.first?.provider == "quark" }
+    var shareURL: String? { isCloud ? sources.first?.url : nil }
+    /// "12 videos · 23.4 GB · 2025-03-02" for a cloud share.
+    var cloudSummary: String {
+        [videoCount.map { $0 == 1 ? L10n.text("1 video") : L10n.format("%d videos", $0) } ?? "", size,
+         added.map { String($0.prefix(10)) } ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
     var sourceKey: String { sources.map { "\($0.provider):\($0.id)" }.joined(separator: ",") }
     var id: String { infoHash.isEmpty ? sourceKey : infoHash }
     /// Parsed once per release name: several regular expressions, read many times per redraw.
@@ -138,6 +148,8 @@ struct TorrentSearchResponse: Decodable {
     struct Provider: Decodable { let provider: String; let count: Int; let error: String? }
     var items: [TorrentSearchItem]
     let providers: [Provider]
+    /// The query as searched; a cloud share's files are looked up again under it.
+    var query: String? = nil
 }
 private struct TorrentSearchDetails: Decodable {
     struct File: Decodable { let name: String; let sizeBytes: UInt64?; let hints: TorrentReleaseHints }
@@ -360,12 +372,14 @@ struct TorrentSearchView: View {
                         } else {
                             ContentUnavailableView("No releases found", systemImage: "magnifyingglass", description: Text("Try a shorter title or another source."))
                         }
-                    } else if usesColumns(geometry.size.width) && !visibleItems.allSatisfy({ $0.sources.contains { $0.provider == "1lou" } }) {
+                    } else if usesColumns(geometry.size.width) {
                         HStack(spacing: 0) {
                             results(visibleItems, inline: true)
                                 .frame(width: min(440, max(280, geometry.size.width * 0.43)))
                             Divider()
-                            if let selectedItem {
+                            if let selectedItem, selectedItem.isCloud {
+                                CloudShareView(item: selectedItem, query: response.query ?? query, embedded: true).id(selectedItem.id)
+                            } else if let selectedItem {
                                 TorrentSearchDetail(item: selectedItem, embedded: true, onAdded: { prepareNextSearch = true; focusNextSearch() }).id(selectedItem.id)
                             } else {
                                 ContentUnavailableView("Choose a release", systemImage: "text.magnifyingglass")
@@ -458,9 +472,9 @@ struct TorrentSearchView: View {
                         })
             }
             ViewThatFits(in: .horizontal) {
-                HStack { sourcePicker; resolutionPicker; Spacer(); searchStatus }
+                HStack { if market != "china" { sourcePicker }; resolutionPicker; Spacer(); searchStatus }
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack { sourcePicker.labelsHidden(); Spacer(); resolutionPicker.labelsHidden() }
+                    HStack { if market != "china" { sourcePicker.labelsHidden() }; Spacer(); resolutionPicker.labelsHidden() }
                     searchStatus
                 }
             }
@@ -484,16 +498,9 @@ struct TorrentSearchView: View {
     private var sourcePicker: some View {
                 Picker("Sources", selection: $source) {
                     Text("Recommended").tag("all")
-                    if market == "china" {
-                        Text("BT之家").tag("1lou")
-                        Text("动漫花园").tag("dmhy")
-                        Text("蜜柑计划").tag("mikan")
-                        Text("Private site").tag("pt")
-                    } else {
-                        Text("The Pirate Bay").tag("tpb")
-                        Text("Torrent CSV").tag("csv")
-                        Text("Nyaa").tag("nyaa")
-                    }
+                    Text("The Pirate Bay").tag("tpb")
+                    Text("Torrent CSV").tag("csv")
+                    Text("Nyaa").tag("nyaa")
                 }
                 #if os(tvOS)
                 .pickerStyle(.segmented)
@@ -554,8 +561,12 @@ struct TorrentSearchView: View {
         }.pickerStyle(.menu).fixedSize().searchFilterControl()
     }
     @ViewBuilder private var searchStatus: some View {
-                if response != nil { Text("\(visibleItems.count) releases").font(.caption).foregroundStyle(.secondary) }
-                if searching { ProgressView().controlSize(.small) }
+                if response != nil && !searching { Text("\(visibleItems.count) releases").font(.caption).foregroundStyle(.secondary) }
+                if searching {
+                    ProgressView().controlSize(.small)
+                    // Every share is opened to check its files, which takes a while.
+                    if market == "china" { Text("Searching and checking links…").font(.caption).foregroundStyle(.secondary) }
+                }
     }
     private func results(_ items: [TorrentSearchItem], inline: Bool) -> some View {
         List(items) { item in
@@ -572,8 +583,8 @@ struct TorrentSearchView: View {
         }.listStyle(.plain).canvasBackground().disabled(searching)
     }
     @ViewBuilder private func ordinaryRow(_ item: TorrentSearchItem, inline: Bool) -> some View {
-            if item.sources.contains(where: { $0.provider == "1lou" }) {
-                TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true; focusNextSearch() }, ownership: ownership(item), artworkYear: artworkYear(item))
+            if item.isCloud && !inline {
+                NavigationLink { CloudShareView(item: item, query: response?.query ?? query) } label: { TorrentSearchRow(item: item, ownership: ownership(item), artworkYear: artworkYear(item)) }
             } else if inline {
                 TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true; focusNextSearch() }, ownership: ownership(item), artworkYear: artworkYear(item))
                     .contentShape(Rectangle()).onTapGesture { selectedID = item.id }
@@ -635,7 +646,7 @@ struct TorrentSearchView: View {
         if let year { body["year"] = year }; if let season { body["season"] = season }; if let episode { body["episode"] = episode }
         work = Task { @MainActor in
             do {
-                let value: TorrentSearchResponse = try await store.request("POST", "/v1/search/torrents", body: body, timeout: 30)
+                let value: TorrentSearchResponse = try await store.request("POST", "/v1/search/torrents", body: body, timeout: market == "china" ? 90 : 30)
                 guard !Task.isCancelled else { return }; response = value
                 if let seasonFilter, !availableSeasons.contains(seasonFilter) { self.seasonFilter = nil }
                 if let episodeFilter, !availableEpisodes.contains(episodeFilter) { self.episodeFilter = nil }
@@ -701,6 +712,8 @@ struct EpisodeDownloaderSheet: View {
     var notFound: [Int] = []
     /// What the missing-episodes search is still doing; nil once it has finished.
     var progress: String? = nil
+    /// Missing episodes found in a Quark Drive share instead (the missing-episodes search only).
+    var cloudOffer: CloudOffer? = nil
     @State private var adding: Set<Int> = []
     @State private var added: Set<Int> = []
     @State private var failures: [Int: String] = [:]
@@ -714,6 +727,7 @@ struct EpisodeDownloaderSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                if let cloudOffer { CloudOfferSection(offer: cloudOffer) }
                 SwiftUI.Section {
                     ForEach(picks) { pick in row(pick) }
                     if let progress {
@@ -921,31 +935,6 @@ private struct SearchReleaseArtwork: View {
     }
 }
 
-@MainActor
-private enum SearchReleaseSizes {
-    struct Choice: Decodable, Identifiable { let id: String; let name: String; let url: String? }
-    struct Summary: Decodable { let sizeLabel: String?; let choices: [Choice] }
-    static var summaries: [String: Summary] = [:]
-    static var cache: [String: String] = [:]
-    static var active = 0
-    static func load(_ item: TorrentSearchItem, store: Store) async throws -> String {
-        let key = store.server + item.sourceKey
-        if let cached = cache[key] { return cached }
-        while active >= 2 { try await Task.sleep(for: .milliseconds(200)) }
-        try Task.checkCancellation()
-        if let cached = cache[key] { return cached }
-        active += 1
-        defer { active -= 1 }
-        guard let source = item.sources.first(where: { $0.provider == "1lou" }) else { return "" }
-        let summary: Summary = try await store.request("POST", "/v1/search/torrents/summary", body: ["provider": source.provider, "id": source.id], timeout: 25)
-        let value = summary.sizeLabel ?? ""
-        if cache.count >= 128 { cache.removeAll(); summaries.removeAll() }
-        summaries[key] = summary
-        cache[key] = value
-        return value
-    }
-}
-
 private struct TorrentSearchRow: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
@@ -955,9 +944,6 @@ private struct TorrentSearchRow: View {
     var trialSelected: Set<String> = []
     var ownership: String? = nil
     var artworkYear: Int? = nil
-    @State private var fetchedSize: String?
-    @State private var showBTDetails = false
-    @State private var btChoices: [SearchReleaseSizes.Choice] = []
     @State private var adding = false
     @State private var added = false
     @State private var addError: String?
@@ -967,9 +953,8 @@ private struct TorrentSearchRow: View {
     #else
     private let compactRow = false
     #endif
-    private var isBT: Bool { item.sources.contains { $0.provider == "1lou" } }
-    private var displayedSize: String { item.size.isEmpty ? (fetchedSize ?? "") : item.size }
-    private var metadata: String { [item.edition, item.quality, estimatedBitrate].filter { !$0.isEmpty }.joined(separator: " · ") }
+    private var displayedSize: String { item.isCloud ? "" : item.size }
+    private var metadata: String { item.isCloud ? item.cloudSummary : [item.edition, item.quality, estimatedBitrate].filter { !$0.isEmpty }.joined(separator: " · ") }
     @State private var facts: SearchReleaseFacts?
     /// The picture's likely bitrate: the release's size over its running time, less a typical figure for its kind of audio.
     private var estimatedBitrate: String {
@@ -1025,35 +1010,18 @@ private struct TorrentSearchRow: View {
                 }
                 if let addError { Text(addError).font(.caption).foregroundStyle(.orange) }
             }
-            if let onTrial {
+            if let onTrial, !item.isCloud, !item.magnet.isEmpty {
                 Spacer(minLength: 8)
-                if isBT {
-                    if btChoices.count == 1, let choice = btChoices.first, let url = choice.url {
-                        Button(trialSelected.contains(url) ? "Selected" : "Add to trial") { onTrial("torrent_url",url,item.name,item.sourceKey) }
-                    } else if !btChoices.isEmpty {
-                        Menu("Add to trial") { ForEach(btChoices) { choice in
-                            if let url=choice.url { Button(choice.name) { onTrial("torrent_url",url,choice.name,"") } }
-                        } }
-                    } else { ProgressView().controlSize(.small) }
-                } else if !item.magnet.isEmpty {
-                    Button(trialSelected.contains(item.magnet) ? "Selected" : "Add to trial") { onTrial("magnet",item.magnet,item.name,item.sourceKey) }
-                }
-            } else if isBT {
+                Button(trialSelected.contains(item.magnet) ? "Selected" : "Add to trial") { onTrial("magnet",item.magnet,item.name,item.sourceKey) }
+            }
+            if item.isCloud {
+                // Choosing episodes happens on the share's page; this row just leads there.
                 Spacer(minLength: 8)
-                if adding { ProgressView().controlSize(.small) }
-                else if added { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent).accessibilityLabel("Added") }
-                else if btChoices.count == 1, let choice = btChoices.first {
-                    Button("Add torrent") { Task { await addBT(choice) } }.buttonStyle(MonoButtonStyle(prominent: true))
-                } else if btChoices.count > 1 {
-                    Menu("Add torrent") { ForEach(btChoices) { choice in Button(choice.name) { Task { await addBT(choice) } } } }
-                        .buttonStyle(MonoButtonStyle(prominent: true))
-                }
-                Button { showBTDetails=true } label: { Image(systemName:"info.circle") }
-                    .buttonStyle(.borderless).accessibilityLabel("Torrent details")
+                Image(systemName: "icloud.and.arrow.down").foregroundStyle(Theme.accent).accessibilityLabel("Quark Drive")
             }
             #if !os(tvOS)
             // Add straight from the list; opening the details stays optional.
-            if onTrial == nil, !isBT, !item.magnet.isEmpty {
+            if onTrial == nil, !item.isCloud, !item.magnet.isEmpty {
                 Spacer(minLength: 8)
                 if adding { ProgressView().controlSize(.small) }
                 else if added || ownership == "Already in your torrents" {
@@ -1068,21 +1036,6 @@ private struct TorrentSearchRow: View {
             }
             #endif
         }.padding(.vertical, 2).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            .sheet(isPresented: $showBTDetails) {
-                NavigationStack { TorrentSearchDetail(item:item, loadBTDetails:true, knownSize:displayedSize)
-                    .toolbar { ToolbarItem(placement:.cancellationAction) { Button("Close") { showBTDetails=false } } }
-                }
-                    .frame(minWidth:320,minHeight:400)
-            }
-            .task(id: store.server + item.sourceKey) {
-                guard isBT else { return }
-                do {
-                    fetchedSize = try await SearchReleaseSizes.load(item, store: store)
-                    btChoices = SearchReleaseSizes.summaries[store.server + item.sourceKey]?.choices ?? []
-                }
-                catch is CancellationError { }
-                catch { fetchedSize = nil }
-            }
     }
     private func addMagnet() async {
         guard !adding, !added, !item.magnet.isEmpty else { return }
@@ -1097,20 +1050,6 @@ private struct TorrentSearchRow: View {
             onAdded()
         } catch { addError = error.localizedDescription }
     }
-    private func addBT(_ choice: SearchReleaseSizes.Choice) async {
-        guard !adding, !added, let url=choice.url else { return }
-        adding=true; addError=nil
-        defer { adding=false }
-        do {
-            struct Result: Decodable { let torrentDuplicate: TorrentIdentity? }
-            struct TorrentIdentity: Decodable { let name: String? }
-            let result: Result = try await store.request("POST", "/v1/torrents", body: ["torrent_url":url,"listing_key":btChoices.count == 1 ? item.sourceKey : ""], timeout:45)
-            added=true
-            store.notify(result.torrentDuplicate == nil ? "Torrent added" : "Already in your torrents", detail:item.name)
-            onAdded()
-        } catch { addError=error.localizedDescription }
-    }
-
 }
 
 private struct TorrentSearchDetail: View {
@@ -1119,8 +1058,6 @@ private struct TorrentSearchDetail: View {
     @Environment(\.dismiss) private var dismiss
     let item: TorrentSearchItem
     var embedded = false
-    var loadBTDetails = false
-    var knownSize = ""
     var onAdded: () -> Void = {}
     @State private var detail: TorrentSearchDetails?
     @State private var attachment = 0
@@ -1129,18 +1066,13 @@ private struct TorrentSearchDetail: View {
         return values[attachment]
     }
     private var resolved: TorrentSearchItem { release?.item ?? item }
-    private var displayedSize: String { resolved.size.isEmpty ? knownSize : resolved.size }
-    private var isBTListing: Bool { item.sources.contains { $0.provider == "1lou" } }
+    private var displayedSize: String { resolved.size }
     @State private var loading = false
     @State private var adding = false
     @State private var paused = false
     @State private var added = false
     @State private var message: String?
     @State private var detailError: String?
-    private typealias Choice = SearchReleaseSizes.Choice
-    private struct Resolution: Decodable { let choices: [Choice]?; let item: TorrentSearchItem?; let metainfo: String? }
-    @State private var choices: [Choice] = []
-    @State private var selectedAttachment: String?
 
     var body: some View {
         List {
@@ -1157,22 +1089,16 @@ private struct TorrentSearchDetail: View {
                         }
                     }
                 }
-                if !choices.isEmpty {
-                    Picker("Release", selection: $selectedAttachment) {
-                        Text("Choose a release").tag(String?.none)
-                        ForEach(choices) { choice in Text(choice.name).tag(Optional(choice.id)) }
-                    }
-                }
                 Toggle("Add paused", isOn: $paused).disabled(adding || added)
                 Button { Task { await add() } } label: {
                     Label(LocalizedStringKey(added ? "Added to Transmission" : adding ? "Adding…" : "Add torrent"), systemImage: added ? "checkmark.circle.fill" : "plus.circle.fill")
                 }.buttonStyle(MonoButtonStyle(prominent: true)).disabled(adding || added)
                 if let message { Text(L10n.text(message)).foregroundStyle(.secondary) }
             }
-            if !isBTListing && !item.hints.summary.isEmpty {
+            if !item.hints.summary.isEmpty {
                 SwiftUI.Section("Release tags") { Text(item.hints.summary) }
             }
-            if !isBTListing { SwiftUI.Section("Sources") {
+            SwiftUI.Section("Sources") {
                 ForEach(item.sources, id: \.url) { source in
                     #if os(tvOS)
                     Text(source.label)
@@ -1180,7 +1106,6 @@ private struct TorrentSearchDetail: View {
                     Link(source.label, destination: URL(string: source.url)!)
                     #endif
                 }
-            }
             }
             if loading { ProgressView("Loading details…") }
             if let detailError { Text(detailError).foregroundStyle(.secondary) }
@@ -1212,13 +1137,8 @@ private struct TorrentSearchDetail: View {
         }.searchDetailTitle(embedded: embedded)
         .task {
             guard let source = item.sources.first(where: { $0.provider == "tpb" }) ?? item.sources.first(where: { $0.provider == "nyaa" }) ?? item.sources.first else { return }
-            if let summary = SearchReleaseSizes.summaries[store.server + item.sourceKey] {
-                if summary.choices.count == 1 { selectedAttachment = summary.choices.first?.id }
-                else if summary.choices.count > 1 { choices = summary.choices }
-            }
-            guard !isBTListing || loadBTDetails else { return }
             loading = true; defer { loading = false }
-            do { detail = try await store.request("POST", "/v1/search/torrents/detail", body: ["provider": source.provider, "id": source.id, "explicit": loadBTDetails], timeout: 45) }
+            do { detail = try await store.request("POST", "/v1/search/torrents/detail", body: ["provider": source.provider, "id": source.id], timeout: 45) }
             catch { if !Task.isCancelled { detailError = "Couldn’t load source details. You can still add this torrent." } }
         }
     }
@@ -1229,21 +1149,8 @@ private struct TorrentSearchDetail: View {
             struct Torrent: Decodable { let name: String?; let hashString: String? }
             struct Added: Decodable { let torrentAdded: Torrent?; let torrentDuplicate: Torrent? }
             var payload: [String: Any] = ["paused": paused]
-            if !resolved.magnet.isEmpty && choices.isEmpty {
+            if !resolved.magnet.isEmpty {
                 payload["magnet"] = resolved.magnet
-            } else if let source = item.sources.first(where: { $0.provider == "1lou" }) {
-                if selectedAttachment == nil, let summary = SearchReleaseSizes.summaries[store.server + item.sourceKey] {
-                    if summary.choices.count == 1 { selectedAttachment = summary.choices.first?.id }
-                    else if summary.choices.count > 1 { choices = summary.choices; message = "Choose a release, then add it."; return }
-                }
-                var request: [String: Any] = ["provider": source.provider, "id": source.id]
-                if let selectedAttachment { request["attachment"] = selectedAttachment }
-                let resolution: Resolution = try await store.request("POST", "/v1/search/torrents/resolve", body: request, timeout: 45)
-                if let options = resolution.choices, !options.isEmpty {
-                    choices = options; message = "Choose a release, then add it."; return
-                }
-                guard let metainfo = resolution.metainfo else { message = "Couldn’t retrieve this torrent. Try again."; return }
-                payload["metainfo"] = metainfo
             } else { message = "This release has no downloadable torrent."; return }
             let result: Added = try await store.request("POST", "/v1/torrents", body: payload, timeout: 45)
             added = true; message = result.torrentDuplicate == nil ? "Torrent added" : "Already in your torrents"
@@ -1405,7 +1312,7 @@ struct MissingEpisodesBar: View {
             missing = try? await store.request("GET", "/v1/library/titles/\(title.id)/missing-episodes", timeout: 20)
         }
         .sheet(item: Binding(get: { finding.map { FindingSeason(season: $0) } }, set: { finding = $0?.season })) { item in
-            LocalizedInterface { MissingEpisodesSheet(show: title.title, season: item.season) }.environmentObject(store)
+            LocalizedInterface { MissingEpisodesSheet(show: title.title, originalTitle: missing?.originalTitle, season: item.season) }.environmentObject(store)
         }
     }
     private struct FindingSeason: Identifiable { let season: MissingEpisodes.Season; var id: Int { season.season } }
@@ -1416,7 +1323,9 @@ struct MissingEpisodesBar: View {
 private struct MissingEpisodesSheet: View {
     @EnvironmentObject var store: Store
     let show: String
+    var originalTitle: String? = nil
     let season: MissingEpisodes.Season
+    @State private var cloudOffer: CloudOffer?
     @AppStorage("torrentSearchMarket") private var market = "world"
     @AppStorage("torrentSearchResolution") private var resolution = "all"
     @State private var found: [Int: [TorrentSearchItem]] = [:]
@@ -1431,8 +1340,9 @@ private struct MissingEpisodesSheet: View {
         let chosen = Set(picks.map(\.episode))
         EpisodeDownloaderSheet(show: show, season: season.season, picks: picks,
                                notFound: season.missing.map(\.episode).filter { !chosen.contains($0) && (progress == nil || searched.contains($0)) },
-                               progress: progress)
+                               progress: progress, cloudOffer: cloudOffer)
             .task { await search() }
+            .task { await searchCloud() }
     }
     private func owned(_ item: TorrentSearchItem) -> String? {
         store.torrents.contains { !item.infoHash.isEmpty && $0.hashString.caseInsensitiveCompare(item.infoHash) == .orderedSame } ? "Already in your torrents" : nil
@@ -1454,6 +1364,21 @@ private struct MissingEpisodesSheet: View {
         let response: TorrentSearchResponse? = try? await store.request("POST", "/v1/search/torrents", body: body, timeout: 30)
         return usable(response?.items ?? []).filter { $0.hints.season ?? 1 == season.season }
     }
+    /// A Chinese show is also looked for on Quark Drive, by its Chinese title: the share holding
+    /// the most missing episodes of this season is offered with just those files chosen.
+    private func searchCloud() async {
+        let chinese = [originalTitle, show].compactMap { $0 }.first { $0.range(of: #"\p{Han}"#, options: .regularExpression) != nil }
+        guard let query = chinese ?? (market == "china" ? show : nil) else { return }
+        guard let found: CloudSearch = try? await store.request("POST", "/v1/cloud/search", body: ["query": query], timeout: 90) else { return }
+        let best = found.shares.map { share in
+            (share, share.files.filter { file in (file.season ?? season.season) == season.season && file.episode.map(wanted.contains) == true })
+        }.filter { !$0.1.isEmpty }.max { $0.1.count < $1.1.count }
+        guard let (share, files) = best else { return }
+        // One file per episode: the largest copy when a share holds several.
+        var byEpisode: [Int: CloudShare.File] = [:]
+        for file in files { if let episode = file.episode, (byEpisode[episode]?.sizeBytes ?? -1) < (file.sizeBytes ?? 0) { byEpisode[episode] = file } }
+        cloudOffer = CloudOffer(share: share, files: byEpisode.keys.sorted().compactMap { byEpisode[$0] }, title: show, season: season.season)
+    }
     private func search() async {
         for item in await run(episode: nil) { if let episode = item.hints.episode, wanted.contains(episode) { found[episode, default: []].append(item) } }
         // Each episode the season search missed gets a search of its own; the server caches and
@@ -1468,4 +1393,291 @@ private struct MissingEpisodesSheet: View {
         searched.formUnion(remaining)
         progress = nil
     }
+}
+
+// MARK: Cloud shares (Quark Drive)
+/// A cloud-drive share's contents, as the server found them when it checked the share.
+struct CloudShare: Decodable {
+    struct File: Decodable, Identifiable {
+        let path: String; let name: String; let sizeBytes: Int64?; let season: Int?; let episode: Int?
+        var id: String { path }
+        var label: String {
+            switch (season, episode) {
+            case let (season?, episode?): return L10n.format("Season %d Ep %d", season, episode)
+            case let (nil, episode?): return L10n.format("Ep %d", episode)
+            default: return name
+            }
+        }
+    }
+    let url: String
+    let title: String?
+    let posted: String?
+    let videoCount: Int?
+    let totalBytes: Int64?
+    let files: [File]
+}
+struct CloudSearch: Decodable { let shares: [CloudShare] }
+
+/// One share: its videos with checkboxes, the library name to file them under, and Add.
+struct CloudShareView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    @Environment(\.dismiss) private var dismiss
+    let item: TorrentSearchItem
+    let query: String
+    var embedded = false
+    @State private var share: CloudShare?
+    @State private var loading = true
+    @State private var chosen: Set<String> = []
+    @State private var name = ""
+    @State private var adding = false
+    @State private var message: String?
+    @State private var added = false
+    private var chosenBytes: Int64 { share?.files.filter { chosen.contains($0.path) }.reduce(0) { $0 + ($1.sizeBytes ?? 0) } ?? 0 }
+    var body: some View {
+        List {
+            SwiftUI.Section {
+                Text(item.title).font(.title2.bold()).textSelectionIfAvailable()
+                if !item.cloudSummary.isEmpty { Text(item.cloudSummary).font(.subheadline).foregroundStyle(.secondary) }
+                Text(item.name).font(.caption).foregroundStyle(.secondary).textSelectionIfAvailable()
+                LabeledContent("Save as") {
+                    TextField("Title", text: $name).labelsHidden().multilineTextAlignment(.trailing).autocorrectionDisabled()
+                }
+                Button { Task { await add() } } label: {
+                    Label(LocalizedStringKey(added ? "Added to downloads" : adding ? "Adding…" : chosen.isEmpty && share != nil ? "Choose videos to add" : "Add"),
+                          systemImage: added ? "checkmark.circle.fill" : "icloud.and.arrow.down.fill")
+                }.buttonStyle(MonoButtonStyle(prominent: true))
+                    .disabled(adding || added || (share != nil && chosen.isEmpty) || name.trimmingCharacters(in: .whitespaces).isEmpty)
+                if let message { Text(LocalizedStringKey(message)).font(.caption).foregroundStyle(.secondary) }
+            } footer: {
+                Text("Videos are saved to your Quark Drive, downloaded into your library, then removed from the drive.")
+            }
+            if loading {
+                HStack(spacing: 10) { ProgressView().controlSize(.small); Text("Checking the share’s files…").foregroundStyle(.secondary) }
+            } else if let share {
+                SwiftUI.Section {
+                    ForEach(share.files) { file in
+                        Button { if chosen.contains(file.path) { chosen.remove(file.path) } else { chosen.insert(file.path) } } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: chosen.contains(file.path) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(chosen.contains(file.path) ? Theme.accent : Theme.muted).font(.title3)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(verbatim: file.label).font(.headline)
+                                    Text(verbatim: file.name).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                }
+                                Spacer(minLength: 8)
+                                if let size = file.sizeBytes { Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file)).font(.caption).monospacedDigit().foregroundStyle(.secondary) }
+                            }.contentShape(Rectangle())
+                        }.buttonStyle(.plain).disabled(added)
+                    }
+                } header: {
+                    HStack {
+                        Text(L10n.format("%d of %d videos · %@", chosen.count, share.files.count, ByteCountFormatter.string(fromByteCount: chosenBytes, countStyle: .file)))
+                            .monospacedDigit()
+                        Spacer()
+                        Button(LocalizedStringKey(chosen.count == share.files.count ? "Select none" : "Select all")) {
+                            chosen = chosen.count == share.files.count ? [] : Set(share.files.map(\.path))
+                        }.buttonStyle(.borderless).disabled(added)
+                    }.textCase(nil)
+                }
+            } else {
+                Text("This share’s file list is no longer available. Add brings in every video it holds.").foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle(embedded ? "" : L10n.text("Quark Drive"))
+        .task(id: item.id) {
+            name = item.title
+            defer { loading = false }
+            let found: CloudSearch? = try? await store.request("POST", "/v1/cloud/search", body: ["query": query], timeout: 90)
+            share = found?.shares.first { $0.url == item.shareURL }
+            chosen = Set(share?.files.map(\.path) ?? [])
+        }
+    }
+    private func add() async {
+        guard let url = item.shareURL, !adding else { return }
+        adding = true; message = nil
+        defer { adding = false }
+        var body: [String: Any] = ["url": url, "title": name.trimmingCharacters(in: .whitespaces)]
+        if let share {
+            body["files"] = share.files.filter { chosen.contains($0.path) }.map(\.path)
+            let seasons = Set(share.files.filter { chosen.contains($0.path) }.compactMap(\.season))
+            if seasons.count == 1 { body["season"] = seasons.first }
+            if share.files.contains(where: { $0.episode != nil }) { body["kind"] = "tv" }
+        }
+        do {
+            struct Job: Decodable { let jobId: String? }
+            let _: Job = try await store.request("POST", "/v1/cloud/add", body: body, timeout: 45)
+            added = true; message = "Follow its progress in Downloading."
+            store.notify("Added to downloads", detail: name)
+        } catch { message = error.localizedDescription }
+    }
+}
+
+/// Cloud-drive downloads in progress, shown with the torrents being downloaded.
+struct CloudJob: Decodable, Identifiable {
+    let id: String
+    let title: String
+    let state: String
+    var files: Int? = nil
+    var filesDone: Int? = nil
+    var doneBytes: Int64? = nil
+    var totalBytes: Int64? = nil
+    var error: String? = nil
+    var stateLabel: String {
+        switch state {
+        case "queued": return L10n.text("Waiting")
+        case "saving": return L10n.text("Saving to Quark Drive…")
+        case "downloading": return L10n.text("Downloading")
+        case "done": return L10n.text("Downloaded")
+        case "failed": return L10n.text("Failed")
+        default: return state
+        }
+    }
+}
+struct CloudJobsSection: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    @State private var jobs: [CloudJob] = []
+    private struct JobList: Decodable { let jobs: [CloudJob] }
+    var body: some View {
+        Group {
+            if !jobs.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Quark Drive", systemImage: "icloud.and.arrow.down").font(.caption.weight(.semibold)).tracking(1.4).foregroundStyle(Theme.muted)
+                    ForEach(jobs) { job in row(job) }
+                }
+            }
+        }
+        .task(id: store.server) {
+            while !Task.isCancelled {
+                if let list: JobList = try? await store.request("GET", "/v1/cloud/jobs", timeout: 15) { jobs = list.jobs }
+                let active = jobs.contains { ["queued", "saving", "downloading"].contains($0.state) }
+                try? await Task.sleep(for: .seconds(active ? 3 : 15))
+            }
+        }
+    }
+    private func row(_ job: CloudJob) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(verbatim: job.title).font(.headline).lineLimit(2)
+                Spacer(minLength: 8)
+                if job.state == "failed" {
+                    Button("Retry") { act("POST", "/v1/cloud/jobs/\(job.id)/retry") }.buttonStyle(MonoButtonStyle(compact: true)).fixedSize()
+                }
+                if ["done", "failed"].contains(job.state) {
+                    Button("Dismiss") { act("DELETE", "/v1/cloud/jobs/\(job.id)") }.buttonStyle(MonoButtonStyle(compact: true)).fixedSize()
+                }
+            }
+            HStack(spacing: 8) {
+                Text(verbatim: job.stateLabel).foregroundStyle(job.state == "failed" ? .orange : Theme.accent)
+                if let files = job.files, files > 1 { Text(L10n.format("%d of %d videos", job.filesDone ?? 0, files)).foregroundStyle(Theme.muted) }
+                if let total = job.totalBytes, total > 0 {
+                    Text(L10n.format("%@ of %@", ByteCountFormatter.string(fromByteCount: job.doneBytes ?? 0, countStyle: .file), ByteCountFormatter.string(fromByteCount: total, countStyle: .file)))
+                        .foregroundStyle(Theme.muted)
+                }
+            }.font(.caption).monospacedDigit()
+            if let total = job.totalBytes, total > 0, job.state != "done" {
+                ProgressView(value: Double(job.doneBytes ?? 0), total: Double(total)).tint(job.state == "failed" ? .orange : Theme.accent)
+            }
+            if let error = job.error, !error.isEmpty { Text(verbatim: error).font(.caption).foregroundStyle(.orange) }
+        }.padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+    }
+    private func act(_ method: String, _ path: String) {
+        Task {
+            struct Ignored: Decodable {}
+            do { let _: Ignored = try await store.request(method, path, timeout: 20) } catch { store.actionError = error.localizedDescription }
+            if let list: JobList = try? await store.request("GET", "/v1/cloud/jobs", timeout: 15) { jobs = list.jobs }
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder func textSelectionIfAvailable() -> some View {
+        #if os(tvOS)
+        self
+        #else
+        self.textSelection(.enabled)
+        #endif
+    }
+}
+
+/// Missing episodes available in one Quark Drive share.
+struct CloudOffer {
+    let share: CloudShare
+    let files: [CloudShare.File]
+    let title: String
+    let season: Int
+}
+private struct CloudOfferSection: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    let offer: CloudOffer
+    @State private var adding = false
+    @State private var added = false
+    @State private var failure: String?
+    var body: some View {
+        SwiftUI.Section {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(L10n.format("%d missing episodes on Quark Drive", offer.files.count)).font(.headline)
+                    Text(verbatim: offer.files.compactMap(\.episode).map { "E" + String(format: "%02d", $0) }.joined(separator: " ")).font(.caption).monospacedDigit()
+                    Text(verbatim: offer.share.title ?? "").font(.caption).foregroundStyle(Theme.muted).lineLimit(2)
+                    if let failure { Text(failure).font(.caption).foregroundStyle(.orange) }
+                }
+                Spacer(minLength: 8)
+                if added { Label("Added", systemImage: "checkmark.circle.fill").font(.caption.weight(.semibold)) }
+                else if adding { ProgressView().controlSize(.small) }
+                else {
+                    Button { Task { await add() } } label: { Label("Add", systemImage: "icloud.and.arrow.down") }
+                        .buttonStyle(MonoButtonStyle(prominent: true, compact: true)).fixedSize()
+                }
+            }.padding(.vertical, 4)
+        }
+    }
+    private func add() async {
+        adding = true; failure = nil
+        defer { adding = false }
+        do {
+            struct Job: Decodable { let jobId: String? }
+            let _: Job = try await store.request("POST", "/v1/cloud/add", body: ["url": offer.share.url, "title": offer.title, "season": offer.season, "kind": "tv",
+                                                                                "files": offer.files.map(\.path)], timeout: 45)
+            added = true
+            store.notify("Added to downloads", detail: offer.title)
+        } catch { failure = error.localizedDescription }
+    }
+}
+
+/// Free space on the server's media drive (each drive, when the library spans several).
+struct MediaDriveSpace: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    var compact = false
+    var body: some View {
+        if let storage = store.status?.storage, !storage.volumes.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(storage.volumes, id: \.name) { volume in
+                    HStack(spacing: 10) {
+                        Image(systemName: volume.available ? "externaldrive.fill" : "externaldrive.badge.exclamationmark")
+                            .foregroundStyle(!volume.available || low(volume) ? .orange : Theme.muted)
+                        if volume.available {
+                            Text(L10n.format("%@ free of %@", bytes(volume.freeBytes), bytes(volume.totalBytes)))
+                                .font(.caption.weight(.semibold)).monospacedDigit()
+                            if !compact {
+                                ProgressView(value: Double(volume.totalBytes - volume.freeBytes), total: Double(max(volume.totalBytes, 1)))
+                                    .tint(low(volume) ? .orange : Theme.accent).frame(maxWidth: 160)
+                            }
+                        } else {
+                            Text("Drive not connected").font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                        }
+                        Text(verbatim: volume.name).font(.caption).foregroundStyle(Theme.muted).lineLimit(1)
+                    }
+                }
+            }.accessibilityElement(children: .combine)
+        }
+    }
+    /// Under 5% or 50 GB left: time to make room.
+    private func low(_ volume: MediaStorage.Volume) -> Bool {
+        volume.freeBytes < 50_000_000_000 || volume.freeBytes * 20 < volume.totalBytes
+    }
+    private func bytes(_ value: Int64) -> String { ByteCountFormatter.string(fromByteCount: value, countStyle: .file) }
 }

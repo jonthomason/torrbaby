@@ -35,6 +35,9 @@ public class MainActivity extends Activity {
   private JSONArray libraryOperations;
   /** Processing errors and skipped-stage warnings for Needs attention; null until fetched. */
   private JSONArray attention;
+  /** Quark Drive downloads, and free space on the media drives, for Downloading. */
+  private JSONArray cloudJobs;
+  private JSONObject storage;
   private String libraryOperationsError = "";
   private final Map<String, Long> removedTorrents = new HashMap<>();
   private String torrentCategory = "Downloading";
@@ -1106,6 +1109,7 @@ public class MainActivity extends Activity {
         Ui.gap(rows, 10);
       }
     }
+    if (torrentCategory.equals("Downloading")) count += downloadingExtras(rows);
     List<JSONObject> sorted = new ArrayList<>();
     for (int i = 0; torrents != null && i < torrents.length(); i++)
       if (torrents.optJSONObject(i) != null) sorted.add(torrents.optJSONObject(i));
@@ -1280,6 +1284,58 @@ public class MainActivity extends Activity {
     if (section.equals("Torrents") && detailId.isEmpty()) render();
   }
 
+  /** Free space on each media drive, then Quark Drive downloads; returns the rows added. */
+  private int downloadingExtras(LinearLayout rows) {
+    int added = 0;
+    JSONArray volumes = storage == null ? null : storage.optJSONArray("volumes");
+    for (int i = 0; volumes != null && i < volumes.length(); i++) {
+      JSONObject volume = volumes.optJSONObject(i);
+      if (volume == null) continue;
+      String line = volume.optBoolean("available")
+          ? String.format(L10n.locale(), L10n.t("%@ free of %@").replace("%@", "%s"), bytes(volume.optLong("free_bytes")), bytes(volume.optLong("total_bytes")))
+          : L10n.t("Drive not connected");
+      Ui.add(rows, Ui.text(this, line + " · " + volume.optString("name"), 14, Ui.MUTED), -1, -2);
+    }
+    if (volumes != null && volumes.length() > 0) Ui.gap(rows, 10);
+    for (int i = 0; cloudJobs != null && i < cloudJobs.length(); i++) {
+      JSONObject job = cloudJobs.optJSONObject(i);
+      if (job == null) continue;
+      added++;
+      String state = job.optString("state");
+      LinearLayout row = Ui.column(this);
+      Ui.focus(row);
+      row.setOnFocusChangeListener((v, focused) -> Ui.secondaryContrast(v, focused));
+      Ui.pad(row, 16, 14);
+      Ui.add(row, Ui.title(this, job.optString("title"), 16), -1, -2);
+      Ui.gap(row, 6);
+      String label = state.equals("queued") ? L10n.t("Waiting") : state.equals("saving") ? L10n.t("Saving to Quark Drive…")
+          : state.equals("downloading") ? L10n.t("Downloading") : state.equals("done") ? L10n.t("Downloaded") : L10n.t("Failed");
+      String detail = L10n.t("Quark Drive") + " · " + label;
+      if (job.optInt("files") > 1) detail += " · " + String.format(L10n.locale(), L10n.t("%d of %d videos"), job.optInt("files_done"), job.optInt("files"));
+      if (job.optLong("total_bytes") > 0) detail += " · " + bytes(job.optLong("done_bytes")) + " / " + bytes(job.optLong("total_bytes"));
+      Ui.add(row, Ui.text(this, detail, 14, state.equals("failed") ? 0xffffb74d : Ui.ACCENT), -1, -2);
+      String error = job.isNull("error") ? "" : job.optString("error");
+      if (!error.isEmpty()) Ui.add(row, Ui.text(this, error, 12, Ui.MUTED), -1, -2);
+      String id = job.optString("id");
+      row.setOnClickListener(v -> {
+        AlertDialog.Builder dialog = new AlertDialog.Builder(this).setTitle(job.optString("title")).setMessage(error.isEmpty() ? label : error)
+            .setNegativeButton(L10n.t("Cancel"), null);
+        if (state.equals("failed")) dialog.setPositiveButton(L10n.t("Retry"), (d, w) -> cloudJobAction("POST", "/v1/cloud/jobs/" + id + "/retry"));
+        if (state.equals("failed") || state.equals("done")) dialog.setNeutralButton(L10n.t("Dismiss"), (d, w) -> cloudJobAction("DELETE", "/v1/cloud/jobs/" + id));
+        dialog.show();
+      });
+      Ui.add(rows, row, -1, -2);
+      Ui.gap(rows, 10);
+    }
+    return added;
+  }
+  private void cloudJobAction(String method, String path) {
+    Api requested = api;
+    io.execute(() -> {
+      try { requested.request(method, path, null); } catch (Exception e) { runOnUiThread(() -> Toast.makeText(this, message(e), Toast.LENGTH_LONG).show()); }
+      runOnUiThread(this::fetchTorrents);
+    });
+  }
   private void fetchTorrents() {
     if (torrentsLoading) return;
     torrentsLoading = true;
@@ -1296,6 +1352,14 @@ public class MainActivity extends Activity {
           JSONArray attentionResult = null;
           try { attentionResult = requested.request("GET", "/v1/attention", null).getJSONArray("items"); }
           catch (Exception ignored) { }
+          JSONArray jobsResult = null;
+          try { jobsResult = requested.request("GET", "/v1/cloud/jobs", null).getJSONArray("jobs"); }
+          catch (Exception ignored) { }
+          JSONObject storageResult = null;
+          try { storageResult = requested.request("GET", "/v1/storage", null); }
+          catch (Exception ignored) { }
+          final JSONArray receivedJobs = jobsResult;
+          final JSONObject receivedStorage = storageResult;
           final JSONArray receivedAttention = attentionResult;
           final JSONArray receivedOperations = operationResult, receivedTorrents = torrentResult;
           final String operationError = operationFailure;
@@ -1304,6 +1368,8 @@ public class MainActivity extends Activity {
             if (requested != api || isDestroyed()) return;
             if (receivedOperations != null) libraryOperations = receivedOperations;
             if (receivedAttention != null) attention = receivedAttention;
+            if (receivedJobs != null) cloudJobs = receivedJobs;
+            if (receivedStorage != null) storage = receivedStorage;
             libraryOperationsError = operationError;
             torrentStale = receivedTorrents == null;
             if (receivedTorrents != null) {

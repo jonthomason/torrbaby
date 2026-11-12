@@ -13,13 +13,17 @@ final class L10n {
   static {
     IDS.put("%d episodes found", R.string.ui_0290129bc977);
     IDS.put("%d min remaining", R.string.ui_b909e7d6e8c9);
+    IDS.put("%d missing episodes on Quark Drive", R.string.ui_66bd1c71457f);
     IDS.put("%d of %d downloaded", R.string.ui_24d1fa07b247);
+    IDS.put("%d of %d videos", R.string.ui_cf5dae5645db);
     IDS.put("%d selected", R.string.ui_b295fde49b7b);
     IDS.put("%d to add", R.string.ui_216e67233653);
     IDS.put("%d torrents could not be removed", R.string.ui_81590928ad73);
+    IDS.put("%d videos", R.string.ui_712d2e5c0047);
     IDS.put("%dh %dm left", R.string.ui_660a76df86fd);
     IDS.put("%dm left", R.string.ui_659748ef61cf);
     IDS.put("1 seed", R.string.ui_8256cd5880d0);
+    IDS.put("1 video", R.string.ui_9fa45ef1a516);
     IDS.put("1h", R.string.ui_e9c9f7bc39bb);
     IDS.put("24h", R.string.ui_027795961131);
     IDS.put("6h", R.string.ui_8d61fd6a4ee0);
@@ -37,10 +41,10 @@ final class L10n {
     IDS.put("Add paused", R.string.ui_dbe5ad51cb48);
     IDS.put("Add to trial", R.string.ui_abe7e96d75c0);
     IDS.put("Add torrent", R.string.ui_ebf1fd2504e7);
-    IDS.put("Add your private site and passkey in Settings", R.string.ui_e4884bb6064a);
     IDS.put("Added", R.string.ui_b68734c25910);
     IDS.put("Added to Downloads", R.string.ui_f9b608af67f4);
     IDS.put("Added to Transmission", R.string.ui_a98648e9368b);
+    IDS.put("Added to downloads", R.string.ui_3d3eaa50eab2);
     IDS.put("Adding download", R.string.ui_802e94122566);
     IDS.put("Adding download…", R.string.ui_9295ef6a9cf8);
     IDS.put("Adding…", R.string.ui_ffb2e628b0e9);
@@ -93,6 +97,7 @@ final class L10n {
     IDS.put("Check the year and episodes before applying.", R.string.ui_8e6b214072c4);
     IDS.put("Checking files…", R.string.ui_07369df4cdcc);
     IDS.put("Checking languages…", R.string.ui_80b0becd67a4);
+    IDS.put("Checking the share’s files…", R.string.ui_c31f3333882a);
     IDS.put("China", R.string.ui_d2eaf2aa1512);
     IDS.put("Chinese", R.string.ui_15dc18865567);
     IDS.put("Chinese (Simplified)", R.string.ui_78bba35bec31);
@@ -104,11 +109,11 @@ final class L10n {
     IDS.put("Chinese Voice Transcribed", R.string.ui_54ef86452c0f);
     IDS.put("Choose a profile", R.string.ui_f47537b34855);
     IDS.put("Choose a release", R.string.ui_bf1604f52dd4);
-    IDS.put("Choose a release, then add it.", R.string.ui_9d6a2b12fd09);
     IDS.put("Choose a user", R.string.ui_5f0667ffb45c);
     IDS.put("Choose a user before starting playback.", R.string.ui_0acf0708ca28);
     IDS.put("Choose another (%d)", R.string.ui_2c052719b7f2);
     IDS.put("Choose the right title", R.string.ui_0772fa16aa51);
+    IDS.put("Choose videos to add", R.string.ui_d6994cf8bc6c);
     IDS.put("Choose your server", R.string.ui_82be318f7bae);
     IDS.put("Clear", R.string.ui_719ea396ad92);
     IDS.put("Clear filters", R.string.ui_412226715c56);
@@ -152,7 +157,6 @@ final class L10n {
     IDS.put("Couldn’t manage files", R.string.ui_b8b71a01afec);
     IDS.put("Couldn’t open Torrbaby", R.string.ui_043e16ed23b9);
     IDS.put("Couldn’t refresh file operations", R.string.ui_4a73957afb95);
-    IDS.put("Couldn’t retrieve this torrent. Try again.", R.string.ui_bf0f3a2d2c62);
     IDS.put("Create", R.string.ui_6e157c5da441);
     IDS.put("Create user", R.string.ui_bdbcfa0af077);
     IDS.put("Credits analysis incomplete", R.string.ui_3394786da6fb);
@@ -253,6 +257,7 @@ final class L10n {
     IDS.put("Find servers", R.string.ui_2893768e025f);
     IDS.put("Find the proper title", R.string.ui_26e31d51a583);
     IDS.put("Find torrents", R.string.ui_fce33b5fafaf);
+    IDS.put("Find uses this account for titles under China. Torrbaby saves a share's videos to the account, downloads them into your library, then deletes its copy from the account. The cookie is kept on your server.", R.string.ui_764ca979a261);
     IDS.put("Find your next watch", R.string.ui_d46f03ac24a4);
     IDS.put("Finding your library…", R.string.ui_ea4dab10bf35);
     IDS.put("Find…", R.string.ui_6383e55e9190);
@@ -264,9 +269,9 @@ final class L10n {
     IDS.put("First name must not be empty", R.string.ui_e82b1912c8d1);
     IDS.put("Five minutes. About 256 MB per release. The fastest progressing release is kept; other trial downloads are deleted.", R.string.ui_d851a452d092);
     IDS.put("Folders on your server", R.string.ui_b2b163a7935b);
+    IDS.put("Follow its progress in Downloading.", R.string.ui_a54a576145c1);
     IDS.put("Follow system language", R.string.ui_ddc61f82d863);
     IDS.put("Font", R.string.ui_b97c4d4cddf2);
-    IDS.put("For a private site you are a member of. Its results appear in Find under China. The passkey is kept on your server and is used only to search the site and to fetch the torrents you add.", R.string.ui_ec5de681708d);
     IDS.put("Forced", R.string.ui_6f1b97e4c290);
     IDS.put("Forward", R.string.ui_ba4e72261283);
     IDS.put("General", R.string.ui_9239ee2cda84);
@@ -313,6 +318,7 @@ final class L10n {
     IDS.put("Loading server activity…", R.string.ui_4f96be70a1f2);
     IDS.put("Loading subtitles…", R.string.ui_23f94ec39630);
     IDS.put("Location", R.string.ui_d219c68101f5);
+    IDS.put("Login cookie", R.string.ui_cec3ed33b848);
     IDS.put("Look up again", R.string.ui_82b4b1ef514f);
     IDS.put("Looking up…", R.string.ui_27d9ea3d190c);
     IDS.put("Lookup will retry", R.string.ui_3f4fc9a34ef7);
@@ -332,10 +338,9 @@ final class L10n {
     IDS.put("Mark unwatched", R.string.ui_df7ea09cbb64);
     IDS.put("Mark watched", R.string.ui_46b250bb0a3a);
     IDS.put("Media changed during processing", R.string.ui_13cc75488bfe);
+    IDS.put("Membership", R.string.ui_53bc9670e723);
     IDS.put("Menu bar", R.string.ui_2f28e570a801);
     IDS.put("Metadata is being gathered on Diamond", R.string.ui_9188f98eea10);
-    IDS.put("Minimum ratio", R.string.ui_1a41eb35728a);
-    IDS.put("Minimum seeding time (hours)", R.string.ui_4fc5110aa6f0);
     IDS.put("Mono", R.string.ui_c5c5533844c5);
     IDS.put("Monospace", R.string.ui_216fcddff2f9);
     IDS.put("More", R.string.ui_4bab2d8fe13f);
@@ -391,6 +396,7 @@ final class L10n {
     IDS.put("Nothing to add", R.string.ui_602f15feebf4);
     IDS.put("Notifications", R.string.ui_753a22b2eb61);
     IDS.put("Now processing", R.string.ui_8c9bc3ae4603);
+    IDS.put("Nyaa", R.string.ui_d2b9a90d54cd);
     IDS.put("OK", R.string.ui_9ce3bd4224c8);
     IDS.put("Off", R.string.ui_e3de5ab0ca4c);
     IDS.put("Offline", R.string.ui_e01fa717bacc);
@@ -408,7 +414,6 @@ final class L10n {
     IDS.put("Original quality · Native player", R.string.ui_7a38047cc7f2);
     IDS.put("Other episodes", R.string.ui_c9d98984ac76);
     IDS.put("PEERS", R.string.ui_ca07ceefc22c);
-    IDS.put("Passkey", R.string.ui_e35828da748d);
     IDS.put("Paste your server token", R.string.ui_7039298d0ff9);
     IDS.put("Path", R.string.ui_519e39132bb9);
     IDS.put("Pause", R.string.ui_781961bc81c2);
@@ -439,8 +444,6 @@ final class L10n {
     IDS.put("Preparing…", R.string.ui_0b1d6c0b1a56);
     IDS.put("Prioritize processing", R.string.ui_109a00c0bd39);
     IDS.put("Prioritize subtitles", R.string.ui_5af3161d2251);
-    IDS.put("Private Site", R.string.ui_15a245fc958e);
-    IDS.put("Private site", R.string.ui_10e7daf10ff1);
     IDS.put("Process library automatically", R.string.ui_fffc6e1a0c19);
     IDS.put("Processing", R.string.ui_e63451d3cf90);
     IDS.put("Processing failed", R.string.ui_7cd54dae216c);
@@ -448,6 +451,7 @@ final class L10n {
     IDS.put("Profile name must contain 1–80 printable characters", R.string.ui_79e0a2b26494);
     IDS.put("Profile not found", R.string.ui_c009b451b816);
     IDS.put("Progress", R.string.ui_1b90271d66cf);
+    IDS.put("Quark Drive", R.string.ui_21fc53615cd0);
     IDS.put("Queued", R.string.ui_6a599877d753);
     IDS.put("Queued for verification", R.string.ui_fd97ceed201e);
     IDS.put("Queued to download", R.string.ui_71e9c73be501);
@@ -475,8 +479,8 @@ final class L10n {
     IDS.put("Remove %d torrents and delete files", R.string.ui_26803bf718c9);
     IDS.put("Remove %d torrents, keep files", R.string.ui_c059882450a5);
     IDS.put("Remove %d torrents?", R.string.ui_01d9cc52a205);
+    IDS.put("Remove Quark login", R.string.ui_a8cc3b78d828);
     IDS.put("Remove from Continue Watching", R.string.ui_b589f73a82dc);
-    IDS.put("Remove private site", R.string.ui_280bb327e41f);
     IDS.put("Remove torrent", R.string.ui_63db985f6027);
     IDS.put("Remove torrent and delete files", R.string.ui_41b8f0cd711e);
     IDS.put("Remove torrent, keep files", R.string.ui_e512d90885bf);
@@ -512,11 +516,13 @@ final class L10n {
     IDS.put("SERVER ADDRESS", R.string.ui_0b25507fa566);
     IDS.put("Sans serif", R.string.ui_ecc39dc53993);
     IDS.put("Save", R.string.ui_efc007a393f6);
-    IDS.put("Save private site", R.string.ui_23b24c3c8910);
+    IDS.put("Save Quark login", R.string.ui_62797693813d);
+    IDS.put("Save as", R.string.ui_f313a0b1810b);
     IDS.put("Save profile", R.string.ui_f597c0e8201d);
     IDS.put("Save seeding settings", R.string.ui_3b36f730de5c);
     IDS.put("Save settings", R.string.ui_913aba9f96cf);
     IDS.put("Saved", R.string.ui_c0ae8f6ea841);
+    IDS.put("Saving to Quark Drive…", R.string.ui_5e024bb2742c);
     IDS.put("Scan again", R.string.ui_f6ab55dd3509);
     IDS.put("Scan connection code", R.string.ui_b3b48e971d6e);
     IDS.put("Scan media library", R.string.ui_875f33d23a6c);
@@ -529,6 +535,7 @@ final class L10n {
     IDS.put("Search region", R.string.ui_c33f99863bee);
     IDS.put("Search titles, genres or year", R.string.ui_c51ba3511ecd);
     IDS.put("Search torrents", R.string.ui_d499e5b1e322);
+    IDS.put("Searching and checking links…", R.string.ui_2aa6b7d83c95);
     IDS.put("Searching for episode %d…", R.string.ui_25806b49a576);
     IDS.put("Searching for the missing episodes…", R.string.ui_00e59ec60399);
     IDS.put("Searching…", R.string.ui_1a6a5ba8c23d);
@@ -566,8 +573,9 @@ final class L10n {
     IDS.put("Show download and upload rates", R.string.ui_4589080623ff);
     IDS.put("Show torrent", R.string.ui_3437b8727d9f);
     IDS.put("Showing the first 150 cast entries.", R.string.ui_56b7696a10e7);
+    IDS.put("Signed in", R.string.ui_1b6c524ffb71);
+    IDS.put("Signed out — enter a new login cookie", R.string.ui_9fc1773eba4d);
     IDS.put("Single episodes", R.string.ui_c150b0bcf05d);
-    IDS.put("Site address", R.string.ui_392df6e0ef56);
     IDS.put("Size", R.string.ui_b7152342a267);
     IDS.put("Size unavailable", R.string.ui_336d9bdb4d4c);
     IDS.put("Size…", R.string.ui_b5eedcf44417);
@@ -577,6 +585,7 @@ final class L10n {
     IDS.put("Source languages", R.string.ui_2d37f6721074);
     IDS.put("Sources", R.string.ui_2eb56be3c2d9);
     IDS.put("Sources unavailable", R.string.ui_4df6c61fc071);
+    IDS.put("Space used", R.string.ui_063b54d619ba);
     IDS.put("Special features", R.string.ui_2e51c9be1bab);
     IDS.put("Specials", R.string.ui_adc3296dff7b);
     IDS.put("Speed", R.string.ui_2d2cb022bc3d);
@@ -625,13 +634,12 @@ final class L10n {
     IDS.put("Text", R.string.ui_c3328c39b0e2);
     IDS.put("Text color", R.string.ui_1c7a30e57131);
     IDS.put("Text opacity", R.string.ui_83e097038017);
+    IDS.put("The Pirate Bay", R.string.ui_22b20e9773ff);
     IDS.put("The connection to Transmission was interrupted. Please try again.", R.string.ui_17640422b43a);
     IDS.put("The download is incomplete.", R.string.ui_ceaf21e9d02f);
     IDS.put("The entire package will be hidden from everyone, continue seeding, and be permanently deleted when seeding finishes.", R.string.ui_9a212ea4c5bb);
     IDS.put("The entire package will be hidden now, continue seeding, and be permanently deleted when seeding finishes.", R.string.ui_fa9822b1acbe);
     IDS.put("The file changed. Remove this download and add it again.", R.string.ui_b540d8e8df09);
-    IDS.put("The private site could not be reached", R.string.ui_3d6b1dc8c59c);
-    IDS.put("The private site timed out", R.string.ui_a2745523e072);
     IDS.put("The saved connection could not be opened.", R.string.ui_d3fdb91c3f77);
     IDS.put("The server did not supply this torrent's identity.", R.string.ui_9b8b91a1710b);
     IDS.put("The server is deleting this package.", R.string.ui_03a02769fe24);
@@ -639,7 +647,6 @@ final class L10n {
     IDS.put("The server will continue this operation after you leave this screen.", R.string.ui_be694571db36);
     IDS.put("The server will continue this operation if you close this screen.", R.string.ui_2dee52785f6e);
     IDS.put("The server will retry automatically.", R.string.ui_1bab38b72a4a);
-    IDS.put("The site's seeding rules", R.string.ui_47e2d404730f);
     IDS.put("The torrent is still listed. Refresh in a moment to check whether removal finished.", R.string.ui_6ddf94adca4b);
     IDS.put("The video stream was interrupted. Check the server and network connection.", R.string.ui_196686e4c2fc);
     IDS.put("These settings apply to everyone who uses this server.", R.string.ui_6315e169d054);
@@ -657,6 +664,7 @@ final class L10n {
     IDS.put("This server has not enabled automatic connection for this network.", R.string.ui_ecd01d877069);
     IDS.put("This shared download is not valid.", R.string.ui_db17ebebbe1c);
     IDS.put("This shared download needs a newer version of Torrbaby.", R.string.ui_0c77f0cf970a);
+    IDS.put("This share’s file list is no longer available. Add brings in every video it holds.", R.string.ui_7f508c26421a);
     IDS.put("This title has no complete media files on the server.", R.string.ui_8607ce0e91d1);
     IDS.put("This title isn’t downloaded. Reconnect to your library to play it.", R.string.ui_d1431bac909d);
     IDS.put("This torrent is no longer in Transmission.", R.string.ui_2e1fcceaec2e);
@@ -720,6 +728,7 @@ final class L10n {
     IDS.put("Verifying", R.string.ui_536244f4cc64);
     IDS.put("Version", R.string.ui_2da600bf9404);
     IDS.put("Video", R.string.ui_bc17c1f0179a);
+    IDS.put("Videos are saved to your Quark Drive, downloaded into your library, then removed from the drive.", R.string.ui_a67bba005296);
     IDS.put("View source", R.string.ui_31a7604a3c74);
     IDS.put("Voice Transcribed", R.string.ui_f22eadf74236);
     IDS.put("Waiting", R.string.ui_33d30632848d);

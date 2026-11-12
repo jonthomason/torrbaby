@@ -515,7 +515,7 @@ struct TorrentListView: View {
                     }.font(.caption.monospacedDigit())
                 }
                 TransferHistoryView(compact: compact)
-                if section == .active { MediaDriveSpace(compact: compact) }
+                if section == .active { MediaDriveSpace(compact: compact); CloudJobsSection() }
                 if section == .seeding { LibraryOperationStatus(search: search) }
                 if let error = store.torrentError {
                     Label("Couldn’t refresh torrents: " + error, systemImage: "exclamationmark.triangle")
@@ -680,40 +680,6 @@ struct TorrentListView: View {
         Metric(title: "UPLOADING", value: rate(store.torrents.reduce(0) { $0 + $1.rateUpload }), symbol: "arrow.up", color: Theme.muted)
         Metric(title: "LIBRARY", value: "\(store.torrents.filter(\.completed).count) complete", symbol: "checkmark", color: Theme.muted)
     }
-}
-/// Free space on the server's media drive (each drive, when the library spans several).
-struct MediaDriveSpace: View {
-    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
-    @EnvironmentObject var store: Store
-    var compact = false
-    var body: some View {
-        if let storage = store.status?.storage, !storage.volumes.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(storage.volumes, id: \.name) { volume in
-                    HStack(spacing: 10) {
-                        Image(systemName: volume.available ? "externaldrive.fill" : "externaldrive.badge.exclamationmark")
-                            .foregroundStyle(!volume.available || low(volume) ? .orange : Theme.muted)
-                        if volume.available {
-                            Text(L10n.format("%@ free of %@", bytes(volume.freeBytes), bytes(volume.totalBytes)))
-                                .font(.caption.weight(.semibold)).monospacedDigit()
-                            if !compact {
-                                ProgressView(value: Double(volume.totalBytes - volume.freeBytes), total: Double(max(volume.totalBytes, 1)))
-                                    .tint(low(volume) ? .orange : Theme.accent).frame(maxWidth: 160)
-                            }
-                        } else {
-                            Text("Drive not connected").font(.caption.weight(.semibold)).foregroundStyle(.orange)
-                        }
-                        Text(verbatim: volume.name).font(.caption).foregroundStyle(Theme.muted).lineLimit(1)
-                    }
-                }
-            }.accessibilityElement(children: .combine)
-        }
-    }
-    /// Under 5% or 50 GB left: time to make room.
-    private func low(_ volume: MediaStorage.Volume) -> Bool {
-        volume.freeBytes < 50_000_000_000 || volume.freeBytes * 20 < volume.totalBytes
-    }
-    private func bytes(_ value: Int64) -> String { ByteCountFormatter.string(fromByteCount: value, countStyle: .file) }
 }
 struct Metric: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared

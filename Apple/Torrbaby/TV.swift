@@ -768,6 +768,7 @@ private struct TVTorrentView: View {
                 LazyVStack(spacing: 28) {
                     if category == "Seeding" { LibraryOperationStatus() }
                     if category == "Needs attention" { ProcessingAttention(count: $processingIssues) }
+                    if category == "Downloading" { MediaDriveSpace(); CloudJobsSection() }
                     ForEach(torrents) { torrent in
                         VStack(alignment: .leading, spacing: 18) {
                             Text(torrent.displayName).font(.headline).lineLimit(2)

@@ -2,13 +2,17 @@
 <resources>
     <string name="ui_0290129bc977" formatted="false">%d episodes found</string>
     <string name="ui_b909e7d6e8c9" formatted="false">%d min remaining</string>
+    <string name="ui_66bd1c71457f" formatted="false">%d missing episodes on Quark Drive</string>
     <string name="ui_24d1fa07b247" formatted="false">%d of %d downloaded</string>
+    <string name="ui_cf5dae5645db" formatted="false">%d of %d videos</string>
     <string name="ui_b295fde49b7b" formatted="false">%d selected</string>
     <string name="ui_216e67233653" formatted="false">%d to add</string>
     <string name="ui_81590928ad73" formatted="false">%d torrents could not be removed</string>
+    <string name="ui_712d2e5c0047" formatted="false">%d videos</string>
     <string name="ui_660a76df86fd" formatted="false">%dh %dm left</string>
     <string name="ui_659748ef61cf" formatted="false">%dm left</string>
     <string name="ui_8256cd5880d0" formatted="false">1 seed</string>
+    <string name="ui_9fa45ef1a516" formatted="false">1 video</string>
     <string name="ui_e9c9f7bc39bb" formatted="false">1h</string>
     <string name="ui_027795961131" formatted="false">24h</string>
     <string name="ui_8d61fd6a4ee0" formatted="false">6h</string>
@@ -26,10 +30,10 @@
     <string name="ui_dbe5ad51cb48" formatted="false">Add paused</string>
     <string name="ui_abe7e96d75c0" formatted="false">Add to trial</string>
     <string name="ui_ebf1fd2504e7" formatted="false">Add torrent</string>
-    <string name="ui_e4884bb6064a" formatted="false">Add your private site and passkey in Settings</string>
     <string name="ui_b68734c25910" formatted="false">Added</string>
     <string name="ui_f9b608af67f4" formatted="false">Added to Downloads</string>
     <string name="ui_a98648e9368b" formatted="false">Added to Transmission</string>
+    <string name="ui_3d3eaa50eab2" formatted="false">Added to downloads</string>
     <string name="ui_802e94122566" formatted="false">Adding download</string>
     <string name="ui_9295ef6a9cf8" formatted="false">Adding download…</string>
     <string name="ui_ffb2e628b0e9" formatted="false">Adding…</string>
@@ -82,6 +86,7 @@
     <string name="ui_8e6b214072c4" formatted="false">Check the year and episodes before applying.</string>
     <string name="ui_07369df4cdcc" formatted="false">Checking files…</string>
     <string name="ui_80b0becd67a4" formatted="false">Checking languages…</string>
+    <string name="ui_c31f3333882a" formatted="false">Checking the share’s files…</string>
     <string name="ui_d2eaf2aa1512" formatted="false">China</string>
     <string name="ui_15dc18865567" formatted="false">Chinese</string>
     <string name="ui_78bba35bec31" formatted="false">Chinese (Simplified)</string>
@@ -93,11 +98,11 @@
     <string name="ui_54ef86452c0f" formatted="false">Chinese Voice Transcribed</string>
     <string name="ui_f47537b34855" formatted="false">Choose a profile</string>
     <string name="ui_bf1604f52dd4" formatted="false">Choose a release</string>
-    <string name="ui_9d6a2b12fd09" formatted="false">Choose a release, then add it.</string>
     <string name="ui_5f0667ffb45c" formatted="false">Choose a user</string>
     <string name="ui_0acf0708ca28" formatted="false">Choose a user before starting playback.</string>
     <string name="ui_2c052719b7f2" formatted="false">Choose another (%d)</string>
     <string name="ui_0772fa16aa51" formatted="false">Choose the right title</string>
+    <string name="ui_d6994cf8bc6c" formatted="false">Choose videos to add</string>
     <string name="ui_82be318f7bae" formatted="false">Choose your server</string>
     <string name="ui_719ea396ad92" formatted="false">Clear</string>
     <string name="ui_412226715c56" formatted="false">Clear filters</string>
@@ -141,7 +146,6 @@
     <string name="ui_b8b71a01afec" formatted="false">Couldn’t manage files</string>
     <string name="ui_043e16ed23b9" formatted="false">Couldn’t open Torrbaby</string>
     <string name="ui_4a73957afb95" formatted="false">Couldn’t refresh file operations</string>
-    <string name="ui_bf0f3a2d2c62" formatted="false">Couldn’t retrieve this torrent. Try again.</string>
     <string name="ui_6e157c5da441" formatted="false">Create</string>
     <string name="ui_bdbcfa0af077" formatted="false">Create user</string>
     <string name="ui_3394786da6fb" formatted="false">Credits analysis incomplete</string>
@@ -242,6 +246,7 @@
     <string name="ui_2893768e025f" formatted="false">Find servers</string>
     <string name="ui_26e31d51a583" formatted="false">Find the proper title</string>
     <string name="ui_fce33b5fafaf" formatted="false">Find torrents</string>
+    <string name="ui_764ca979a261" formatted="false">Find uses this account for titles under China. Torrbaby saves a share\'s videos to the account, downloads them into your library, then deletes its copy from the account. The cookie is kept on your server.</string>
     <string name="ui_d46f03ac24a4" formatted="false">Find your next watch</string>
     <string name="ui_ea4dab10bf35" formatted="false">Finding your library…</string>
     <string name="ui_6383e55e9190" formatted="false">Find…</string>
@@ -253,9 +258,9 @@
     <string name="ui_e82b1912c8d1" formatted="false">First name must not be empty</string>
     <string name="ui_d851a452d092" formatted="false">Five minutes. About 256 MB per release. The fastest progressing release is kept; other trial downloads are deleted.</string>
     <string name="ui_b2b163a7935b" formatted="false">Folders on your server</string>
+    <string name="ui_a54a576145c1" formatted="false">Follow its progress in Downloading.</string>
     <string name="ui_ddc61f82d863" formatted="false">Follow system language</string>
     <string name="ui_b97c4d4cddf2" formatted="false">Font</string>
-    <string name="ui_ec5de681708d" formatted="false">For a private site you are a member of. Its results appear in Find under China. The passkey is kept on your server and is used only to search the site and to fetch the torrents you add.</string>
     <string name="ui_6f1b97e4c290" formatted="false">Forced</string>
     <string name="ui_ba4e72261283" formatted="false">Forward</string>
     <string name="ui_9239ee2cda84" formatted="false">General</string>
@@ -302,6 +307,7 @@
     <string name="ui_4f96be70a1f2" formatted="false">Loading server activity…</string>
     <string name="ui_23f94ec39630" formatted="false">Loading subtitles…</string>
     <string name="ui_d219c68101f5" formatted="false">Location</string>
+    <string name="ui_cec3ed33b848" formatted="false">Login cookie</string>
     <string name="ui_82b4b1ef514f" formatted="false">Look up again</string>
     <string name="ui_27d9ea3d190c" formatted="false">Looking up…</string>
     <string name="ui_3f4fc9a34ef7" formatted="false">Lookup will retry</string>
@@ -321,10 +327,9 @@
     <string name="ui_df7ea09cbb64" formatted="false">Mark unwatched</string>
     <string name="ui_46b250bb0a3a" formatted="false">Mark watched</string>
     <string name="ui_13cc75488bfe" formatted="false">Media changed during processing</string>
+    <string name="ui_53bc9670e723" formatted="false">Membership</string>
     <string name="ui_2f28e570a801" formatted="false">Menu bar</string>
     <string name="ui_9188f98eea10" formatted="false">Metadata is being gathered on Diamond</string>
-    <string name="ui_1a41eb35728a" formatted="false">Minimum ratio</string>
-    <string name="ui_4fc5110aa6f0" formatted="false">Minimum seeding time (hours)</string>
     <string name="ui_c5c5533844c5" formatted="false">Mono</string>
     <string name="ui_216fcddff2f9" formatted="false">Monospace</string>
     <string name="ui_4bab2d8fe13f" formatted="false">More</string>
@@ -380,6 +385,7 @@
     <string name="ui_602f15feebf4" formatted="false">Nothing to add</string>
     <string name="ui_753a22b2eb61" formatted="false">Notifications</string>
     <string name="ui_8c9bc3ae4603" formatted="false">Now processing</string>
+    <string name="ui_d2b9a90d54cd" formatted="false">Nyaa</string>
     <string name="ui_9ce3bd4224c8" formatted="false">OK</string>
     <string name="ui_e3de5ab0ca4c" formatted="false">Off</string>
     <string name="ui_e01fa717bacc" formatted="false">Offline</string>
@@ -397,7 +403,6 @@
     <string name="ui_7a38047cc7f2" formatted="false">Original quality · Native player</string>
     <string name="ui_c9d98984ac76" formatted="false">Other episodes</string>
     <string name="ui_ca07ceefc22c" formatted="false">PEERS</string>
-    <string name="ui_e35828da748d" formatted="false">Passkey</string>
     <string name="ui_7039298d0ff9" formatted="false">Paste your server token</string>
     <string name="ui_519e39132bb9" formatted="false">Path</string>
     <string name="ui_781961bc81c2" formatted="false">Pause</string>
@@ -428,8 +433,6 @@
     <string name="ui_0b1d6c0b1a56" formatted="false">Preparing…</string>
     <string name="ui_109a00c0bd39" formatted="false">Prioritize processing</string>
     <string name="ui_5af3161d2251" formatted="false">Prioritize subtitles</string>
-    <string name="ui_15a245fc958e" formatted="false">Private Site</string>
-    <string name="ui_10e7daf10ff1" formatted="false">Private site</string>
     <string name="ui_fffc6e1a0c19" formatted="false">Process library automatically</string>
     <string name="ui_e63451d3cf90" formatted="false">Processing</string>
     <string name="ui_7cd54dae216c" formatted="false">Processing failed</string>
@@ -437,6 +440,7 @@
     <string name="ui_79e0a2b26494" formatted="false">Profile name must contain 1–80 printable characters</string>
     <string name="ui_c009b451b816" formatted="false">Profile not found</string>
     <string name="ui_1b90271d66cf" formatted="false">Progress</string>
+    <string name="ui_21fc53615cd0" formatted="false">Quark Drive</string>
     <string name="ui_6a599877d753" formatted="false">Queued</string>
     <string name="ui_fd97ceed201e" formatted="false">Queued for verification</string>
     <string name="ui_71e9c73be501" formatted="false">Queued to download</string>
@@ -464,8 +468,8 @@
     <string name="ui_26803bf718c9" formatted="false">Remove %d torrents and delete files</string>
     <string name="ui_c059882450a5" formatted="false">Remove %d torrents, keep files</string>
     <string name="ui_01d9cc52a205" formatted="false">Remove %d torrents?</string>
+    <string name="ui_a8cc3b78d828" formatted="false">Remove Quark login</string>
     <string name="ui_b589f73a82dc" formatted="false">Remove from Continue Watching</string>
-    <string name="ui_280bb327e41f" formatted="false">Remove private site</string>
     <string name="ui_63db985f6027" formatted="false">Remove torrent</string>
     <string name="ui_41b8f0cd711e" formatted="false">Remove torrent and delete files</string>
     <string name="ui_e512d90885bf" formatted="false">Remove torrent, keep files</string>
@@ -501,11 +505,13 @@
     <string name="ui_0b25507fa566" formatted="false">SERVER ADDRESS</string>
     <string name="ui_ecc39dc53993" formatted="false">Sans serif</string>
     <string name="ui_efc007a393f6" formatted="false">Save</string>
-    <string name="ui_23b24c3c8910" formatted="false">Save private site</string>
+    <string name="ui_62797693813d" formatted="false">Save Quark login</string>
+    <string name="ui_f313a0b1810b" formatted="false">Save as</string>
     <string name="ui_f597c0e8201d" formatted="false">Save profile</string>
     <string name="ui_3b36f730de5c" formatted="false">Save seeding settings</string>
     <string name="ui_913aba9f96cf" formatted="false">Save settings</string>
     <string name="ui_c0ae8f6ea841" formatted="false">Saved</string>
+    <string name="ui_5e024bb2742c" formatted="false">Saving to Quark Drive…</string>
     <string name="ui_f6ab55dd3509" formatted="false">Scan again</string>
     <string name="ui_b3b48e971d6e" formatted="false">Scan connection code</string>
     <string name="ui_875f33d23a6c" formatted="false">Scan media library</string>
@@ -518,6 +524,7 @@
     <string name="ui_c33f99863bee" formatted="false">Search region</string>
     <string name="ui_c51ba3511ecd" formatted="false">Search titles, genres or year</string>
     <string name="ui_d499e5b1e322" formatted="false">Search torrents</string>
+    <string name="ui_2aa6b7d83c95" formatted="false">Searching and checking links…</string>
     <string name="ui_25806b49a576" formatted="false">Searching for episode %d…</string>
     <string name="ui_00e59ec60399" formatted="false">Searching for the missing episodes…</string>
     <string name="ui_1a6a5ba8c23d" formatted="false">Searching…</string>
@@ -555,8 +562,9 @@
     <string name="ui_4589080623ff" formatted="false">Show download and upload rates</string>
     <string name="ui_3437b8727d9f" formatted="false">Show torrent</string>
     <string name="ui_56b7696a10e7" formatted="false">Showing the first 150 cast entries.</string>
+    <string name="ui_1b6c524ffb71" formatted="false">Signed in</string>
+    <string name="ui_9fc1773eba4d" formatted="false">Signed out — enter a new login cookie</string>
     <string name="ui_c150b0bcf05d" formatted="false">Single episodes</string>
-    <string name="ui_392df6e0ef56" formatted="false">Site address</string>
     <string name="ui_b7152342a267" formatted="false">Size</string>
     <string name="ui_336d9bdb4d4c" formatted="false">Size unavailable</string>
     <string name="ui_b5eedcf44417" formatted="false">Size…</string>
@@ -566,6 +574,7 @@
     <string name="ui_2d37f6721074" formatted="false">Source languages</string>
     <string name="ui_2eb56be3c2d9" formatted="false">Sources</string>
     <string name="ui_4df6c61fc071" formatted="false">Sources unavailable</string>
+    <string name="ui_063b54d619ba" formatted="false">Space used</string>
     <string name="ui_2e51c9be1bab" formatted="false">Special features</string>
     <string name="ui_adc3296dff7b" formatted="false">Specials</string>
     <string name="ui_2d2cb022bc3d" formatted="false">Speed</string>
@@ -614,13 +623,12 @@
     <string name="ui_c3328c39b0e2" formatted="false">Text</string>
     <string name="ui_1c7a30e57131" formatted="false">Text color</string>
     <string name="ui_83e097038017" formatted="false">Text opacity</string>
+    <string name="ui_22b20e9773ff" formatted="false">The Pirate Bay</string>
     <string name="ui_17640422b43a" formatted="false">The connection to Transmission was interrupted. Please try again.</string>
     <string name="ui_ceaf21e9d02f" formatted="false">The download is incomplete.</string>
     <string name="ui_9a212ea4c5bb" formatted="false">The entire package will be hidden from everyone, continue seeding, and be permanently deleted when seeding finishes.</string>
     <string name="ui_fa9822b1acbe" formatted="false">The entire package will be hidden now, continue seeding, and be permanently deleted when seeding finishes.</string>
     <string name="ui_b540d8e8df09" formatted="false">The file changed. Remove this download and add it again.</string>
-    <string name="ui_3d6b1dc8c59c" formatted="false">The private site could not be reached</string>
-    <string name="ui_a2745523e072" formatted="false">The private site timed out</string>
     <string name="ui_d3fdb91c3f77" formatted="false">The saved connection could not be opened.</string>
     <string name="ui_9b8b91a1710b" formatted="false">The server did not supply this torrent\'s identity.</string>
     <string name="ui_03a02769fe24" formatted="false">The server is deleting this package.</string>
@@ -628,7 +636,6 @@
     <string name="ui_be694571db36" formatted="false">The server will continue this operation after you leave this screen.</string>
     <string name="ui_2dee52785f6e" formatted="false">The server will continue this operation if you close this screen.</string>
     <string name="ui_1bab38b72a4a" formatted="false">The server will retry automatically.</string>
-    <string name="ui_47e2d404730f" formatted="false">The site\'s seeding rules</string>
     <string name="ui_6ddf94adca4b" formatted="false">The torrent is still listed. Refresh in a moment to check whether removal finished.</string>
     <string name="ui_196686e4c2fc" formatted="false">The video stream was interrupted. Check the server and network connection.</string>
     <string name="ui_6315e169d054" formatted="false">These settings apply to everyone who uses this server.</string>
@@ -646,6 +653,7 @@
     <string name="ui_ecd01d877069" formatted="false">This server has not enabled automatic connection for this network.</string>
     <string name="ui_db17ebebbe1c" formatted="false">This shared download is not valid.</string>
     <string name="ui_0c77f0cf970a" formatted="false">This shared download needs a newer version of Torrbaby.</string>
+    <string name="ui_7f508c26421a" formatted="false">This share’s file list is no longer available. Add brings in every video it holds.</string>
     <string name="ui_8607ce0e91d1" formatted="false">This title has no complete media files on the server.</string>
     <string name="ui_d1431bac909d" formatted="false">This title isn’t downloaded. Reconnect to your library to play it.</string>
     <string name="ui_2e1fcceaec2e" formatted="false">This torrent is no longer in Transmission.</string>
@@ -709,6 +717,7 @@
     <string name="ui_536244f4cc64" formatted="false">Verifying</string>
     <string name="ui_2da600bf9404" formatted="false">Version</string>
     <string name="ui_bc17c1f0179a" formatted="false">Video</string>
+    <string name="ui_a67bba005296" formatted="false">Videos are saved to your Quark Drive, downloaded into your library, then removed from the drive.</string>
     <string name="ui_31a7604a3c74" formatted="false">View source</string>
     <string name="ui_f22eadf74236" formatted="false">Voice Transcribed</string>
     <string name="ui_33d30632848d" formatted="false">Waiting</string>

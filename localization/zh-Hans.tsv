@@ -299,7 +299,6 @@ Time	时间
 Time range	时间范围
 Torrbaby transfer rates	Torrbaby 传输速度
 Torrent CSV	种子 CSV
-Torrent details	种子详情
 Torrent removed	种子已移除
 Torrents	种子
 Transfer	传输
@@ -558,8 +557,6 @@ Profile name must contain 1–80 printable characters	用户名字必须包含 1
 Remove from Continue Watching	从继续观看中移除
 Removed from Continue Watching	已从继续观看中移除
 Undo	撤销
-Choose a release, then add it.	请选择版本，然后添加。
-Couldn’t retrieve this torrent. Try again.	无法获取此种子，请重试。
 This release has no downloadable torrent.	此版本没有可下载的种子。
 Couldn’t open Torrbaby	无法打开 Torrbaby
 Check access to your Application Support folder and try again.	请检查应用程序支持文件夹的访问权限，然后重试。
@@ -754,23 +751,9 @@ Updating…	正在更新…
 Download updated	下载已更新
 This download can't be updated in place. Delete it and download it again.	此下载无法就地更新。请删除后重新下载。
 Updated subtitles are available for %lld downloads.	有 %lld 个下载可更新字幕。
-Private Site	私有站点
-Private site	私有站点
-Site address	站点地址
-Passkey	密钥（Passkey）
 Set up	已设置
 Not set up	未设置
 Unchanged	未更改
-Save private site	保存私有站点
-Remove private site	移除私有站点
-For a private site you are a member of. Its results appear in Find under China. The passkey is kept on your server and is used only to search the site and to fetch the torrents you add.	用于你已加入的私有站点。其结果会显示在“查找”的中国来源中。密钥保存在你的服务器上，仅用于搜索该站点和获取你添加的种子。
-The private site timed out	私有站点请求超时
-The private site could not be reached	无法连接私有站点
-Add your private site and passkey in Settings	请在设置中添加私有站点和密钥
-Minimum seeding time (hours)	最短做种时间（小时）
-Minimum ratio	最低分享率
-The site's seeding rules	站点的做种规则
-Torrents from this site are seeded a quarter past both: for %@ hours, and then until their ratio reaches %@. Until both are met they keep seeding.	来自此站点的种子会比两项要求各多做种四分之一：先做种 %@ 小时，然后直到分享率达到 %@。两项都达到之前会一直做种。
 Season %d is missing %d of %d episodes	第 %d 季缺少 %d 集（已播出 %d 集）
 Also missing: %@	另缺：%@
 Find missing episodes	查找缺失剧集
@@ -790,3 +773,29 @@ Removing %d of %d…	正在移除第 %d 个，共 %d 个…
 %d torrents could not be removed	%d 个种子未能移除
 %@ free of %@	可用 %@，共 %@
 Drive not connected	硬盘未连接
+Quark Drive	夸克网盘
+1 video	1 个视频
+%d videos	%d 个视频
+Searching and checking links…	正在搜索并检查链接…
+Save as	保存为
+Added to downloads	已加入下载
+Choose videos to add	请选择要添加的视频
+Videos are saved to your Quark Drive, downloaded into your library, then removed from the drive.	视频会先存入你的夸克网盘，下载到媒体库后再从网盘删除。
+Checking the share’s files…	正在检查分享中的文件…
+%d of %d videos · %@	已选 %d / %d 个视频 · %@
+%d of %d videos	%d / %d 个视频
+This share’s file list is no longer available. Add brings in every video it holds.	此分享的文件列表已不可用。点按“添加”将下载其中的全部视频。
+Follow its progress in Downloading.	可在“下载中”查看进度。
+Saving to Quark Drive…	正在存入夸克网盘…
+%d missing episodes on Quark Drive	夸克网盘上有 %d 集缺失剧集
+Signed out — enter a new login cookie	已退出登录——请输入新的登录 Cookie
+Signed in	已登录
+Membership	会员
+Space used	已用空间
+Login cookie	登录 Cookie
+Find uses this account for titles under China. Torrbaby saves a share's videos to the account, downloads them into your library, then deletes its copy from the account. The cookie is kept on your server.	“查找”中的中国内容通过此账号获取。Torrbaby 会把分享中的视频存入该账号，下载到你的媒体库，然后从账号中删除这份副本。Cookie 仅保存在你的服务器上。
+Save Quark login	保存夸克登录
+Remove Quark login	移除夸克登录
+The Pirate Bay	The Pirate Bay
+Nyaa	Nyaa
+Torrent details	种子详情

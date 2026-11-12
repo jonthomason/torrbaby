@@ -88,7 +88,7 @@ struct AutomationView: View {
 enum SettingsPage: String, CaseIterable, Identifiable {
     case user = "User", general = "General", notifications = "Notifications", playback = "Playback", downloads = "Downloads"
     case connection = "Connection", devices = "Devices"
-    case library = "Library & Organizing", seeding = "Upload & Seeding", subtitles = "Subtitles & Translation", privateSite = "Private Site"
+    case library = "Library & Organizing", seeding = "Upload & Seeding", subtitles = "Subtitles & Translation", quarkDrive = "Quark Drive"
     case about = "About"
     var id: String { rawValue }
     var symbol: String {
@@ -103,7 +103,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .library: "folder.fill"
         case .seeding: "arrow.up.circle.fill"
         case .subtitles: "captions.bubble.fill"
-        case .privateSite: "key.fill"
+        case .quarkDrive: "icloud.and.arrow.down.fill"
         case .about: "info.circle.fill"
         }
     }
@@ -116,7 +116,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .downloads, .seeding: .green
         case .library: .orange
         case .subtitles: .purple
-        case .privateSite: .indigo
+        case .quarkDrive: .indigo
         }
     }
     /// Groups as they appear in the list; Downloads exists only where the app keeps offline copies.
@@ -124,7 +124,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         [(nil, nil, [.user]),
          (nil, nil, [.general, .notifications, .playback] + (downloadsAvailable ? [.downloads] : [])),
          (nil, nil, [.connection, .devices]),
-         ("Server", "These settings apply to everyone who uses this server.", [.library, .seeding, .subtitles, .privateSite]),
+         ("Server", "These settings apply to everyone who uses this server.", [.library, .seeding, .subtitles, .quarkDrive]),
          (nil, nil, [.about])]
     }
     static var downloadsAvailable: Bool {
@@ -263,7 +263,7 @@ struct SettingsPageView: View {
             case .devices: DeviceSettings()
             case .library: LibrarySettings()
             case .seeding: SeedingSettings()
-            case .privateSite: PrivateSiteSettings()
+            case .quarkDrive: QuarkDriveSettings()
             case .subtitles: SwiftUI.Section { BackgroundSubtitlesView() } footer: { Text("Prepares English and Chinese subtitles for new titles on your server, on the server itself.") }
             case .about: AboutSettings()
             }
@@ -497,27 +497,21 @@ struct SeedingSettings: View {
     }
 }
 
-/// A private site the user is a member of (the NexusPHP kind most Chinese private trackers
-/// run). The passkey is sent to the user's own server and never shown again.
-struct PrivateSiteSettings: View {
+/// The household's Quark Drive (夸克网盘) account, which mainland titles in Find are fetched
+/// through. The login cookie goes to the user's own server and is never shown again.
+struct QuarkDriveSettings: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
-    @State private var loaded = false
-    @State private var configured = false
-    @State private var address = ""
-    @State private var passkey = ""
-    @State private var hours = 72.0
-    @State private var ratio = 0.8
-    @State private var seedHours = 90.0
-    @State private var seedRatio = 1.0
-    struct Site: Decodable {
-        let configured: Bool; let baseUrl: String?
-        let minSeedHours: Double?; let minRatio: Double?; let seedHours: Double?; let seedRatio: Double?
+    struct Account: Decodable {
+        let configured: Bool; var signedIn: Bool? = nil; var member: String? = nil
+        var usedBytes: Int64? = nil; var totalBytes: Int64? = nil; var error: String? = nil
     }
-    private func show(_ site: Site) {
-        configured = site.configured; address = site.baseUrl ?? address; passkey = ""; loaded = true
-        hours = site.minSeedHours ?? hours; ratio = site.minRatio ?? ratio
-        seedHours = site.seedHours ?? hours * 1.25; seedRatio = site.seedRatio ?? ratio * 1.25
+    @State private var account: Account?
+    @State private var loaded = false
+    @State private var cookie = ""
+    private var status: String {
+        guard let account, account.configured else { return "Not set up" }
+        return account.signedIn == false ? "Signed out — enter a new login cookie" : "Signed in"
     }
     var body: some View {
         Group {
@@ -525,45 +519,41 @@ struct PrivateSiteSettings: View {
                 SwiftUI.Section { HStack { Spacer(); ProgressView(); Spacer() } }
             } else {
                 SwiftUI.Section {
-                    LabeledContent("Status") { Text(LocalizedStringKey(configured ? "Set up" : "Not set up")) }
-                    LabeledContent("Site address") {
-                        TextField("https://", text: $address).labelsHidden().multilineTextAlignment(.trailing).autocorrectionDisabled()
-                            #if os(iOS)
-                            .textInputAutocapitalization(.never).keyboardType(.URL)
-                            #endif
+                    LabeledContent("Status") {
+                        Text(LocalizedStringKey(status)).foregroundStyle(account?.signedIn == false ? .orange : .secondary)
                     }
-                    LabeledContent("Passkey") {
-                        SecureField(configured ? L10n.text("Unchanged") : "", text: $passkey).labelsHidden().multilineTextAlignment(.trailing)
+                    if let member = account?.member, !member.isEmpty {
+                        LabeledContent("Membership") { Text(verbatim: member) }
+                    }
+                    if let used = account?.usedBytes, let total = account?.totalBytes, total > 0 {
+                        LabeledContent("Space used") {
+                            Text(L10n.format("%@ of %@", ByteCountFormatter.string(fromByteCount: used, countStyle: .file), ByteCountFormatter.string(fromByteCount: total, countStyle: .file)))
+                                .monospacedDigit()
+                        }
+                    }
+                    if let error = account?.error, !error.isEmpty { Text(verbatim: error).font(.caption).foregroundStyle(.orange) }
+                    LabeledContent("Login cookie") {
+                        SecureField(account?.configured == true ? L10n.text("Unchanged") : "", text: $cookie).labelsHidden().multilineTextAlignment(.trailing)
+                            .autocorrectionDisabled()
                     }
                 } footer: {
-                    Text("For a private site you are a member of. Its results appear in Find under China. The passkey is kept on your server and is used only to search the site and to fetch the torrents you add.")
+                    Text("Find uses this account for titles under China. Torrbaby saves a share's videos to the account, downloads them into your library, then deletes its copy from the account. The cookie is kept on your server.")
                 }
                 SwiftUI.Section {
-                    LabeledContent("Minimum seeding time (hours)") {
-                        TextField("Minimum seeding time (hours)", value: $hours, format: .number.precision(.fractionLength(0...1))).labelsHidden().multilineTextAlignment(.trailing)
-                    }
-                    LabeledContent("Minimum ratio") {
-                        TextField("Minimum ratio", value: $ratio, format: .number.precision(.fractionLength(0...2))).labelsHidden().multilineTextAlignment(.trailing)
-                    }
-                } header: { Text("The site's seeding rules") } footer: {
-                    Text(L10n.format("Torrents from this site are seeded a quarter past both: for %@ hours, and then until their ratio reaches %@. Until both are met they keep seeding.",
-                                     seedHours.formatted(.number.precision(.fractionLength(0...1))), seedRatio.formatted(.number.precision(.fractionLength(0...2)))))
-                }
-                SwiftUI.Section {
-                    Button("Save private site") {
-                        store.perform { show(try await store.request("PUT", "/v1/private-site", body: ["base_url": address, "passkey": passkey, "min_seed_hours": hours, "min_ratio": ratio])) }
-                    }.disabled(store.busy || !store.connected || address.isEmpty || (passkey.isEmpty && !configured) || !hours.isFinite || hours < 0 || !ratio.isFinite || ratio < 0)
-                    if configured {
-                        Button("Remove private site", role: .destructive) {
-                            store.perform { let site: Site = try await store.request("DELETE", "/v1/private-site"); address = ""; show(site) }
+                    Button("Save Quark login") {
+                        store.perform { account = try await store.request("PUT", "/v1/cloud/quark", body: ["cookie": cookie.trimmingCharacters(in: .whitespacesAndNewlines)], timeout: 30); cookie = "" }
+                    }.disabled(store.busy || !store.connected || cookie.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if account?.configured == true {
+                        Button("Remove Quark login", role: .destructive) {
+                            store.perform { account = try await store.request("DELETE", "/v1/cloud/quark") }
                         }.disabled(store.busy || !store.connected)
                     }
                 }
             }
         }
         .task(id: store.server) {
-            if let site: Site = try? await store.request("GET", "/v1/private-site") { show(site) }
-            else { loaded = true }   // offline or an older server: the form still shows; saving reports why it failed
+            account = try? await store.request("GET", "/v1/cloud/quark", timeout: 30)
+            loaded = true
         }
     }
 }

@@ -2,13 +2,17 @@
 <resources>
     <string name="ui_0290129bc977" formatted="false">找到 %d 集</string>
     <string name="ui_b909e7d6e8c9" formatted="false">剩余 %d 分钟</string>
+    <string name="ui_66bd1c71457f" formatted="false">夸克网盘上有 %d 集缺失剧集</string>
     <string name="ui_24d1fa07b247" formatted="false">已下载 %d/%d</string>
+    <string name="ui_cf5dae5645db" formatted="false">%d / %d 个视频</string>
     <string name="ui_b295fde49b7b" formatted="false">已选 %d 个</string>
     <string name="ui_216e67233653" formatted="false">%d 集待添加</string>
     <string name="ui_81590928ad73" formatted="false">%d 个种子未能移除</string>
+    <string name="ui_712d2e5c0047" formatted="false">%d 个视频</string>
     <string name="ui_660a76df86fd" formatted="false">剩余 %d 小时 %d 分钟</string>
     <string name="ui_659748ef61cf" formatted="false">剩余 %d 分钟</string>
     <string name="ui_8256cd5880d0" formatted="false">1 个做种</string>
+    <string name="ui_9fa45ef1a516" formatted="false">1 个视频</string>
     <string name="ui_e9c9f7bc39bb" formatted="false">1 小时</string>
     <string name="ui_027795961131" formatted="false">24 小时</string>
     <string name="ui_8d61fd6a4ee0" formatted="false">6 小时</string>
@@ -26,10 +30,10 @@
     <string name="ui_dbe5ad51cb48" formatted="false">添加后暂停</string>
     <string name="ui_abe7e96d75c0" formatted="false">加入试下载</string>
     <string name="ui_ebf1fd2504e7" formatted="false">添加种子</string>
-    <string name="ui_e4884bb6064a" formatted="false">请在设置中添加私有站点和密钥</string>
     <string name="ui_b68734c25910" formatted="false">已添加</string>
     <string name="ui_f9b608af67f4" formatted="false">已添加到下载</string>
     <string name="ui_a98648e9368b" formatted="false">已添加到 Transmission</string>
+    <string name="ui_3d3eaa50eab2" formatted="false">已加入下载</string>
     <string name="ui_802e94122566" formatted="false">正在添加下载</string>
     <string name="ui_9295ef6a9cf8" formatted="false">正在添加下载…</string>
     <string name="ui_ffb2e628b0e9" formatted="false">正在添加…</string>
@@ -82,6 +86,7 @@
     <string name="ui_8e6b214072c4" formatted="false">应用前请确认年份和集数。</string>
     <string name="ui_07369df4cdcc" formatted="false">正在检查文件…</string>
     <string name="ui_80b0becd67a4" formatted="false">正在检查语言…</string>
+    <string name="ui_c31f3333882a" formatted="false">正在检查分享中的文件…</string>
     <string name="ui_d2eaf2aa1512" formatted="false">中国</string>
     <string name="ui_15dc18865567" formatted="false">中文</string>
     <string name="ui_78bba35bec31" formatted="false">简体中文</string>
@@ -93,11 +98,11 @@
     <string name="ui_54ef86452c0f" formatted="false">中文语音转写</string>
     <string name="ui_f47537b34855" formatted="false">选择用户</string>
     <string name="ui_bf1604f52dd4" formatted="false">选择资源</string>
-    <string name="ui_9d6a2b12fd09" formatted="false">请选择版本，然后添加。</string>
     <string name="ui_5f0667ffb45c" formatted="false">选择用户</string>
     <string name="ui_0acf0708ca28" formatted="false">开始播放前请选择用户。</string>
     <string name="ui_2c052719b7f2" formatted="false">换一个资源（%d）</string>
     <string name="ui_0772fa16aa51" formatted="false">选择正确的影片</string>
+    <string name="ui_d6994cf8bc6c" formatted="false">请选择要添加的视频</string>
     <string name="ui_82be318f7bae" formatted="false">选择服务器</string>
     <string name="ui_719ea396ad92" formatted="false">清除</string>
     <string name="ui_412226715c56" formatted="false">清除筛选</string>
@@ -141,7 +146,6 @@
     <string name="ui_b8b71a01afec" formatted="false">无法管理文件</string>
     <string name="ui_043e16ed23b9" formatted="false">无法打开 Torrbaby</string>
     <string name="ui_4a73957afb95" formatted="false">无法刷新文件操作</string>
-    <string name="ui_bf0f3a2d2c62" formatted="false">无法获取此种子，请重试。</string>
     <string name="ui_6e157c5da441" formatted="false">创建</string>
     <string name="ui_bdbcfa0af077" formatted="false">创建用户</string>
     <string name="ui_3394786da6fb" formatted="false">片尾检测未完成</string>
@@ -242,6 +246,7 @@
     <string name="ui_2893768e025f" formatted="false">查找服务器</string>
     <string name="ui_26e31d51a583" formatted="false">查找正确的影片</string>
     <string name="ui_fce33b5fafaf" formatted="false">查找种子</string>
+    <string name="ui_764ca979a261" formatted="false">“查找”中的中国内容通过此账号获取。Torrbaby 会把分享中的视频存入该账号，下载到你的媒体库，然后从账号中删除这份副本。Cookie 仅保存在你的服务器上。</string>
     <string name="ui_d46f03ac24a4" formatted="false">寻找下一部好片</string>
     <string name="ui_ea4dab10bf35" formatted="false">正在查找媒体库…</string>
     <string name="ui_6383e55e9190" formatted="false">查找…</string>
@@ -253,9 +258,9 @@
     <string name="ui_e82b1912c8d1" formatted="false">名字不能为空</string>
     <string name="ui_d851a452d092" formatted="false">试下载五分钟，每个版本约 256 MB。自动保留最快的版本，并删除其他试下载文件。</string>
     <string name="ui_b2b163a7935b" formatted="false">服务器上的文件夹</string>
+    <string name="ui_a54a576145c1" formatted="false">可在“下载中”查看进度。</string>
     <string name="ui_ddc61f82d863" formatted="false">跟随系统语言</string>
     <string name="ui_b97c4d4cddf2" formatted="false">字体</string>
-    <string name="ui_ec5de681708d" formatted="false">用于你已加入的私有站点。其结果会显示在“查找”的中国来源中。密钥保存在你的服务器上，仅用于搜索该站点和获取你添加的种子。</string>
     <string name="ui_6f1b97e4c290" formatted="false">强制字幕</string>
     <string name="ui_ba4e72261283" formatted="false">前进</string>
     <string name="ui_9239ee2cda84" formatted="false">通用</string>
@@ -302,6 +307,7 @@
     <string name="ui_4f96be70a1f2" formatted="false">正在加载服务器活动…</string>
     <string name="ui_23f94ec39630" formatted="false">正在加载字幕…</string>
     <string name="ui_d219c68101f5" formatted="false">位置</string>
+    <string name="ui_cec3ed33b848" formatted="false">登录 Cookie</string>
     <string name="ui_82b4b1ef514f" formatted="false">重新查找</string>
     <string name="ui_27d9ea3d190c" formatted="false">正在查找…</string>
     <string name="ui_3f4fc9a34ef7" formatted="false">将重试查找</string>
@@ -321,10 +327,9 @@
     <string name="ui_df7ea09cbb64" formatted="false">标记为未看</string>
     <string name="ui_46b250bb0a3a" formatted="false">标记为已看</string>
     <string name="ui_13cc75488bfe" formatted="false">媒体文件在处理期间发生变化</string>
+    <string name="ui_53bc9670e723" formatted="false">会员</string>
     <string name="ui_2f28e570a801" formatted="false">菜单栏</string>
     <string name="ui_9188f98eea10" formatted="false">正在 Diamond 上获取影片信息</string>
-    <string name="ui_1a41eb35728a" formatted="false">最低分享率</string>
-    <string name="ui_4fc5110aa6f0" formatted="false">最短做种时间（小时）</string>
     <string name="ui_c5c5533844c5" formatted="false">单声道</string>
     <string name="ui_216fcddff2f9" formatted="false">等宽字体</string>
     <string name="ui_4bab2d8fe13f" formatted="false">更多</string>
@@ -380,6 +385,7 @@
     <string name="ui_602f15feebf4" formatted="false">没有可添加的内容</string>
     <string name="ui_753a22b2eb61" formatted="false">通知</string>
     <string name="ui_8c9bc3ae4603" formatted="false">正在处理</string>
+    <string name="ui_d2b9a90d54cd" formatted="false">Nyaa</string>
     <string name="ui_9ce3bd4224c8" formatted="false">好</string>
     <string name="ui_e3de5ab0ca4c" formatted="false">关闭</string>
     <string name="ui_e01fa717bacc" formatted="false">离线</string>
@@ -397,7 +403,6 @@
     <string name="ui_7a38047cc7f2" formatted="false">原始画质 · 原生播放器</string>
     <string name="ui_c9d98984ac76" formatted="false">其他剧集</string>
     <string name="ui_ca07ceefc22c" formatted="false">节点</string>
-    <string name="ui_e35828da748d" formatted="false">密钥（Passkey）</string>
     <string name="ui_7039298d0ff9" formatted="false">粘贴服务器令牌</string>
     <string name="ui_519e39132bb9" formatted="false">路径</string>
     <string name="ui_781961bc81c2" formatted="false">暂停</string>
@@ -428,8 +433,6 @@
     <string name="ui_0b1d6c0b1a56" formatted="false">正在准备…</string>
     <string name="ui_109a00c0bd39" formatted="false">优先处理</string>
     <string name="ui_5af3161d2251" formatted="false">优先处理字幕</string>
-    <string name="ui_15a245fc958e" formatted="false">私有站点</string>
-    <string name="ui_10e7daf10ff1" formatted="false">私有站点</string>
     <string name="ui_fffc6e1a0c19" formatted="false">自动处理媒体库</string>
     <string name="ui_e63451d3cf90" formatted="false">媒体处理</string>
     <string name="ui_7cd54dae216c" formatted="false">处理失败</string>
@@ -437,6 +440,7 @@
     <string name="ui_79e0a2b26494" formatted="false">用户名字必须包含 1–80 个可显示的字符</string>
     <string name="ui_c009b451b816" formatted="false">找不到用户</string>
     <string name="ui_1b90271d66cf" formatted="false">进度</string>
+    <string name="ui_21fc53615cd0" formatted="false">夸克网盘</string>
     <string name="ui_6a599877d753" formatted="false">排队中</string>
     <string name="ui_fd97ceed201e" formatted="false">等待校验</string>
     <string name="ui_71e9c73be501" formatted="false">等待下载</string>
@@ -464,8 +468,8 @@
     <string name="ui_26803bf718c9" formatted="false">移除 %d 个种子并删除文件</string>
     <string name="ui_c059882450a5" formatted="false">移除 %d 个种子，保留文件</string>
     <string name="ui_01d9cc52a205" formatted="false">移除 %d 个种子？</string>
+    <string name="ui_a8cc3b78d828" formatted="false">移除夸克登录</string>
     <string name="ui_b589f73a82dc" formatted="false">从继续观看中移除</string>
-    <string name="ui_280bb327e41f" formatted="false">移除私有站点</string>
     <string name="ui_63db985f6027" formatted="false">移除种子</string>
     <string name="ui_41b8f0cd711e" formatted="false">移除种子并删除文件</string>
     <string name="ui_e512d90885bf" formatted="false">移除种子，保留文件</string>
@@ -501,11 +505,13 @@
     <string name="ui_0b25507fa566" formatted="false">服务器地址</string>
     <string name="ui_ecc39dc53993" formatted="false">无衬线字体</string>
     <string name="ui_efc007a393f6" formatted="false">保存</string>
-    <string name="ui_23b24c3c8910" formatted="false">保存私有站点</string>
+    <string name="ui_62797693813d" formatted="false">保存夸克登录</string>
+    <string name="ui_f313a0b1810b" formatted="false">保存为</string>
     <string name="ui_f597c0e8201d" formatted="false">保存用户</string>
     <string name="ui_3b36f730de5c" formatted="false">保存做种设置</string>
     <string name="ui_913aba9f96cf" formatted="false">保存设置</string>
     <string name="ui_c0ae8f6ea841" formatted="false">已保存</string>
+    <string name="ui_5e024bb2742c" formatted="false">正在存入夸克网盘…</string>
     <string name="ui_f6ab55dd3509" formatted="false">重新扫描</string>
     <string name="ui_b3b48e971d6e" formatted="false">扫描连接码</string>
     <string name="ui_875f33d23a6c" formatted="false">扫描媒体库</string>
@@ -518,6 +524,7 @@
     <string name="ui_c33f99863bee" formatted="false">搜索地区</string>
     <string name="ui_c51ba3511ecd" formatted="false">搜索片名、类型或年份</string>
     <string name="ui_d499e5b1e322" formatted="false">搜索种子</string>
+    <string name="ui_2aa6b7d83c95" formatted="false">正在搜索并检查链接…</string>
     <string name="ui_25806b49a576" formatted="false">正在搜索第 %d 集…</string>
     <string name="ui_00e59ec60399" formatted="false">正在搜索缺失的剧集…</string>
     <string name="ui_1a6a5ba8c23d" formatted="false">正在搜索…</string>
@@ -555,8 +562,9 @@
     <string name="ui_4589080623ff" formatted="false">显示下载和上传速度</string>
     <string name="ui_3437b8727d9f" formatted="false">查看种子</string>
     <string name="ui_56b7696a10e7" formatted="false">仅显示前 150 条演员记录。</string>
+    <string name="ui_1b6c524ffb71" formatted="false">已登录</string>
+    <string name="ui_9fc1773eba4d" formatted="false">已退出登录——请输入新的登录 Cookie</string>
     <string name="ui_c150b0bcf05d" formatted="false">单集</string>
-    <string name="ui_392df6e0ef56" formatted="false">站点地址</string>
     <string name="ui_b7152342a267" formatted="false">大小</string>
     <string name="ui_336d9bdb4d4c" formatted="false">大小不可用</string>
     <string name="ui_b5eedcf44417" formatted="false">大小…</string>
@@ -566,6 +574,7 @@
     <string name="ui_2d37f6721074" formatted="false">源语言</string>
     <string name="ui_2eb56be3c2d9" formatted="false">来源</string>
     <string name="ui_4df6c61fc071" formatted="false">来源不可用</string>
+    <string name="ui_063b54d619ba" formatted="false">已用空间</string>
     <string name="ui_2e51c9be1bab" formatted="false">特别收录</string>
     <string name="ui_adc3296dff7b" formatted="false">特别篇</string>
     <string name="ui_2d2cb022bc3d" formatted="false">速度</string>
@@ -614,13 +623,12 @@
     <string name="ui_c3328c39b0e2" formatted="false">文本</string>
     <string name="ui_1c7a30e57131" formatted="false">文字颜色</string>
     <string name="ui_83e097038017" formatted="false">文字不透明度</string>
+    <string name="ui_22b20e9773ff" formatted="false">The Pirate Bay</string>
     <string name="ui_17640422b43a" formatted="false">与 Transmission 的连接已中断，请重试。</string>
     <string name="ui_ceaf21e9d02f" formatted="false">下载不完整。</string>
     <string name="ui_9a212ea4c5bb" formatted="false">整个下载包将对所有用户隐藏，继续做种，并在做种完成后永久删除。</string>
     <string name="ui_fa9822b1acbe" formatted="false">整个下载包将立即隐藏，继续做种，并在做种完成后永久删除。</string>
     <string name="ui_b540d8e8df09" formatted="false">文件已更改，请移除此下载后重新添加。</string>
-    <string name="ui_3d6b1dc8c59c" formatted="false">无法连接私有站点</string>
-    <string name="ui_a2745523e072" formatted="false">私有站点请求超时</string>
     <string name="ui_d3fdb91c3f77" formatted="false">无法打开已保存的连接。</string>
     <string name="ui_9b8b91a1710b" formatted="false">服务器未提供此种子的标识。</string>
     <string name="ui_03a02769fe24" formatted="false">服务器正在删除此下载包。</string>
@@ -628,7 +636,6 @@
     <string name="ui_be694571db36" formatted="false">离开此页面后，服务器仍将继续此操作。</string>
     <string name="ui_2dee52785f6e" formatted="false">关闭此页面后，服务器仍将继续此操作。</string>
     <string name="ui_1bab38b72a4a" formatted="false">服务器将自动重试。</string>
-    <string name="ui_47e2d404730f" formatted="false">站点的做种规则</string>
     <string name="ui_6ddf94adca4b" formatted="false">种子仍在列表中，请稍后刷新以确认是否已移除。</string>
     <string name="ui_196686e4c2fc" formatted="false">视频流已中断，请检查服务器和网络连接。</string>
     <string name="ui_6315e169d054" formatted="false">这些设置适用于使用此服务器的所有人。</string>
@@ -646,6 +653,7 @@
     <string name="ui_ecd01d877069" formatted="false">此服务器尚未为此网络启用自动连接。</string>
     <string name="ui_db17ebebbe1c" formatted="false">此共享下载无效。</string>
     <string name="ui_0c77f0cf970a" formatted="false">此共享下载需要更新版本的 Torrbaby。</string>
+    <string name="ui_7f508c26421a" formatted="false">此分享的文件列表已不可用。点按“添加”将下载其中的全部视频。</string>
     <string name="ui_8607ce0e91d1" formatted="false">服务器上没有此影片的完整媒体文件。</string>
     <string name="ui_d1431bac909d" formatted="false">此影片尚未下载。请重新连接媒体库后播放。</string>
     <string name="ui_2e1fcceaec2e" formatted="false">此种子已不在 Transmission 中。</string>
@@ -709,6 +717,7 @@
     <string name="ui_536244f4cc64" formatted="false">校验中</string>
     <string name="ui_2da600bf9404" formatted="false">版本</string>
     <string name="ui_bc17c1f0179a" formatted="false">视频</string>
+    <string name="ui_a67bba005296" formatted="false">视频会先存入你的夸克网盘，下载到媒体库后再从网盘删除。</string>
     <string name="ui_31a7604a3c74" formatted="false">查看来源</string>
     <string name="ui_f22eadf74236" formatted="false">语音转写</string>
     <string name="ui_33d30632848d" formatted="false">等待中</string>
