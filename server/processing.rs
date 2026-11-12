@@ -45,6 +45,7 @@ pub static SHUTTING_DOWN:std::sync::atomic::AtomicBool=std::sync::atomic::Atomic
 pub fn attention(db:&Database)->Result<Value> {
     let rows=db.rows("SELECT f.rowid AS id,f.asset_id,f.stage,f.error,f.occurrences,f.first_seen,f.last_seen,json_extract(a.document,'$.path') AS path \
         FROM processing_failures f JOIN library_assets a ON a.id=f.asset_id \
+        JOIN media_processing m ON m.asset_id=f.asset_id AND m.revision=f.revision \
         WHERE f.resolved_at IS NULL AND COALESCE(json_extract(a.document,'$.available'),0)=1 \
         AND NOT EXISTS (SELECT 1 FROM attention_dismissals d WHERE d.asset_id=f.asset_id AND d.revision=f.revision AND d.stage=f.stage AND d.error=f.error) \
         ORDER BY f.last_seen DESC LIMIT 500",[])?;
@@ -486,6 +487,8 @@ mod tests {
             db.connection.execute("INSERT INTO library_assets VALUES(?,?)",rusqlite::params![id,json!({"id":id,"available":true,"path":format!("/M/{id} - S01E01.mkv")}).to_string()])?;
             enroll(&db,id,"r1")?;
         }
+        // A problem with an earlier version of the file is not listed.
+        db.connection.execute("INSERT INTO processing_failures(asset_id,revision,stage,error,first_seen,last_seen) VALUES('a','old','inventory','No such file',1,1)",[])?;
         fail(&db,"a","r1","decode failed")?;
         log_failure(&db,"b","r1","credits_skipped","Video timestamps are irregular")?;
         let items=attention(&db)?["items"].as_array().unwrap().clone();
