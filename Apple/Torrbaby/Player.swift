@@ -466,6 +466,12 @@ struct NativePlayer: UIViewControllerRepresentable {
         view.showsPlaybackControls = true
         view.speeds = PlaybackSpeeds.options
         view.allowsPictureInPicturePlayback = true
+        #if os(tvOS)
+        // Ask the television for the video's own dynamic range and frame rate, as the
+        // Apple TV's Match Content settings allow. Without this a Dolby Vision or HDR
+        // video is converted to whatever format the Apple TV happens to be outputting.
+        view.appliesPreferredDisplayCriteriaAutomatically = true
+        #endif
         return view
     }
     func updateUIViewController(_ view: KeyboardPlayerController, context: Context) {
