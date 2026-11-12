@@ -243,7 +243,7 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
                     if entry.file_name()==".torrbaby-trials" {continue;}
                     if entry.path() == root.join("Junk") { continue; }
                     pending.push(entry.path());
-                } else if kind.is_file() && video(&entry.path())
+                } else if kind.is_file() && video(&entry.path()) && !crate::drive_moves::leaving(&entry.path())
                     && !(role == Role::Downloads && torrent_copy(&entry.path(), root, incomplete, &unfinished_names, &tracked)) {
                     candidates.entry(entry.path()).or_insert_with(
                         || json!({"complete":complete,"added_at":now(),"torrent_present":false}),

@@ -283,10 +283,10 @@ impl Drives {
     /// Dismiss drive items by attention id, or all of them; they come back if the drive
     /// returns and goes missing again.
     pub fn dismiss(&self, ids: &[i64], all: bool) {
-        let Ok(mut dismissed) = DISMISSED.lock() else { return };
-        for (index, d) in self.0.iter().enumerate() {
-            if (all || ids.contains(&(ATTENTION_BASE + index as i64))) && !d.online() { dismissed.insert(d.id.clone()); }
-        }
+        // Status first: it takes the same lock when a drive is back.
+        let away: Vec<String> = self.0.iter().enumerate().filter(|(index, d)| (all || ids.contains(&(ATTENTION_BASE + *index as i64))) && !d.online())
+            .map(|(_, d)| d.id.clone()).collect();
+        if let Ok(mut dismissed) = DISMISSED.lock() { dismissed.extend(away); }
     }
     /// For clients: every volume, plus the totals across them.
     pub fn report(&self) -> Value {

@@ -43,6 +43,7 @@ mod transmission;
 mod video_metadata;
 mod drives;
 mod drive_settings;
+mod drive_moves;
 mod scan_report;
 use anyhow::Result;
 use clap::{Parser, Subcommand};

@@ -211,6 +211,13 @@ pub async fn serve(
                 tokio::time::sleep(std::time::Duration::from_secs_f64(seconds)).await;
             }
         }));
+        let moves = service.clone();
+        workers.push(tokio::spawn(async move {
+            loop {
+                if let Err(error) = crate::drive_moves::tick(&moves).await { tracing::warn!(%error, "Moving files between drives"); }
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        }));
         let removals = service.clone();
         workers.push(tokio::spawn(async move {
             loop {
@@ -1050,6 +1057,9 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         }
     }
     // Drive changes only touch the settings in this server's database and each drive's marker.
+    if let Some(result) = crate::drive_moves::route(s, method.as_str(), path, &body).await {
+        return result;
+    }
     if let Some(result) = crate::drive_settings::route(s, method.as_str(), path, &body).await {
         return result;
     }

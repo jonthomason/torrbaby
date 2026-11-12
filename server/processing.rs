@@ -22,6 +22,17 @@ fn carry_over(db:&Database,id:&str,revision:&str)->Result<bool> {
     }
     Ok(true)
 }
+/// A file was copied to another drive and the library now points at the copy: its
+/// finished work (subtitles, language inventory, credits) belongs to the copy.
+pub fn follow(db:&Database,id:&str,revision:&str)->Result<()> {
+    use rusqlite::OptionalExtension;
+    let Some(prior):Option<String>=db.connection.query_row("SELECT revision FROM media_processing WHERE asset_id=?",[id],|r|r.get(0)).optional()? else {return Ok(())};
+    for table in ["media_processing","media_inventory","credits_analysis"] {
+        db.connection.execute(&format!("UPDATE {table} SET revision=?1 WHERE asset_id=?2 AND revision=?3"),rusqlite::params![revision,id,prior])?;
+    }
+    db.connection.execute("UPDATE processing_failures SET revision=?1 WHERE asset_id=?2 AND revision=?3",rusqlite::params![revision,id,prior])?;
+    Ok(())
+}
 fn enroll(db:&Database,id:&str,revision:&str)->Result<()> {
     db.connection.execute("INSERT INTO media_processing(asset_id,revision,version,state,stage,inventory_state,subtitles_state,credits_state,updated) VALUES(?,?,?,'queued','inventory','pending','pending','pending',?) ON CONFLICT(asset_id) DO UPDATE SET revision=excluded.revision,version=excluded.version,state='queued',stage='inventory',inventory_state='pending',subtitles_state='pending',credits_state='pending',detail='{}',error=NULL,retry_after=0,attempts=0,completed_at=NULL,updated=excluded.updated WHERE media_processing.revision!=excluded.revision OR media_processing.version!=excluded.version",rusqlite::params![id,revision,VERSION,now()])?;
     Ok(())
@@ -167,7 +178,8 @@ fn assets(db:&Database)->Result<Vec<Value>> {
             a["path"]=json!(path.to_string_lossy());a["available"]=json!(true);a["complete"]=json!(true);a["early"]=json!(true);
         }
     }
-    assets.retain(|a|a["available"]==true && a["complete"]==true);
+    // A file being moved to another drive is left alone until it lands.
+    assets.retain(|a|a["available"]==true && a["complete"]==true && a["moving"]!=true);
     crate::media_inventory::order_assets(&mut assets,&crate::media_inventory::priorities(db)?);
     Ok(assets)
 }
