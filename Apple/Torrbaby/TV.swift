@@ -221,6 +221,7 @@ private struct TVSettingsView: View {
     let connection: () -> Void
     @State private var showSubtitles = false
     @State private var showPairing = false
+    @State private var editingProfile: UserProfile?
     var body: some View {
         HStack(alignment: .center, spacing: 0) {
             VStack(spacing: 22) {
@@ -237,6 +238,9 @@ private struct TVSettingsView: View {
                 }
                 SwiftUI.Section("User") {
                     LabeledContent { Text(verbatim: store.activeProfile?.name ?? L10n.text("Choose a user")) } label: { Text("User") }
+                    if let profile = store.activeProfile {
+                        Button { editingProfile = profile } label: { TVSettingsRow(title: "Edit profile") }
+                    }
                     Button { store.choosingProfile = true } label: { TVSettingsRow(title: "Switch user") }
                 }
                 SwiftUI.Section("Playback") {
@@ -281,6 +285,7 @@ private struct TVSettingsView: View {
         }.padding(.horizontal, 60)
         .sheet(isPresented: $showSubtitles) { LocalizedInterface { SubtitlePreferencesView() } }
         .fullScreenCover(isPresented: $showPairing) { LocalizedInterface { PairingCodeView() }.environmentObject(store) }
+        .sheet(item: $editingProfile) { person in LocalizedInterface { ProfileEditor(profile: person) }.environmentObject(store) }
     }
 }
 

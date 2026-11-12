@@ -767,7 +767,11 @@ struct UserProfile: Codable, Identifiable, Equatable {
     var avatarSymbol: String? = nil
     var textColor: String? = nil
     var backgroundColor: String? = nil
-    var symbol: String { avatarSymbol.flatMap { $0.isEmpty ? nil : $0 } ?? String(name.prefix(1)).uppercased() }
+    /// The avatar's one character: the chosen symbol's first (an emoji counts as one), else the name's initial.
+    var symbol: String {
+        let chosen = (avatarSymbol ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return chosen.isEmpty ? String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1)).uppercased() : String(chosen.prefix(1))
+    }
 }
 private struct ProfileList: Decodable { let profiles: [UserProfile] }
 private struct DeviceProfileState: Decodable {
@@ -897,8 +901,9 @@ struct ProfileEditor: View {
                     ProfileAvatar(profile: UserProfile(id: "preview", name: name, avatarSymbol: symbol, textColor: foreground, backgroundColor: background), size: 100)
                         .frame(maxWidth: .infinity)
                     TextField("First name", text: $name).profileFieldStyle()
+                    // Not cut short while typing: a pinyin or other input method composes several
+                    // letters before it commits a character. Only the first character is kept on save.
                     TextField("Initial or emoji", text: $symbol).profileFieldStyle()
-                        .onChange(of: symbol) { _, value in symbol = String(value.prefix(1)) }
                     ProfileColorPicker(title: "Text color", hex: $foreground)
                     ProfileColorPicker(title: "Background color", hex: $background)
                     if let error { Text(L10n.text(error)).foregroundStyle(.orange) }
@@ -913,7 +918,8 @@ struct ProfileEditor: View {
                             Task {
                                 defer { saving = false }
                                 do {
-                                    try await store.saveProfile(id: profile?.id, name: name.trimmingCharacters(in: .whitespacesAndNewlines), symbol: symbol, textColor: foreground, backgroundColor: background)
+                                    let chosen = String(symbol.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1))
+                                    try await store.saveProfile(id: profile?.id, name: name.trimmingCharacters(in: .whitespacesAndNewlines), symbol: chosen, textColor: foreground, backgroundColor: background)
                                     dismiss()
                                 } catch { self.error = error.localizedDescription }
                             }

@@ -2127,7 +2127,9 @@ public class MainActivity extends Activity {
   }
 
   private void createProfile(Api requested) { editProfile(requested,null); }
-  private void editProfile(Api requested,JSONObject prior) {
+  private void editProfile(Api requested,JSONObject prior) { editProfile(requested,prior,()->chooseProfile(true)); }
+  /** Edits a profile; {@code done} runs after an existing profile is saved (the chooser, or Settings). */
+  private void editProfile(Api requested,JSONObject prior,Runnable done) {
     if(switchingProfile || api!=requested)return;
     ProfileUi.editor(this,prior,(values,dialog)->{
       if(switchingProfile || api!=requested)return;
@@ -2141,7 +2143,7 @@ public class MainActivity extends Activity {
             if(person.optString("id").equals(api.profile)){
               api.profileAppearance=person;try{store.save(api);}catch(Exception e){error(message(e));return;}
             }
-            dialog.dismiss();chooseProfile(true);
+            dialog.dismiss();ProfileUi.refreshBadges(this,getWindow().getDecorView(),api);done.run();
           });
         } catch(Exception e){runOnUiThread(()->{switchingProfile=false;dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);error(message(e));});}
       });
@@ -2199,7 +2201,10 @@ public class MainActivity extends Activity {
         // The build is what Settings is most often opened for, so it sits in the title.
         .setTitle(L10n.t("Settings") + " · " + BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")")
         .setItems(L10n.labels(pages), (d, w) -> {
-          if (w == 0) settingsPage("User", new String[] {"Switch user"}, i -> { if (api != null) chooseProfile(true); });
+          if (w == 0) settingsPage("User", new String[] {"Edit profile", "Switch user"}, i -> {
+            if (api == null) return;
+            if (i == 0) editProfile(api, ProfileUi.person(api), () -> {}); else chooseProfile(true);
+          });
           else if (w == 1) settingsPage("General", new String[] {"Follow system language", "Refresh library"}, i -> {
             if (i == 0) L10n.system(this); else load();
           });
