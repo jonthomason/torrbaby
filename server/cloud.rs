@@ -22,7 +22,9 @@ const BROWSER: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebK
 const DESKTOP: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch";
 /// Folder in the member's drive that holds files on their way to the library.
 const STAGING: &str = "Torrbaby";
-const CONNECTIONS: u64 = 8;
+/// Pieces fetched at once. The drive's own client keeps to a few; many long-running
+/// connections are what it throttles.
+const CONNECTIONS: u64 = 4;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct JobFile {
@@ -101,7 +103,9 @@ pub fn visible(name: &str) -> String {
 }
 /// Season and episode a file name states, if any: "S01E02", "第12集", "EP12", "12.mkv".
 pub fn episode(name: &str) -> (Option<u64>, Option<u64>) {
-    let name = &visible(name);
+    // A date in the name ("2026.07.02-先导片") is not an episode number.
+    static DATE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:19|20)\d{2}[.\-_/年]\d{1,2}[.\-_/月]\d{1,2}日?").expect("valid regex"));
+    let name = &DATE.replace_all(&visible(name), " ").into_owned();
     static SEASONED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)s(\d{1,2})[ ._-]?e(\d{1,3})").expect("valid regex"));
     static NAMED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:第\s*(\d{1,3})\s*[集话話期]|\bep?[ ._-]?(\d{1,3})\b)").expect("valid regex"));
     static NOISE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(\d{3,4}p|\d{2,3}fps|[48]k|(19|20)\d{2}|[hx]\.?26[45]|ddp?\d\.\d|aac\d\.\d|\d+bit)").expect("valid regex"));
@@ -279,6 +283,81 @@ pub fn preference(copy: &Value) -> impl Ord + use<> {
     let sound = match copy["audio"].as_str() { Some("stereo") => 0, Some(_) => 2, None => 1 };
     // Native rate before sharpness: an interpolated copy is never the one wanted.
     std::cmp::Reverse((copy["complete"] == true, copy["beyond"] != true, covered, copy["fps"].as_u64().is_none_or(|fps| fps < 49), picture, sound, copy["total_bytes"].as_u64().unwrap_or(0)))
+}
+/// Make an MP4's HEVC video playable on Apple devices: retag its sample entry from
+/// "hev1" to "hvc1". The two name the same video; "hev1" only allows the parameter sets
+/// to sit in the stream instead of the description, and Apple's players show nothing
+/// for it (the sound plays over black). The tag is changed, four bytes in place, only
+/// when the description does hold the VPS, SPS and PPS, so "hvc1" is true of the file.
+/// Returns how many tracks were retagged.
+pub fn retag_hev1(path: &Path) -> Result<usize> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    let mut file = std::fs::OpenOptions::new().read(true).write(true).open(path)?;
+    let length = file.metadata()?.len();
+    // The boxes directly inside a span: (kind, body start, end).
+    fn boxes(file: &mut std::fs::File, start: u64, end: u64) -> Result<Vec<([u8; 4], u64, u64)>> {
+        let (mut found, mut at) = (Vec::new(), start);
+        while at + 8 <= end && found.len() < 4096 {
+            let mut head = [0u8; 16];
+            file.seek(SeekFrom::Start(at))?;
+            file.read_exact(&mut head[..8])?;
+            let mut size = u32::from_be_bytes(head[..4].try_into()?) as u64;
+            let mut body = at + 8;
+            if size == 1 { file.read_exact(&mut head[8..])?; size = u64::from_be_bytes(head[8..].try_into()?); body = at + 16; }
+            else if size == 0 { size = end - at; }
+            if size < body - at || at + size > end { break; }
+            found.push((head[4..8].try_into()?, body, at + size));
+            at += size;
+        }
+        Ok(found)
+    }
+    let mut spans = vec![(0u64, length)];
+    for kind in [b"moov", b"trak", b"mdia", b"minf", b"stbl", b"stsd"] {
+        let mut next = Vec::new();
+        for (start, end) in spans { for (found, body, stop) in boxes(&mut file, start, end)? { if &found == kind { next.push((body, stop)); } } }
+        spans = next;
+    }
+    let mut retagged = 0;
+    for (body, stop) in spans {
+        // stsd: version and flags, entry count, then the entries.
+        for (kind, entry, end) in boxes(&mut file, body + 8, stop)? {
+            if ![*b"hev1", *b"dvhe", *b"hvc1"].contains(&kind) { continue; }
+            let mut sets = std::collections::BTreeSet::new();
+            // Dolby Vision that cannot be shown as plain HEVC (profile 5) must be named "dvh1".
+            let mut exclusive = false;
+            for (inner, config, config_end) in boxes(&mut file, entry + 78, end)? {
+                if config_end - config > 1 << 20 { continue; }
+                let mut record = vec![0u8; (config_end - config) as usize];
+                file.seek(SeekFrom::Start(config))?;
+                file.read_exact(&mut record)?;
+                if &inner == b"dvcC" || &inner == b"dvvC" { exclusive |= crate::media_format::dolby_exclusive(&record); }
+                if &inner != b"hvcC" || record.len() < 23 { continue; }
+                let mut at = 23;
+                for _ in 0..record[22] {
+                    if at + 3 > record.len() { break; }
+                    sets.insert(record[at] & 0x3f);
+                    let count = u16::from_be_bytes([record[at + 1], record[at + 2]]);
+                    at += 3;
+                    for _ in 0..count { if at + 2 > record.len() { break; } at += 2 + u16::from_be_bytes([record[at], record[at + 1]]) as usize; }
+                }
+            }
+            let complete = [32u8, 33, 34].iter().all(|kind| sets.contains(kind));
+            // Parameter sets in the description allow the out-of-band names; without them the entry stays as it is.
+            let wanted: [u8; 4] = if exclusive || &kind == b"dvhe" { *b"dvh1" } else { *b"hvc1" };
+            if kind != wanted && (complete || &kind == b"hvc1") {
+                file.seek(SeekFrom::Start(entry - 4))?;
+                file.write_all(&wanted)?;
+                retagged += 1;
+            }
+        }
+    }
+    if retagged > 0 { file.sync_all()?; }
+    Ok(retagged)
+}
+/// Whether a job holds several videos for the episode this one belongs to.
+fn in_parts_of(job: &Job, file: &JobFile) -> bool {
+    let number = |f: &JobFile| f.destination.file_name().and_then(|n| n.to_str()).map(|n| (episode(n), crate::scanner::part(n))).filter(|(e, _)| e.1.is_some());
+    number(file).is_some_and(|mine| job.files.iter().filter(|other| number(other) == Some(mine)).count() > 1)
 }
 /// Whether one copy of an episode is worth having over another, each given as its
 /// read tracks and its size. In order: a native frame rate beats an interpolated 50 or
@@ -637,6 +716,8 @@ impl Cloud {
         std::fs::read_dir(folder).into_iter().flatten().flatten().map(|entry| entry.path()).filter(|path| {
             let other = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             path.is_file() && VIDEO.is_match(other) && !other.starts_with('.') && { let (s, n) = episode(other); n == Some(number) && s.unwrap_or(1) == season.unwrap_or(1) }
+                // Parts of one episode are not copies of each other.
+                && crate::scanner::part(other) == crate::scanner::part(name)
         }).collect()
     }
     /// Whether a video on the drive should take the place of the library's copies of its
@@ -676,7 +757,36 @@ impl Cloud {
         let (season, Some(number)) = episode(name) else { return Vec::new() };
         let Some(assets) = s.db.lock().ok().and_then(|db| db.documents("assets").ok()) else { return Vec::new() };
         assets.into_iter().filter(|asset| asset["entity_id"] == entity && asset["role"] != "extra" && asset["episode"].as_u64() == Some(number)
-            && asset["season"].as_u64().unwrap_or(1) == season.unwrap_or(1) && asset["path"].as_str().is_some_and(|path| Path::new(path) != destination)).collect()
+            && asset["season"].as_u64().unwrap_or(1) == season.unwrap_or(1) && asset["path"].as_str().is_some_and(|path| Path::new(path) != destination)
+            && asset["path"].as_str().map(crate::scanner::part) == Some(crate::scanner::part(name))).collect()
+    }
+    /// Torrents that are trying to fetch episodes this job has delivered, found by name.
+    /// A torrent that has barely started has no files the library could map to an
+    /// episode, so the database does not know it; its name ("Pursuit of Jade S01E21 …")
+    /// does. Only unfinished torrents whose name gives the show and an explicit SxxEyy
+    /// are taken, and they are marked like any other bettered copy.
+    async fn supersede_named(&self, s: &Service, entity: Option<&str>, job: &Job) {
+        static NUMBERED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:^|[^a-z0-9])s(\d{1,2})[ ._-]?e(\d{1,3})(?:[^0-9]|$)").expect("valid regex"));
+        let Some(entity) = entity else { return };
+        let fold = |text: &str| text.chars().map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { ' ' }).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ");
+        let titles: Vec<String> = s.db.lock().ok().and_then(|db| db.documents("entities").ok()).into_iter().flatten().filter(|e| e["id"] == entity)
+            .flat_map(|e| [e["title"].as_str().map(fold), e["original_title"].as_str().map(fold)]).flatten().filter(|title| title.chars().count() >= 2).collect();
+        if titles.is_empty() { return; }
+        // The episodes this job now holds in the library.
+        let held: Vec<(u64, u64)> = self.jobs.lock().ok().and_then(|jobs| jobs.iter().find(|j| j.id == job.id).map(|j| j.files.iter()
+            .filter(|f| f.done && f.outcome.as_deref() != Some("discarded")).filter_map(|f| { let (season, number) = episode(f.destination.file_name()?.to_str()?); Some((season.unwrap_or(1), number?)) }).collect())).unwrap_or_default();
+        if held.is_empty() { return; }
+        let Ok(torrents) = crate::organizer::torrents(s).await else { return };
+        for torrent in &torrents {
+            if torrent["percent_done"].as_f64().unwrap_or(1.0) >= 1.0 { continue; }
+            let (Some(hash), Some(name)) = (torrent["hash_string"].as_str(), torrent["name"].as_str()) else { continue };
+            let Some(found) = NUMBERED.captures(name) else { continue };
+            let (Ok(season), Ok(number)) = (found[1].parse::<u64>(), found[2].parse::<u64>()) else { continue };
+            if !held.contains(&(season, number)) { continue; }
+            let named = fold(name);
+            if !titles.iter().any(|title| named.contains(title.as_str())) { continue; }
+            self.supersede(hash, "", false);
+        }
     }
     fn supersede(&self, hash: &str, path: &str, outclassed: bool) {
         let Ok(mut all) = self.superseded.lock() else { return };
@@ -694,8 +804,9 @@ impl Cloud {
     /// Remove, with their files, the torrents whose episodes all have better copies now,
     /// when that is harmless: the torrent has finished seeding; or it never finished
     /// downloading and either has barely started (under 5%) or promises no sharper a
-    /// picture than the copy that replaced it. One still seeding waits until it is done,
-    /// and one holding an episode with no better copy is left alone.
+    /// picture than the copy that replaced it; or it is going nowhere, with nobody
+    /// connected and no activity for an hour, or with nothing ever uploaded. One actively seeding waits until it is
+    /// done, and one holding an episode with no better copy is left alone.
     pub async fn reap(&self, s: &Service) {
         let waiting = self.superseded.lock().map(|all| all.clone()).unwrap_or_default();
         if waiting.is_empty() { return; }
@@ -713,7 +824,15 @@ impl Cloud {
                 .all(|asset| asset["path"].as_str().is_some_and(|path| entry.paths.iter().any(|known| known == path)));
             if !whole { continue; }
             let done = torrent["percent_done"].as_f64().unwrap_or(0.0);
-            let harmless = if done >= 1.0 { torrent["status"].as_u64() == Some(0) } else { done < 0.05 || entry.outclassed };
+            // Seeding that will never finish is not worth waiting for: nobody connected,
+            // nothing sent, and no activity for an hour. A torrent from the member's private
+            // site is the exception; there the seeding time is owed, so it is waited out.
+            let owed = torrent["labels"].as_array().is_some_and(|labels| labels.iter().any(|label| label == crate::torrent_search::PRIVATE_LABEL));
+            let quiet = torrent["peers_connected"].as_u64().unwrap_or(0) == 0 && torrent["rate_upload"].as_u64().unwrap_or(0) == 0
+                && torrent["activity_date"].as_f64().is_some_and(|last| now() - last > 3600.0);
+            // Nothing ever uploaded is the other sign: nobody has wanted it.
+            let unwanted = torrent["uploaded_ever"].as_u64().unwrap_or(0) == 0;
+            let harmless = if done >= 1.0 { torrent["status"].as_u64() == Some(0) || ((quiet || unwanted) && !owed) } else { done < 0.05 || entry.outclassed || (quiet && !owed) };
             if !harmless { continue; }
             match crate::organizer::action(s, hash, "remove", &json!({"delete_data": true, "confirm_hash": hash})).await {
                 Ok(_) => { tracing::info!(hash, name = torrent["name"].as_str().unwrap_or(""), "Removed a torrent whose episodes all have better copies"); settled.push(hash.clone()); }
@@ -819,13 +938,28 @@ impl Cloud {
         let drives = crate::drives::Drives::of(&config);
         let prefer = if film { None } else { crate::drives::show_titled(&entities, &assets, &title).and_then(|show| drives.show_drive(&assets, &show)) };
         let folder = drives.place(prefer.as_deref(), bytes)?.library(!film).join(&title);
+        // Several videos for one episode are its parts and extras (a variety show's
+        // "第1期(一)", "第1期纯享"…), not copies of it: each keeps its own label in its name,
+        // or they would all be filed as the one episode and replace each other.
+        let mut shared: HashMap<(u64, u64), usize> = HashMap::new();
+        for (path, _) in &chosen { let (stated, number) = episode(path); if let Some(number) = number { *shared.entry((stated.unwrap_or(season), number)).or_default() += 1; } }
         let files = chosen.into_iter().map(|(path, size)| {
             let extension = path.rsplit('.').next().unwrap_or("mkv").to_ascii_lowercase();
             let (stated, number) = episode(&path);
+            let leaf = visible(path.rsplit('/').next().unwrap_or(&path));
+            let stem = clean(leaf.rsplit_once('.').map_or(leaf.as_str(), |(stem, _)| stem));
+            // A variety show's part is one episode and one part ("S03E05 - Part 1"); its bonus
+            // videos keep their own label without a number, and the library lists them as extras.
+            let part = (!film).then(|| crate::scanner::part_file_name(&title, stated.unwrap_or(season), &stem, &extension)).flatten();
+            let bonus = !film && part.is_none() && crate::scanner::variety_labelled(&stem);
             let name = match number {
+                _ if part.is_some() => part.unwrap_or_default(),
+                _ if bonus => format!("{title} - {stem}.{extension}"),
+                Some(number) if !film && shared.get(&(stated.unwrap_or(season), number)).copied().unwrap_or(0) > 1 =>
+                    format!("{title} - S{:02}E{number:02} - {stem}.{extension}", stated.unwrap_or(season)),
                 Some(number) if !film => format!("{title} - S{:02}E{number:02}.{extension}", stated.unwrap_or(season)),
                 _ if film => format!("{title}.{extension}"),
-                _ => clean(path.rsplit('/').next().unwrap_or(&path)),
+                _ => format!("{title} - {stem}.{extension}"),
             };
             JobFile { destination: folder.join(name), path, size, done: false, outcome: None }
         }).collect();
@@ -837,6 +971,19 @@ impl Cloud {
                 && files.iter().all(|wanted| job.files.iter().any(|held| held.path == wanted.path)))
             .map(|job| job.id.clone()));
         if let Some(existing) = covered { return Ok(json!({"job_id": existing, "already_queued": true, "total": files.len()})); }
+        // More videos of a share whose download for the same title has not started yet join
+        // that download: one show is one row, not two with the same name.
+        {
+            let mut jobs = self.jobs.lock().map_err(|_| anyhow::anyhow!("Cloud downloads unavailable"))?;
+            if let Some(waiting) = jobs.iter_mut().find(|job| job.state == "queued" && job.title == title && job.files.iter().all(|f| !f.done)
+                && SHARE.captures(&job.url).map(|c| c[1].to_owned()) == SHARE.captures(url).map(|c| c[1].to_owned())) {
+                let before = waiting.files.len();
+                for file in &files { if !waiting.files.iter().any(|held| held.path == file.path) { waiting.files.push(file.clone()); } }
+                let (id, added) = (waiting.id.clone(), waiting.files.len() - before);
+                self.persist(&jobs);
+                return Ok(json!({"job_id": id, "merged": true, "added": added, "total": files.len()}));
+            }
+        }
         // Videos already in place, byte for byte the same length: there is nothing to fetch.
         // When that is all of them nothing is queued, and the member is told instead.
         let total = files.len();
@@ -863,6 +1010,16 @@ impl Cloud {
             }
         }
         json!({"removed": removed, "cancelling": cancelling})
+    }
+    /// Put right the MP4s that earlier downloads left tagged "hev1", which Apple devices
+    /// show as black. Run by the server itself over every video its downloads delivered,
+    /// so files from before the downloader did this are covered without anyone's help.
+    /// Checking a file reads only its index; one already right is left untouched.
+    async fn retag_delivered(&self) -> usize {
+        let delivered: Vec<PathBuf> = self.jobs.lock().map(|jobs| jobs.iter().flat_map(|job| job.files.iter().filter(|f| f.done).map(|f| f.destination.clone())).collect()).unwrap_or_default();
+        tokio::task::spawn_blocking(move || delivered.iter()
+            .filter(|path| path.extension().and_then(|e| e.to_str()).is_some_and(|e| ["mp4", "mov", "m4v"].contains(&e.to_ascii_lowercase().as_str())) && path.is_file())
+            .filter(|path| retag_hev1(path).is_ok_and(|count| count > 0)).count()).await.unwrap_or(0)
     }
     /// Clear the staging folder on the member's drive of anything that belongs to no
     /// download still in hand: a track read cut short by a restart, a job long gone.
@@ -903,78 +1060,96 @@ impl Cloud {
         let made = self.call("/file", &[], Some(json!({"pdir_fid": parent, "file_name": name, "dir_path": "", "dir_init_lock": false})), Some(cookie), false).await?;
         made["data"]["fid"].as_str().map(str::to_owned).context("Quark did not create the folder")
     }
-    /// Fetch one file over several connections, each writing its own stretch straight
-    /// into the file at its place: nothing is stitched together afterwards. The file is
-    /// kept under a working name until it is whole. How far each stretch has come is
-    /// noted beside it every few seconds, after the data is safely on disk, so a restart
-    /// or a retry carries on from there.
+    /// Fetch one file the way the drive's own desktop client does: in pieces of the size
+    /// the drive names (about 20 MB), a few at a time, each written straight into the
+    /// file at its place. Asking for long open-ended stretches instead is throttled by
+    /// the drive to a crawl after a while. The file is kept under a working name until it
+    /// is whole; which pieces are had is noted beside it every few seconds, after the
+    /// data is safely on disk, so a restart or a retry carries on from there.
     async fn fetch(&self, cookie: &str, fid: &str, size: u64, destination: &Path) -> Result<()> {
         use tokio::io::{AsyncSeekExt, AsyncWriteExt};
         let link = self.call("/file/download", &[], Some(json!({"fids": [fid]})), Some(cookie), true).await?;
         let url = link["data"][0]["download_url"].as_str().context("Quark gave no download link")?.to_owned();
+        let piece = link["data"][0]["range_size"].as_u64().filter(|n| (1 << 20..=1 << 30).contains(n)).unwrap_or(20_485_760);
         let parent = destination.parent().context("Invalid destination")?;
         crate::drives::create_media_folder(parent)?;
-        // Pieces left by the earlier way of downloading are of no use to this one.
-        for i in 0..CONNECTIONS { let _ = tokio::fs::remove_file(format!("{}.part{i:02}", destination.display())).await; }
+        // Pieces left by the earlier ways of downloading are of no use to this one.
+        for i in 0..8u64 { let _ = tokio::fs::remove_file(format!("{}.part{i:02}", destination.display())).await; }
         let _ = tokio::fs::remove_file(format!("{}.joining", destination.display())).await;
         let (working, notes) = (PathBuf::from(format!("{}.partial", destination.display())), PathBuf::from(format!("{}.progress", destination.display())));
-        let step = size.div_ceil(CONNECTIONS).max(1);
-        let ranges: Vec<(usize, u64, u64)> = (0..CONNECTIONS).map(|i| (i as usize, i * step, ((i + 1) * step).min(size))).filter(|(_, start, end)| start < end).collect();
-        // What an earlier attempt noted, if it was for a file of this size and the working file is still there.
-        let known: Vec<u64> = match (tokio::fs::read(&notes).await.ok().and_then(|raw| serde_json::from_slice::<Value>(&raw).ok()), tokio::fs::metadata(&working).await) {
-            (Some(noted), Ok(file)) if noted["size"].as_u64() == Some(size) && file.len() == size =>
-                ranges.iter().map(|&(i, start, end)| noted["done"][i].as_u64().unwrap_or(0).min(end - start)).collect(),
-            _ => vec![0; ranges.len()],
+        let count = size.div_ceil(piece).max(1);
+        let span = |index: u64| (index * piece, ((index + 1) * piece).min(size));
+        // What an earlier attempt noted, if it was for this file cut the same way and the working file is still there.
+        let had: std::collections::BTreeSet<u64> = match (tokio::fs::read(&notes).await.ok().and_then(|raw| serde_json::from_slice::<Value>(&raw).ok()), tokio::fs::metadata(&working).await) {
+            (Some(noted), Ok(file)) if noted["size"].as_u64() == Some(size) && noted["piece"].as_u64() == Some(piece) && file.len() == size =>
+                noted["pieces"].as_array().into_iter().flatten().filter_map(Value::as_u64).filter(|index| *index < count).collect(),
+            _ => Default::default(),
         };
-        if known.iter().all(|done| *done == 0) {
+        if had.is_empty() {
             let file = tokio::fs::File::create(&working).await?;
             file.set_len(size).await?;
         }
-        let done: Arc<Vec<AtomicU64>> = Arc::new(known.iter().map(|have| AtomicU64::new(*have)).collect());
-        let total = || done.iter().map(|d| d.load(Ordering::Relaxed)).sum::<u64>();
-        self.progress.store(total(), Ordering::Relaxed);
-        let pieces = ranges.iter().map(|&(i, start, end)| {
-            let (url, working, done) = (url.clone(), working.clone(), done.clone());
+        let wanted: Vec<u64> = (0..count).filter(|index| !had.contains(index)).collect();
+        let done = Arc::new(Mutex::new(had));
+        let bytes = |pieces: &std::collections::BTreeSet<u64>| pieces.iter().map(|index| { let (start, end) = span(*index); end - start }).sum::<u64>();
+        self.progress.store(done.lock().map(|d| bytes(&d)).unwrap_or(0), Ordering::Relaxed);
+        let next = AtomicU64::new(0);
+        let workers = (0..CONNECTIONS.min(wanted.len() as u64)).map(|_| {
+            let (url, working, done, wanted, next) = (url.clone(), working.clone(), done.clone(), &wanted, &next);
             async move {
-                for _attempt in 0..6u32 {
-                    let have = done[i].load(Ordering::Relaxed);
-                    if have == end - start { return Ok(()); }
-                    let sent = self.http.get(&url).header("User-Agent", DESKTOP).header("Referer", "https://pan.quark.cn/").header("Cookie", cookie)
-                        .header("Range", format!("bytes={}-{}", start + have, end - 1)).send().await;
-                    let Ok(mut response) = sent else { tokio::time::sleep(Duration::from_secs(3)).await; continue };
-                    if !response.status().is_success() { tokio::time::sleep(Duration::from_secs(3)).await; continue; }
-                    let mut file = tokio::fs::OpenOptions::new().write(true).open(&working).await?;
-                    file.seek(std::io::SeekFrom::Start(start + have)).await?;
-                    let mut room = end - start - have;
-                    while let Ok(Some(chunk)) = response.chunk().await {
-                        let take = (chunk.len() as u64).min(room) as usize;
-                        file.write_all(&chunk[..take]).await?;
-                        room -= take as u64;
-                        done[i].fetch_add(take as u64, Ordering::Relaxed);
-                        self.progress.fetch_add(take as u64, Ordering::Relaxed);
-                        if room == 0 { break; }
+                let mut file = tokio::fs::OpenOptions::new().write(true).open(&working).await?;
+                while let Some(index) = wanted.get(next.fetch_add(1, Ordering::Relaxed) as usize).copied() {
+                    let (start, end) = span(index);
+                    let mut whole = false;
+                    for _attempt in 0..6u32 {
+                        let sent = self.http.get(&url).header("User-Agent", DESKTOP).header("Referer", "https://pan.quark.cn/").header("Cookie", cookie)
+                            .header("Range", format!("bytes={start}-{}", end - 1)).send().await;
+                        let Ok(mut response) = sent else { tokio::time::sleep(Duration::from_secs(3)).await; continue };
+                        if !response.status().is_success() { tokio::time::sleep(Duration::from_secs(3)).await; continue; }
+                        file.seek(std::io::SeekFrom::Start(start)).await?;
+                        let mut got = 0u64;
+                        while let Ok(Some(chunk)) = response.chunk().await {
+                            let take = (chunk.len() as u64).min(end - start - got) as usize;
+                            file.write_all(&chunk[..take]).await?;
+                            got += take as u64;
+                            self.progress.fetch_add(take as u64, Ordering::Relaxed);
+                            if got == end - start { break; }
+                        }
+                        file.flush().await?;
+                        if got == end - start { whole = true; break; }
+                        // A piece cut short is fetched again from its start.
+                        self.progress.fetch_sub(got, Ordering::Relaxed);
+                        tokio::time::sleep(Duration::from_secs(2)).await;
                     }
-                    file.flush().await?;
+                    ensure!(whole, "The download kept stopping");
+                    if let Ok(mut done) = done.lock() { done.insert(index); }
                 }
-                ensure!(done[i].load(Ordering::Relaxed) == end - start, "The download kept stopping");
                 Ok(())
             }
         });
-        // Beside the connections, one note-taker: every several seconds it has the file
-        // put safely on disk, then records how far each stretch had come before that.
-        // One sync for the whole file, not one per connection, so the disk is not kept busy syncing.
+        // Beside the connections, one note-taker: every several seconds it lists the pieces
+        // had, has the file put safely on disk, and only then records that list.
         let noting = async {
             let Ok(file) = tokio::fs::OpenOptions::new().write(true).open(&working).await else { return std::future::pending::<()>().await };
             loop {
                 tokio::time::sleep(Duration::from_secs(10)).await;
-                let reached: Vec<u64> = done.iter().map(|d| d.load(Ordering::Relaxed)).collect();
-                if file.sync_data().await.is_ok() { let _ = tokio::fs::write(&notes, serde_json::to_vec(&json!({"size": size, "done": reached})).unwrap_or_default()).await; }
+                let reached: Vec<u64> = done.lock().map(|d| d.iter().copied().collect()).unwrap_or_default();
+                if file.sync_data().await.is_ok() { let _ = tokio::fs::write(&notes, serde_json::to_vec(&json!({"size": size, "piece": piece, "pieces": reached})).unwrap_or_default()).await; }
             }
         };
-        tokio::select! { fetched = futures_util::future::try_join_all(pieces) => { fetched?; }, _ = noting => {} }
-        ensure!(tokio::fs::metadata(&working).await?.len() == size && total() == size, "The downloaded file is the wrong size");
+        tokio::select! { fetched = futures_util::future::try_join_all(workers) => { fetched?; }, _ = noting => {} }
+        ensure!(tokio::fs::metadata(&working).await?.len() == size && done.lock().is_ok_and(|d| d.len() as u64 == count), "The downloaded file is incomplete");
         tokio::fs::rename(&working, destination).await?;
         let _ = tokio::fs::remove_file(&notes).await;
+        // An MP4 whose video is tagged "hev1" is black on Apple devices; the file is ours, so it is put right.
+        if destination.extension().and_then(|e| e.to_str()).is_some_and(|e| ["mp4", "mov", "m4v"].contains(&e.to_ascii_lowercase().as_str())) {
+            let target = destination.to_owned();
+            match tokio::task::spawn_blocking(move || retag_hev1(&target)).await {
+                Ok(Ok(count)) if count > 0 => tracing::info!(file = %destination.display(), "Retagged HEVC video from hev1 to hvc1 for Apple players"),
+                Ok(Err(error)) => tracing::warn!(file = %destination.display(), %error, "Could not check an MP4's video tag"),
+                _ => {}
+            }
+        }
         Ok(())
     }
     /// Whether a waiting download has been put ahead of this one ("Download next").
@@ -1015,6 +1190,9 @@ impl Cloud {
         self.update(&job.id, |j| j.state = "downloading".into());
         self.progress.store(0, Ordering::Relaxed);
         let entity = self.entity(s, job).await;
+        // Episodes delivered before a pause or restart may have torrents the database never knew.
+        self.supersede_named(s, entity.as_deref(), job).await;
+        self.reap(s).await;
         for file in &pending {
             if self.overtaken(&job.id) { return Ok(false); }
             let name = file.path.rsplit('/').next().unwrap_or(&file.path);
@@ -1025,8 +1203,12 @@ impl Cloud {
             // every copy mapped to this episode lives, in a torrent or loose; a newcomer is
             // fetched only when it beats all that play, and then the lesser copies go. This
             // is how a download fills a show's gaps and raises its quality without duplicates.
-            let mapped = if present { Vec::new() } else { Self::mapped(s, entity.as_deref(), &file.destination) };
-            let exists = |path: &PathBuf| path.is_file() && *path != file.destination;
+            let mapped = if present || in_parts_of(job, file) { Vec::new() } else { Self::mapped(s, entity.as_deref(), &file.destination) };
+            // The job's own videos are parts or siblings, never rivals of one another; and an
+            // episode that comes in parts is not weighed against a whole copy, whose size says nothing about it.
+            let key = |f: &JobFile| f.destination.file_name().and_then(|n| n.to_str()).map(|n| (episode(n), crate::scanner::part(n)));
+            let in_parts = key(file).is_some_and(|mine| mine.0.1.is_some() && job.files.iter().filter(|other| key(other) == Some(mine)).count() > 1);
+            let exists = |path: &PathBuf| path.is_file() && *path != file.destination && !in_parts && !job.files.iter().any(|other| other.destination == *path);
             let mut rivals: Vec<PathBuf> = if present { Vec::new() } else { Self::rivals(&file.destination) };
             rivals.extend(mapped.iter().filter(|asset| asset["available"] == true && asset["complete"] != false).filter_map(|asset| asset["path"].as_str().map(PathBuf::from)));
             rivals.retain(exists);
@@ -1059,6 +1241,7 @@ impl Cloud {
                     tracing::info!(kept = %file.destination.display(), removed = %rival.display(), "A better copy of an episode replaced a lesser one");
                     let _ = tokio::fs::remove_file(rival).await;
                 }
+                self.supersede_named(s, entity.as_deref(), job).await;
                 self.reap(s).await;
             }
             let present = present || outcome == "discarded";
@@ -1088,6 +1271,9 @@ impl Cloud {
     async fn downloads(&self, s: &Service) {
         // The first tidy comes a minute after starting, once any interrupted job has been taken up again.
         let mut swept = Instant::now() - Duration::from_secs(3540);
+        // Videos delivered before the downloader retagged them itself are put right at start.
+        let fixed = self.retag_delivered().await;
+        if fixed > 0 { tracing::info!(fixed, "Retagged earlier downloads from hev1 to hvc1"); self.rescan.notify_one(); }
         loop {
             let next = self.jobs.lock().ok().and_then(|jobs| jobs.iter().find(|j| j.state == "queued").cloned());
             let Some(job) = next else {
@@ -1172,6 +1358,10 @@ mod tests {
         assert_eq!(episode("S\u{200b}1\u{200c}|2160p|/\u{200c}/3\u{200b}\u{200b}\u{200c}\u{200d}8\u{200c}\u{200d}.mkv"), (None, Some(38)));
         assert_eq!(episode("0\u{200b}\u{feff}1.mkv"), (None, Some(1)));
         assert_eq!(visible("逐\u{200d}玉"), "逐玉");
+        // Dates are not episodes; a variety show's parts all belong to their episode.
+        assert_eq!(episode("X/2026.07.02-先导片.mp4"), (None, None));
+        assert_eq!(episode("X/2026.07.04-第1期(五).mp4"), (None, Some(1)));
+        assert_eq!(episode("X/2026.08.21-第8期(一)-4K.高码率.mp4"), (None, Some(8)));
         assert_eq!(episode("28.4k.mp4"), (None, Some(28)));
         assert_eq!(episode("01 4K.mp4"), (None, Some(1)));
         assert_eq!(episode("12.5.1.mkv"), (None, Some(12)));
@@ -1218,6 +1408,56 @@ mod tests {
         assert!(better((&uhd, 2_000), (&copy(3840, 25.0, "Dolby Atmos", 6), 1_000)));
         assert!(better((&copy(3840, 25.0, "Dolby Atmos", 6), 1_000), (&uhd, 1_100)));
         assert!(!better((&uhd, 1_000), (&uhd, 1_000)));
+    }
+    #[test]
+    fn hev1_video_is_retagged_only_when_its_description_holds_the_parameter_sets() -> Result<()> {
+        fn atom(kind: &[u8; 4], body: &[u8]) -> Vec<u8> { let mut out = ((body.len() + 8) as u32).to_be_bytes().to_vec(); out.extend(kind); out.extend(body); out }
+        let dolby = |name: &[u8; 4], tag: &[u8; 4], profile: u64, compatible: u64| {
+            let mut config = vec![0u8; 22];
+            config.push(3);
+            for kind in [32u8, 33, 34] { config.extend([kind, 0, 1, 0, 2, 0xAA, 0xBB]); }
+            let mut entry = vec![0u8; 78];
+            entry.extend(atom(b"hvcC", &config));
+            entry.extend(atom(name, &crate::media_format::dolby_record(1, 0, profile, 6, true, false, true, compatible).expect("a record").1));
+            let mut stsd = vec![0, 0, 0, 0, 0, 0, 0, 1];
+            stsd.extend(atom(tag, &entry));
+            atom(b"moov", &atom(b"trak", &atom(b"mdia", &atom(b"minf", &atom(b"stbl", &atom(b"stsd", &stsd))))))
+        };
+        // Dolby Vision profile 5 must be named dvh1, whatever it arrived as; profile 8 stays plain HEVC.
+        let vision = std::env::temp_dir().join(format!("torrbaby-retag-dv-{}.mp4", uuid::Uuid::new_v4()));
+        for (tag, profile, compatible, becomes) in [(b"hev1", 5, 0, &b"dvh1"[..]), (b"hvc1", 5, 0, b"dvh1"), (b"dvhe", 5, 0, b"dvh1"), (b"hev1", 8, 1, b"hvc1"), (b"hvc1", 8, 1, b"hvc1")] {
+            std::fs::write(&vision, dolby(if profile > 7 { b"dvvC" } else { b"dvcC" }, tag, profile, compatible))?;
+            let _ = retag_hev1(&vision)?;
+            let after = std::fs::read(&vision)?;
+            assert_eq!(&after[60..64], becomes, "{} profile {profile}", String::from_utf8_lossy(tag));
+        }
+        std::fs::remove_file(&vision)?;
+        let build = |sets: &[u8]| {
+            let mut config = vec![0u8; 22];
+            config.push(sets.len() as u8);
+            for kind in sets { config.extend([*kind, 0, 1, 0, 2, 0xAA, 0xBB]); }
+            let mut entry = vec![0u8; 78];
+            entry.extend(atom(b"hvcC", &config));
+            let mut stsd = vec![0, 0, 0, 0, 0, 0, 0, 1];
+            stsd.extend(atom(b"hev1", &entry));
+            let mut file = atom(b"ftyp", b"isom");
+            file.extend(atom(b"moov", &atom(b"trak", &atom(b"mdia", &atom(b"minf", &atom(b"stbl", &atom(b"stsd", &stsd)))))));
+            file.extend(atom(b"mdat", &[1, 2, 3, 4]));
+            file
+        };
+        let path = std::env::temp_dir().join(format!("torrbaby-retag-{}.mp4", uuid::Uuid::new_v4()));
+        std::fs::write(&path, build(&[32, 33, 34]))?;
+        assert_eq!(retag_hev1(&path)?, 1);
+        let fixed = std::fs::read(&path)?;
+        assert!(fixed.windows(4).any(|w| w == b"hvc1") && !fixed.windows(4).any(|w| w == b"hev1"));
+        assert_eq!(fixed.len(), build(&[32, 33, 34]).len());
+        assert_eq!(retag_hev1(&path)?, 0);
+        // Without the sets in the description the tag stays as it is.
+        std::fs::write(&path, build(&[33, 34]))?;
+        assert_eq!(retag_hev1(&path)?, 0);
+        assert!(std::fs::read(&path)?.windows(4).any(|w| w == b"hev1"));
+        std::fs::remove_file(&path)?;
+        Ok(())
     }
     #[test]
     fn seasons_are_read_from_titles() {

@@ -150,6 +150,9 @@ fn random_access(kinds: &[u8], decode_pts: &[u64], hevc: bool) -> RandomAccess {
 struct VisualRewrite {
     boxes: Vec<u8>,
     access: RandomAccess,
+    /// The sample entry's name when it must differ from the codec's own: "dvh1" for
+    /// Dolby Vision that cannot be shown as plain HEVC.
+    entry: Option<[u8; 4]>,
 }
 
 fn sample_table(kind: &[u8; 4], numbers: &[u32]) -> Result<Vec<u8>> {
@@ -359,7 +362,8 @@ fn remux_pass(input: &Path, output: &Path, max_bytes: u64, mapping: Mapping,
         source.metadata()?.is_file(),
         "Expected a regular input file"
     );
-    let mut mkv = MatroskaFile::open(BufReader::new(source))?;
+    drop(source);
+    let mut mkv = MatroskaFile::open(BufReader::new(crate::matroska::Bounded::open(input)?))?;
     let scale = mkv.info().timestamp_scale().get();
     let mut tracks = BTreeMap::new();
     // Audio formats this passthrough cannot carry (for example DTS, which
@@ -575,7 +579,7 @@ fn remux_pass(input: &Path, output: &Path, max_bytes: u64, mapping: Mapping,
                 }
             }
         }
-        mkv = MatroskaFile::open(BufReader::new(File::open(input)?))?;
+        mkv = MatroskaFile::open(BufReader::new(crate::matroska::Bounded::open(input)?))?;
     }
     let selected_audio = tracks
         .values()
@@ -755,12 +759,20 @@ fn remux_pass(input: &Path, output: &Path, max_bytes: u64, mapping: Mapping,
             .collect();
         let partial_sync_samples: usize = access.values().map(|a| a.partial.len()).sum();
         let demoted_keyframes: usize = access.values().map(|a| a.demoted).sum();
+        let dolby = crate::media_format::dolby_vision(input);
         let visual: BTreeMap<u32, VisualRewrite> = tracks
             .values()
             .filter(|t| t.video)
             .map(|t| {
                 let id = t.stream.index + 1;
-                (id, VisualRewrite { boxes: t.visual_boxes.clone(), access: access.remove(&id).unwrap_or_default() })
+                // Dolby Vision is declared in the sample description, or an Apple player
+                // decodes it as ordinary HEVC and shows profile 5 in the wrong colours.
+                let mut boxes = t.visual_boxes.clone();
+                let mut entry = None;
+                if let Some((name, record, exclusive)) = &dolby {
+                    if let Ok(atom) = crate::video_metadata::atom(name, record) { boxes.extend(atom); if *exclusive { entry = Some(*b"dvh1"); } }
+                }
+                (id, VisualRewrite { boxes, access: access.remove(&id).unwrap_or_default(), entry })
             })
             .collect();
         let labels = tracks
@@ -1001,7 +1013,8 @@ fn rewrite_visual_container(data: &[u8], visual: &VisualRewrite, depth: usize) -
             }
             entry.extend(extra);
             let mut replacement = body[..8].to_vec();
-            replacement.extend(crate::video_metadata::atom(&codec, &entry)?);
+            let named = if &codec == b"hvc1" { visual.entry.unwrap_or(codec) } else { codec };
+            replacement.extend(crate::video_metadata::atom(&named, &entry)?);
             replacement
         } else {
             body.to_vec()

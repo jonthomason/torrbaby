@@ -26,7 +26,7 @@ let retryOffsets = [0.0, -0.4, 0.4, -0.8]
 // - After the warm-up a recognition failure ends the job without retrying. The
 //   server requeues jobs whose error contains textModelsChanged; a new process
 //   then warms up under the lock and finds the program the last compile left.
-// Keep this block identical in SubtitleOCR.swift.
+// Keep this block identical in SubtitleOCR.swift and BurnedSubtitles.swift.
 let textModelsChanged = "Text recognition models changed; retry later"
 func textWarmUpImage() -> CGImage? {
     let width = 960, height = 120

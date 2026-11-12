@@ -524,6 +524,14 @@ impl Metadata {
         Ok(json!({"provider": "TMDB", "provider_id": id.to_string(), "title": detail["name"], "original_title": detail["original_name"],
             "year": detail["first_air_date"].as_str().and_then(|date| date.get(..4)), "status": detail["status"], "seasons": seasons}))
     }
+    /// The English title of a series known by this title at home, if exactly one is. Answers are cached.
+    pub async fn series_english_title(&self, name: &str) -> Option<String> {
+        let fold = |text: &str| text.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect::<String>();
+        let wanted = fold(name);
+        if wanted.is_empty() { return None; }
+        let data = self.request("search/tv", &[("query", name), ("language", "en-US"), ("include_adult", "false")]).await.ok()?;
+        array(&data["results"]).iter().find(|hit| hit["original_name"].as_str().is_some_and(|t| fold(t) == wanted)).and_then(|hit| hit["name"].as_str()).map(str::to_owned)
+    }
     pub async fn cast(&self, entity: &Value) -> Result<Value> {
         let kind=entity["kind"].as_str().context("Missing media kind")?;
         anyhow::ensure!(["movie","tv"].contains(&kind), "Invalid media kind");

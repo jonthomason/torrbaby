@@ -43,6 +43,24 @@ final class Ui {
     v.setFocusableInTouchMode(true);
   }
 
+  /** A bar that reads as a panel when idle and turns white under the remote, with its text and its children's text following. */
+  static void focusPanel(View v) {
+    Context c = v.getContext();
+    StateListDrawable s = new StateListDrawable();
+    s.addState(new int[] {android.R.attr.state_focused}, shape(Color.WHITE, Color.WHITE, c));
+    s.addState(new int[] {android.R.attr.state_pressed}, shape(Color.WHITE, Color.WHITE, c));
+    s.addState(new int[] {}, shape(PANEL, 0, c));
+    v.setBackground(s);
+    v.setFocusable(true);
+    v.setFocusableInTouchMode(true);
+    v.setOnFocusChangeListener((view, focused) -> tint(view, focused ? Color.BLACK : Color.WHITE));
+    tint(v, Color.WHITE);
+  }
+  private static void tint(View v, int color) {
+    if (v instanceof TextView && v.getTag() == null) ((TextView) v).setTextColor(color);
+    if (v instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) v).getChildCount(); i++) tint(((ViewGroup) v).getChildAt(i), color);
+  }
+
   static void primary(Button b) {
     focus(b);
   }

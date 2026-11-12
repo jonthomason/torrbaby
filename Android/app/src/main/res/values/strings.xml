@@ -19,6 +19,7 @@
     <string name="ui_712d2e5c0047" formatted="false">%d videos</string>
     <string name="ui_660a76df86fd" formatted="false">%dh %dm left</string>
     <string name="ui_659748ef61cf" formatted="false">%dm left</string>
+    <string name="ui_9b722d3ba900" formatted="false">%s free of %s</string>
     <string name="ui_c428b17e2512" formatted="false">1 DOWNLOAD</string>
     <string name="ui_54fc19e5c9f4" formatted="false">1 episode</string>
     <string name="ui_8256cd5880d0" formatted="false">1 seed</string>
@@ -54,6 +55,7 @@
     <string name="ui_f9b608af67f4" formatted="false">Added to Downloads</string>
     <string name="ui_a98648e9368b" formatted="false">Added to Transmission</string>
     <string name="ui_3d3eaa50eab2" formatted="false">Added to downloads</string>
+    <string name="ui_ac18c3c9f5d2" formatted="false">Added to the download already waiting for this show.</string>
     <string name="ui_802e94122566" formatted="false">Adding download</string>
     <string name="ui_9295ef6a9cf8" formatted="false">Adding download…</string>
     <string name="ui_ffb2e628b0e9" formatted="false">Adding…</string>
@@ -101,6 +103,8 @@
     <string name="ui_77dfd2135f4d" formatted="false">Cancel</string>
     <string name="ui_67bb11d08df2" formatted="false">Cancel download</string>
     <string name="ui_87f8cd8360cc" formatted="false">Cancel trial</string>
+    <string name="ui_24f5f64bb24c" formatted="false">Can’t reach your library right now. Try again in a moment.</string>
+    <string name="ui_fe5cb199d204" formatted="false">Can’t reach your server</string>
     <string name="ui_60745aef336b" formatted="false">Cast</string>
     <string name="ui_b4e2e1ffb3ed" formatted="false">Cellular</string>
     <string name="ui_6b9dfc21816d" formatted="false">Cellular downloads allowed until</string>
@@ -111,6 +115,7 @@
     <string name="ui_eba399ce4b7b" formatted="false">Check access to your Application Support folder and try again.</string>
     <string name="ui_e185048ce3c0" formatted="false">Check again</string>
     <string name="ui_2ce5dd0d6f18" formatted="false">Check now</string>
+    <string name="ui_b4d790f692fb" formatted="false">Check that the server is on and that this device is on the same network.</string>
     <string name="ui_ffe5184940bc" formatted="false">Check the server address and network connection.</string>
     <string name="ui_8e6b214072c4" formatted="false">Check the year and episodes before applying.</string>
     <string name="ui_07369df4cdcc" formatted="false">Checking files…</string>
@@ -265,6 +270,7 @@
     <string name="ui_ec4a7319deb9" formatted="false">Ep %d</string>
     <string name="ui_da66b520661a" formatted="false">Ep %d–%d</string>
     <string name="ui_8669aa56ebc3" formatted="false">Episode</string>
+    <string name="ui_ff8b7f3b6044" formatted="false">Episode %d</string>
     <string name="ui_4d9e959a49a6" formatted="false">Episode order</string>
     <string name="ui_49d641ba8893" formatted="false">Episodes</string>
     <string name="ui_1300ab995b0b" formatted="false">Episodes to keep per show</string>
@@ -344,6 +350,7 @@
     <string name="ui_89b86ab0e66f" formatted="false">Language</string>
     <string name="ui_db07be184479" formatted="false">Languages</string>
     <string name="ui_4ece8db0cba2" formatted="false">Languages unavailable</string>
+    <string name="ui_b288f8c8e974" formatted="false">Last checked %s</string>
     <string name="ui_88a68e0e00b7" formatted="false">Leave Torrbaby?</string>
     <string name="ui_b8100f5ba8bd" formatted="false">Library</string>
     <string name="ui_cbfda9ea6b27" formatted="false">Library &amp; Organizing</string>
@@ -414,6 +421,7 @@
     <string name="ui_96df46930d75" formatted="false">New episodes go to the drive that already has the show. Everything else goes to the drive with the most free space.</string>
     <string name="ui_9e627c7b1aec" formatted="false">New name</string>
     <string name="ui_834ae0b1f228" formatted="false">Next Episode</string>
+    <string name="ui_35da6a009052" formatted="false">Next check: %s</string>
     <string name="ui_882f1a46548e" formatted="false">Next episode</string>
     <string name="ui_a3047eafa5d4" formatted="false">Next episode…</string>
     <string name="ui_a66974cfe156" formatted="false">No available next episode</string>
@@ -800,6 +808,7 @@
     <string name="ui_567bfc4dad37" formatted="false">Up next</string>
     <string name="ui_82fb1d5144a8" formatted="false">Up to date</string>
     <string name="ui_1b0fb105245e" formatted="false">Update download</string>
+    <string name="ui_f2f8570ddd7b" formatted="false">Updated</string>
     <string name="ui_fcb0f4dbd866" formatted="false">Updated subtitles are available for this download.</string>
     <string name="ui_3ab0d73100de" formatted="false">Updating…</string>
     <string name="ui_8bdf057f91e7" formatted="false">Upload</string>

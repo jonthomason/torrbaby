@@ -142,6 +142,17 @@ pub(crate) fn reopen_untranscribed(db:&Database,data:&Path)->Result<usize> {
     }
     Ok(reopened)
 }
+/// Files whose Chinese subtitles were translated to English a line at a time go through
+/// their subtitle stage again; what is already right is found ready and only the
+/// translation is made anew.
+pub(crate) fn reopen_line_translated(db:&Database,assets:&std::collections::BTreeSet<String>)->Result<usize> {
+    let mut reopened=0;
+    for id in assets {
+        reopened+=db.connection.execute("UPDATE media_processing SET subtitles_state='pending',stage='subtitles',state=CASE WHEN state IN ('ready','failed') THEN 'queued' ELSE state END,retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=? AND inventory_state='ready' AND state!='running' AND subtitles_state IN ('ready','skipped')",rusqlite::params![now(),id])?;
+    }
+    if reopened>0 {tracing::info!(reopened,"Chinese subtitles will be translated again, a sentence at a time");}
+    Ok(reopened)
+}
 /// Operator rescans. `scope`: "failed" re-queues every failed file now (any
 /// stage); with `stage` "credits", "no_credits" reopens credits wherever none were
 /// found and "all" reopens credits everywhere. `asset_ids` limits any scope.
@@ -259,6 +270,7 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
             reopen_outdated(&db)?;
             retire_obsolete_failures(&db)?;
             reopen_untranscribed(&db,&s.data_dir)?;
+            reopen_line_translated(&db,&s.subtitle_jobs.line_translated())?;
             if let Ok(mut e)=ENROLLED.lock() {*e=Some((revision,now()));}
         }
         if migrating {
@@ -636,7 +648,7 @@ mod tests {
         // Once transcription reaches a verdict the file stays settled.
         db.connection.execute("UPDATE media_processing SET state='ready',subtitles_state='not_applicable' WHERE asset_id='silent'",[])?;
         std::fs::create_dir_all(crate::speech_subtitles::directory(&data))?;
-        std::fs::write(crate::speech_subtitles::record(&data,"silent","r1"),r#"{"state":"rejected"}"#)?;
+        std::fs::write(crate::speech_subtitles::record(&data,"silent","r1"),r#"{"state":"rejected","tried":["en","zh-Hans","picture"]}"#)?;
         assert_eq!(reopen_untranscribed(&db,&data)?,0);
         // A finished title transcribed by an older version is redone once.
         std::fs::write(crate::speech_subtitles::directory(&data).join("old.json"),r#"{"state":"ready","asset_id":"subtitled"}"#)?;

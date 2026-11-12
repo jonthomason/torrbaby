@@ -87,6 +87,19 @@ pub(crate) fn present<T>(result: std::io::Result<T>) -> std::io::Result<Option<T
         Err(error) => Err(error),
     }
 }
+/// Which way of doing a job its identity stands for. Chinese to English is 2: those are
+/// translated a sentence at a time, where a subtitle line is often half a sentence
+/// (什么时候想和离了 / 告诉我一声); translations made a line at a time (1) are made again.
+fn generation(source: &Option<String>, target: &Option<String>) -> u8 {
+    if source.as_deref() == Some("zh-Hans") && target.as_deref() == Some("en") { 2 } else { 1 }
+}
+fn job_id(asset: &str, input: &Path, revision: &str, track: u64, source: &Option<String>, target: &Option<String>) -> Result<String> {
+    keyed(generation(source, target), asset, input, revision, track, source, target)
+}
+fn keyed(generation: u8, asset: &str, input: &Path, revision: &str, track: u64, source: &Option<String>, target: &Option<String>) -> Result<String> {
+    let key = serde_json::to_vec(&(generation, asset, input, revision, track, source, target))?;
+    Ok(sha2::Sha256::digest(key).iter().map(|b| format!("{b:02x}")).collect())
+}
 /// What a prepared track is, for its short name: "text" (an original text
 /// track), "images" (read from bitmap subtitles), "speech" (transcribed from
 /// the audio) or "translated". Clients localize "English Text", "Chinese
@@ -414,12 +427,31 @@ impl Manager {
         ensure!(data.len() <= 16_777_216, "Subtitle output too large");
         String::from_utf8(data).context("Invalid prepared subtitles")
     }
+    /// Assets whose English translation of Chinese subtitles was made a line at a time
+    /// and has not been made again a sentence at a time. Their subtitle stage reopens.
+    pub fn line_translated(&self) -> std::collections::BTreeSet<String> {
+        let index=self.index.lock().map(|index|index.clone()).unwrap_or_default();
+        let mut assets=std::collections::BTreeSet::new();
+        for (asset,jobs) in index {
+            for job in jobs.iter().filter_map(|id|self.read(id).ok()) {
+                if job.state!="ready" || generation(&job.source,&job.target)==1 {continue;}
+                // Only for the file as it is now: a job for an earlier copy is history.
+                if revision(&job.input).ok().as_deref()!=Some(job.revision.as_str()) {continue;}
+                let Ok(current)=job_id(&asset,&job.input,&job.revision,job.track,&job.source,&job.target) else{continue};
+                // A track whose language was detected is keyed by "auto" and is asked for that way again: not one of these.
+                if keyed(1,&asset,&job.input,&job.revision,job.track,&job.source,&job.target).ok().as_deref()!=Some(job.id.as_str()) {continue;}
+                if !self.status(&current).is_ok_and(|status|status["state"]=="ready") {assets.insert(asset.clone());break;}
+            }
+        }
+        assets
+    }
     pub fn lookup(&self, asset: &str, input: &Path, track: u64, source: &Option<String>, target: &Option<String>) -> Option<Value> {
         let revision=revision(input).ok()?;
-        let key=serde_json::to_vec(&(1,asset,input,&revision,track,source,target)).ok()?;
-        let id:String=sha2::Sha256::digest(key).iter().map(|b|format!("{b:02x}")).collect();
+        let id=job_id(asset,input,&revision,track,source,target).ok()?;
         let exact=self.status(&id).ok();
         if exact.as_ref().is_some_and(|j|j["state"]=="ready"){return exact;}
+        // An earlier generation's output is not this job's.
+        if generation(source,target)!=1 {return exact;}
         // Older OCR jobs were keyed as auto, then saved with the detected language.
         // Reuse those validated outputs rather than extracting/translating them again.
         let candidates=self.index.lock().ok()?.get(asset).cloned().unwrap_or_default();
@@ -462,11 +494,7 @@ impl Manager {
             "Choose English and Simplified Chinese for translation"
         );
         let revision = revision(&input)?;
-        let key = serde_json::to_vec(&(1, asset_id, &input, &revision, track, &source, &target))?;
-        let id: String = sha2::Sha256::digest(key)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        let id = job_id(asset_id, &input, &revision, track, &source, &target)?;
         if let Ok(status) = self.status(&id) {
             if status["state"] == "ready" {
                 return Ok(status);
@@ -594,8 +622,8 @@ impl Manager {
                 job.source=Some(output.language);job.unreadable_cues=output.unreadable_cues;output.cues
             } else {
                 // Transcripts of a title's audio are text files the server wrote itself.
-                let speech=crate::speech_subtitles::is_transcript(self.root.parent().unwrap_or(&self.root),&job.input);
-                job.extraction_method=Some(if speech {"speech"} else {"text"}.into());
+                let made=crate::speech_subtitles::method(self.root.parent().unwrap_or(&self.root),&job.input);
+                job.extraction_method=Some(made.unwrap_or("text").into());
                 crate::native_subtitles::extract(&job.input,job.track).await?
             };
             if job.source.as_deref()==Some("auto") {job.source=Some(crate::ocr_subtitles::detect_language(&cues).await?);}
@@ -714,6 +742,16 @@ impl Manager {
 #[cfg(test)]
 mod sidecar_job_tests {
     use super::*;
+    #[test]
+    fn chinese_to_english_jobs_have_a_new_identity_so_line_by_line_ones_are_redone() -> Result<()> {
+        let (zh,en)=(Some("zh-Hans".to_owned()),Some("en".to_owned()));
+        let input=Path::new("/media/a.mkv");
+        assert_ne!(job_id("a",input,"r",3,&zh,&en)?,keyed(1,"a",input,"r",3,&zh,&en)?);
+        // Extraction and English to Chinese keep theirs: nothing about them changed.
+        assert_eq!(job_id("a",input,"r",3,&zh,&None)?,keyed(1,"a",input,"r",3,&zh,&None)?);
+        assert_eq!(job_id("a",input,"r",3,&en,&zh)?,keyed(1,"a",input,"r",3,&en,&zh)?);
+        Ok(())
+    }
     #[test]
     fn prepared_tracks_have_short_descriptive_names() {
         let cases=[(Some("text"),None,"en","English Text"),(Some("ocr"),None,"en","English Images"),

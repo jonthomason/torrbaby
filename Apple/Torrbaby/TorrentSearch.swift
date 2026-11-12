@@ -1122,7 +1122,8 @@ private struct TorrentSearchRow: View {
         HStack(alignment: .center, spacing: 10) {
             let episodic = item.hints.season != nil || item.hints.episodeCount != nil
             // A year borrowed from same-titled results is sent as a plain "Title Year S01" name.
-            SearchReleaseArtwork(name: item.hints.year == nil && artworkYear != nil ? "\(item.title) \(artworkYear!)\(episodic ? " S01" : "")" : item.name,
+            // A cloud share's own name says little; the series' title and year find its artwork.
+            SearchReleaseArtwork(name: item.cloud?.show != nil && item.hints.year != nil ? "\(item.title) \(item.hints.year!) S\(String(format: "%02d", item.hints.season ?? 1))" : item.hints.year == nil && artworkYear != nil ? "\(item.title) \(artworkYear!)\(episodic ? " S01" : "")" : item.name,
                 identity: "\(item.title.lowercased()):\((item.hints.year ?? artworkYear).map(String.init) ?? ""):\(episodic ? "tv:\(item.hints.season ?? 0)" : "movie")",
                 season: item.hints.season, onFacts: { facts = $0 })
             VStack(alignment: .leading, spacing: 2) {
@@ -1631,11 +1632,14 @@ struct CloudAdded: Decodable {
     /// How many of the videos asked for are in the library already, exactly the same, out of how many.
     var alreadyHave: Int? = nil
     var total: Int? = nil
+    /// The videos joined a download of this show that was already waiting.
+    var merged: Bool? = nil
     /// Nothing new was queued.
     var nothingNew: Bool { alreadyQueued == true || jobId == nil }
     /// What to tell the member, when it is not simply "added".
     var warning: String? {
         if alreadyQueued == true { return L10n.text("Already in the download queue.") }
+        if merged == true { return L10n.text("Added to the download already waiting for this show.") }
         guard let alreadyHave, alreadyHave > 0, let total else { return nil }
         return alreadyHave >= total ? L10n.format("Already in your library: all %d videos. Nothing to download.", total) : L10n.format("%d of %d videos are already in your library; the rest will download.", alreadyHave, total)
     }
@@ -1837,6 +1841,10 @@ struct CloudJob: Decodable, Identifiable {
     var discarded: Int? = nil
     /// Its place in the line while waiting: 1 runs next.
     var position: Int? = nil
+    /// The show's English title, when the library or the metadata service knows it.
+    var english: String? = nil
+    /// "Pursuit of Jade · 逐玉": both names, so the row can be read either way.
+    var displayTitle: String { english.map { $0 + " · " + title } ?? title }
     var outcomeLine: String {
         [(replaced ?? 0) > 0 ? L10n.format("Replaced with better: %d", replaced ?? 0) : "", (discarded ?? 0) > 0 ? L10n.format("Already had as good: %d", discarded ?? 0) : ""]
             .filter { !$0.isEmpty }.joined(separator: " · ")
@@ -1875,15 +1883,17 @@ struct CloudJobsSection: View {
         .padding(.bottom, jobs.isEmpty ? -sectionSpacing : 0)
         .task(id: store.server) {
             while !Task.isCancelled {
-                if let list: JobList = try? await store.request("GET", "/v1/cloud/jobs", timeout: 15) { jobs = list.jobs }
+                if let list: JobList = try? await store.request("GET", "/v1/cloud/jobs", timeout: 15) { jobs = shown(list.jobs) }
                 let active = jobs.contains(where: \.isActive)
                 try? await Task.sleep(for: .seconds(active ? 3 : 15))
             }
         }
     }
     private func reload() {
-        Task { if let list: JobList = try? await store.request("GET", "/v1/cloud/jobs", timeout: 15) { jobs = list.jobs } }
+        Task { if let list: JobList = try? await store.request("GET", "/v1/cloud/jobs", timeout: 15) { jobs = shown(list.jobs) } }
     }
+    /// A finished download is in the library; this section lists only what is still coming or has failed.
+    private func shown(_ all: [CloudJob]) -> [CloudJob] { all.filter { $0.state != "done" } }
 }
 /// One cloud-drive download: its title in the downloads' colour, progress, speed, time
 /// left, the video being fetched, and Cancel, Retry or Dismiss. Sits among the torrents.
@@ -1898,7 +1908,7 @@ struct CloudJobRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 // Blue titles are cloud downloads, green ones torrents; nothing else is coloured.
-                Text(verbatim: job.title).font(.headline).foregroundStyle(Theme.cloud).lineLimit(2).textSelectionIfAvailable()
+                Text(verbatim: job.displayTitle).font(.headline).foregroundStyle(Theme.cloud).lineLimit(2).textSelectionIfAvailable()
                 Spacer(minLength: 8)
                 if job.state == "failed" || job.state == "retrying" {
                     Button("Retry") { act("POST", "/v1/cloud/jobs/\(job.id)/retry") }.buttonStyle(MonoButtonStyle(compact: true)).fixedSize()

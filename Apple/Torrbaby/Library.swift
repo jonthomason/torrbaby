@@ -227,6 +227,16 @@ struct LibraryTitle: Decodable, Identifiable {
     }
 
 }
+extension LibraryAsset {
+    /// The episode's own title, when it has one. TMDB lists most Chinese dramas (and many
+    /// other shows) with no episode titles, only the number again as "Episode 1" or
+    /// "第1集"; shown under our own "Episode 1" that read "Episode 1 Episode 1".
+    var ownName: String? {
+        guard let name = name?.trimmingCharacters(in: .whitespaces), !name.isEmpty else { return nil }
+        guard episode != nil else { return name }
+        return name.range(of: #"^(episode|ep\.?|第)\s*#?\d+(\.\d+)?\s*[集话話期回]?$"#, options: [.regularExpression, .caseInsensitive]) == nil ? name : nil
+    }
+}
 struct LibraryAsset: Decodable, Identifiable {
     let id: String
     let name: String?
@@ -283,7 +293,16 @@ struct MediaTrackInfo: Decodable {
         }
     }
     var video: Video? = nil
-    struct Prepared: Decodable { let id: String; let language: String?; let generated: Bool; let state: String; var kind: String? = nil; var sdh: Bool? = nil }
+    struct Prepared: Decodable {
+        let id: String; let language: String?; let generated: Bool; let state: String; var kind: String? = nil; var sdh: Bool? = nil
+        var picture: Bool? = nil; var extractionMethod: String? = nil; var sidecar: String? = nil
+        /// Made from subtitles printed in the picture. Servers that do not say so are
+        /// recognised by how such a track is recorded: read as images, from a text file.
+        var fromPicture: Bool { picture ?? (extractionMethod == "ocr" && sidecar != nil) }
+    }
+    /// The picture itself carries subtitles (as Chinese dramas do), so subtitles the
+    /// player draws land on top of them and need an opaque box to be read.
+    var hasPictureSubtitles: Bool { prepared.contains { $0.fromPicture } }
     let state: String
     let audioTracks: [Track]
     let subtitleTracks: [Track]
@@ -841,8 +860,13 @@ struct LibraryDetail: View {
                 HStack(spacing: 12) {
                     Image(systemName: "play.circle.fill").font(.title).foregroundStyle(Theme.accent)
                     VStack(alignment: .leading, spacing: 5) {
-                        if asset.season != nil, let e = asset.episode { Text("Episode \(e)").font(.caption).foregroundStyle(Theme.muted) }
-                        Text(asset.name ?? title.title).font(.headline)
+                        // An episode with no title of its own is headed by its number, once.
+                        if asset.season != nil, let e = asset.episode {
+                            if let name = asset.ownName {
+                                Text("Episode \(e)").font(.caption).foregroundStyle(Theme.muted)
+                                Text(name).font(.headline)
+                            } else { Text("Episode \(e)").font(.headline) }
+                        } else { Text(asset.name ?? title.title).font(.headline) }
                         if !asset.summary.isEmpty { Text(asset.summary).font(.caption).lineLimit(2).foregroundStyle(Theme.muted) }
                         if asset.duration > 0 && !asset.watched { ProgressView(value: min(1, asset.position / asset.duration)) }
                         #if !os(tvOS)

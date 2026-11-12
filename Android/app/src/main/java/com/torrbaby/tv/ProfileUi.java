@@ -12,6 +12,12 @@ import org.json.*;
 final class ProfileUi {
   interface Save { void apply(JSONObject values, AlertDialog dialog); }
   static int color(String hex,int fallback) { try{return Color.parseColor(hex);}catch(Exception e){return fallback;} }
+  /** The first character as a reader sees it: an emoji or a Chinese character counts as one. */
+  static String firstCharacter(String text) {
+    String value=text.trim();if(value.isEmpty())return "";
+    java.text.BreakIterator it=java.text.BreakIterator.getCharacterInstance();it.setText(value);
+    int end=it.next();return value.substring(0,end==java.text.BreakIterator.DONE?value.length():end);
+  }
   static String initial(String name) { return name.isEmpty()?"?":new String(Character.toChars(name.codePointAt(0))).toUpperCase(java.util.Locale.ROOT); }
   static TextView avatar(Activity a,JSONObject person,int size) {
     TextView view=Ui.title(a, "", size/2);
@@ -20,8 +26,8 @@ final class ProfileUi {
     return view;
   }
   static void updateAvatar(Activity a,TextView view,JSONObject person,int size) {
-    String symbol=person.optString("avatar_symbol");
-    view.setText(symbol.isEmpty()?initial(person.optString("name")):symbol);
+    String symbol=firstCharacter(person.optString("avatar_symbol"));
+    view.setText(symbol.isEmpty()?initial(person.optString("name").trim()):symbol);
     view.setTextColor(color(person.optString("text_color"),Ui.ACCENT));
     GradientDrawable background=new GradientDrawable();background.setShape(GradientDrawable.OVAL);
     background.setColor(color(person.optString("background_color"),0xff243a38));
@@ -80,7 +86,7 @@ final class ProfileUi {
     }public void afterTextChanged(Editable e){}};
     for(EditText input:new EditText[]{name,symbol,foreground,background})input.addTextChangedListener(change);
     ScrollView scroll=new ScrollView(a);scroll.addView(form);
-    AlertDialog dialog=new AlertDialog.Builder(a).setTitle(L10n.t(creating?"Create user":"Edit profile")).setView(scroll)
+    AlertDialog dialog=new AppDialog(a).setTitle(L10n.t(creating?"Create user":"Edit profile")).setView(scroll)
       .setNegativeButton(L10n.t("Cancel"),null).setPositiveButton(L10n.t("Save profile"),null).create();
     dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
       if(name.getText().toString().trim().isEmpty()){name.setError(L10n.t("Enter a name"));return;}
@@ -89,7 +95,7 @@ final class ProfileUi {
     }));dialog.show();
   }
   private static JSONObject values(EditText name,EditText symbol,EditText foreground,EditText background){
-    JSONObject value=new JSONObject();try{value.put("name",name.getText().toString().trim()).put("avatar_symbol",symbol.getText().toString()).put("text_color",foreground.getText().toString()).put("background_color",background.getText().toString());}catch(Exception ignored){}return value;
+    JSONObject value=new JSONObject();try{value.put("name",name.getText().toString().trim()).put("avatar_symbol",firstCharacter(symbol.getText().toString())).put("text_color",foreground.getText().toString()).put("background_color",background.getText().toString());}catch(Exception ignored){}return value;
   }
   private static EditText field(Activity a,LinearLayout form,String label,String value){
     Ui.add(form,Ui.text(a,L10n.t(label),14,Ui.MUTED),-1,-2);

@@ -134,6 +134,10 @@ struct TVRootView: View {
                     }
                 }
             }
+            // The page takes the whole width for the remote: moving down from the language
+            // switch at the far right lands in the page even when nothing sits right below it.
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .focusSection()
             .navigationDestination(for: LibraryDestination.self) { route in TVMediaDetail(titleID: route.id) }
             .navigationDestination(for: TVShelfDestination.self) { route in TVMediaDetail(titleID: route.id, autoPlay: route.play) }
         }
@@ -144,7 +148,8 @@ struct TVRootView: View {
                     HStack(spacing: 8) {
                         ForEach(sections, id: \.self) { item in
                             Button { settings = false; section = item } label: {
-                                Text(LocalizedStringKey(item)).font(.system(size: 24, weight: .semibold))
+                                // The page holds cloud downloads as well as torrents, so the television calls it Downloads.
+                                Text(LocalizedStringKey(item == "Torrents" ? "Downloads" : item)).font(.system(size: 24, weight: .semibold))
                             }.buttonStyle(TVMonochromeButtonStyle(selected: section == item)).focused($focusedTab, equals: item)
                         }
                     }
@@ -184,6 +189,12 @@ struct TVRootView: View {
         .alert(ActionAlert(store.actionError, fallbackTitle: "Couldn’t complete the request").title, isPresented: Binding(get: { store.actionError != nil }, set: { if !$0 { store.actionError = nil } })) {
             Button("OK") { store.actionError = nil }
         } message: { Text(ActionAlert(store.actionError, fallbackTitle: "Couldn’t complete the request").message) }
+        // The app tints controls white, and an alert's focused button is white: its title must not be.
+        .tint(nil)
+        #if targetEnvironment(simulator)
+        // Lets a simulator run show this alert without a remote, to check it can be read.
+        .task { if let text = ProcessInfo.processInfo.environment["TORRBABY_SHOW_ALERT"] { try? await Task.sleep(for: .seconds(4)); store.actionError = text } }
+        #endif
     }
     private func openShelfSelection() {
         guard let url = pendingShelfURL, url.scheme == "torrbaby", url.host == "library",
@@ -220,6 +231,7 @@ private struct TVSettingsView: View {
     let connection: () -> Void
     @State private var showSubtitles = false
     @State private var showPairing = false
+    @State private var editingProfile: UserProfile?
     var body: some View {
         HStack(alignment: .center, spacing: 0) {
             VStack(spacing: 22) {
@@ -236,6 +248,9 @@ private struct TVSettingsView: View {
                 }
                 SwiftUI.Section("User") {
                     LabeledContent { Text(verbatim: store.activeProfile?.name ?? L10n.text("Choose a user")) } label: { Text("User") }
+                    if let profile = store.activeProfile {
+                        Button { editingProfile = profile } label: { TVSettingsRow(title: "Edit profile") }
+                    }
                     Button { store.choosingProfile = true } label: { TVSettingsRow(title: "Switch user") }
                 }
                 SwiftUI.Section("Playback") {
@@ -270,7 +285,7 @@ private struct TVSettingsView: View {
                     if let status = store.status { Button {} label: { TVSettingsRow(title: "Server version", value: status.version) } }
                 }
                 SwiftUI.Section("Library") {
-                    NavigationLink { TorrentSearchView() } label: { Text("Find torrents") }
+                    NavigationLink { TorrentSearchView() } label: { Text("Find") }
                 }
             }.listStyle(.grouped).frame(maxWidth: 900)
             // The app tints controls white; a focused row is white too, so its title must not be.
@@ -280,6 +295,7 @@ private struct TVSettingsView: View {
         }.padding(.horizontal, 60)
         .sheet(isPresented: $showSubtitles) { LocalizedInterface { SubtitlePreferencesView() } }
         .fullScreenCover(isPresented: $showPairing) { LocalizedInterface { PairingCodeView() }.environmentObject(store) }
+        .sheet(item: $editingProfile) { person in LocalizedInterface { ProfileEditor(profile: person) }.environmentObject(store) }
     }
 }
 
@@ -332,9 +348,11 @@ private struct TVMonochromeButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .padding(.horizontal, 18).padding(.vertical, 8)
-            .foregroundStyle(focused || selected ? Color.black : .white)
-            .background(focused || selected ? Color.white : .clear, in: RoundedRectangle(cornerRadius: 8))
-            .scaleEffect(focused ? 1.025 : 1)
+            // Where the remote is must never look the same as what is merely chosen: focus
+            // is solid white and a little larger; the chosen tab is a quiet tint until focused.
+            .foregroundStyle(focused ? Color.black : .white)
+            .background(focused ? Color.white : selected ? Color.white.opacity(0.22) : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .scaleEffect(focused ? 1.08 : 1)
             .opacity(configuration.isPressed ? 0.75 : 1)
             .animation(.easeOut(duration: 0.15), value: focused)
     }
@@ -541,8 +559,13 @@ private struct TVMediaDetail: View {
                 }
                 Image(systemName: "play.circle.fill").font(.largeTitle)
                 VStack(alignment: .leading, spacing: 10) {
-                    if let episode = asset.episode { Text("Episode \(episode)").font(.caption) }
-                    Text(asset.name ?? title.title).font(.headline).lineLimit(2)
+                    // An episode with no title of its own is headed by its number, once.
+                    if let episode = asset.episode {
+                        if let name = asset.ownName {
+                            Text("Episode \(episode)").font(.caption)
+                            Text(name).font(.headline).lineLimit(2)
+                        } else { Text("Episode \(episode)").font(.headline) }
+                    } else { Text(asset.name ?? title.title).font(.headline).lineLimit(2) }
                     if !asset.summary.isEmpty { Text(asset.summary).font(.caption).lineLimit(2) }
                     if asset.offline == true { Text("Drive not connected").font(.caption).foregroundStyle(Theme.muted) }
                     else if !asset.complete { Text("Downloading").font(.caption).foregroundStyle(Theme.muted) }
@@ -567,7 +590,7 @@ private struct TVMediaDetail: View {
                 try await store.registerClient()
                 let link = try await store.mediaPlaybackLink(asset: asset, titleID: title.id) { preparation = $0 }
                 playback = Playback(sessionId: link.sessionId, resumePosition: fromBeginning ? 0 : (link.resumePosition ?? 0),
-                    url: try store.endpoint(link.path), name: asset.episode == nil ? title.title : title.title + " · " + (asset.name ?? "Episode \(asset.episode!)"), libraryAssetID: asset.id, libraryTitleID: title.id)
+                    url: try store.endpoint(link.path), name: asset.episode == nil ? title.title : title.title + " · " + (asset.ownName ?? L10n.format("Ep %d", asset.episode!)), libraryAssetID: asset.id, libraryTitleID: title.id)
             } catch { if !Task.isCancelled { store.actionError = error.localizedDescription } }
         }
     }
@@ -754,6 +777,7 @@ private struct TVTorrentView: View {
     }
     private var torrents: [Torrent] {
         sortSelection.wrappedValue.ordered(store.torrents.filter {
+            if category == "Watching" { return false }
             if category == "Needs attention" { return !$0.isJunk && $0.needsAttention }
             if $0.fileOperation != nil { return category == "Seeding" }
             return category == "Downloading" ? !$0.completed : category == "Seeding" ? $0.completed && $0.status == 6 : $0.completed && $0.status != 6
@@ -762,7 +786,7 @@ private struct TVTorrentView: View {
     var body: some View {
         VStack(spacing: 30) {
             Picker("Torrents", selection: $category) {
-                ForEach(["Downloading", "Seeding", "Complete", "Needs attention"], id: \.self) { Text(LocalizedStringKey($0)).tag($0) }
+                ForEach(["Downloading", "Seeding", "Complete", "Needs attention", "Watching"], id: \.self) { Text(LocalizedStringKey($0)).tag($0) }
             }.pickerStyle(.segmented).padding(.horizontal, 70)
             if let error = store.torrentError {
                 Text("Couldn’t refresh torrents: " + error).font(.caption).foregroundStyle(.orange).padding(.horizontal, 70)
@@ -775,6 +799,8 @@ private struct TVTorrentView: View {
                     if category == "Seeding" { LibraryOperationStatus() }
                     if category == "Needs attention" { ProcessingAttention(count: $processingIssues) }
                     if category == "Downloading" { MediaDriveSpace(); CloudJobsSection() }
+                    // Shows watched for new episodes: what each lacks, and where it is looked for.
+                    if category == "Watching" { WatchingList() }
                     ForEach(torrents) { torrent in
                         VStack(alignment: .leading, spacing: 18) {
                             Text(torrent.displayName).font(.headline).lineLimit(2)

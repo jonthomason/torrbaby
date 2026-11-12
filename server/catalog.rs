@@ -193,6 +193,7 @@ impl Database {
                 asset["file_index"].as_u64().unwrap_or(0)
             );
             let progress = history.get(&media).cloned().unwrap_or(json!({}));
+            let part = asset["path"].as_str().filter(|_| asset["season"].as_u64().is_some_and(|season| season > 0)).and_then(crate::scanner::part);
             let episode = entity["episodes"]
                 .as_array()
                 .and_then(|eps| {
@@ -205,6 +206,9 @@ impl Database {
                 .cloned()
                 // TMDB's special with this number is usually a different special.
                 .filter(|_| asset["season"] != 0)
+                // A part of an episode ("S03E05 - Part 2") is not TMDB's episode of that number:
+                // for variety shows TMDB numbers the parts one after another instead.
+                .filter(|_| part.is_none())
                 .unwrap_or(json!({}));
             // Specials (season 0) are extras: listed with the bonus material, never in the
             // seasons or the next-episode flow. Release packs number specials differently
@@ -220,8 +224,10 @@ impl Database {
                 continue;
             }
             title["assets"].as_array_mut().context("Invalid title assets")?.push(json!({
-                "id":id,"media_info":crate::media_inventory::cached(self,id)?,"role":"main","name":if asset["season"] == 0 { extra_name(asset) } else { episode["title"].as_str().unwrap_or(if kind=="movie"{name}else{&fallback}).to_owned() },
-                "season":asset["season"],"episode":asset["episode"],"summary":episode["summary"].as_str().unwrap_or(""),
+                "id":id,"media_info":crate::media_inventory::cached(self,id)?,"role":"main","name":if asset["season"] == 0 { extra_name(asset) }
+                    else if let Some(title) = part.and(asset["path"].as_str()).and_then(crate::scanner::part_title) { title }
+                    else { episode["title"].as_str().unwrap_or(if kind=="movie"{name}else{&fallback}).to_owned() },
+                "season":asset["season"],"episode":asset["episode"],"part":part,"summary":episode["summary"].as_str().unwrap_or(""),
                 "airdate":episode["airdate"],"thumbnail":episode["thumbnail"],"duration_minutes":episode.get("duration_minutes").unwrap_or(&entity["duration_minutes"]),
                 "complete":asset["complete"],"size":asset["size"],"position":progress["position"].as_f64().unwrap_or(0.0),
                 "duration":progress["duration"].as_f64().unwrap_or(0.0),"watched":progress["watched"].as_bool().unwrap_or(false),
@@ -254,6 +260,12 @@ impl Database {
             }));
         }
         let mut titles: Vec<_> = titles.into_values().collect();
+        // Episodes in order, the parts of one episode in order, then the extras.
+        for title in &mut titles {
+            if let Some(assets) = title["assets"].as_array_mut() {
+                assets.sort_by_key(|a| (a["role"] != "main", a["season"].as_u64().unwrap_or(0), a["episode"].as_u64().unwrap_or(0), a["part"].as_u64().unwrap_or(0)));
+            }
+        }
         // A title is offline when none of its files can be played now.
         for title in &mut titles {
             let offline = title["assets"].as_array().is_some_and(|a| !a.is_empty() && a.iter().all(|a| a["offline"] == true));
@@ -349,6 +361,10 @@ impl Database {
 fn extra_name(asset: &Value) -> String {
     if let Some(name) = asset["display_name"].as_str().filter(|n| !n.trim().is_empty()) {
         return name.to_owned();
+    }
+    // A variety show's bonus video, under the label from its file name ("第3期纯享上集").
+    if let Some(label) = asset["label"].as_str().filter(|n| !n.trim().is_empty()) {
+        return label.to_owned();
     }
     static NUMBER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(r"(?i)^.*?\bs\d{1,2}e\d{1,3}(?:-?e\d{1,3})*\s*-\s*").expect("valid regex")

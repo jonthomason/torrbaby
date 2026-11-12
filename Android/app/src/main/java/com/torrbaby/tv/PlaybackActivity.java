@@ -30,6 +30,8 @@ public class PlaybackActivity extends Activity {
   private volatile boolean cancelled;
   /** The file's own subtitle tracks (by track number) that the server found to be SDH. */
   private final Set<Integer> sdhTracks = java.util.concurrent.ConcurrentHashMap.newKeySet();
+  /** The picture carries its own subtitles, so the player's sit on a nearly opaque box. */
+  private volatile boolean overPicture;
   private ExoPlayer player;
   private boolean subtitleChoiceMade;
   private PlayerView view;
@@ -95,6 +97,7 @@ public class PlaybackActivity extends Activity {
               if (tracks == null) tracks = new JSONArray();
               try {
                 JSONArray prepared = PreparedSubtitles.ready(api::request, id, () -> cancelled, sdhTracks);
+                overPicture = PreparedSubtitles.picture;
                 for (int i = 0; i < prepared.length(); i++) tracks.put(prepared.getJSONObject(i));
               } catch (CancellationException e) {
                 return;
@@ -200,7 +203,7 @@ public class PlaybackActivity extends Activity {
         true);
     player.setHandleAudioBecomingNoisy(true);
     view.setPlayer(player);
-    Subtitles.apply(subtitlePreferences, player, view.getSubtitleView());
+    Subtitles.apply(subtitlePreferences, player, view.getSubtitleView(), overPicture);
     mediaSession = new MediaSession.Builder(this, player).setId(session).build();
     player.addListener(
         new Player.Listener() {
@@ -523,7 +526,7 @@ public class PlaybackActivity extends Activity {
 
   private void failure(String message) {
     if (isFinishing() || isDestroyed()) return;
-    new AlertDialog.Builder(this)
+    new AppDialog(this)
         .setTitle(L10n.t("Unable to play"))
         .setMessage(message)
         .setPositiveButton(L10n.t("Retry"), (d, w) -> restart(false))

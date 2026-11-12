@@ -37,6 +37,8 @@ public class MainActivity extends Activity {
   private JSONArray attention;
   /** Quark Drive downloads, and free space on the media drives, for Downloading. */
   private JSONArray cloudJobs;
+  /** Shows the server watches for new episodes, as GET /v1/watch reports them. */
+  private JSONObject watchList;
   private JSONObject storage;
   private String libraryOperationsError = "";
   private final Map<String, Long> removedTorrents = new HashMap<>();
@@ -215,7 +217,8 @@ public class MainActivity extends Activity {
       Button b =
           Ui.button(
               this,
-              L10n.t(label),
+              // The page holds cloud downloads as well as torrents, so the television calls it Downloads.
+              L10n.t(label.equals("Torrents") ? "Downloads" : label),
               () -> {
                 if (!section.equals(label)) transition = 2;
                 section = label;
@@ -730,7 +733,7 @@ public class MainActivity extends Activity {
 
   private boolean continueWatchingMenu(Library.Title title) {
     if(!title.isContinuing())return false;
-    new AlertDialog.Builder(this).setTitle(title.title)
+    new AppDialog(this).setTitle(title.title)
         .setItems(new String[]{L10n.t("Remove from Continue Watching")},(dialog,which)->setContinueWatchingHidden(title,true)).show();
     return true;
   }
@@ -833,7 +836,7 @@ public class MainActivity extends Activity {
             () -> {
               List<String> gs = library.genres(kind);
               gs.add(0, "All genres");
-              new AlertDialog.Builder(this)
+              new AppDialog(this)
                   .setTitle(L10n.t("Genre"))
                   .setItems(
                       gs.toArray(new String[0]),
@@ -854,7 +857,7 @@ public class MainActivity extends Activity {
             this,
             sorts[sort],
             () ->
-                new AlertDialog.Builder(this)
+                new AppDialog(this)
                     .setTitle(L10n.t("Sort by"))
                     .setSingleChoiceItems(
                         sorts,
@@ -1007,11 +1010,11 @@ public class MainActivity extends Activity {
     torrentActions = new TorrentActions(this, api, io, this::fetchTorrents, this::torrentRemoved);
     Ui.pad(content, 35, 16);
     LinearLayout controls = Ui.row(this);
-    for (String category : new String[] {"Downloading", "Seeding", "Complete", "Needs attention"}) {
+    for (String category : new String[] {"Downloading", "Seeding", "Complete", "Needs attention", "Watching"}) {
       Button button =
           Ui.button(
               this,
-              category,
+              L10n.t(category),
               () -> {
                 torrentCategory = category;
                 render();
@@ -1022,7 +1025,7 @@ public class MainActivity extends Activity {
     }
     View space = new View(this);
     controls.addView(space, new LinearLayout.LayoutParams(0, 1, 1));
-    Ui.add(controls, Ui.button(this, L10n.t("Find torrents"), () -> startActivity(new Intent(this, TorrentSearchActivity.class))), -2, 42);
+    Ui.add(controls, Ui.button(this, L10n.t("Find"), () -> startActivity(new Intent(this, TorrentSearchActivity.class))), -2, 42);
     Ui.gap(controls, 12);
     Ui.add(controls, Ui.button(this, L10n.t("Manage"), () -> torrentActions.manage()), -2, 42);
     Ui.gap(controls, 12);
@@ -1042,7 +1045,7 @@ public class MainActivity extends Activity {
       Button button =
           Ui.button(
               this,
-              choice,
+              L10n.t(choice),
               () -> {
                 getPreferences(MODE_PRIVATE)
                     .edit()
@@ -1062,7 +1065,7 @@ public class MainActivity extends Activity {
                 ? L10n.t("Offline · showing the last server status")
                 : torrentUpdated == 0
                     ? L10n.t("Server transfers")
-                    : "Server transfers · updated "
+                    : L10n.t("Server transfers") + " · " + L10n.t("Updated") + " "
                         + new java.text.SimpleDateFormat("HH:mm:ss", Locale.getDefault())
                             .format(new java.util.Date(torrentUpdated)),
             11,
@@ -1098,7 +1101,7 @@ public class MainActivity extends Activity {
         boolean error = item.optString("severity").equals("error");
         Ui.add(row, Ui.text(this, L10n.t(item.optString("summary")), 14, error ? 0xffffb74d : Ui.MUTED), -1, -2);
         Ui.add(row, Ui.text(this, L10n.t(item.optString("error")), 12, Ui.MUTED), -1, -2);
-        row.setOnClickListener(v -> new AlertDialog.Builder(this)
+        row.setOnClickListener(v -> new AppDialog(this)
             .setTitle(item.optString("title"))
             .setMessage(L10n.t(item.optString("error")))
             .setPositiveButton(L10n.t("Dismiss"), (d, w) -> dismissAttention(new JSONObject(), item.optLong("id")))
@@ -1110,6 +1113,7 @@ public class MainActivity extends Activity {
       }
     }
     if (torrentCategory.equals("Downloading")) count += downloadingExtras(rows);
+    if (torrentCategory.equals("Watching")) count += watchingRows(rows);
     List<JSONObject> sorted = new ArrayList<>();
     for (int i = 0; torrents != null && i < torrents.length(); i++)
       if (torrents.optJSONObject(i) != null) sorted.add(torrents.optJSONObject(i));
@@ -1135,6 +1139,7 @@ public class MainActivity extends Activity {
       JSONObject fileOperation = item.optJSONObject("file_operation");
       boolean junk = fileOperation != null && fileOperation.optString("action").equals("junk");
       String issue = torrentIssue(item);
+      if (torrentCategory.equals("Watching")) continue;
       if (torrentCategory.equals("Needs attention")) { if (junk || issue == null) continue; }
       else if (fileOperation != null ? !torrentCategory.equals("Seeding") : torrentCategory.equals("Downloading")
           ? complete
@@ -1292,7 +1297,7 @@ public class MainActivity extends Activity {
       JSONObject volume = volumes.optJSONObject(i);
       if (volume == null) continue;
       String line = volume.optBoolean("available")
-          ? String.format(L10n.locale(), L10n.t("%@ free of %@").replace("%@", "%s"), bytes(volume.optLong("free_bytes")), bytes(volume.optLong("total_bytes")))
+          ? String.format(L10n.locale(), L10n.t("%s free of %s"), bytes(volume.optLong("free_bytes")), bytes(volume.optLong("total_bytes")))
           : L10n.t("Drive not connected");
       Ui.add(rows, Ui.text(this, line + " · " + volume.optString("name"), 14, Ui.MUTED), -1, -2);
     }
@@ -1300,18 +1305,21 @@ public class MainActivity extends Activity {
     for (int i = 0; cloudJobs != null && i < cloudJobs.length(); i++) {
       JSONObject job = cloudJobs.optJSONObject(i);
       if (job == null) continue;
-      added++;
       String state = job.optString("state");
+      // A finished download is in the library; the television lists only what is still coming.
+      if (state.equals("done")) continue;
+      added++;
       LinearLayout row = Ui.column(this);
       Ui.focus(row);
       row.setOnFocusChangeListener((v, focused) -> Ui.secondaryContrast(v, focused));
       Ui.pad(row, 16, 14);
       // Quark downloads are told from the torrents around them by their colour.
-      TextView jobTitle = Ui.title(this, job.optString("title"), 16); jobTitle.setTextColor(0xff85c2ff);
+      TextView jobTitle = Ui.title(this, (job.isNull("english") || job.optString("english").isEmpty() ? "" : job.optString("english") + " · ") + job.optString("title"), 16); jobTitle.setTextColor(0xff85c2ff);
       Ui.add(row, jobTitle, -1, -2);
       Ui.gap(row, 6);
       boolean active = state.equals("queued") || state.equals("saving") || state.equals("downloading") || state.equals("retrying");
-      String label = state.equals("retrying") ? L10n.t("Retrying shortly…") : state.equals("queued") ? L10n.t("Waiting") : state.equals("saving") ? L10n.t("Saving to Quark Drive…")
+      int place = job.isNull("position") ? 0 : job.optInt("position");
+      String label = state.equals("retrying") ? L10n.t("Retrying shortly…") : state.equals("queued") ? (place > 0 ? String.format(L10n.locale(), L10n.t("Waiting · %d in line"), place) : L10n.t("Waiting")) : state.equals("saving") ? L10n.t("Saving to Quark Drive…")
           : state.equals("downloading") ? L10n.t("Downloading") : state.equals("done") ? L10n.t("Downloaded") : L10n.t("Failed");
       String detail = L10n.t("Quark Drive") + " · " + label;
       if (job.optInt("files") > 1) detail += " · " + String.format(L10n.locale(), L10n.t("%d of %d videos"), job.optInt("files_done"), job.optInt("files"));
@@ -1327,16 +1335,29 @@ public class MainActivity extends Activity {
       if (job.optInt("replaced") > 0) outcomes.add(String.format(L10n.locale(), L10n.t("Replaced with better: %d"), job.optInt("replaced")));
       if (job.optInt("discarded") > 0) outcomes.add(String.format(L10n.locale(), L10n.t("Already had as good: %d"), job.optInt("discarded")));
       if (!outcomes.isEmpty()) Ui.add(row, Ui.text(this, String.join(" · ", outcomes), 12, Ui.MUTED), -1, -2);
+      if (job.optLong("total_bytes") > 0) {
+        // The same bar a torrent has.
+        Ui.gap(row, 10);
+        ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        bar.setProgressTintList(android.content.res.ColorStateList.valueOf(0xffffffff));
+        int percent = (int) (100 * job.optLong("done_bytes") / job.optLong("total_bytes"));
+        bar.setProgress(percent);
+        Ui.add(row, bar, -1, 8);
+        Ui.gap(row, 6);
+        Ui.add(row, Ui.text(this, percent + "%", 12, Ui.MUTED), -1, -2);
+      }
       if (!job.isNull("current") && !job.optString("current").isEmpty()) Ui.add(row, Ui.text(this, job.optString("current"), 12, Ui.MUTED), -1, -2);
       String error = job.isNull("error") ? "" : job.optString("error");
       if (!error.isEmpty()) Ui.add(row, Ui.text(this, error, 12, Ui.MUTED), -1, -2);
       String id = job.optString("id");
       row.setOnClickListener(v -> {
-        AlertDialog.Builder dialog = new AlertDialog.Builder(this).setTitle(job.optString("title")).setMessage(error.isEmpty() ? label : error)
+        AlertDialog.Builder dialog = new AppDialog(this).setTitle(job.optString("title")).setMessage(error.isEmpty() ? label : error)
             .setNegativeButton(L10n.t(active ? "Close" : "Cancel"), null);
         // Stops the download and clears what it had fetched of unfinished videos.
         if (active) dialog.setNeutralButton(L10n.t("Cancel download"), (d, w) -> cloudJobAction("DELETE", "/v1/cloud/jobs/" + id));
         if (state.equals("failed") || state.equals("retrying")) dialog.setPositiveButton(L10n.t("Retry"), (d, w) -> cloudJobAction("POST", "/v1/cloud/jobs/" + id + "/retry"));
+        // Downloads run in the order added; this one jumps the line once the current video is done.
+        if (state.equals("queued") && place > 1) dialog.setPositiveButton(L10n.t("Download next"), (d, w) -> cloudJobAction("POST", "/v1/cloud/jobs/" + id + "/next"));
         if (state.equals("failed") || state.equals("done")) dialog.setNeutralButton(L10n.t("Dismiss"), (d, w) -> cloudJobAction("DELETE", "/v1/cloud/jobs/" + id));
         dialog.show();
       });
@@ -1344,6 +1365,83 @@ public class MainActivity extends Activity {
       Ui.gap(rows, 10);
     }
     return added;
+  }
+  /** "E01–E11 E13–E34": runs of consecutive episodes. */
+  private static String episodeRanges(JSONArray numbers) {
+    List<Integer> all = new ArrayList<>();
+    for (int i = 0; numbers != null && i < numbers.length(); i++) all.add(numbers.optInt(i));
+    Collections.sort(all);
+    List<String> runs = new ArrayList<>();
+    int start = -1, end = -1;
+    for (int n : all) {
+      if (start >= 0 && n <= end + 1) { end = Math.max(end, n); continue; }
+      if (start >= 0) runs.add(start == end ? String.format(Locale.ROOT, "E%02d", start) : String.format(Locale.ROOT, "E%02d–E%02d", start, end));
+      start = end = n;
+    }
+    if (start >= 0) runs.add(start == end ? String.format(Locale.ROOT, "E%02d", start) : String.format(Locale.ROOT, "E%02d–E%02d", start, end));
+    return runs.size() > 5 ? String.join(" ", runs.subList(0, 5)) + " …" : String.join(" ", runs);
+  }
+  /** The shows watched for new episodes: what each lacks, where it is looked for, and when it was last checked. */
+  private int watchingRows(LinearLayout rows) {
+    java.text.DateFormat when = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT, L10n.locale());
+    JSONArray shows = watchList == null ? null : watchList.optJSONArray("shows");
+    if (watchList != null && !watchList.isNull("next_check"))
+      Ui.add(rows, Ui.text(this, String.format(L10n.locale(), L10n.t("Next check: %s"), when.format(new Date((long) (watchList.optDouble("next_check") * 1000)))), 14, Ui.MUTED), -1, -2);
+    Ui.add(rows, Ui.text(this, L10n.t("Missing episodes are looked for around midday and in the evening."), 12, Ui.MUTED), -1, -2);
+    Ui.gap(rows, 10);
+    if (shows == null || shows.length() == 0) {
+      Ui.add(rows, Ui.title(this, L10n.t("No shows are being watched"), 18), -1, -2);
+      return 1;
+    }
+    Button check = Ui.button(this, L10n.t("Check now"), () -> cloudJobAction("POST", "/v1/watch/check"));
+    Ui.add(rows, check, 220, 44);
+    Ui.gap(rows, 10);
+    for (int i = 0; i < shows.length(); i++) {
+      JSONObject show = shows.optJSONObject(i);
+      if (show == null) continue;
+      String id = show.optString("id"), market = show.optString("market");
+      String name = show.optString("title");
+      if (!show.isNull("original_title") && !show.optString("original_title").isEmpty() && !show.optString("original_title").equals(name)) name += " · " + show.optString("original_title");
+      List<String> gaps = new ArrayList<>();
+      JSONArray missing = show.optJSONArray("missing");
+      for (int j = 0; missing != null && j < missing.length(); j++) {
+        JSONObject season = missing.optJSONObject(j);
+        gaps.add((missing.length() > 1 || season.optInt("season") > 1 ? String.format(L10n.locale(), L10n.t("Season %d"), season.optInt("season")) + " " : "") + episodeRanges(season.optJSONArray("episodes")));
+      }
+      List<String> facts = new ArrayList<>();
+      facts.add(L10n.t(market.equals("china") ? "China" : "World"));
+      if (show.optBoolean("airing")) facts.add(L10n.t("Airing now"));
+      if (show.optBoolean("auto")) facts.add(L10n.t("Added automatically"));
+      if (!show.isNull("checked")) facts.add(String.format(L10n.locale(), L10n.t("Last checked %s"), when.format(new Date((long) (show.optDouble("checked") * 1000)))));
+      if (show.optInt("found") > 0) facts.add(String.format(L10n.locale(), L10n.t("Queued: %d"), show.optInt("found")));
+      LinearLayout row = Ui.column(this);
+      Ui.focus(row);
+      row.setOnFocusChangeListener((v, focused) -> Ui.secondaryContrast(v, focused));
+      Ui.pad(row, 16, 14);
+      Ui.add(row, Ui.title(this, name, 16), -1, -2);
+      Ui.gap(row, 6);
+      Ui.add(row, Ui.text(this, gaps.isEmpty() ? L10n.t("Up to date") : L10n.t("Missing") + " " + String.join(" · ", gaps), 14, gaps.isEmpty() ? Ui.ACCENT : 0xffffb74d), -1, -2);
+      Ui.add(row, Ui.text(this, String.join(" · ", facts), 12, Ui.MUTED), -1, -2);
+      String problem = show.isNull("error") ? "" : show.optString("error");
+      if (!problem.isEmpty()) Ui.add(row, Ui.text(this, problem, 12, 0xffffb74d), -1, -2);
+      String shown = name;
+      // Where its episodes are looked for can be switched, and the show taken off the list.
+      row.setOnClickListener(v -> new AppDialog(this).setTitle(shown)
+          .setPositiveButton(L10n.t(market.equals("china") ? "World" : "China"), (d, w) -> watchAction("POST", "/v1/watch/" + id, market.equals("china") ? "world" : "china"))
+          .setNeutralButton(L10n.t("Stop watching"), (d, w) -> watchAction("DELETE", "/v1/watch/" + id, null))
+          .setNegativeButton(L10n.t("Close"), null).show());
+      Ui.add(rows, row, -1, -2);
+      Ui.gap(rows, 10);
+    }
+    return shows.length();
+  }
+  private void watchAction(String method, String path, String market) {
+    Api requested = api;
+    io.execute(() -> {
+      try { requested.request(method, path, market == null ? null : new JSONObject().put("market", market)); }
+      catch (Exception e) { runOnUiThread(() -> Toast.makeText(this, message(e), Toast.LENGTH_LONG).show()); }
+      runOnUiThread(this::fetchTorrents);
+    });
   }
   private void cloudJobAction(String method, String path) {
     Api requested = api;
@@ -1374,6 +1472,10 @@ public class MainActivity extends Activity {
           JSONObject storageResult = null;
           try { storageResult = requested.request("GET", "/v1/storage", null); }
           catch (Exception ignored) { }
+          JSONObject watchResult = null;
+          try { watchResult = requested.request("GET", "/v1/watch", null); }
+          catch (Exception ignored) { }
+          final JSONObject receivedWatch = watchResult;
           final JSONArray receivedJobs = jobsResult;
           final JSONObject receivedStorage = storageResult;
           final JSONArray receivedAttention = attentionResult;
@@ -1385,6 +1487,7 @@ public class MainActivity extends Activity {
             if (receivedOperations != null) libraryOperations = receivedOperations;
             if (receivedAttention != null) attention = receivedAttention;
             if (receivedJobs != null) cloudJobs = receivedJobs;
+            if (receivedWatch != null && receivedWatch.has("shows")) watchList = receivedWatch;
             if (receivedStorage != null) storage = receivedStorage;
             libraryOperationsError = operationError;
             torrentStale = receivedTorrents == null;
@@ -1674,13 +1777,13 @@ public class MainActivity extends Activity {
       LinearLayout row = Ui.row(this);
       row.setTag("seasons");
       scroll.addView(row);
-      // A single season needs no selector; the guide starts directly below the synopsis.
-      if (seasons.size() < 2) scroll.setVisibility(View.GONE);
+      // Shown even for a single season, so every show's page has the same shape.
+      if (seasons.isEmpty()) scroll.setVisibility(View.GONE);
       for (int number : seasons) {
         Button button =
             Ui.button(
                 this,
-                number == EXTRAS ? L10n.t("Extras") : number == 0 ? L10n.t("Specials") : "Season " + number,
+                number == EXTRAS ? L10n.t("Extras") : number == 0 ? L10n.t("Specials") : String.format(L10n.locale(), L10n.t("Season %d"), number),
                 () -> {
                   season = number;
                   for(int i=0;i<row.getChildCount();i++) {
@@ -1757,7 +1860,7 @@ public class MainActivity extends Activity {
     labels.add(L10n.t(preferred.watched ? "Mark as Unwatched" : "Mark as Watched")); actions.add(() -> mark(preferred));
     if (preferred.complete) { labels.add(L10n.t("Manage files")); actions.add(() -> new LibraryFileActions(this, api, io, preferred.id, this::load).show()); }
     if (t.isContinuing()) { labels.add(L10n.t("Remove from Continue Watching")); actions.add(() -> setContinueWatchingHidden(t, true)); }
-    new AlertDialog.Builder(this).setTitle(t.title)
+    new AppDialog(this).setTitle(t.title)
         .setItems(labels.toArray(new String[0]), (dialog, which) -> actions.get(which).run())
         .setNegativeButton(L10n.t("Cancel"), null).show();
   }
@@ -1833,11 +1936,15 @@ public class MainActivity extends Activity {
     Ui.add(row, playIcon, 36, 36);
     Ui.gap(row, 14);
     LinearLayout text = Ui.column(this);
-    if (a.episode > 0) {
-      Ui.add(text, Ui.text(this, "Episode " + a.episode, 12, Ui.MUTED), -1, -2);
+    // An episode with no title of its own is headed by its number, once. TMDB lists most
+    // Chinese dramas with only the number again ("Episode 1", "第1集") as each title.
+    String number = a.episode > 0 ? String.format(L10n.locale(), L10n.t("Episode %d"), a.episode) : null;
+    boolean titled = number == null || !a.name.trim().matches("(?i)^(episode|ep\\.?|第)\\s*#?\\d+(\\.\\d+)?\\s*[集话話期回]?$") && !a.name.trim().isEmpty();
+    if (number != null && titled) {
+      Ui.add(text, Ui.text(this, number, 12, Ui.MUTED), -1, -2);
       Ui.gap(text, 5);
     }
-    TextView name = Ui.title(this, a.name, 18);
+    TextView name = Ui.title(this, titled ? a.name : number, 18);
     name.setMaxLines(2);
     Ui.add(text, name, -1, -2);
     if (!a.summary.isEmpty()) {
@@ -1885,7 +1992,7 @@ public class MainActivity extends Activity {
 
   private void assetOptions(Library.Title t, Library.Asset a) {
     if (a == null) {
-      new AlertDialog.Builder(this)
+      new AppDialog(this)
           .setTitle(L10n.t("Not yet available"))
           .setMessage(L10n.t("This title has no complete media files on the server."))
           .setPositiveButton(L10n.t("OK"), null)
@@ -1899,7 +2006,7 @@ public class MainActivity extends Activity {
     }
     labels.add(a.watched ? "Mark as Unwatched" : "Mark as Watched");
     if (a.complete) labels.add("Manage Files");
-    new AlertDialog.Builder(this)
+    new AppDialog(this)
         .setTitle(a.name)
         .setItems(
             L10n.labels(labels.toArray(new String[0])),
@@ -1983,17 +2090,20 @@ public class MainActivity extends Activity {
         runOnUiThread(() -> {
           if (isDestroyed() || api != requested) return;
           base();
-          Ui.add(root, Ui.title(this, L10n.t("Who's watching?"), 30), -1, 56);
+          // Centred, like the Apple TV: a heading, a wide bar for each user, and Create user as wide as they are.
+          TextView heading = Ui.title(this, L10n.t("Who's watching?"), 30); heading.setGravity(Gravity.CENTER);
+          Ui.add(root, heading, -1, 56);
           ScrollView scroll = new ScrollView(this);
-          LinearLayout list = Ui.column(this);
-          scroll.addView(list);
+          LinearLayout list = Ui.column(this); list.setGravity(Gravity.CENTER_HORIZONTAL);
+          scroll.addView(list, new ScrollView.LayoutParams(-1, -2));
           root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
           for (int n = 0; n < people.length(); n++) {
             JSONObject person = people.optJSONObject(n);
             if (person == null) continue;
             LinearLayout card = Ui.row(this);card.setGravity(Gravity.CENTER_VERTICAL);
-            LinearLayout button = Ui.row(this);button.setGravity(Gravity.CENTER_VERTICAL);Ui.focus(button);Ui.pad(button,16,12);
-            button.addView(ProfileUi.avatar(this,person,64));Ui.gap(button,20);
+            LinearLayout button = Ui.row(this);button.setGravity(Gravity.CENTER_VERTICAL);Ui.focusPanel(button);Ui.pad(button,16,12);
+            // Tagged so the bar's focus colours leave the avatar's own colours alone.
+            TextView face=ProfileUi.avatar(this,person,64);face.setTag("avatar");button.addView(face);Ui.gap(button,20);
             TextView label = Ui.title(this,person.optString("name"),22);
             button.addView(label,new LinearLayout.LayoutParams(0,-2,1));
             if(requested.profile.equals(person.optString("id")))Ui.add(button,Ui.text(this,"✓",22,Ui.ACCENT),36,-2);
@@ -2004,23 +2114,32 @@ public class MainActivity extends Activity {
             });
             card.addView(button,new LinearLayout.LayoutParams(0,-2,1));Ui.gap(card,12);
             Button edit = Ui.button(this,"✎",()->editProfile(requested,person));edit.setContentDescription(L10n.t("Edit profile"));Ui.add(card,edit,48,48);
-            Ui.add(list,card,600,-2);Ui.gap(list,16);
+            Ui.add(list,card,820,-2);Ui.gap(list,14);
             if (n == 0) button.requestFocus();
           }
-          Ui.add(list, Ui.button(this, L10n.t("Create user"), () -> createProfile(requested)), 420, 56);
-          if (!requested.profile.isEmpty()) {
-            Ui.gap(list, 12);
-            Ui.add(list, Ui.button(this, L10n.t("Back to library"), () -> { selectingProfile = false; render(); }), 420, 56);
-          }
+          // No "back" button: the remote's Back key returns to the library, as does choosing the user in use.
+          TextView create = Ui.title(this, L10n.t("Create user"), 20); create.setGravity(Gravity.CENTER);
+          Ui.focusPanel(create); Ui.pad(create, 16, 16);
+          create.setOnClickListener(v -> createProfile(requested));
+          Ui.add(list, create, 820, -2);
         });
       } catch (Exception e) {
         runOnUiThread(() -> {
           if (isDestroyed() || api != requested) return;
           base();
-          Ui.add(root, Ui.title(this, L10n.t("Could not load users"), 28), -1, 56);
-          Ui.add(root, Ui.text(this, message(e), 16, Ui.MUTED), -1, -2);
-          Button retry = Ui.button(this, L10n.t("Try again"), () -> chooseProfile(switching));
-          Ui.add(root, retry, 260, 56);
+          // Said plainly, with what to check and one way forward.
+          root.setGravity(Gravity.CENTER_HORIZONTAL);
+          TextView problem = Ui.title(this, L10n.t("Can’t reach your server"), 28); problem.setGravity(Gravity.CENTER);
+          Ui.add(root, problem, -1, 56);
+          TextView advice = Ui.text(this, L10n.t("Check that the server is on and that this device is on the same network."), 16, Ui.MUTED); advice.setGravity(Gravity.CENTER);
+          Ui.add(root, advice, -1, -2);
+          TextView detail = Ui.text(this, message(e), 12, Ui.MUTED); detail.setGravity(Gravity.CENTER);
+          Ui.add(root, detail, -1, -2);
+          Ui.gap(root, 18);
+          TextView retry = Ui.title(this, L10n.t("Try again"), 20); retry.setGravity(Gravity.CENTER);
+          Ui.focusPanel(retry); Ui.pad(retry, 16, 16);
+          retry.setOnClickListener(v -> chooseProfile(switching));
+          Ui.add(root, retry, 420, -2);
           retry.requestFocus();
         });
       }
@@ -2028,7 +2147,9 @@ public class MainActivity extends Activity {
   }
 
   private void createProfile(Api requested) { editProfile(requested,null); }
-  private void editProfile(Api requested,JSONObject prior) {
+  private void editProfile(Api requested,JSONObject prior) { editProfile(requested,prior,()->chooseProfile(true)); }
+  /** Edits a profile; {@code done} runs after an existing profile is saved (the chooser, or Settings). */
+  private void editProfile(Api requested,JSONObject prior,Runnable done) {
     if(switchingProfile || api!=requested)return;
     ProfileUi.editor(this,prior,(values,dialog)->{
       if(switchingProfile || api!=requested)return;
@@ -2042,7 +2163,7 @@ public class MainActivity extends Activity {
             if(person.optString("id").equals(api.profile)){
               api.profileAppearance=person;try{store.save(api);}catch(Exception e){error(message(e));return;}
             }
-            dialog.dismiss();chooseProfile(true);
+            dialog.dismiss();ProfileUi.refreshBadges(this,getWindow().getDecorView(),api);done.run();
           });
         } catch(Exception e){runOnUiThread(()->{switchingProfile=false;dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);error(message(e));});}
       });
@@ -2096,11 +2217,14 @@ public class MainActivity extends Activity {
   /** Settings in the same categories as the Apple apps: User, General, Playback, Connection, About. */
   private void settings() {
     String[] pages = {"User", "General", "Playback", "Connection", "About"};
-    new AlertDialog.Builder(this)
+    new AppDialog(this)
         // The build is what Settings is most often opened for, so it sits in the title.
         .setTitle(L10n.t("Settings") + " · " + BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")")
         .setItems(L10n.labels(pages), (d, w) -> {
-          if (w == 0) settingsPage("User", new String[] {"Switch user"}, i -> { if (api != null) chooseProfile(true); });
+          if (w == 0) settingsPage("User", new String[] {"Edit profile", "Switch user"}, i -> {
+            if (api == null) return;
+            if (i == 0) editProfile(api, ProfileUi.person(api), () -> {}); else chooseProfile(true);
+          });
           else if (w == 1) settingsPage("General", new String[] {"Follow system language", "Refresh library"}, i -> {
             if (i == 0) L10n.system(this); else load();
           });
@@ -2108,10 +2232,10 @@ public class MainActivity extends Activity {
           else if (w == 3) settingsPage("Connection", new String[] {"Change server connection", "Disconnect this TV"}, i -> {
             if (i == 0) discover(""); else disconnect();
           });
-          else new AlertDialog.Builder(this)
+          else new AppDialog(this)
               .setTitle(L10n.t("About"))
               .setMessage(L10n.t("Version") + " " + BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")")
-              .setNeutralButton(L10n.t("Startup diagnostics"), (x, y) -> new AlertDialog.Builder(this)
+              .setNeutralButton(L10n.t("Startup diagnostics"), (x, y) -> new AppDialog(this)
                   .setTitle(L10n.t("Startup timings")).setMessage(StartupTrace.text()).setPositiveButton(L10n.t("Close"), null).show())
               .setPositiveButton(L10n.t("Close"), null)
               .show();
@@ -2120,7 +2244,7 @@ public class MainActivity extends Activity {
   }
 
   private void settingsPage(String title, String[] items, java.util.function.IntConsumer action) {
-    new AlertDialog.Builder(this)
+    new AppDialog(this)
         .setTitle(L10n.t(title))
         .setItems(L10n.labels(items), (d, w) -> action.accept(w))
         .setNegativeButton(L10n.t("Back"), (d, w) -> settings())
@@ -2130,7 +2254,7 @@ public class MainActivity extends Activity {
   }
 
   private void disconnect() {
-    new AlertDialog.Builder(this)
+    new AppDialog(this)
         .setTitle(L10n.t("Disconnect this TV?"))
         .setMessage(L10n.t("Your library and viewing history stay on the server."))
         .setNegativeButton(L10n.t("Cancel"), null)
@@ -2350,7 +2474,7 @@ public class MainActivity extends Activity {
   }
 
   private void error(String s) {
-    new AlertDialog.Builder(this)
+    new AppDialog(this)
         .setTitle("Torrbaby")
         .setMessage(s)
         .setPositiveButton(L10n.t("OK"), null)
@@ -2359,6 +2483,8 @@ public class MainActivity extends Activity {
 
   @Override
   public void onBackPressed() {
+    // From the user chooser, Back returns to the library when a user is already in use.
+    if (selectingProfile && api != null && !api.profile.isEmpty() && !switchingProfile) { selectingProfile = false; render(); return; }
     if (showingCast) {
       showingCast = false; render();
       View cast = root.findViewWithTag("cast");
@@ -2401,7 +2527,7 @@ public class MainActivity extends Activity {
       restoreId = "";
       render();
     } else
-      new AlertDialog.Builder(this)
+      new AppDialog(this)
           .setTitle(L10n.t("Leave Torrbaby?"))
           .setNegativeButton(L10n.t("Stay"), null)
           .setPositiveButton(L10n.t("Exit"), (d, w) -> finish())

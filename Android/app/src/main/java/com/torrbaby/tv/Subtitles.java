@@ -66,7 +66,18 @@ final class Subtitles {
         .setOverrideForType(choice).build());
   }
 
-  static void apply(JSONObject p, ExoPlayer player, SubtitleView view) {
+  /** Subtitles drawn over ones printed in the picture sit on a box at least this opaque. */
+  static final int COVERING_OPACITY = 90;
+
+  static void apply(JSONObject p, ExoPlayer player, SubtitleView view) { apply(p, player, view, false); }
+
+  /** As above. Over a picture that carries its own subtitles the box behind the text is nearly opaque, so the text can be read. */
+  static void apply(JSONObject p, ExoPlayer player, SubtitleView view, boolean overPicture) {
+    if (p == null && overPicture && view != null) {
+      view.setApplyEmbeddedStyles(false);
+      view.setStyle(new CaptionStyleCompat(Color.WHITE, Color.argb(COVERING_OPACITY * 255 / 100, 0, 0, 0), Color.TRANSPARENT,
+          CaptionStyleCompat.EDGE_TYPE_NONE, Color.BLACK, Typeface.DEFAULT));
+    }
     if (p == null) return;
     String language = p.optString("language", "original");
     player.setTrackSelectionParameters(
@@ -82,7 +93,8 @@ final class Subtitles {
     Typeface font =
         family.equals("default") ? Typeface.DEFAULT : Typeface.create(family, Typeface.NORMAL);
     int text = Color.argb(p.optInt("text_opacity", 100) * 255 / 100, 255, 255, 255);
-    int background = Color.argb(p.optInt("background_opacity", 0) * 255 / 100, 0, 0, 0);
+    int opacity = overPicture ? Math.max(p.optInt("background_opacity", 0), COVERING_OPACITY) : p.optInt("background_opacity", 0);
+    int background = Color.argb(opacity * 255 / 100, 0, 0, 0);
     view.setApplyEmbeddedStyles(false);
     view.setStyle(
         new CaptionStyleCompat(
@@ -120,7 +132,7 @@ final class Subtitles {
       L10n.t("Background opacity") + ": " + p.optInt("background_opacity") + "%"
     };
     AlertDialog.Builder dialog =
-        new AlertDialog.Builder(a)
+        new AppDialog(a)
             .setTitle(L10n.t("Subtitles on this TV"))
             .setItems(
                 L10n.labels(labels),
@@ -151,7 +163,7 @@ final class Subtitles {
                   }
                   if (which == 0) names = new String[] {"Off", "On"};
                   if (which == 1) names = new String[] {"Original", "English", "Chinese (Simplified)"};
-                  new AlertDialog.Builder(a)
+                  new AppDialog(a)
                       .setTitle(labels[which])
                       .setSingleChoiceItems(
                           L10n.labels(names),
@@ -190,7 +202,7 @@ final class Subtitles {
     a.runOnUiThread(
         () -> {
           if (!a.isFinishing())
-            new AlertDialog.Builder(a)
+            new AppDialog(a)
                 .setTitle(L10n.t("Subtitle preferences"))
                 .setMessage(MainActivity.message(e))
                 .setPositiveButton(L10n.t("OK"), null)

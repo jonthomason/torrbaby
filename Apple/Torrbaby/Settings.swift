@@ -221,7 +221,8 @@ struct SettingsView: View {
                         } label: {
                             if page == .user {
                                 HStack(spacing: 14) {
-                                    Image(systemName: page.symbol).font(.system(size: 44)).foregroundStyle(page.tint).accessibilityHidden(true)
+                                    if let profile = store.activeProfile { ProfileAvatar(profile: profile, size: 48) }
+                                    else { Image(systemName: page.symbol).font(.system(size: 44)).foregroundStyle(page.tint).accessibilityHidden(true) }
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(verbatim: store.activeProfile?.name ?? L10n.text("Choose a user")).font(.title3.weight(.semibold))
                                         Text("Switch user").font(.subheadline).foregroundStyle(.secondary)
@@ -294,9 +295,21 @@ private struct UserSettings: View {
     #if os(macOS)
     @Environment(\.openWindow) private var openWindow
     #endif
+    @State private var editing: UserProfile?
     var body: some View {
         SwiftUI.Section {
-            LabeledContent { Text(verbatim: store.activeProfile?.name ?? L10n.text("Choose a user")) } label: { Text("User") }
+            if let profile = store.activeProfile {
+                HStack(spacing: 14) {
+                    ProfileAvatar(profile: profile, size: 52)
+                    Text(verbatim: profile.name).font(.title3.weight(.semibold))
+                }.padding(.vertical, 4)
+                // The sheet hangs on this one button. On the section it was applied to every
+                // row, and several sheets opening at once closed each other straight away.
+                Button("Edit profile") { editing = profile }
+                    .sheet(item: $editing) { person in LocalizedInterface { ProfileEditor(profile: person) }.environmentObject(store) }
+            } else {
+                LabeledContent { Text("Choose a user") } label: { Text("User") }
+            }
             Button("Switch user") {
                 store.choosingProfile = true
                 #if os(macOS)

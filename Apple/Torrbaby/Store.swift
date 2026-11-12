@@ -338,6 +338,10 @@ final class Store: ObservableObject {
         #if !os(tvOS)
         DownloadQueue.shared.attach(self)
         #endif
+        #if DEBUG
+        // UI checks can open the user chooser directly: -initialChooser YES.
+        if UserDefaults.standard.bool(forKey: "initialChooser") { choosingProfile = true }
+        #endif
         #if os(iOS)
         AutoDownload.store = self
         UNUserNotificationCenter.current().delegate = NotificationPresenter.shared
@@ -691,8 +695,18 @@ extension Store {
         guard canStream else {
             throw APIError(message: usingFallback && connected
                 ? "Streaming is unavailable on fallback. Download this title to watch it."
-                : "This title isn’t downloaded. Reconnect to your library to play it.")
+                : Self.unreachable)
         }
+    }
+    /// Why a title cannot play while the server is out of reach. An Apple TV keeps no
+    /// downloads, so there the only thing to say is that the library cannot be reached,
+    /// which is usually over in a moment (the server restarting).
+    static var unreachable: String {
+        #if os(tvOS)
+        "Can’t reach your library right now. Try again in a moment."
+        #else
+        "This title isn’t downloaded. Reconnect to your library to play it."
+        #endif
     }
     /// Request native virtual MP4 tracks without copying the audiovisual stream.
     func mediaPlaybackLink(asset: LibraryAsset, titleID: String, startSession: Bool = true, progress: @escaping (String) -> Void = { _ in }) async throws -> PlaybackLink {
@@ -771,7 +785,11 @@ struct UserProfile: Codable, Identifiable, Equatable {
     var avatarSymbol: String? = nil
     var textColor: String? = nil
     var backgroundColor: String? = nil
-    var symbol: String { avatarSymbol.flatMap { $0.isEmpty ? nil : $0 } ?? String(name.prefix(1)).uppercased() }
+    /// The avatar's one character: the chosen symbol's first (an emoji counts as one), else the name's initial.
+    var symbol: String {
+        let chosen = (avatarSymbol ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return chosen.isEmpty ? String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1)).uppercased() : String(chosen.prefix(1))
+    }
 }
 private struct ProfileList: Decodable { let profiles: [UserProfile] }
 private struct DeviceProfileState: Decodable {
@@ -801,7 +819,12 @@ struct ProfileGate<Content: View>: View {
         }
         .overlay(alignment: .topTrailing) {
             if store.configured && (!store.profileReady || store.choosingProfile) {
+                #if os(tvOS)
+                // A strip across the top for the remote, so left, right and down all leave the switch sensibly.
+                HStack { Spacer(); InterfaceLanguagePicker() }.padding(16).frame(maxWidth: .infinity).focusSection()
+                #else
                 InterfaceLanguagePicker().padding(16)
+                #endif
             }
         }
         .onChange(of: scenePhase) { _, phase in
@@ -836,14 +859,31 @@ struct ProfilePicker: View {
     @State private var editing: UserProfile?
     @State private var creating = false
     @State private var working = false
+    @FocusState private var focusedProfile: String?
+    /// Wide, centred bars on the television; a readable column elsewhere.
+    private var columnWidth: CGFloat {
+        #if os(tvOS)
+        1180
+        #else
+        760
+        #endif
+    }
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                Text("Who's watching?").font(.largeTitle.bold())
+            VStack(alignment: .center, spacing: 22) {
+                Text("Who's watching?").font(.largeTitle.bold()).frame(maxWidth: .infinity, alignment: .center)
                 if store.loadingProfiles || working { ProgressView() }
                 if let error = store.profileError {
-                    Text(L10n.text(error)).foregroundStyle(.orange)
-                    Button("Try again") { Task { await store.loadProfiles() } }
+                    // Said plainly, with what to check and one way forward.
+                    HStack(alignment: .center, spacing: 18) {
+                        Image(systemName: store.connected ? "exclamationmark.triangle" : "wifi.exclamationmark").font(.title2).foregroundStyle(.orange).accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(store.connected ? LocalizedStringKey(L10n.text(error)) : "Can’t reach your server").font(.headline)
+                            if !store.connected { Text("Check that the server is on and that this device is on the same network.").font(.subheadline).foregroundStyle(Theme.muted) }
+                        }
+                        Spacer(minLength: 12)
+                        Button("Try again") { Task { await store.loadProfiles() } }.buttonStyle(MonoButtonStyle(compact: true)).fixedSize()
+                    }.padding(18).frame(maxWidth: .infinity).background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
                 }
                 ForEach(store.profiles) { person in
                     HStack(spacing: 16) {
@@ -859,18 +899,39 @@ struct ProfilePicker: View {
                                 ProfileAvatar(profile: person, size: 72)
                                 Text(verbatim: person.name).font(.title2.weight(.semibold))
                                 Spacer()
-                                if person.id == store.activeProfile?.id { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent) }
+                                // Takes the row's own colour, so it stays visible when the row is focused and turns white.
+                                if person.id == store.activeProfile?.id { Image(systemName: "checkmark.circle.fill") }
                             }.padding(16).contentShape(RoundedRectangle(cornerRadius: 8))
-                        }.buttonStyle(MonoButtonStyle())
+                        }.buttonStyle(MonoButtonStyle()).focused($focusedProfile, equals: person.id)
                         Button { editing = person } label: { Image(systemName: "pencil").frame(width: 44, height: 44) }
-                            .accessibilityLabel("Edit profile")
+                            .buttonStyle(MonoButtonStyle()).accessibilityLabel("Edit profile")
                     }
                 }
-                Button("Create user") { creating = true }.libraryActionStyle()
-                if store.profileReady { Button("Back to library") { store.choosingProfile = false } }
-            }.disabled(working).padding(40).frame(maxWidth: 760).frame(maxWidth: .infinity)
+                // As wide as the users above it, and in the same style. There is no "back" button:
+                // choosing the user already in use returns to the library, as does the remote's Back.
+                Button { creating = true } label: {
+                    Label("Create user", systemImage: "plus").font(.title3.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 10)
+                }.buttonStyle(MonoButtonStyle())
+            }.disabled(working).padding(40).frame(maxWidth: columnWidth).frame(maxWidth: .infinity)
+                #if os(tvOS)
+                // The whole width belongs to this column for the remote: moving down from the
+                // language switch in the corner lands here, though nothing sits right below it.
+                .focusSection()
+                // The remote starts on the user already in use, not on Create user.
+                .defaultFocus($focusedProfile, store.activeProfile?.id ?? store.profiles.first?.id, priority: .userInitiated)
+                #endif
         }.background(Theme.canvas)
-            .task { await store.loadProfiles() }
+            #if os(tvOS)
+            .onExitCommand { if store.profileReady { store.choosingProfile = false } }
+            #endif
+            .task {
+                await store.loadProfiles()
+                #if os(tvOS)
+                // Once the users are on screen, put the remote on the one in use.
+                try? await Task.sleep(for: .milliseconds(350))
+                focusedProfile = store.activeProfile?.id ?? store.profiles.first?.id
+                #endif
+            }
             .sheet(isPresented: $creating) { LocalizedInterface { ProfileEditor(profile: nil) } }
             .sheet(item: $editing) { person in LocalizedInterface { ProfileEditor(profile: person) } }
     }
@@ -901,8 +962,9 @@ struct ProfileEditor: View {
                     ProfileAvatar(profile: UserProfile(id: "preview", name: name, avatarSymbol: symbol, textColor: foreground, backgroundColor: background), size: 100)
                         .frame(maxWidth: .infinity)
                     TextField("First name", text: $name).profileFieldStyle()
+                    // Not cut short while typing: a pinyin or other input method composes several
+                    // letters before it commits a character. Only the first character is kept on save.
                     TextField("Initial or emoji", text: $symbol).profileFieldStyle()
-                        .onChange(of: symbol) { _, value in symbol = String(value.prefix(1)) }
                     ProfileColorPicker(title: "Text color", hex: $foreground)
                     ProfileColorPicker(title: "Background color", hex: $background)
                     if let error { Text(L10n.text(error)).foregroundStyle(.orange) }
@@ -917,7 +979,8 @@ struct ProfileEditor: View {
                             Task {
                                 defer { saving = false }
                                 do {
-                                    try await store.saveProfile(id: profile?.id, name: name.trimmingCharacters(in: .whitespacesAndNewlines), symbol: symbol, textColor: foreground, backgroundColor: background)
+                                    let chosen = String(symbol.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1))
+                                    try await store.saveProfile(id: profile?.id, name: name.trimmingCharacters(in: .whitespacesAndNewlines), symbol: chosen, textColor: foreground, backgroundColor: background)
                                     dismiss()
                                 } catch { self.error = error.localizedDescription }
                             }

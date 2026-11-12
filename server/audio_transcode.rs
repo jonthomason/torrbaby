@@ -97,7 +97,7 @@ fn supported(codec: &str) -> bool { matches!(codec, "A_AAC" | "A_AC3" | "A_EAC3"
 
 /// Tracks to convert: None when the file has no audio or already has a track that plays as is.
 fn plan(input: &Path) -> Result<Option<Vec<Plan>>> {
-    let mkv = MatroskaFile::open(BufReader::new(fs::File::open(input)?))?;
+    let mkv = MatroskaFile::open(BufReader::new(crate::matroska::Bounded::open(input)?))?;
     let audio = || mkv.tracks().iter().enumerate().filter(|(_, t)| t.track_type() == TrackType::Audio);
     if audio().next().is_none() || audio().any(|(_, t)| supported(t.codec_id())) { return Ok(None); }
     Ok(Some(audio()

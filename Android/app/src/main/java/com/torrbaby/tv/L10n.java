@@ -30,6 +30,7 @@ final class L10n {
     IDS.put("%d videos", R.string.ui_712d2e5c0047);
     IDS.put("%dh %dm left", R.string.ui_660a76df86fd);
     IDS.put("%dm left", R.string.ui_659748ef61cf);
+    IDS.put("%s free of %s", R.string.ui_9b722d3ba900);
     IDS.put("1 DOWNLOAD", R.string.ui_c428b17e2512);
     IDS.put("1 episode", R.string.ui_54fc19e5c9f4);
     IDS.put("1 seed", R.string.ui_8256cd5880d0);
@@ -65,6 +66,7 @@ final class L10n {
     IDS.put("Added to Downloads", R.string.ui_f9b608af67f4);
     IDS.put("Added to Transmission", R.string.ui_a98648e9368b);
     IDS.put("Added to downloads", R.string.ui_3d3eaa50eab2);
+    IDS.put("Added to the download already waiting for this show.", R.string.ui_ac18c3c9f5d2);
     IDS.put("Adding download", R.string.ui_802e94122566);
     IDS.put("Adding download…", R.string.ui_9295ef6a9cf8);
     IDS.put("Adding…", R.string.ui_ffb2e628b0e9);
@@ -112,6 +114,8 @@ final class L10n {
     IDS.put("Cancel", R.string.ui_77dfd2135f4d);
     IDS.put("Cancel download", R.string.ui_67bb11d08df2);
     IDS.put("Cancel trial", R.string.ui_87f8cd8360cc);
+    IDS.put("Can’t reach your library right now. Try again in a moment.", R.string.ui_24f5f64bb24c);
+    IDS.put("Can’t reach your server", R.string.ui_fe5cb199d204);
     IDS.put("Cast", R.string.ui_60745aef336b);
     IDS.put("Cellular", R.string.ui_b4e2e1ffb3ed);
     IDS.put("Cellular downloads allowed until", R.string.ui_6b9dfc21816d);
@@ -122,6 +126,7 @@ final class L10n {
     IDS.put("Check access to your Application Support folder and try again.", R.string.ui_eba399ce4b7b);
     IDS.put("Check again", R.string.ui_e185048ce3c0);
     IDS.put("Check now", R.string.ui_2ce5dd0d6f18);
+    IDS.put("Check that the server is on and that this device is on the same network.", R.string.ui_b4d790f692fb);
     IDS.put("Check the server address and network connection.", R.string.ui_ffe5184940bc);
     IDS.put("Check the year and episodes before applying.", R.string.ui_8e6b214072c4);
     IDS.put("Checking files…", R.string.ui_07369df4cdcc);
@@ -276,6 +281,7 @@ final class L10n {
     IDS.put("Ep %d", R.string.ui_ec4a7319deb9);
     IDS.put("Ep %d–%d", R.string.ui_da66b520661a);
     IDS.put("Episode", R.string.ui_8669aa56ebc3);
+    IDS.put("Episode %d", R.string.ui_ff8b7f3b6044);
     IDS.put("Episode order", R.string.ui_4d9e959a49a6);
     IDS.put("Episodes", R.string.ui_49d641ba8893);
     IDS.put("Episodes to keep per show", R.string.ui_1300ab995b0b);
@@ -355,6 +361,7 @@ final class L10n {
     IDS.put("Language", R.string.ui_89b86ab0e66f);
     IDS.put("Languages", R.string.ui_db07be184479);
     IDS.put("Languages unavailable", R.string.ui_4ece8db0cba2);
+    IDS.put("Last checked %s", R.string.ui_b288f8c8e974);
     IDS.put("Leave Torrbaby?", R.string.ui_88a68e0e00b7);
     IDS.put("Library", R.string.ui_b8100f5ba8bd);
     IDS.put("Library & Organizing", R.string.ui_cbfda9ea6b27);
@@ -425,6 +432,7 @@ final class L10n {
     IDS.put("New episodes go to the drive that already has the show. Everything else goes to the drive with the most free space.", R.string.ui_96df46930d75);
     IDS.put("New name", R.string.ui_9e627c7b1aec);
     IDS.put("Next Episode", R.string.ui_834ae0b1f228);
+    IDS.put("Next check: %s", R.string.ui_35da6a009052);
     IDS.put("Next episode", R.string.ui_882f1a46548e);
     IDS.put("Next episode…", R.string.ui_a3047eafa5d4);
     IDS.put("No available next episode", R.string.ui_a66974cfe156);
@@ -811,6 +819,7 @@ final class L10n {
     IDS.put("Up next", R.string.ui_567bfc4dad37);
     IDS.put("Up to date", R.string.ui_82fb1d5144a8);
     IDS.put("Update download", R.string.ui_1b0fb105245e);
+    IDS.put("Updated", R.string.ui_f2f8570ddd7b);
     IDS.put("Updated subtitles are available for this download.", R.string.ui_fcb0f4dbd866);
     IDS.put("Updating…", R.string.ui_3ab0d73100de);
     IDS.put("Upload", R.string.ui_8bdf057f91e7);

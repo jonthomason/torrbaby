@@ -32,6 +32,9 @@ fn normalize_prepared(info:&mut Value) {
     if let Some(prepared)=info["prepared"].as_array_mut() {
         for job in prepared {
             job["generated"]=json!(generated(job));
+            // Read from subtitles printed in the picture (its source is the server's own
+            // transcript file): players put an opaque box behind anything shown over them.
+            job["picture"]=json!(job["extraction_method"]=="ocr" && !job["sidecar"].is_null());
             job["kind"]=json!(crate::subtitle_jobs::kind(job["extraction_method"].as_str(),job["target"].as_str()));
             if job["state"]=="ready" && job["sidecar"].is_null() {
                 if let (Some(track),Some(source))=(job["track"].as_u64(),job["source"].as_str()) {
@@ -272,8 +275,8 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
     }
     let mut outcome=advance_jobs(s,asset,id,&planned)?;
     if outcome.no_source {
-        // No usable English or Chinese subtitles: transcribe the English audio,
-        // then translate the transcript to Chinese like any English text track.
+        // No usable English or Chinese subtitles: transcribe the English or Mandarin
+        // audio, then translate the transcript to the other language like any text track.
         let report=|done:u64,total:u64|{
             if let Ok(db)=s.db.lock() {
                 let detail=json!({"state":"running","stage":"transcription","completed_cues":done,"total_cues":total});
@@ -281,8 +284,8 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
             }
         };
         match crate::speech_subtitles::transcript(s,asset,&input,report).await? {
-            crate::speech_subtitles::Transcript::Ready(path) => {
-                let planned=vec![(path.clone(),1,"en",None),(path,1,"en",Some("zh-Hans"))];
+            crate::speech_subtitles::Transcript::Ready(path,language) => {
+                let planned=vec![(path.clone(),1,language,None),(path,1,language,Some(if language=="en" {"zh-Hans"}else{"en"}))];
                 outcome=advance_jobs(s,asset,id,&planned)?;
             }
             crate::speech_subtitles::Transcript::Rejected(reason) => {

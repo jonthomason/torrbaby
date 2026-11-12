@@ -57,10 +57,19 @@ struct InterfaceLanguagePicker: View {
     }
     private func option(_ label: String, code: String) -> some View {
         Button { language.choose(code) } label: {
+            #if os(tvOS)
+            Text(verbatim: label).frame(minWidth: 30)
+            #else
             Text(verbatim: label).frame(minWidth: 30).padding(.horizontal, 9).padding(.vertical, 5)
                 .foregroundStyle(language.code == code ? Theme.onAccent : Color.white)
                 .background(language.code == code ? Theme.accent : .clear, in: RoundedRectangle(cornerRadius: 6))
-        }.buttonStyle(.plain)
+            #endif
+        }
+            #if os(tvOS)
+            .buttonStyle(TVLanguageOptionStyle(selected: language.code == code))
+            #else
+            .buttonStyle(.plain)
+            #endif
             .accessibilityLabel(code == "en" ? "English" : "中文")
             .accessibilityAddTraits(language.code == code ? .isSelected : [])
     }
@@ -199,3 +208,21 @@ struct ActionAlert {
         }
     }
 }
+
+#if os(tvOS)
+/// The language switch on the television: the remote's position is solid white and a
+/// little larger, the language in use a quiet tint, so the two are never mistaken.
+struct TVLanguageOptionStyle: ButtonStyle {
+    var selected = false
+    @Environment(\.isFocused) private var focused
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, 14).padding(.vertical, 7)
+            .foregroundStyle(focused ? Color.black : .white)
+            .background(focused ? Color.white : selected ? Color.white.opacity(0.22) : .clear, in: RoundedRectangle(cornerRadius: 6))
+            .scaleEffect(focused ? 1.08 : 1)
+            .opacity(configuration.isPressed ? 0.75 : 1)
+            .animation(.easeOut(duration: 0.15), value: focused)
+    }
+}
+#endif

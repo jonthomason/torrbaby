@@ -19,6 +19,7 @@
     <string name="ui_712d2e5c0047" formatted="false">%d 个视频</string>
     <string name="ui_660a76df86fd" formatted="false">剩余 %d 小时 %d 分钟</string>
     <string name="ui_659748ef61cf" formatted="false">剩余 %d 分钟</string>
+    <string name="ui_9b722d3ba900" formatted="false">可用 %s，共 %s</string>
     <string name="ui_c428b17e2512" formatted="false">1 个下载</string>
     <string name="ui_54fc19e5c9f4" formatted="false">1 集</string>
     <string name="ui_8256cd5880d0" formatted="false">1 个做种</string>
@@ -54,6 +55,7 @@
     <string name="ui_f9b608af67f4" formatted="false">已添加到下载</string>
     <string name="ui_a98648e9368b" formatted="false">已添加到 Transmission</string>
     <string name="ui_3d3eaa50eab2" formatted="false">已加入下载</string>
+    <string name="ui_ac18c3c9f5d2" formatted="false">已加入该剧集正在等待的下载。</string>
     <string name="ui_802e94122566" formatted="false">正在添加下载</string>
     <string name="ui_9295ef6a9cf8" formatted="false">正在添加下载…</string>
     <string name="ui_ffb2e628b0e9" formatted="false">正在添加…</string>
@@ -101,6 +103,8 @@
     <string name="ui_77dfd2135f4d" formatted="false">取消</string>
     <string name="ui_67bb11d08df2" formatted="false">取消下载</string>
     <string name="ui_87f8cd8360cc" formatted="false">取消试下载</string>
+    <string name="ui_24f5f64bb24c" formatted="false">暂时无法连接到媒体库，请稍后再试。</string>
+    <string name="ui_fe5cb199d204" formatted="false">无法连接到你的服务器</string>
     <string name="ui_60745aef336b" formatted="false">演员表</string>
     <string name="ui_b4e2e1ffb3ed" formatted="false">蜂窝网络</string>
     <string name="ui_6b9dfc21816d" formatted="false">蜂窝网络下载允许至</string>
@@ -111,6 +115,7 @@
     <string name="ui_eba399ce4b7b" formatted="false">请检查应用程序支持文件夹的访问权限，然后重试。</string>
     <string name="ui_e185048ce3c0" formatted="false">再次检查</string>
     <string name="ui_2ce5dd0d6f18" formatted="false">立即检查</string>
+    <string name="ui_b4d790f692fb" formatted="false">请确认服务器已开启，并且此设备与它在同一网络中。</string>
     <string name="ui_ffe5184940bc" formatted="false">请检查服务器地址和网络连接。</string>
     <string name="ui_8e6b214072c4" formatted="false">应用前请确认年份和集数。</string>
     <string name="ui_07369df4cdcc" formatted="false">正在检查文件…</string>
@@ -265,6 +270,7 @@
     <string name="ui_ec4a7319deb9" formatted="false">第 %d 集</string>
     <string name="ui_da66b520661a" formatted="false">第 %d–%d 集</string>
     <string name="ui_8669aa56ebc3" formatted="false">集</string>
+    <string name="ui_ff8b7f3b6044" formatted="false">第 %d 集</string>
     <string name="ui_4d9e959a49a6" formatted="false">按集数排序</string>
     <string name="ui_49d641ba8893" formatted="false">集数</string>
     <string name="ui_1300ab995b0b" formatted="false">每部剧保留的集数</string>
@@ -344,6 +350,7 @@
     <string name="ui_89b86ab0e66f" formatted="false">语言</string>
     <string name="ui_db07be184479" formatted="false">语言</string>
     <string name="ui_4ece8db0cba2" formatted="false">语言信息不可用</string>
+    <string name="ui_b288f8c8e974" formatted="false">上次检查：%s</string>
     <string name="ui_88a68e0e00b7" formatted="false">退出 Torrbaby？</string>
     <string name="ui_b8100f5ba8bd" formatted="false">媒体库</string>
     <string name="ui_cbfda9ea6b27" formatted="false">媒体库与整理</string>
@@ -414,6 +421,7 @@
     <string name="ui_96df46930d75" formatted="false">新剧集会存到已有该剧的硬盘，其他内容存到可用空间最多的硬盘。</string>
     <string name="ui_9e627c7b1aec" formatted="false">新名称</string>
     <string name="ui_834ae0b1f228" formatted="false">下一集</string>
+    <string name="ui_35da6a009052" formatted="false">下次检查：%s</string>
     <string name="ui_882f1a46548e" formatted="false">下一集</string>
     <string name="ui_a3047eafa5d4" formatted="false">下一集…</string>
     <string name="ui_a66974cfe156" formatted="false">暂无可播放的下一集</string>
@@ -800,6 +808,7 @@
     <string name="ui_567bfc4dad37" formatted="false">接下来播放</string>
     <string name="ui_82fb1d5144a8" formatted="false">已是最新</string>
     <string name="ui_1b0fb105245e" formatted="false">更新下载</string>
+    <string name="ui_f2f8570ddd7b" formatted="false">更新于</string>
     <string name="ui_fcb0f4dbd866" formatted="false">此下载有更新的字幕可用。</string>
     <string name="ui_3ab0d73100de" formatted="false">正在更新…</string>
     <string name="ui_8bdf057f91e7" formatted="false">上传</string>

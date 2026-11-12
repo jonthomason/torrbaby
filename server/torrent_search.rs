@@ -527,6 +527,8 @@ impl Search {
             }
         }
         let mut items: Vec<_> = unique.into_values().collect();
+        // A release named as a program or an archive ("…H 264-POKE.exe") is bait, not video.
+        items.retain(|item| !program_payload(&item.name));
         items.sort_by(|a, b| {
             b.match_score
                 .cmp(&a.match_score)
@@ -1251,9 +1253,25 @@ fn score(item: &mut Item, query: &Query) {
     item.match_score = score.clamp(0, 100) as u16;
 }
 
+/// Whether a release's name ends as a program, script or archive rather than a video:
+/// fakes that borrow an episode's name to deliver malware.
+pub fn program_payload(title: &str) -> bool {
+    static PROGRAM: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)\.(?:exe|scr|com|bat|cmd|msi|lnk|vbs|js|jar|apk|dmg|pkg|zip|rar|7z)\s*$").expect("valid regex")
+    });
+    PROGRAM.is_match(title.trim())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn releases_named_as_programs_are_not_offered() {
+        assert!(program_payload("MobLand S02E03 Bonzo Goes to Bitburg 1080p AMZN WEB-DL DDP5 1 H 264-POKE.exe"));
+        assert!(program_payload("Show S01E01 1080p.rar "));
+        assert!(!program_payload("MobLand S02E01 I Wanna Be Your Dog 1080P AMZN WEB-DL DDP5.1. X265 POOTLED.mkv"));
+        assert!(!program_payload("The Comedy Club (2024) S01 1080p WEB-DL"));
+    }
     #[tokio::test]
     async fn persistent_bt_cache_avoids_network_after_restart() {
         use sha2::{Digest,Sha256};

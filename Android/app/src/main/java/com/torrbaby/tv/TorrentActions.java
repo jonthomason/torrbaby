@@ -31,7 +31,7 @@ final class TorrentActions {
           ? "This package is in Junk. The server will finish seeding and delete it automatically."
           : "The server is deleting this package.";
       if (!operation.isNull("error")) status += "\n\n" + operation.optString("error");
-      new AlertDialog.Builder(activity).setTitle(item.optString("name"))
+      new AppDialog(activity).setTitle(item.optString("name"))
           .setMessage(status).setPositiveButton(L10n.t("Close"), null).show();
       return;
     }
@@ -53,7 +53,7 @@ final class TorrentActions {
       // Reads as a state once chosen; choosing it again returns to an ordinary download.
       first ? "Stop downloading first" : "Download first"
     };
-    new AlertDialog.Builder(activity)
+    new AppDialog(activity)
         .setTitle(item.optString("name"))
         .setItems(
             L10n.labels(labels),
@@ -104,7 +104,7 @@ final class TorrentActions {
                       () -> send("POST", path + "ignore", new JSONObject()));
                   break;
                 case 7:
-                  new AlertDialog.Builder(activity)
+                  new AppDialog(activity)
                       .setTitle(L10n.t("Remove torrent"))
                       .setItems(
                           L10n.labels(new String[] {"Keep files on server", "Delete files from server…"}),
@@ -134,7 +134,7 @@ final class TorrentActions {
   }
 
   void manage() {
-    new AlertDialog.Builder(activity)
+    new AppDialog(activity)
         .setTitle(L10n.t("Server torrents"))
         .setItems(
             L10n.labels(new String[] {"Add magnet link", "Seeding target"}),
@@ -155,7 +155,7 @@ final class TorrentActions {
                 () -> {
                   if (activity.isDestroyed()) return;
                   double[] ratios = {1.0, 1.2, 1.5, 2.0, 3.0};
-                  new AlertDialog.Builder(activity)
+                  new AppDialog(activity)
                       .setTitle(L10n.t("Seeding target"))
                       .setMessage(
                           current.optBoolean("enabled")
@@ -164,7 +164,7 @@ final class TorrentActions {
                       .setPositiveButton(
                           L10n.t("Change"),
                           (d, w) ->
-                              new AlertDialog.Builder(activity)
+                              new AppDialog(activity)
                                   .setTitle(L10n.t("Default seed ratio"))
                                   .setItems(
                                       L10n.labels(new String[] {"1.0", "1.2", "1.5", "2.0", "3.0", "Unlimited"}),
@@ -219,7 +219,7 @@ final class TorrentActions {
     input.selectAll();
     input.setInputType(InputType.TYPE_CLASS_TEXT);
     AlertDialog dialog =
-        new AlertDialog.Builder(activity)
+        new AppDialog(activity)
             .setTitle(title)
             .setView(input)
             .setNegativeButton(L10n.t("Cancel"), null)
@@ -265,7 +265,7 @@ final class TorrentActions {
             .append("% · ")
             .append(String.format(Locale.ROOT, "%.2f GB", size / 1e9));
       }
-    new AlertDialog.Builder(activity)
+    new AppDialog(activity)
         .setTitle(item.optString("name"))
         .setMessage(text)
         .setPositiveButton(L10n.t("Close"), null)
@@ -295,7 +295,7 @@ final class TorrentActions {
 
   private void confirm(String title, String message, Runnable action) {
     AlertDialog dialog =
-        new AlertDialog.Builder(activity)
+        new AppDialog(activity)
             .setTitle(title)
             .setMessage(message)
             .setNegativeButton(L10n.t("Cancel"), null)
@@ -361,7 +361,7 @@ final class TorrentActions {
 
   private void error(String message) {
     if (!activity.isDestroyed() && !activity.isFinishing())
-      new AlertDialog.Builder(activity)
+      new AppDialog(activity)
           .setTitle(L10n.t("Torrent action"))
           .setMessage(message)
           .setPositiveButton(L10n.t("OK"), null)

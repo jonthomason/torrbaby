@@ -914,3 +914,12 @@ A file has no path	有文件缺少路径
 Already in the download queue.	已在下载队列中。
 Already in your library: all %d videos. Nothing to download.	这 %d 个视频已全部在你的资料库中，无需下载。
 %d of %d videos are already in your library; the rest will download.	%d / %d 个视频已在你的资料库中，其余将会下载。
+Next check: %s	下次检查：%s
+Last checked %s	上次检查：%s
+Updated	更新于
+%s free of %s	可用 %s，共 %s
+Added to the download already waiting for this show.	已加入该剧集正在等待的下载。
+Can’t reach your server	无法连接到你的服务器
+Check that the server is on and that this device is on the same network.	请确认服务器已开启，并且此设备与它在同一网络中。
+Can’t reach your library right now. Try again in a moment.	暂时无法连接到媒体库，请稍后再试。
+Episode %d	第 %d 集
