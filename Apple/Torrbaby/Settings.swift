@@ -174,7 +174,9 @@ struct SettingsView: View {
     @EnvironmentObject var store: Store
     @Binding var showConnect: Bool
     #if os(macOS)
-    @State private var selected: SettingsPage? = .general
+    @State private var selected: SettingsPage? = SettingsView.initialPage
+    /// The page a new Settings window opens on.
+    static var initialPage: SettingsPage = .general
     #endif
     var body: some View {
         #if os(macOS)
@@ -820,6 +822,53 @@ private struct FallbackAddressView: View {
         #if os(macOS)
         .frame(width: 520, height: 300)
         #endif
+    }
+}
+#endif
+
+#if os(macOS)
+/// Test aid: `-snapshotSettings <folder>` renders every Mac Settings page, in English and
+/// Chinese, to PNG files and quits. It lets the layout be checked on a Mac whose screen
+/// cannot be captured. Available in release builds because only the signed app can read
+/// its saved connection.
+@MainActor enum SettingsSnapshot {
+    @discardableResult static func runIfRequested() -> Bool {
+        guard let folder = UserDefaults.standard.string(forKey: "snapshotSettings") else { return false }
+        Task { @MainActor in
+            // Its own store: with the screen locked the app may never show a window to borrow one from.
+            let store = Store()
+            await store.connect()
+            try? await store.resolveProfile()
+            await store.refresh(polling: false)
+            for _ in 0..<20 where !store.connected || store.status == nil { try? await Task.sleep(for: .milliseconds(500)) }
+            for language in ["en", "zh-Hans"] {
+                InterfaceLanguage.shared.selection = language
+                for page in SettingsPage.allCases {
+                    SettingsView.initialPage = page
+                    let size = NSSize(width: 760, height: 560)
+                    let view = LocalizedInterface { SettingsView(showConnect: .constant(false)) }
+                        .environmentObject(store).tint(Theme.accent).preferredColorScheme(.dark)
+                        .toggleStyle(MonoToggleStyle()).frame(width: size.width, height: size.height)
+                    let host = NSHostingView(rootView: view)
+                    host.frame = NSRect(origin: .zero, size: size)
+                    let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+                    window.appearance = NSAppearance(named: .darkAqua)
+                    window.contentView = host
+                    window.setFrameOrigin(NSPoint(x: 40, y: 40)); window.orderFrontRegardless()
+                    try? await Task.sleep(for: .seconds(3))
+                    host.layoutSubtreeIfNeeded()
+                    if let image = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                        host.cacheDisplay(in: host.bounds, to: image)
+                        let name = "mac-\(language)-\(page.rawValue.replacingOccurrences(of: " & ", with: "-")).png"
+                        try? image.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: folder).appendingPathComponent(name))
+                    }
+                    window.close()
+                }
+            }
+            SettingsView.initialPage = .general
+            NSApp.terminate(nil)
+        }
+        return true
     }
 }
 #endif

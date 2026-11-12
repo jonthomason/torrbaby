@@ -7,6 +7,8 @@ import Darwin
 struct TorrbabyApp: App {
     init() {
         #if os(macOS)
+        // A snapshot run renders Settings to files and quits; it is not a second app instance.
+        if SettingsSnapshot.runIfRequested() { return }
         MacInstance.enforce()
         // Tabs are created only by an explicit New Tab action.
         NSWindow.allowsAutomaticWindowTabbing = false
