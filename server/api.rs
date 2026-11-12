@@ -30,7 +30,7 @@ pub struct Service {
     pub(crate) data_dir: PathBuf,
     http: reqwest::Client,
     scan_lock: tokio::sync::Mutex<()>,
-    metadata: crate::metadata::Metadata,
+    pub(crate) metadata: crate::metadata::Metadata,
     metadata_lock: tokio::sync::Mutex<()>,
     pub(crate) mutation_lock: tokio::sync::Mutex<()>,
     pub(crate) subtitle_jobs: Arc<crate::subtitle_jobs::Manager>,
