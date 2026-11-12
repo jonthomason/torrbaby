@@ -10,6 +10,7 @@
     <string name="ui_2dd21150b9d0" formatted="false">%d / %d 集</string>
     <string name="ui_5f03e85d806c" formatted="false">%d / %d 个资源</string>
     <string name="ui_cf5dae5645db" formatted="false">%d / %d 个视频</string>
+    <string name="ui_f8713dc1c4d5" formatted="false">%d / %d 个视频已在你的资料库中，其余将会下载。</string>
     <string name="ui_b4d8b30e51a8" formatted="false">%d 个资源</string>
     <string name="ui_55d456f87a3f" formatted="false">筛选条件隐藏了 %d 个资源</string>
     <string name="ui_b295fde49b7b" formatted="false">已选 %d 个</string>
@@ -71,6 +72,8 @@
     <string name="ui_0deb0259dcd9" formatted="false">允许通过蜂窝网络或热点下载</string>
     <string name="ui_9d12608fc0bd" formatted="false">按名称排序</string>
     <string name="ui_e1bc0ebdf8b8" formatted="false">已有同样好的版本：%d</string>
+    <string name="ui_6894bde06f9a" formatted="false">已在下载队列中。</string>
+    <string name="ui_76b9b9fca943" formatted="false">这 %d 个视频已全部在你的资料库中，无需下载。</string>
     <string name="ui_f2de57952082" formatted="false">已在种子列表中</string>
     <string name="ui_39e932f8acd0" formatted="false">已在那块硬盘上</string>
     <string name="ui_591169c6ab54" formatted="false">此位置连接的是另一块硬盘</string>

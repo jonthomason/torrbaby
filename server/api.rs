@@ -674,8 +674,8 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             let id = url.rsplit('/').next()?.split('?').next()?;
             let several = share["copies"].as_array().is_some_and(|all| all.len() > 1);
             let title = share["title"].as_str().filter(|t| !t.is_empty()).unwrap_or(query);
-            let folder = copy["folder"].as_str().and_then(|f| f.rsplit('/').next()).filter(|f| !f.is_empty());
-            let name = match folder { Some(folder) if several && folder != title => format!("{title} · {folder}"), _ => title.to_owned() };
+            let folder = copy["folder"].as_str().and_then(|f| f.rsplit('/').next()).map(crate::cloud::visible).filter(|f| !f.is_empty());
+            let name = match &folder { Some(folder) if several && folder != title => format!("{title} · {folder}"), _ => title.to_owned() };
             let mut item = crate::torrent_search::cloud_item(name, &if several { format!("{id}#{index}") } else { id.to_owned() }, url, copy["total_bytes"].as_u64(),
                 share["posted"].as_str().filter(|p| !p.is_empty()).map(str::to_owned), copy["video_count"].as_u64().unwrap_or(0), &show, copy["key"].as_str());
             // What the files are, not what the title happens to say.

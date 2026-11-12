@@ -21,6 +21,7 @@ final class L10n {
     IDS.put("%d of %d episodes", R.string.ui_2dd21150b9d0);
     IDS.put("%d of %d releases", R.string.ui_5f03e85d806c);
     IDS.put("%d of %d videos", R.string.ui_cf5dae5645db);
+    IDS.put("%d of %d videos are already in your library; the rest will download.", R.string.ui_f8713dc1c4d5);
     IDS.put("%d releases", R.string.ui_b4d8b30e51a8);
     IDS.put("%d releases hidden by filters", R.string.ui_55d456f87a3f);
     IDS.put("%d selected", R.string.ui_b295fde49b7b);
@@ -82,6 +83,8 @@ final class L10n {
     IDS.put("Allow downloads over cellular or hotspot", R.string.ui_0deb0259dcd9);
     IDS.put("Alphabetical", R.string.ui_9d12608fc0bd);
     IDS.put("Already had as good: %d", R.string.ui_e1bc0ebdf8b8);
+    IDS.put("Already in the download queue.", R.string.ui_6894bde06f9a);
+    IDS.put("Already in your library: all %d videos. Nothing to download.", R.string.ui_76b9b9fca943);
     IDS.put("Already in your torrents", R.string.ui_f2de57952082);
     IDS.put("Already on that drive", R.string.ui_39e932f8acd0);
     IDS.put("Another drive is connected in its place", R.string.ui_591169c6ab54);

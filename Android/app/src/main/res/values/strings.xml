@@ -10,6 +10,7 @@
     <string name="ui_2dd21150b9d0" formatted="false">%d of %d episodes</string>
     <string name="ui_5f03e85d806c" formatted="false">%d of %d releases</string>
     <string name="ui_cf5dae5645db" formatted="false">%d of %d videos</string>
+    <string name="ui_f8713dc1c4d5" formatted="false">%d of %d videos are already in your library; the rest will download.</string>
     <string name="ui_b4d8b30e51a8" formatted="false">%d releases</string>
     <string name="ui_55d456f87a3f" formatted="false">%d releases hidden by filters</string>
     <string name="ui_b295fde49b7b" formatted="false">%d selected</string>
@@ -71,6 +72,8 @@
     <string name="ui_0deb0259dcd9" formatted="false">Allow downloads over cellular or hotspot</string>
     <string name="ui_9d12608fc0bd" formatted="false">Alphabetical</string>
     <string name="ui_e1bc0ebdf8b8" formatted="false">Already had as good: %d</string>
+    <string name="ui_6894bde06f9a" formatted="false">Already in the download queue.</string>
+    <string name="ui_76b9b9fca943" formatted="false">Already in your library: all %d videos. Nothing to download.</string>
     <string name="ui_f2de57952082" formatted="false">Already in your torrents</string>
     <string name="ui_39e932f8acd0" formatted="false">Already on that drive</string>
     <string name="ui_591169c6ab54" formatted="false">Another drive is connected in its place</string>

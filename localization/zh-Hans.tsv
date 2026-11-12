@@ -349,9 +349,7 @@ Finished	已完成
 Failed	失败
 Queued	排队中
 Ready	已就绪
-Paused	已暂停
 Interrupted	已中断
-Extracting	提取中
 Preparing	准备中
 Complete	已完成
 Not progressing	无进展
@@ -533,7 +531,6 @@ track	轨道
 Closed captions	隐藏式字幕
 Could not connect.	无法连接。
 Could not refresh.	无法刷新。
-First name	名字
 Release date	上映日期
 Title	片名
 Upload	上传
@@ -914,3 +911,6 @@ Use a shorter name	请使用更短的名称
 Wait until the download has finished	请等待下载完成
 Media folders are set per drive when a drives list is configured	配置硬盘列表后，媒体文件夹按硬盘分别设置
 A file has no path	有文件缺少路径
+Already in the download queue.	已在下载队列中。
+Already in your library: all %d videos. Nothing to download.	这 %d 个视频已全部在你的资料库中，无需下载。
+%d of %d videos are already in your library; the rest will download.	%d / %d 个视频已在你的资料库中，其余将会下载。

@@ -1079,6 +1079,7 @@ private struct TorrentSearchRow: View {
     @State private var adding = false
     @State private var added = false
     @State private var addError: String?
+    @State private var addNote: String?
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var rowSizeClass
     private var compactRow: Bool { rowSizeClass == .compact }
@@ -1156,7 +1157,9 @@ private struct TorrentSearchRow: View {
                 }
                 if let addError { Text(addError).font(.caption).foregroundStyle(.orange) }
                 if added && item.isCloud {
-                    Label("Follow its progress in Downloading.", systemImage: "checkmark.circle.fill").font(.caption.weight(.semibold)).foregroundStyle(Theme.accent)
+                    // A warning when it was already queued or already in the library; otherwise where to watch it.
+                    if let addNote { Label { Text(verbatim: addNote) } icon: { Image(systemName: "exclamationmark.circle.fill") }.font(.caption.weight(.semibold)).foregroundStyle(.orange) }
+                    else { Label("Follow its progress in Downloading.", systemImage: "checkmark.circle.fill").font(.caption.weight(.semibold)).foregroundStyle(Theme.accent) }
                 }
             }
             if let onTrial, !item.isCloud, !item.magnet.isEmpty {
@@ -1209,10 +1212,9 @@ private struct TorrentSearchRow: View {
         if let season = item.cloud?.season ?? CloudShareView.season(in: item.name) { body["season"] = season }
         if item.cloud?.episodes?.isEmpty == false { body["kind"] = "tv" }
         do {
-            struct Job: Decodable { let jobId: String? }
-            let _: Job = try await store.request("POST", "/v1/cloud/add", body: body, timeout: 45)
-            added = true
-            store.notify("Added to downloads", detail: name)
+            let result: CloudAdded = try await store.request("POST", "/v1/cloud/add", body: body, timeout: 45)
+            added = true; addNote = result.warning
+            if !result.nothingNew { store.notify("Added to downloads", detail: name) }
         } catch { addError = error.localizedDescription }
     }
     private func addMagnet() async {
@@ -1621,6 +1623,23 @@ struct CloudShare: Decodable {
     var copies: [CloudCopy]? = nil
 }
 struct CloudSearch: Decodable { let shares: [CloudShare] }
+/// The server's answer to a request to download from a share.
+struct CloudAdded: Decodable {
+    var jobId: String? = nil
+    /// A download of these same videos was already waiting or running.
+    var alreadyQueued: Bool? = nil
+    /// How many of the videos asked for are in the library already, exactly the same, out of how many.
+    var alreadyHave: Int? = nil
+    var total: Int? = nil
+    /// Nothing new was queued.
+    var nothingNew: Bool { alreadyQueued == true || jobId == nil }
+    /// What to tell the member, when it is not simply "added".
+    var warning: String? {
+        if alreadyQueued == true { return L10n.text("Already in the download queue.") }
+        guard let alreadyHave, alreadyHave > 0, let total else { return nil }
+        return alreadyHave >= total ? L10n.format("Already in your library: all %d videos. Nothing to download.", total) : L10n.format("%d of %d videos are already in your library; the rest will download.", alreadyHave, total)
+    }
+}
 
 /// One share: its videos with checkboxes, the library name to file them under, and Add.
 struct CloudShareView: View {
@@ -1790,10 +1809,9 @@ struct CloudShareView: View {
             if let season = item.cloud?.season { body["season"] = season }
         }
         do {
-            struct Job: Decodable { let jobId: String? }
-            let _: Job = try await store.request("POST", "/v1/cloud/add", body: body, timeout: 45)
-            added = true; message = "Follow its progress in Downloading."
-            store.notify("Added to downloads", detail: name)
+            let result: CloudAdded = try await store.request("POST", "/v1/cloud/add", body: body, timeout: 45)
+            added = !result.nothingNew; message = result.warning ?? "Follow its progress in Downloading."
+            if !result.nothingNew { store.notify("Added to downloads", detail: name) }
         } catch { message = error.localizedDescription }
     }
 }
@@ -1898,8 +1916,6 @@ struct CloudJobRow: View {
                 }
             }
             HStack(spacing: 8) {
-                // Says what it is in words too; colour alone should not carry it.
-                Label("Quark Drive", systemImage: "icloud.and.arrow.down").foregroundStyle(Theme.muted)
                 Text(verbatim: job.state == "queued" && job.position != nil ? L10n.format("Waiting · %d in line", job.position ?? 1) : job.stateLabel).foregroundStyle(job.state == "failed" || job.state == "retrying" ? .orange : Theme.accent)
                 if let files = job.files, files > 1 { Text(L10n.format("%d of %d videos", job.filesDone ?? 0, files)).foregroundStyle(Theme.muted) }
                 if let total = job.totalBytes, total > 0 {

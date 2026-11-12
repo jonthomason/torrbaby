@@ -76,7 +76,7 @@ pub struct Cloud {
     searches: Mutex<HashMap<String, (Instant, Value)>>,
     wake: tokio::sync::Notify,
     /// When the download speed was last measured, the bytes fetched by then, and the speed.
-    pace: Mutex<(Instant, u64, f64)>,
+    pace: Mutex<std::collections::VecDeque<(Instant, u64)>>,
     /// Jobs the member has cancelled while they were running.
     cancelled: Mutex<std::collections::HashSet<String>>,
     /// What reading a copy's first video found, by share and copy; kept on disk.
@@ -94,8 +94,14 @@ pub struct Cloud {
 static VIDEO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\.(mp4|mkv|ts|mov|m2ts|avi)$").expect("valid regex"));
 static SHARE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^https://pan\.quark\.cn/s/([0-9a-zA-Z]{6,40})").expect("valid regex"));
 
+/// A name without the invisible characters some sharers thread through it to defeat
+/// matching: "0\u{200b}1.mkv" reads "01.mkv" to the eye and must to the server too.
+pub fn visible(name: &str) -> String {
+    name.chars().filter(|c| !matches!(c, '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}')).collect()
+}
 /// Season and episode a file name states, if any: "S01E02", "第12集", "EP12", "12.mkv".
 pub fn episode(name: &str) -> (Option<u64>, Option<u64>) {
+    let name = &visible(name);
     static SEASONED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)s(\d{1,2})[ ._-]?e(\d{1,3})").expect("valid regex"));
     static NAMED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:第\s*(\d{1,3})\s*[集话話期]|\bep?[ ._-]?(\d{1,3})\b)").expect("valid regex"));
     static NOISE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(\d{3,4}p|\d{2,3}fps|[48]k|(19|20)\d{2}|[hx]\.?26[45]|ddp?\d\.\d|aac\d\.\d|\d+bit)").expect("valid regex"));
@@ -200,7 +206,7 @@ pub fn copies(videos: &mut [Value], listing: &str) -> Vec<Value> {
     let mut found: Vec<Value> = order.into_iter().map(|key| {
         let members: Vec<&Value> = groups[&key].iter().map(|i| &videos[*i]).collect();
         let first = members[0];
-        let said = format!("{} {} {listing}", first["path"].as_str().unwrap_or(""), members.last().and_then(|v| v["path"].as_str()).unwrap_or(""));
+        let said = visible(&format!("{} {} {listing}", first["path"].as_str().unwrap_or(""), members.last().and_then(|v| v["path"].as_str()).unwrap_or("")));
         let folder = key.rsplitn(3, '|').nth(2).unwrap_or("");
         // The set is described by what most of its videos are; the rest are counted beside it.
         let mut pictures: Vec<(&'static str, usize)> = Vec::new();
@@ -246,7 +252,7 @@ pub fn cover(found: &mut Value, show: &Value, wanted: Option<u64>) {
     for share in found["shares"].as_array_mut().into_iter().flatten() {
         let named = stated_season(share["title"].as_str().unwrap_or(""));
         for copy in share["copies"].as_array_mut().into_iter().flatten() {
-            let season = copy["season"].as_u64().or_else(|| stated_season(copy["folder"].as_str().unwrap_or(""))).or(named).or(wanted)
+            let season = copy["season"].as_u64().or_else(|| stated_season(&visible(copy["folder"].as_str().unwrap_or("")))).or(named).or(wanted)
                 .or((seasons.len() == 1).then(|| seasons[0]["season"].as_u64()).flatten()).unwrap_or(1);
             copy["season"] = json!(season);
             let Some(known) = seasons.iter().find(|s| s["season"].as_u64() == Some(season)) else { continue };
@@ -329,7 +335,7 @@ impl Cloud {
             progress: AtomicU64::new(0),
             searches: Mutex::new(HashMap::new()),
             wake: tokio::sync::Notify::new(),
-            pace: Mutex::new((Instant::now(), 0, 0.0)),
+            pace: Mutex::new(std::collections::VecDeque::new()),
             cancelled: Mutex::new(std::collections::HashSet::new()),
             probes: Mutex::new(std::fs::read(data.join("cloud-probes.json")).ok().and_then(|raw| serde_json::from_slice(&raw).ok()).unwrap_or_default()),
             probes_file: data.join("cloud-probes.json"),
@@ -439,7 +445,7 @@ impl Cloud {
     fn videos(files: &[(String, Value)], listing: &str) -> (Vec<Value>, Vec<Value>) {
         let mut videos: Vec<Value> = files.iter().filter(|(path, entry)| VIDEO.is_match(path) && entry["size"].as_u64().unwrap_or(0) >= 50_000_000).map(|(path, entry)| {
             let (season, number) = episode(path);
-            json!({"path": path, "name": path.rsplit('/').next().unwrap_or(path), "size_bytes": entry["size"], "season": season, "episode": number,
+            json!({"path": path, "name": visible(path.rsplit('/').next().unwrap_or(path)), "size_bytes": entry["size"], "season": season, "episode": number,
                 "width": entry["video_width"], "height": entry["video_height"], "fps": entry["fps"], "duration": entry["duration"]})
         }).collect();
         let copies = copies(&mut videos, listing);
@@ -737,13 +743,20 @@ impl Cloud {
     pub fn jobs(&self) -> Value {
         let jobs = self.jobs.lock().map(|j| j.clone()).unwrap_or_default();
         let running = self.progress.load(Ordering::Relaxed);
-        // Speed over the last few seconds, from how far the running file has come since it was last asked.
+        // Speed over the last several seconds, from how far the running download as a whole
+        // has come since it was last asked. Measured across its videos, not within one:
+        // a video now takes seconds, and a figure reset at each one read far too low.
+        let fetched = jobs.iter().find(|job| job.state == "downloading").map_or(0, |job| job.files.iter().filter(|f| f.done).map(|f| f.size).sum::<u64>() + running);
+        // Averaged over the last three minutes, so it is steady and the time left can be believed.
         let speed = self.pace.lock().map(|mut pace| {
-            let waited = pace.0.elapsed().as_secs_f64();
-            if running < pace.1 { *pace = (Instant::now(), running, pace.2); }
-            // Smoothed, so the time left does not lurch with every burst and pause.
-            else if waited >= 2.0 { let now = (running - pace.1) as f64 / waited; *pace = (Instant::now(), running, if pace.2 > 0.0 { pace.2 * 0.7 + now * 0.3 } else { now }); }
-            pace.2
+            let now = Instant::now();
+            if pace.back().is_some_and(|(_, last)| fetched < *last) { pace.clear(); }
+            if pace.back().is_none_or(|(at, _)| at.elapsed() >= Duration::from_secs(5)) { pace.push_back((now, fetched)); }
+            while pace.front().is_some_and(|(at, _)| at.elapsed() > Duration::from_secs(180)) && pace.len() > 2 { pace.pop_front(); }
+            match (pace.front(), pace.back()) {
+                (Some((first, from)), Some((last, to))) if last.duration_since(*first).as_secs_f64() >= 5.0 => (to - from) as f64 / last.duration_since(*first).as_secs_f64(),
+                _ => 0.0,
+            }
         }).unwrap_or(0.0);
         let waiting = jobs.iter().filter(|job| job.state == "queued").count();
         let mut place = 0usize;
@@ -816,11 +829,24 @@ impl Cloud {
             };
             JobFile { destination: folder.join(name), path, size, done: false, outcome: None }
         }).collect();
+        let files: Vec<JobFile> = files;
+        // Asked for twice (a second press of Download, or another device): the videos that a
+        // waiting or running download of this share already covers are not queued again.
+        let covered: Option<String> = self.jobs.lock().ok().and_then(|jobs| jobs.iter()
+            .find(|job| matches!(job.state.as_str(), "queued" | "saving" | "downloading" | "retrying") && SHARE.captures(&job.url).map(|c| c[1].to_owned()) == SHARE.captures(url).map(|c| c[1].to_owned())
+                && files.iter().all(|wanted| job.files.iter().any(|held| held.path == wanted.path)))
+            .map(|job| job.id.clone()));
+        if let Some(existing) = covered { return Ok(json!({"job_id": existing, "already_queued": true, "total": files.len()})); }
+        // Videos already in place, byte for byte the same length: there is nothing to fetch.
+        // When that is all of them nothing is queued, and the member is told instead.
+        let total = files.len();
+        let had = files.iter().filter(|file| std::fs::metadata(&file.destination).is_ok_and(|found| found.len() == file.size)).count();
+        if had == total { return Ok(json!({"job_id": Value::Null, "already_have": had, "total": total})); }
         let job = Job { id: uuid::Uuid::new_v4().simple().to_string(), url: url.to_owned(), title, state: "queued".into(), files, error: None, created: now(), attempts: 0 };
         let id = job.id.clone();
         { let mut jobs = self.jobs.lock().map_err(|_| anyhow::anyhow!("Cloud downloads unavailable"))?; jobs.push(job); self.persist(&jobs); }
         self.wake.notify_one();
-        Ok(json!({"job_id": id}))
+        Ok(json!({"job_id": id, "already_have": had, "total": total}))
     }
     /// Remove a job from the list. One that is running is cancelled first: the worker
     /// stops it, clears its partial files and its staging folder, then drops it.
@@ -837,6 +863,21 @@ impl Cloud {
             }
         }
         json!({"removed": removed, "cancelling": cancelling})
+    }
+    /// Clear the staging folder on the member's drive of anything that belongs to no
+    /// download still in hand: a track read cut short by a restart, a job long gone.
+    async fn sweep(&self) {
+        let Some(cookie) = self.cookie() else { return };
+        // Not while a track read is using its own folder there.
+        let Ok(_turn) = self.probing.try_lock() else { return };
+        let Ok(top) = self.pages("/file/sort", &[("pdir_fid", "0".into())], Some(&cookie)).await else { return };
+        let Some(staging) = top.iter().find(|e| e["dir"] == true && e["file_name"] == STAGING).and_then(|e| e["fid"].as_str()) else { return };
+        let Ok(entries) = self.pages("/file/sort", &[("pdir_fid", staging.to_owned())], Some(&cookie)).await else { return };
+        let kept: Vec<String> = self.jobs.lock().map(|jobs| jobs.iter().filter(|job| job.state != "done").map(|job| job.id.clone()).collect()).unwrap_or_default();
+        let stray: Vec<&str> = entries.iter().filter(|e| e["file_name"].as_str().is_some_and(|name| !kept.iter().any(|id| id == name))).filter_map(|e| e["fid"].as_str()).collect();
+        if stray.is_empty() { return; }
+        tracing::info!(count = stray.len(), "Clearing leftovers from the cloud staging folder");
+        let _ = self.call("/file/delete", &[], Some(json!({"action_type": 2, "filelist": stray, "exclude_fids": []})), Some(&cookie), false).await;
     }
     /// Leave nothing of an abandoned job behind: pieces of its unfinished videos, and its folder on the drive.
     async fn discard(&self, job: &Job) {
@@ -892,9 +933,8 @@ impl Cloud {
         let done: Arc<Vec<AtomicU64>> = Arc::new(known.iter().map(|have| AtomicU64::new(*have)).collect());
         let total = || done.iter().map(|d| d.load(Ordering::Relaxed)).sum::<u64>();
         self.progress.store(total(), Ordering::Relaxed);
-        let note = |done: &Vec<AtomicU64>| serde_json::to_vec(&json!({"size": size, "done": done.iter().map(|d| d.load(Ordering::Relaxed)).collect::<Vec<_>>()})).unwrap_or_default();
         let pieces = ranges.iter().map(|&(i, start, end)| {
-            let (url, working, notes, done) = (url.clone(), working.clone(), notes.clone(), done.clone());
+            let (url, working, done) = (url.clone(), working.clone(), done.clone());
             async move {
                 for _attempt in 0..6u32 {
                     let have = done[i].load(Ordering::Relaxed);
@@ -905,36 +945,46 @@ impl Cloud {
                     if !response.status().is_success() { tokio::time::sleep(Duration::from_secs(3)).await; continue; }
                     let mut file = tokio::fs::OpenOptions::new().write(true).open(&working).await?;
                     file.seek(std::io::SeekFrom::Start(start + have)).await?;
-                    let (mut room, mut written, mut noted) = (end - start - have, have, Instant::now());
+                    let mut room = end - start - have;
                     while let Ok(Some(chunk)) = response.chunk().await {
                         let take = (chunk.len() as u64).min(room) as usize;
                         file.write_all(&chunk[..take]).await?;
-                        room -= take as u64; written += take as u64;
+                        room -= take as u64;
+                        done[i].fetch_add(take as u64, Ordering::Relaxed);
                         self.progress.fetch_add(take as u64, Ordering::Relaxed);
-                        // Only data that has reached the disk is noted as had.
-                        if noted.elapsed() >= Duration::from_secs(4) || room == 0 {
-                            file.flush().await?; file.sync_data().await?;
-                            done[i].store(written, Ordering::Relaxed);
-                            let _ = tokio::fs::write(&notes, note(&done)).await;
-                            noted = Instant::now();
-                        }
                         if room == 0 { break; }
                     }
-                    file.flush().await?; file.sync_data().await?;
-                    // What arrived after the last note and before the connection dropped is fetched again.
-                    self.progress.fetch_sub(written - done[i].load(Ordering::Relaxed), Ordering::Relaxed);
+                    file.flush().await?;
                 }
                 ensure!(done[i].load(Ordering::Relaxed) == end - start, "The download kept stopping");
                 Ok(())
             }
         });
-        futures_util::future::try_join_all(pieces).await?;
+        // Beside the connections, one note-taker: every several seconds it has the file
+        // put safely on disk, then records how far each stretch had come before that.
+        // One sync for the whole file, not one per connection, so the disk is not kept busy syncing.
+        let noting = async {
+            let Ok(file) = tokio::fs::OpenOptions::new().write(true).open(&working).await else { return std::future::pending::<()>().await };
+            loop {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                let reached: Vec<u64> = done.iter().map(|d| d.load(Ordering::Relaxed)).collect();
+                if file.sync_data().await.is_ok() { let _ = tokio::fs::write(&notes, serde_json::to_vec(&json!({"size": size, "done": reached})).unwrap_or_default()).await; }
+            }
+        };
+        tokio::select! { fetched = futures_util::future::try_join_all(pieces) => { fetched?; }, _ = noting => {} }
         ensure!(tokio::fs::metadata(&working).await?.len() == size && total() == size, "The downloaded file is the wrong size");
         tokio::fs::rename(&working, destination).await?;
         let _ = tokio::fs::remove_file(&notes).await;
         Ok(())
     }
-    async fn run(&self, s: &Service, job: &Job) -> Result<()> {
+    /// Whether a waiting download has been put ahead of this one ("Download next").
+    fn overtaken(&self, id: &str) -> bool {
+        self.jobs.lock().is_ok_and(|jobs| jobs.iter().position(|job| job.id == id).is_some_and(|mine| jobs[..mine].iter().any(|job| job.state == "queued")))
+    }
+    /// Run a job. True when it has finished; false when it stepped aside between two
+    /// videos for a download that was put ahead of it, to carry on afterwards from
+    /// where it stopped.
+    async fn run(&self, s: &Service, job: &Job) -> Result<bool> {
         let cookie = self.cookie().context("Sign in to Quark in Settings first")?;
         let pending: Vec<&JobFile> = job.files.iter().filter(|f| !f.done).collect();
         self.update(&job.id, |j| { j.state = "saving".into(); j.error = None; });
@@ -966,6 +1016,7 @@ impl Cloud {
         self.progress.store(0, Ordering::Relaxed);
         let entity = self.entity(s, job).await;
         for file in &pending {
+            if self.overtaken(&job.id) { return Ok(false); }
             let name = file.path.rsplit('/').next().unwrap_or(&file.path);
             let entry = mine_files.iter().find(|e| e["file_name"] == name && e["size"].as_u64() == Some(file.size)).context("A saved file is missing from the drive")?;
             let present = tokio::fs::metadata(&file.destination).await.is_ok_and(|m| m.len() == file.size);
@@ -1020,7 +1071,7 @@ impl Cloud {
         }
         // The drive is only a staging post: remove the job's copy once it is in the library.
         let _ = self.call("/file/delete", &[], Some(json!({"action_type": 2, "filelist": [mine], "exclude_fids": []})), Some(&cookie), false).await;
-        Ok(())
+        Ok(true)
     }
     /// Run queued jobs one at a time for as long as the server lives.
     /// Run the downloads, and beside them the library scans they ask for: an episode is
@@ -1035,11 +1086,15 @@ impl Cloud {
         tokio::join!(self.downloads(s), scans);
     }
     async fn downloads(&self, s: &Service) {
+        // The first tidy comes a minute after starting, once any interrupted job has been taken up again.
+        let mut swept = Instant::now() - Duration::from_secs(3540);
         loop {
             let next = self.jobs.lock().ok().and_then(|jobs| jobs.iter().find(|j| j.state == "queued").cloned());
             let Some(job) = next else {
                 // Torrents that were still seeding when their episodes were bettered are let go once they finish.
                 self.reap(s).await;
+                // Now and then, with nothing downloading, the staging folder is tidied.
+                if swept.elapsed() >= Duration::from_secs(3600) { self.sweep().await; swept = Instant::now(); }
                 tokio::select! { _ = self.wake.notified() => {}, _ = tokio::time::sleep(Duration::from_secs(60)) => {} }
                 continue;
             };
@@ -1056,7 +1111,9 @@ impl Cloud {
                     if let Ok(mut jobs) = self.jobs.lock() { jobs.retain(|j| j.id != job.id); self.persist(&jobs); }
                     if let Err(error) = crate::api::scan_library(s).await { tracing::warn!(%error, "Library scan after a cancelled cloud download failed"); }
                 }
-                Some(Ok(())) => {
+                // Stepped aside for a download put ahead of it: back in line, where it will be next again.
+                Some(Ok(false)) => self.update(&job.id, |j| { j.state = "queued".into(); j.error = None; }),
+                Some(Ok(true)) => {
                     self.update(&job.id, |j| { j.state = "done".into(); j.error = None; });
                     if let Err(error) = crate::api::scan_library(s).await { tracing::warn!(%error, "Library scan after a cloud download failed"); }
                 }
@@ -1077,7 +1134,8 @@ impl Cloud {
         }
     }
     /// Downloads run one at a time in the order they were added. This moves a waiting
-    /// one to the head of the line, to run as soon as the current one finishes.
+    /// one to the head of the line. The one running finishes the video it is on, steps
+    /// aside, and carries on after the one moved ahead is done.
     pub fn next(&self, id: &str) -> Value {
         let mut moved = false;
         if let Ok(mut jobs) = self.jobs.lock() {
@@ -1110,6 +1168,10 @@ mod tests {
         assert_eq!(episode("The.Wandering.Earth.II.2023.BluRay.2160p.DTS.mkv"), (None, None));
         assert_eq!(episode("繁花.2023.4K.60fps.E30.mkv"), (None, Some(30)));
         assert_eq!(episode("九重紫/4K/01.4K.mp4"), (None, Some(1)));
+        // Invisible characters threaded through a name do not hide its number.
+        assert_eq!(episode("S\u{200b}1\u{200c}|2160p|/\u{200c}/3\u{200b}\u{200b}\u{200c}\u{200d}8\u{200c}\u{200d}.mkv"), (None, Some(38)));
+        assert_eq!(episode("0\u{200b}\u{feff}1.mkv"), (None, Some(1)));
+        assert_eq!(visible("逐\u{200d}玉"), "逐玉");
         assert_eq!(episode("28.4k.mp4"), (None, Some(28)));
         assert_eq!(episode("01 4K.mp4"), (None, Some(1)));
         assert_eq!(episode("12.5.1.mkv"), (None, Some(12)));
