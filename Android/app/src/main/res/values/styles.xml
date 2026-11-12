@@ -7,5 +7,21 @@
         <item name="android:colorAccent">#FFFFFF</item>
         <item name="android:windowFullscreen">true</item>
         <item name="android:windowNoTitle">true</item>
+        <item name="android:alertDialogTheme">@style/AppDialog</item>
+    </style>
+    <!-- Every dialog is the app's own dark panel with light text, whatever the television's
+         system dialog looks like: on one projector it was white, and the list could not be read. -->
+    <style name="AppDialog" parent="android:style/Theme.Material.Dialog.Alert">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowBackground">@drawable/dialog_background</item>
+        <item name="android:colorBackground">#1C1C1E</item>
+        <item name="android:colorBackgroundFloating">#1C1C1E</item>
+        <item name="android:textColorPrimary">#FFFFFF</item>
+        <item name="android:textColorSecondary">#B0B0B5</item>
+        <item name="android:textColorAlertDialogListItem">#FFFFFF</item>
+        <item name="android:colorAccent">#FFFFFF</item>
+        <item name="android:colorControlHighlight">#55FFFFFF</item>
+        <item name="android:windowMinWidthMajor">62%</item>
+        <item name="android:windowMinWidthMinor">62%</item>
     </style>
 </resources>
