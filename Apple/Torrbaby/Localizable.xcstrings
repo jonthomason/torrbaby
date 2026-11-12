@@ -14811,6 +14811,40 @@
           }
         }
       }
+    },
+    "Download next": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download next"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下一个下载"
+          }
+        }
+      }
+    },
+    "Waiting · %d in line": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting · %d in line"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待中 · 排第 %d 位"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

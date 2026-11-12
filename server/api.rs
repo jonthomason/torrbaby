@@ -1286,6 +1286,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
     if let Some(job) = path.strip_prefix("/v1/cloud/jobs/") {
         if method == Method::DELETE { return Ok(s.cloud.dismiss(job)); }
         if let (true, Some(job)) = (method == Method::POST, job.strip_suffix("/retry")) { return Ok(s.cloud.retry(job)); }
+        if let (true, Some(job)) = (method == Method::POST, job.strip_suffix("/next")) { return Ok(s.cloud.next(job)); }
     }
     if path == "/v1/private-site" {
         // The member's private site. The passkey can be set or removed, never read back.

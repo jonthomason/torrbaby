@@ -205,6 +205,7 @@
     <string name="ui_a89d78db8f1d" formatted="false">Download first</string>
     <string name="ui_20aeeeb840f5" formatted="false">Download interrupted. Tap resume.</string>
     <string name="ui_c6cf3bcf805a" formatted="false">Download limit (GB)</string>
+    <string name="ui_1ef76bd142df" formatted="false">Download next</string>
     <string name="ui_f3c236f285e4" formatted="false">Download paused: not enough available storage.</string>
     <string name="ui_cfa51b7aec7b" formatted="false">Download pieces do not line up.</string>
     <string name="ui_9c8fe84bfbc4" formatted="false">Download progress</string>
@@ -770,6 +771,7 @@
     <string name="ui_0736f273254e" formatted="false">Waiting for peers</string>
     <string name="ui_83ed73bbc425" formatted="false">Waiting for playback to finish</string>
     <string name="ui_640215e9fe28" formatted="false">Waiting to verify</string>
+    <string name="ui_f1184cd6731c" formatted="false">Waiting · %d in line</string>
     <string name="ui_0a444233849c" formatted="false">Watch for new episodes</string>
     <string name="ui_e304f9d1f888" formatted="false">Watch your downloaded movies and episodes.</string>
     <string name="ui_de9a3242d1b8" formatted="false">Watched</string>
