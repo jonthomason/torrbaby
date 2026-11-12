@@ -294,7 +294,7 @@ private struct MacSettingsView: View {
     @State private var showConnect = false
     var body: some View {
         SettingsView(showConnect: $showConnect)
-            .frame(width: 760, height: 560)
+            .frame(width: 760, height: 640)
             .sheet(isPresented: $showConnect) { LocalizedInterface { ConnectionView() } }
     }
 }

@@ -161,11 +161,22 @@ private struct SettingsQuickRows: View {
         .buttonStyle(.plain)
         .disabled(!store.connected)
         .sheet(isPresented: $showPairing) { LocalizedInterface { PairingCodeView() } }
+        #if os(macOS)
+        // The Mac sidebar is narrow: the build sits under its title instead of beside it.
+        Label {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Version")
+                Text(verbatim: AppRelease.description.replacingOccurrences(of: "Version ", with: "")).font(.caption).monospacedDigit()
+                    .foregroundStyle(.secondary).textSelection(.enabled)
+            }
+        } icon: { icon("info", .gray) }
+        #else
         LabeledContent {
             Text(verbatim: AppRelease.description.replacingOccurrences(of: "Version ", with: "")).monospacedDigit().textSelection(.enabled)
         } label: {
             Label { Text("Version") } icon: { icon("info", .gray) }
         }
+        #endif
     }
 }
 
@@ -845,13 +856,14 @@ private struct FallbackAddressView: View {
                 InterfaceLanguage.shared.selection = language
                 for page in SettingsPage.allCases {
                     SettingsView.initialPage = page
-                    let size = NSSize(width: 760, height: 560)
+                    let size = NSSize(width: 760, height: 640)
                     let view = LocalizedInterface { SettingsView(showConnect: .constant(false)) }
                         .environmentObject(store).tint(Theme.accent).preferredColorScheme(.dark)
                         .toggleStyle(MonoToggleStyle()).frame(width: size.width, height: size.height)
                     let host = NSHostingView(rootView: view)
                     host.frame = NSRect(origin: .zero, size: size)
                     let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+                    window.isReleasedWhenClosed = false
                     window.appearance = NSAppearance(named: .darkAqua)
                     window.contentView = host
                     window.setFrameOrigin(NSPoint(x: 40, y: 40)); window.orderFrontRegardless()
