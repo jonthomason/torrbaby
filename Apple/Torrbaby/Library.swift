@@ -186,6 +186,8 @@ struct LibraryTitle: Decodable, Identifiable {
     var continueWatchingHidden: Bool?
     var isContinuing: Bool { continueWatchingHidden != true && resume != nil }
     let cast: [LibraryCastMember]?
+    /// Every file is on a server drive that is not connected now.
+    var offline: Bool? = nil
     var playable: [LibraryAsset] { assets.filter { $0.complete && $0.role != "extra" }.sorted { ($0.season ?? 0, $0.episode ?? 0, $0.name ?? "") < ($1.season ?? 0, $1.episode ?? 0, $1.name ?? "") } }
     var watched: Bool { !playable.isEmpty && playable.allSatisfy(\.watched) }
     var continueWatchingAt: Double { playable.map(\.lastPlayed).max() ?? 0 }
@@ -239,6 +241,22 @@ struct LibraryAsset: Decodable, Identifiable {
     let watched: Bool
     let lastPlayed: Double
     var mediaInfo: MediaTrackInfo? = nil
+    /// On a server drive that is not connected now; it returns when the drive does.
+    var offline: Bool? = nil
+}
+
+/// Marks a title whose server drive is not connected: dimmed, with a drive symbol.
+struct OfflineDriveMark: ViewModifier {
+    let offline: Bool
+    func body(content: Content) -> some View {
+        content.opacity(offline ? 0.45 : 1).overlay(alignment: .bottomLeading) {
+            if offline {
+                Image(systemName: "externaldrive.badge.xmark").font(.caption.weight(.semibold)).foregroundStyle(.white)
+                    .padding(6).background(.black.opacity(0.7), in: Circle()).padding(6)
+                    .accessibilityLabel(L10n.text("Drive not connected"))
+            }
+        }
+    }
 }
 
 struct MediaTrackInfo: Decodable {
@@ -633,6 +651,7 @@ struct LibraryBrowser: View {
                 LibraryArtwork(id: title.id).aspectRatio(2/3, contentMode: .fit)
                     .overlay { if title.poster?.isEmpty != false { Text(title.title).font(.headline).multilineTextAlignment(.center).padding(10) } }
                     .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .modifier(OfflineDriveMark(offline: title.offline == true))
                     .overlay(alignment: .topTrailing) { if title.watched { WatchedBadge() } }
                 if continuing, let asset = title.resume {
                     GeometryReader { geometry in
@@ -711,8 +730,8 @@ struct LibraryDetail: View {
                         Text(asset.playbackActionTitle(television: title.kind == "tv")).lineLimit(1).fixedSize()
                         Text(asset.playbackActionTitle(television: title.kind == "tv", brief: true)).lineLimit(2)
                     }
-                } else { Text("Not downloaded") }
-            } icon: { Image(systemName: store.canPlay(asset) ? "play.fill" : "wifi.slash") }
+                } else { Text(LocalizedStringKey(store.onMissingDrive(asset) ? "Drive not connected" : "Not downloaded")) }
+            } icon: { Image(systemName: store.canPlay(asset) ? "play.fill" : store.onMissingDrive(asset) ? "externaldrive.badge.xmark" : "wifi.slash") }
                 .font(.headline).frame(minWidth: title.kind == "tv" && !stacksActions ? 120 : nil, alignment: .leading).frame(minHeight: 44)
         }.libraryActionStyle(prominent: true).disabled(loading)
         #if !os(tvOS)
@@ -826,7 +845,8 @@ struct LibraryDetail: View {
                         #if !os(tvOS)
                         EpisodeDownloadProgress(asset: asset)
                         #endif
-                        if store.offlineLibrary && !store.isDownloaded(asset) { Text("Not downloaded").font(.caption).foregroundStyle(Theme.muted) }
+                        if store.onMissingDrive(asset) { Text("Drive not connected").font(.caption).foregroundStyle(Theme.muted) }
+                        else if store.offlineLibrary && !store.isDownloaded(asset) { Text("Not downloaded").font(.caption).foregroundStyle(Theme.muted) }
                         else if !asset.complete { Text("Downloading").font(.caption).foregroundStyle(Theme.muted) }
                     }
                     Spacer(minLength: 0)
@@ -1102,6 +1122,7 @@ struct LibraryFileManagement: View {
                         }
                     }.background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
                     Text("Personal watch history and downloaded copies on other devices are kept.").foregroundStyle(.secondary)
+                    DriveMoveSection(assetIDs: store.library?.titles.first(where: { $0.assets.contains { $0.id == assetID } })?.assets.map(\.id) ?? [assetID])
                     ForEach(preview.blockedReasons, id: \.self) { Text($0).foregroundStyle(.red) }
                     if preview.blockedReasons.isEmpty {
                         if preview.allowedActions.contains("junk") {

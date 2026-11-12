@@ -112,7 +112,7 @@ async fn plan(s: &Service, drives: &Drives, assets: &[Value], target: Option<&Dr
         let path = PathBuf::from(asset["path"].as_str().context("A file has no path")?);
         let (drive, role, root) = drives.root_of(&path).context("A file is outside the library")?;
         if !on.contains(&drive.id) { on.push(drive.id.clone()); }
-        ensure!(asset["offline"] != true, "{} is not connected", drive.name);
+        ensure!(asset["offline"] != true, "That drive is not connected");
         let Some(target) = target else { continue };
         if target.id == drive.id { continue; }
         let to = target.root(role).to_path_buf();
@@ -120,7 +120,7 @@ async fn plan(s: &Service, drives: &Drives, assets: &[Value], target: Option<&Dr
         if let Some(t) = torrent {
             let hash = t["hash_string"].as_str().unwrap_or_default().to_owned();
             if units.iter().any(|u| u.torrent.as_deref() == Some(hash.as_str())) { continue; }
-            ensure!(crate::organizer::complete(t), "{} has not finished downloading", t["name"].as_str().unwrap_or("A download"));
+            ensure!(crate::organizer::complete(t), "Wait until the download has finished");
             let dir = PathBuf::from(t["download_dir"].as_str().unwrap_or_default());
             let (_, role, root) = drives.root_of(&dir).filter(|(_, _, r)| *r == dir).context("A download is outside the library folders")?;
             let files = t["files"].as_array().into_iter().flatten()
@@ -166,15 +166,15 @@ async fn preview(s: &Service, body: &Value) -> Result<Value> {
 async fn start(s: &Service, body: &Value) -> Result<Value> {
     let drives = Drives::of(&s.effective_config()?);
     let target = drives.all().iter().find(|d| Some(d.id.as_str()) == body["drive"].as_str()).context("Choose a drive")?;
-    ensure!(target.online(), "{} is not connected", target.name);
+    ensure!(target.online(), "That drive is not connected");
     let ids = ids(body)?;
     ensure!(!load(s).iter().any(|m| matches!(m.state.as_str(), "queued" | "running") && m.asset_ids.iter().any(|id| ids.contains(id))),
         "These files are already moving");
     let assets = assets(s, &ids)?;
     let (units, _) = plan(s, &drives, &assets, Some(target)).await?;
-    ensure!(!units.is_empty(), "Already on {}", target.name);
+    ensure!(!units.is_empty(), "Already on that drive");
     let bytes: u64 = units.iter().flat_map(|u| u.files.iter().map(|(_, size)| size)).sum();
-    ensure!(crate::drives::space(target).1 > bytes + 2_000_000_000, "Not enough free space on {}", target.name);
+    ensure!(crate::drives::space(target).1 > bytes + 2_000_000_000, "Not enough free space on that drive");
     let m = Move { id: uuid::Uuid::new_v4().simple().to_string(), drive: target.id.clone(), asset_ids: ids, units, state: "queued".into(),
         created: now(), bytes, done_bytes: 0, error: None };
     let mut all = load(s);
@@ -313,11 +313,11 @@ fn copy_unit(unit: &Unit) -> std::result::Result<(), Stop> {
     for (name, size) in &unit.files {
         let (original, copy) = (crate::api::checked_path(&unit.from, name)?, crate::api::checked_path(&unit.to, name)?);
         let meta = std::fs::metadata(&original)?;
-        if meta.len() != *size { return Err(Fail(anyhow::anyhow!("{name} changed since the move was planned"))); }
+        if meta.len() != *size { return Err(Fail(anyhow::anyhow!("A file changed since the move was planned"))); }
         if let Ok(existing) = std::fs::metadata(&copy) {
             // Already copied before a restart, or a different file in the way.
             if existing.len() == *size && digest(&copy)? == digest(&original)? { continue; }
-            return Err(Fail(anyhow::anyhow!("{name} already exists on the new drive")));
+            return Err(Fail(anyhow::anyhow!("A file with the same name is already on that drive")));
         }
         crate::drives::create_media_folder(copy.parent().context("Invalid destination")?)?;
         let partial = staged(&copy);
@@ -338,7 +338,7 @@ fn copy_unit(unit: &Unit) -> std::result::Result<(), Stop> {
         let read_back = digest(&partial)?;
         if read_back != hasher.finalize().to_vec() || std::fs::metadata(&partial)?.len() != *size {
             let _ = std::fs::remove_file(&partial);
-            return Err(Fail(anyhow::anyhow!("The copy of {name} did not match; the original is kept")));
+            return Err(Fail(anyhow::anyhow!("A copy did not match its original; the original is kept")));
         }
         // Same modification time, so finished subtitle work recognises the file.
         let mtime = meta.modified()?;

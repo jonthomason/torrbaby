@@ -850,3 +850,67 @@ Queued: %d	已加入下载：%d
 Source	来源
 Download next	下一个下载
 Waiting · %d in line	等待中 · 排第 %d 位
+Drives	硬盘
+Not connected	未连接
+Its titles return when it is connected again. Nothing has been removed.	重新连接后，其中的影片会自动恢复。没有删除任何内容。
+Another drive is connected where this one belongs. Nothing has been removed.	此位置连接的是另一块硬盘。没有删除任何内容。
+It is connected under another name. Restart the server Mac to put it back. Nothing has been removed.	它以其他名称连接。请重新启动服务器 Mac 以恢复。没有删除任何内容。
+This title is on a drive that is not connected	此影片所在的硬盘未连接
+Full · new downloads go to other drives	已满 · 新下载将存到其他硬盘
+Connected · not used for new downloads	已连接 · 不用于新下载
+Another drive is connected in its place	此位置连接的是另一块硬盘
+Connected under another name	以其他名称连接
+Moving to %@ · %lld%%	正在移到 %@ · %lld%%
+Add Drive…	添加硬盘…
+Add Drive	添加硬盘
+New episodes go to the drive that already has the show. Everything else goes to the drive with the most free space.	新剧集会存到已有该剧的硬盘，其他内容存到可用空间最多的硬盘。
+Space	空间
+On this drive	此硬盘上
+Use for new downloads	用于新下载
+Keep free	保留空间
+New downloads stop going to a drive once its free space falls to this amount.	硬盘可用空间降到此数值后，新下载将不再存到这块硬盘。
+Remove Drive	移除硬盘
+To remove this drive, first move its titles to another drive from each title’s Manage Files.	要移除此硬盘，请先在各影片的“管理文件”中将其移到另一块硬盘。
+Its files stay on the drive. Torrbaby stops using it.	文件会保留在硬盘上，Torrbaby 将不再使用它。
+Remove this drive?	要移除这块硬盘吗？
+Connect a drive to your server Mac to add it here.	将硬盘连接到服务器 Mac 后，即可在此添加。
+Used by Torrbaby before	Torrbaby 曾使用过
+This drive is read-only	这块硬盘是只读的
+Torrbaby makes a Media folder on the drive, with Downloads, Movies and TV inside, and keeps a small file there to recognise the drive.	Torrbaby 会在硬盘上创建 Media 文件夹，内含 Downloads、Movies 和 TV，并保存一个小文件用于识别这块硬盘。
+Move to Another Drive	移到另一块硬盘
+Moved to %@	已移到 %@
+The move did not finish; the original files are kept	移动未完成，原文件已保留
+Files are copied and checked before the originals are removed. Watch history and subtitles are kept.	文件会先复制并核对，再删除原文件。观看记录和字幕都会保留。
+%@ free	可用 %@
+Not enough free space	可用空间不足
+Move to %@?	要移到 %@ 吗？
+Move	移动
+%@ will be copied, checked, then removed from its current drive.	%@ 的内容将先复制并核对，然后从当前硬盘删除。
+Waiting for playback to stop	正在等待播放停止
+Waiting for processing to finish	正在等待处理完成
+A copy did not match its original; the original is kept	副本与原文件不一致，原文件已保留
+A copy on the new drive changed; the original is kept	新硬盘上的副本已更改，原文件已保留
+A download is outside the library folders	下载位于媒体库文件夹之外
+A file changed since the move was planned	计划移动后有文件发生了变化
+A file with the same name is already on that drive	那块硬盘上已有同名文件
+A file is outside the library	有文件位于媒体库之外
+Already on that drive	已在那块硬盘上
+Choose a connected drive	请选择已连接的硬盘
+Choose a drive	请选择硬盘
+Choose the files to move	请选择要移动的文件
+Could not create folders on this drive	无法在这块硬盘上创建文件夹
+Could not write to this drive	无法写入这块硬盘
+Its drive is not connected	所在的硬盘未连接
+Move this drive's titles to another drive first	请先将这块硬盘上的影片移到另一块硬盘
+No connected drive takes new downloads	没有已连接的硬盘接收新下载
+Not enough free space on any drive	所有硬盘的可用空间都不足
+Not enough free space on that drive	那块硬盘的可用空间不足
+That drive is not connected	那块硬盘未连接
+The library needs at least one drive	媒体库至少需要一块硬盘
+This drive is already in use	这块硬盘已在使用中
+Torrents are still using this drive	仍有种子在使用这块硬盘
+Unknown drive	未知的硬盘
+Use a shorter name	请使用更短的名称
+Wait until the download has finished	请等待下载完成
+Media folders are set per drive when a drives list is configured	配置硬盘列表后，媒体文件夹按硬盘分别设置
+A file has no path	有文件缺少路径

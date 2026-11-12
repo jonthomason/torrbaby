@@ -393,7 +393,9 @@ final class Store: ObservableObject {
         #endif
     }
     func isDownloaded(_ title: LibraryTitle) -> Bool { title.assets.contains(where: isDownloaded) }
-    func canPlay(_ asset: LibraryAsset) -> Bool { asset.complete && (canStream || isDownloaded(asset)) }
+    /// A copy downloaded to this device still plays while the server's drive is away.
+    func canPlay(_ asset: LibraryAsset) -> Bool { asset.complete && ((canStream && asset.offline != true) || isDownloaded(asset)) }
+    func onMissingDrive(_ asset: LibraryAsset) -> Bool { asset.offline == true && !isDownloaded(asset) }
     func preferredLibraryAsset(_ title: LibraryTitle) -> LibraryAsset? {
         if offlineLibrary {
             if let resume = title.resume, isDownloaded(resume) { return resume }

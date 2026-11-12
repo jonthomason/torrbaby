@@ -417,6 +417,9 @@ private struct LibrarySettings: View {
                 }
                 Stepper("Check every \(Int(interval)) seconds", value: $interval, in: 5...3600, step: 5)
             }
+            DrivesSettings()
+            // The single set of folders from before drives; with a drive list, each drive has its own.
+            if !(store.status?.settings.source.isEmpty ?? true) {
             SwiftUI.Section("Folders on your server") {
                 ForEach([("Downloads", $source), ("Movies", $movies), ("TV shows", $tv)], id: \.0) { label, binding in
                     LabeledContent(LocalizedStringKey(label)) {
@@ -427,10 +430,12 @@ private struct LibrarySettings: View {
                     }
                 }
             }
+            }
             SwiftUI.Section {
                 Button(LocalizedStringKey(saved ? "Saved" : "Save settings")) {
                     store.perform {
-                        try await store.send("PATCH", "/v1/settings", body: ["source": source, "movies": movies, "tv": tv, "poll_seconds": interval])
+                        let folders = !(store.status?.settings.source.isEmpty ?? true)
+                        try await store.send("PATCH", "/v1/settings", body: folders ? ["source": source, "movies": movies, "tv": tv, "poll_seconds": interval] : ["poll_seconds": interval])
                         saved = true
                     }
                 }.disabled(store.busy || !store.connected)

@@ -418,8 +418,12 @@ private struct TVMediaDetail: View {
                                 // secondary actions live in one compact menu beside Play.
                                 HStack(spacing: 14) {
                                     Button { play(asset, title: title) } label: {
-                                        Label(asset.playbackActionTitle(television: title.kind == "tv"), systemImage: "play.fill")
-                                            .font(.headline)
+                                        if asset.offline == true {
+                                            Label("Drive not connected", systemImage: "externaldrive.badge.xmark").font(.headline)
+                                        } else {
+                                            Label(asset.playbackActionTitle(television: title.kind == "tv"), systemImage: "play.fill")
+                                                .font(.headline)
+                                        }
                                     }.buttonStyle(TVMonochromeButtonStyle()).focused($heroFocused)
                                     if title.kind == "tv" {
                                         TVMoreActions(asset: asset, title: title) { play(asset, title: title, fromBeginning: true) }
@@ -540,7 +544,8 @@ private struct TVMediaDetail: View {
                     if let episode = asset.episode { Text("Episode \(episode)").font(.caption) }
                     Text(asset.name ?? title.title).font(.headline).lineLimit(2)
                     if !asset.summary.isEmpty { Text(asset.summary).font(.caption).lineLimit(2) }
-                    if !asset.complete { Text("Downloading").font(.caption).foregroundStyle(Theme.muted) }
+                    if asset.offline == true { Text("Drive not connected").font(.caption).foregroundStyle(Theme.muted) }
+                    else if !asset.complete { Text("Downloading").font(.caption).foregroundStyle(Theme.muted) }
                     if asset.position > 0 && asset.duration > 0 {
                         ProgressView(value: min(1, asset.position / asset.duration)).tint(Theme.accent)
                     }
@@ -548,7 +553,7 @@ private struct TVMediaDetail: View {
                 Spacer()
                 if asset.duration > 0 { Text("\(Int(asset.duration / 60)) min").font(.caption) }
             }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
-        }.buttonStyle(.card).disabled(!asset.complete)
+        }.buttonStyle(.card).disabled(!asset.complete || asset.offline == true)
         }
     }
     private func play(_ asset: LibraryAsset, title: LibraryTitle, fromBeginning: Bool = false) {
@@ -715,6 +720,7 @@ private struct TVPoster: View {
         NavigationLink(value: LibraryDestination(id: title.id)) {
             LibraryArtwork(id: title.id).frame(width: 220, height: 330)
                 .clipShape(RoundedRectangle(cornerRadius: 16))
+                .modifier(OfflineDriveMark(offline: title.offline == true))
                 .overlay { if title.poster?.isEmpty != false { Text(title.title).font(.system(size: 25, weight: .semibold)).multilineTextAlignment(.center).padding() } }
                 .overlay(alignment: .topTrailing) { if title.watched { WatchedBadge() } }
         }.accessibilityLabel(title.title).buttonStyle(TVPosterButtonStyle()).contextMenu { ContinueWatchingAction(title: title) }

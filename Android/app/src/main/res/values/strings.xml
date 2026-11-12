@@ -26,10 +26,19 @@
     <string name="ui_027795961131" formatted="false">24h</string>
     <string name="ui_8d61fd6a4ee0" formatted="false">6h</string>
     <string name="ui_1e568cd5d4d7" formatted="false">&lt;1m remaining</string>
+    <string name="ui_f949edb9a2d7" formatted="false">A copy did not match its original; the original is kept</string>
+    <string name="ui_472a24314413" formatted="false">A copy on the new drive changed; the original is kept</string>
+    <string name="ui_f00a5f90aef1" formatted="false">A download is outside the library folders</string>
+    <string name="ui_3312f869db2d" formatted="false">A file changed since the move was planned</string>
+    <string name="ui_7069e52de595" formatted="false">A file has no path</string>
+    <string name="ui_55bce902c827" formatted="false">A file is outside the library</string>
+    <string name="ui_0eaf3f3adb83" formatted="false">A file with the same name is already on that drive</string>
     <string name="ui_eaca5bbaf44c" formatted="false">API TOKEN</string>
     <string name="ui_6b21fb791ac0" formatted="false">About</string>
     <string name="ui_cbd19b5c397e" formatted="false">Actor</string>
     <string name="ui_61cc55aa0453" formatted="false">Add</string>
+    <string name="ui_ac6361ea9846" formatted="false">Add Drive</string>
+    <string name="ui_10f635a4570c" formatted="false">Add Drive…</string>
     <string name="ui_d584a46acc6a" formatted="false">Add Torrent…</string>
     <string name="ui_73d9c5ee15ad" formatted="false">Add a torrent</string>
     <string name="ui_0c29b8bb1848" formatted="false">Add all</string>
@@ -63,6 +72,9 @@
     <string name="ui_9d12608fc0bd" formatted="false">Alphabetical</string>
     <string name="ui_e1bc0ebdf8b8" formatted="false">Already had as good: %d</string>
     <string name="ui_f2de57952082" formatted="false">Already in your torrents</string>
+    <string name="ui_39e932f8acd0" formatted="false">Already on that drive</string>
+    <string name="ui_591169c6ab54" formatted="false">Another drive is connected in its place</string>
+    <string name="ui_0d5a3962c8e0" formatted="false">Another drive is connected where this one belongs. Nothing has been removed.</string>
     <string name="ui_47efa5d4c257" formatted="false">Any resolution</string>
     <string name="ui_dcc38ee5a416" formatted="false">Applies to torrents that use the server\'s default</string>
     <string name="ui_ad4f3c956b19" formatted="false">Ask trackers for peers</string>
@@ -111,11 +123,14 @@
     <string name="ui_0cd88f513ebe" formatted="false">Chinese Text</string>
     <string name="ui_15101682201f" formatted="false">Chinese Translated</string>
     <string name="ui_54ef86452c0f" formatted="false">Chinese Voice Transcribed</string>
+    <string name="ui_5243fe548318" formatted="false">Choose a connected drive</string>
+    <string name="ui_88572fa2c2be" formatted="false">Choose a drive</string>
     <string name="ui_f47537b34855" formatted="false">Choose a profile</string>
     <string name="ui_bf1604f52dd4" formatted="false">Choose a release</string>
     <string name="ui_5f0667ffb45c" formatted="false">Choose a user</string>
     <string name="ui_0acf0708ca28" formatted="false">Choose a user before starting playback.</string>
     <string name="ui_2c052719b7f2" formatted="false">Choose another (%d)</string>
+    <string name="ui_8149b26cc417" formatted="false">Choose the files to move</string>
     <string name="ui_0772fa16aa51" formatted="false">Choose the right title</string>
     <string name="ui_d6994cf8bc6c" formatted="false">Choose videos to add</string>
     <string name="ui_82be318f7bae" formatted="false">Choose your server</string>
@@ -138,20 +153,25 @@
     <string name="ui_f532a2f643b7" formatted="false">Complete · %d episodes</string>
     <string name="ui_04a212215ef9" formatted="false">Confirm</string>
     <string name="ui_b65463cb6a42" formatted="false">Connect</string>
+    <string name="ui_8f461b406adb" formatted="false">Connect a drive to your server Mac to add it here.</string>
     <string name="ui_d9c85ddf1ada" formatted="false">Connect to Torrbaby</string>
     <string name="ui_5ff4e73045a5" formatted="false">Connect to server</string>
     <string name="ui_0cfb70250af2" formatted="false">Connect to this server?</string>
     <string name="ui_21b5f5d88904" formatted="false">Connect to your Torrbaby server</string>
     <string name="ui_c2f9b7b4897f" formatted="false">Connected</string>
+    <string name="ui_182627e396c6" formatted="false">Connected under another name</string>
+    <string name="ui_9449502ae14e" formatted="false">Connected · not used for new downloads</string>
     <string name="ui_fd3e79699426" formatted="false">Connecting…</string>
     <string name="ui_6512ee1541e9" formatted="false">Connection</string>
     <string name="ui_618aac54b120" formatted="false">Connection settings</string>
     <string name="ui_8fca30f77496" formatted="false">Continue watching</string>
     <string name="ui_138ab007258c" formatted="false">Copy name</string>
     <string name="ui_c0d06c3ff543" formatted="false">Could not connect.</string>
+    <string name="ui_fcfa6de4b522" formatted="false">Could not create folders on this drive</string>
     <string name="ui_3498c19c828e" formatted="false">Could not find your server</string>
     <string name="ui_47dd74c0c423" formatted="false">Could not load users</string>
     <string name="ui_3bcad4a3da4b" formatted="false">Could not refresh.</string>
+    <string name="ui_ec6c4f8da528" formatted="false">Could not write to this drive</string>
     <string name="ui_5a538c5c5377" formatted="false">Couldn’t add release</string>
     <string name="ui_f3f2d926eb9b" formatted="false">Couldn’t add torrent</string>
     <string name="ui_bdbad1e91c63" formatted="false">Couldn’t complete that action</string>
@@ -223,6 +243,7 @@
     <string name="ui_022410e4af2e" formatted="false">Downloads unavailable</string>
     <string name="ui_fbe756da9c9b" formatted="false">Downloads wait for Wi-Fi. Allowing cellular also covers a Personal Hotspot or a Low Data Mode network, and ends after 3 hours or when you join Wi-Fi.</string>
     <string name="ui_9c5da743abfe" formatted="false">Drive not connected</string>
+    <string name="ui_13219b919fb6" formatted="false">Drives</string>
     <string name="ui_4e45c7891116" formatted="false">Each user has their own Continue Watching and viewing history.</string>
     <string name="ui_b3171b22b733" formatted="false">Edit connection</string>
     <string name="ui_15141eab3a28" formatted="false">Edit profile</string>
@@ -258,6 +279,7 @@
     <string name="ui_97d4488a6fcd" formatted="false">Fallback address</string>
     <string name="ui_11b2dac9eb17" formatted="false">File list unavailable</string>
     <string name="ui_df12077fa702" formatted="false">Files and details</string>
+    <string name="ui_120041389b39" formatted="false">Files are copied and checked before the originals are removed. Watch history and subtitles are kept.</string>
     <string name="ui_b677e2df8e0a" formatted="false">Files removed</string>
     <string name="ui_df251b06eefd" formatted="false">Find</string>
     <string name="ui_16689b7611c8" formatted="false">Find a torrent</string>
@@ -282,6 +304,7 @@
     <string name="ui_b97c4d4cddf2" formatted="false">Font</string>
     <string name="ui_6f1b97e4c290" formatted="false">Forced</string>
     <string name="ui_ba4e72261283" formatted="false">Forward</string>
+    <string name="ui_2ccfd1b2fecc" formatted="false">Full · new downloads go to other drives</string>
     <string name="ui_9239ee2cda84" formatted="false">General</string>
     <string name="ui_8eefdd52ad2d" formatted="false">Generated</string>
     <string name="ui_a1af0d20ca98" formatted="false">Generated subtitles</string>
@@ -303,9 +326,14 @@
     <string name="ui_8bfa1406b66d" formatted="false">Initial or emoji</string>
     <string name="ui_9407e9ca65ce" formatted="false">Interface language</string>
     <string name="ui_50be3afcff74" formatted="false">Interrupted</string>
+    <string name="ui_65b63733a6f3" formatted="false">It is connected under another name. Restart the server Mac to put it back. Nothing has been removed.</string>
+    <string name="ui_16001f72b451" formatted="false">Its drive is not connected</string>
+    <string name="ui_eadbdb3346d4" formatted="false">Its files stay on the drive. Torrbaby stops using it.</string>
+    <string name="ui_d45a38ad2c16" formatted="false">Its titles return when it is connected again. Nothing has been removed.</string>
     <string name="ui_08c0c7e5fa43" formatted="false">Junk · delete after seeding</string>
     <string name="ui_44d9c7e94283" formatted="false">Keep file extensions and episode numbers.</string>
     <string name="ui_0ecad4174400" formatted="false">Keep files on server</string>
+    <string name="ui_60bcc51c0842" formatted="false">Keep free</string>
     <string name="ui_ed7e27d64487" formatted="false">Keep free (GB)</string>
     <string name="ui_9583e0e2e974" formatted="false">Keep new episodes on this device</string>
     <string name="ui_d2c87390fe7a" formatted="false">Keep this release</string>
@@ -348,6 +376,7 @@
     <string name="ui_df7ea09cbb64" formatted="false">Mark unwatched</string>
     <string name="ui_46b250bb0a3a" formatted="false">Mark watched</string>
     <string name="ui_13cc75488bfe" formatted="false">Media changed during processing</string>
+    <string name="ui_eff618b7cee6" formatted="false">Media folders are set per drive when a drives list is configured</string>
     <string name="ui_53bc9670e723" formatted="false">Membership</string>
     <string name="ui_2f28e570a801" formatted="false">Menu bar</string>
     <string name="ui_9188f98eea10" formatted="false">Metadata is being gathered on Diamond</string>
@@ -359,8 +388,11 @@
     <string name="ui_f49ac09d3a35" formatted="false">More to explore</string>
     <string name="ui_4ac8baf107e9" formatted="false">More…</string>
     <string name="ui_da76cfbbf86f" formatted="false">Most seeds</string>
+    <string name="ui_76cdb9507216" formatted="false">Move</string>
     <string name="ui_f1f9e40dfd55" formatted="false">Move the entire package to Junk?</string>
+    <string name="ui_3d7c9b828720" formatted="false">Move this drive\'s titles to another drive first</string>
     <string name="ui_960728c07953" formatted="false">Move this package to Junk?</string>
+    <string name="ui_22303bf400af" formatted="false">Move to Another Drive</string>
     <string name="ui_d1b65f7eb7e8" formatted="false">Move to Complete at target ratio</string>
     <string name="ui_0f86501b5086" formatted="false">Move to Junk</string>
     <string name="ui_3b0085b2395a" formatted="false">Move to Junk and finish seeding</string>
@@ -373,14 +405,17 @@
     <string name="ui_bbeec6fc8b45" formatted="false">New Tab</string>
     <string name="ui_dfdde1f46ede" formatted="false">New Tab (⌘T)</string>
     <string name="ui_6499c7afe865" formatted="false">New code</string>
+    <string name="ui_8ae19658ce37" formatted="false">New downloads stop going to a drive once its free space falls to this amount.</string>
     <string name="ui_008dfac2c12f" formatted="false">New episode downloaded</string>
     <string name="ui_5478cfd5b4d6" formatted="false">New episodes</string>
+    <string name="ui_96df46930d75" formatted="false">New episodes go to the drive that already has the show. Everything else goes to the drive with the most free space.</string>
     <string name="ui_9e627c7b1aec" formatted="false">New name</string>
     <string name="ui_834ae0b1f228" formatted="false">Next Episode</string>
     <string name="ui_882f1a46548e" formatted="false">Next episode</string>
     <string name="ui_a3047eafa5d4" formatted="false">Next episode…</string>
     <string name="ui_a66974cfe156" formatted="false">No available next episode</string>
     <string name="ui_7f91412671b3" formatted="false">No confident match yet</string>
+    <string name="ui_9e5c2b4cfc49" formatted="false">No connected drive takes new downloads</string>
     <string name="ui_9367342a5e79" formatted="false">No downloads</string>
     <string name="ui_cd0af6cfca75" formatted="false">No matches</string>
     <string name="ui_b0b087bbea50" formatted="false">No matches. You can still enter a name above.</string>
@@ -406,8 +441,12 @@
     <string name="ui_2d4f57f93a15" formatted="false">None of them match the resolution or other filters you have chosen.</string>
     <string name="ui_fadae5312047" formatted="false">None of them match the resolution you have chosen.</string>
     <string name="ui_811931bba8d1" formatted="false">Not configured</string>
+    <string name="ui_8b02f3de3906" formatted="false">Not connected</string>
     <string name="ui_5fe04f57e34d" formatted="false">Not downloaded</string>
     <string name="ui_d93783e0c5db" formatted="false">Not enough download storage for this title.</string>
+    <string name="ui_8d845d16e535" formatted="false">Not enough free space</string>
+    <string name="ui_7d7dbf6869ce" formatted="false">Not enough free space on any drive</string>
+    <string name="ui_e07feb82ca22" formatted="false">Not enough free space on that drive</string>
     <string name="ui_0008c8375b5d" formatted="false">Not progressing</string>
     <string name="ui_be8f2e94e7b3" formatted="false">Not set up</string>
     <string name="ui_5a28f15df569" formatted="false">Not yet available</string>
@@ -421,6 +460,7 @@
     <string name="ui_66cf318223c2" formatted="false">Offline mode</string>
     <string name="ui_cdac56f89fbf" formatted="false">Offline · showing the last server status</string>
     <string name="ui_e0049a66519c" formatted="false">On</string>
+    <string name="ui_e6005bcf4f77" formatted="false">On this drive</string>
     <string name="ui_6c913a0dd748" formatted="false">On your connected device</string>
     <string name="ui_b56b38b02274" formatted="false">Only finished downloads can be shared.</string>
     <string name="ui_976905271718" formatted="false">Open Torrbaby</string>
@@ -500,8 +540,10 @@
     <string name="ui_26803bf718c9" formatted="false">Remove %d torrents and delete files</string>
     <string name="ui_c059882450a5" formatted="false">Remove %d torrents, keep files</string>
     <string name="ui_01d9cc52a205" formatted="false">Remove %d torrents?</string>
+    <string name="ui_cd1bd819178d" formatted="false">Remove Drive</string>
     <string name="ui_a8cc3b78d828" formatted="false">Remove Quark login</string>
     <string name="ui_b589f73a82dc" formatted="false">Remove from Continue Watching</string>
+    <string name="ui_727db09f06c8" formatted="false">Remove this drive?</string>
     <string name="ui_63db985f6027" formatted="false">Remove torrent</string>
     <string name="ui_41b8f0cd711e" formatted="false">Remove torrent and delete files</string>
     <string name="ui_e512d90885bf" formatted="false">Remove torrent, keep files</string>
@@ -613,6 +655,7 @@
     <string name="ui_2d37f6721074" formatted="false">Source languages</string>
     <string name="ui_2eb56be3c2d9" formatted="false">Sources</string>
     <string name="ui_4df6c61fc071" formatted="false">Sources unavailable</string>
+    <string name="ui_6d8c9b124d52" formatted="false">Space</string>
     <string name="ui_063b54d619ba" formatted="false">Space used</string>
     <string name="ui_2e51c9be1bab" formatted="false">Special features</string>
     <string name="ui_adc3296dff7b" formatted="false">Specials</string>
@@ -663,12 +706,15 @@
     <string name="ui_c3328c39b0e2" formatted="false">Text</string>
     <string name="ui_1c7a30e57131" formatted="false">Text color</string>
     <string name="ui_83e097038017" formatted="false">Text opacity</string>
+    <string name="ui_84226c2c5018" formatted="false">That drive is not connected</string>
     <string name="ui_22b20e9773ff" formatted="false">The Pirate Bay</string>
     <string name="ui_17640422b43a" formatted="false">The connection to Transmission was interrupted. Please try again.</string>
     <string name="ui_ceaf21e9d02f" formatted="false">The download is incomplete.</string>
     <string name="ui_9a212ea4c5bb" formatted="false">The entire package will be hidden from everyone, continue seeding, and be permanently deleted when seeding finishes.</string>
     <string name="ui_fa9822b1acbe" formatted="false">The entire package will be hidden now, continue seeding, and be permanently deleted when seeding finishes.</string>
     <string name="ui_b540d8e8df09" formatted="false">The file changed. Remove this download and add it again.</string>
+    <string name="ui_cc0e23161b56" formatted="false">The library needs at least one drive</string>
+    <string name="ui_4c1f79490879" formatted="false">The move did not finish; the original files are kept</string>
     <string name="ui_d3fdb91c3f77" formatted="false">The saved connection could not be opened.</string>
     <string name="ui_e075008957d5" formatted="false">The series has %d</string>
     <string name="ui_9b8b91a1710b" formatted="false">The server did not supply this torrent\'s identity.</string>
@@ -685,6 +731,8 @@
     <string name="ui_fa5a6dd9d249" formatted="false">This device</string>
     <string name="ui_6aacdc553205" formatted="false">This device could not decode the video or audio format.</string>
     <string name="ui_63f0d417cbbf" formatted="false">This download can\'t be updated in place. Delete it and download it again.</string>
+    <string name="ui_9e9f1ebdec89" formatted="false">This drive is already in use</string>
+    <string name="ui_9f9b021c3d1c" formatted="false">This drive is read-only</string>
     <string name="ui_f85d694d9581" formatted="false">This episode is not yet available on the server.</string>
     <string name="ui_f71f96454e21" formatted="false">This file couldn’t play</string>
     <string name="ui_6ca3d776fe97" formatted="false">This media file is not yet available on the server.</string>
@@ -696,6 +744,7 @@
     <string name="ui_0c77f0cf970a" formatted="false">This shared download needs a newer version of Torrbaby.</string>
     <string name="ui_7f508c26421a" formatted="false">This share’s file list is no longer available. Add brings in every video it holds.</string>
     <string name="ui_8607ce0e91d1" formatted="false">This title has no complete media files on the server.</string>
+    <string name="ui_3f249ad8dcd0" formatted="false">This title is on a drive that is not connected</string>
     <string name="ui_d1431bac909d" formatted="false">This title isn’t downloaded. Reconnect to your library to play it.</string>
     <string name="ui_2e1fcceaec2e" formatted="false">This torrent is no longer in Transmission.</string>
     <string name="ui_f577c9312507" formatted="false">This video could not be played.</string>
@@ -703,6 +752,8 @@
     <string name="ui_22cd3c65b98a" formatted="false">Time range</string>
     <string name="ui_768e0c1c6957" formatted="false">Title</string>
     <string name="ui_44a4597b5507" formatted="false">Title A–Z</string>
+    <string name="ui_eafdcec8c9d0" formatted="false">To remove this drive, first move its titles to another drive from each title’s Manage Files.</string>
+    <string name="ui_7fc3a24d77a0" formatted="false">Torrbaby makes a Media folder on the drive, with Downloads, Movies and TV inside, and keeps a small file there to recognise the drive.</string>
     <string name="ui_625fdd6c399e" formatted="false">Torrbaby transfer rates</string>
     <string name="ui_7b518ca84399" formatted="false">Torrent CSV</string>
     <string name="ui_0dcf2b602af0" formatted="false">Torrent action</string>
@@ -710,6 +761,7 @@
     <string name="ui_b05aed6afa6a" formatted="false">Torrent details</string>
     <string name="ui_c0fdf7497ff3" formatted="false">Torrent removed</string>
     <string name="ui_3e8f36b12ffb" formatted="false">Torrents</string>
+    <string name="ui_5edf6af8c64e" formatted="false">Torrents are still using this drive</string>
     <string name="ui_44f08a6839a5" formatted="false">Transcribing audio</string>
     <string name="ui_cbb4cc49824b" formatted="false">Transfer</string>
     <string name="ui_8a095c5d2bc7" formatted="false">Transfer interrupted. Tap resume.</string>
@@ -739,6 +791,7 @@
     <string name="ui_51ed65113221" formatted="false">Unchanged</string>
     <string name="ui_39fc72124884" formatted="false">Undo</string>
     <string name="ui_bc7819b34ff8" formatted="false">Unknown</string>
+    <string name="ui_63dad5d3a355" formatted="false">Unknown drive</string>
     <string name="ui_b8bef37b7153" formatted="false">Unlimited</string>
     <string name="ui_e50bad848e4a" formatted="false">Unsupported media container for processing</string>
     <string name="ui_567bfc4dad37" formatted="false">Up next</string>
@@ -749,8 +802,11 @@
     <string name="ui_8bdf057f91e7" formatted="false">Upload</string>
     <string name="ui_50bda393938a" formatted="false">Upload &amp; Seeding</string>
     <string name="ui_2fb6cfd6c7df" formatted="false">Use Torrbaby for magnet links</string>
+    <string name="ui_ebc0fb39affb" formatted="false">Use a shorter name</string>
     <string name="ui_952de75621d0" formatted="false">Use available space</string>
+    <string name="ui_63e157999dab" formatted="false">Use for new downloads</string>
     <string name="ui_7669011536cd" formatted="false">Use this name</string>
+    <string name="ui_243f5503f603" formatted="false">Used by Torrbaby before</string>
     <string name="ui_ebb884ce8b5b" formatted="false">Used when the primary address is unreachable. Torrents and downloads are available; streaming is disabled.</string>
     <string name="ui_9f8a2389a20c" formatted="false">User</string>
     <string name="ui_7a3d72b59826" formatted="false">User switched</string>
@@ -763,6 +819,7 @@
     <string name="ui_a67bba005296" formatted="false">Videos are saved to your Quark Drive, downloaded into your library, then removed from the drive.</string>
     <string name="ui_31a7604a3c74" formatted="false">View source</string>
     <string name="ui_f22eadf74236" formatted="false">Voice Transcribed</string>
+    <string name="ui_c672990b0948" formatted="false">Wait until the download has finished</string>
     <string name="ui_33d30632848d" formatted="false">Waiting</string>
     <string name="ui_819ba5c9dca6" formatted="false">Waiting for Wi-Fi</string>
     <string name="ui_91df8bb76aa2" formatted="false">Waiting for activity</string>
@@ -770,6 +827,8 @@
     <string name="ui_d1884a2d21c7" formatted="false">Waiting for media identification before moving to the library</string>
     <string name="ui_0736f273254e" formatted="false">Waiting for peers</string>
     <string name="ui_83ed73bbc425" formatted="false">Waiting for playback to finish</string>
+    <string name="ui_64189e6dc1d9" formatted="false">Waiting for playback to stop</string>
+    <string name="ui_d9852df62ffb" formatted="false">Waiting for processing to finish</string>
     <string name="ui_640215e9fe28" formatted="false">Waiting to verify</string>
     <string name="ui_f1184cd6731c" formatted="false">Waiting · %d in line</string>
     <string name="ui_0a444233849c" formatted="false">Watch for new episodes</string>
