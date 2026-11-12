@@ -216,6 +216,7 @@ final class L10n {
     IDS.put("Download first", R.string.ui_a89d78db8f1d);
     IDS.put("Download interrupted. Tap resume.", R.string.ui_20aeeeb840f5);
     IDS.put("Download limit (GB)", R.string.ui_c6cf3bcf805a);
+    IDS.put("Download next", R.string.ui_1ef76bd142df);
     IDS.put("Download paused: not enough available storage.", R.string.ui_f3c236f285e4);
     IDS.put("Download pieces do not line up.", R.string.ui_cfa51b7aec7b);
     IDS.put("Download progress", R.string.ui_9c8fe84bfbc4);
@@ -781,6 +782,7 @@ final class L10n {
     IDS.put("Waiting for peers", R.string.ui_0736f273254e);
     IDS.put("Waiting for playback to finish", R.string.ui_83ed73bbc425);
     IDS.put("Waiting to verify", R.string.ui_640215e9fe28);
+    IDS.put("Waiting · %d in line", R.string.ui_f1184cd6731c);
     IDS.put("Watch for new episodes", R.string.ui_0a444233849c);
     IDS.put("Watch your downloaded movies and episodes.", R.string.ui_e304f9d1f888);
     IDS.put("Watched", R.string.ui_de9a3242d1b8);

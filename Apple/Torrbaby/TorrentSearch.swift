@@ -1817,6 +1817,8 @@ struct CloudJob: Decodable, Identifiable {
     /// Episodes that took the place of a lesser copy, and ones skipped because the library's copy was as good.
     var replaced: Int? = nil
     var discarded: Int? = nil
+    /// Its place in the line while waiting: 1 runs next.
+    var position: Int? = nil
     var outcomeLine: String {
         [(replaced ?? 0) > 0 ? L10n.format("Replaced with better: %d", replaced ?? 0) : "", (discarded ?? 0) > 0 ? L10n.format("Already had as good: %d", discarded ?? 0) : ""]
             .filter { !$0.isEmpty }.joined(separator: " · ")
@@ -1883,6 +1885,10 @@ struct CloudJobRow: View {
                 if job.state == "failed" || job.state == "retrying" {
                     Button("Retry") { act("POST", "/v1/cloud/jobs/\(job.id)/retry") }.buttonStyle(MonoButtonStyle(compact: true)).fixedSize()
                 }
+                if job.state == "queued", let position = job.position, position > 1 {
+                    // Downloads run in the order added; this one jumps the line.
+                    Button("Download next") { act("POST", "/v1/cloud/jobs/\(job.id)/next") }.buttonStyle(MonoButtonStyle(compact: true)).fixedSize()
+                }
                 if job.isActive {
                     // Stops the download and clears what it had fetched of unfinished videos.
                     Button("Cancel") { act("DELETE", "/v1/cloud/jobs/\(job.id)") }.buttonStyle(MonoButtonStyle(compact: true)).fixedSize()
@@ -1894,7 +1900,7 @@ struct CloudJobRow: View {
             HStack(spacing: 8) {
                 // Says what it is in words too; colour alone should not carry it.
                 Label("Quark Drive", systemImage: "icloud.and.arrow.down").foregroundStyle(Theme.muted)
-                Text(verbatim: job.stateLabel).foregroundStyle(job.state == "failed" || job.state == "retrying" ? .orange : Theme.accent)
+                Text(verbatim: job.state == "queued" && job.position != nil ? L10n.format("Waiting · %d in line", job.position ?? 1) : job.stateLabel).foregroundStyle(job.state == "failed" || job.state == "retrying" ? .orange : Theme.accent)
                 if let files = job.files, files > 1 { Text(L10n.format("%d of %d videos", job.filesDone ?? 0, files)).foregroundStyle(Theme.muted) }
                 if let total = job.totalBytes, total > 0 {
                     Text(L10n.format("%@ of %@", ByteCountFormatter.string(fromByteCount: job.doneBytes ?? 0, countStyle: .file), ByteCountFormatter.string(fromByteCount: total, countStyle: .file)))

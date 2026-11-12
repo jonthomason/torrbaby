@@ -737,7 +737,16 @@ impl Cloud {
             else if waited >= 2.0 { let now = (running - pace.1) as f64 / waited; *pace = (Instant::now(), running, if pace.2 > 0.0 { pace.2 * 0.7 + now * 0.3 } else { now }); }
             pace.2
         }).unwrap_or(0.0);
-        json!({"jobs": jobs.iter().rev().take(50).map(|job| {
+        let waiting = jobs.iter().filter(|job| job.state == "queued").count();
+        let mut place = 0usize;
+        // The running one, then the waiting ones in the order they will run, then the rest, newest first.
+        let mut listed: Vec<&Job> = jobs.iter().filter(|job| matches!(job.state.as_str(), "saving" | "downloading" | "retrying")).collect();
+        listed.extend(jobs.iter().filter(|job| job.state == "queued"));
+        listed.extend(jobs.iter().rev().filter(|job| !matches!(job.state.as_str(), "saving" | "downloading" | "retrying" | "queued")));
+        json!({"jobs": listed.into_iter().take(50).map(|job| {
+            // 1 for the next to run; null when it is not waiting.
+            let position = (job.state == "queued").then(|| { place += 1; place });
+            let _ = waiting;
             let total: u64 = job.files.iter().map(|f| f.size).sum();
             let finished: u64 = job.files.iter().filter(|f| f.done).map(|f| f.size).sum();
             let active = job.state == "downloading";
@@ -750,7 +759,7 @@ impl Cloud {
                 // The video being fetched now, and where the job's videos are filed.
                 "current": if active { job.files.iter().find(|f| !f.done).and_then(name) } else { None },
                 "folder": job.files.first().and_then(|f| f.destination.parent()).map(|p| p.to_string_lossy().into_owned()),
-                "attempts": job.attempts,
+                "attempts": job.attempts, "position": position,
                 "replaced": job.files.iter().filter(|f| f.outcome.as_deref() == Some("replaced")).count(),
                 "discarded": job.files.iter().filter(|f| f.outcome.as_deref() == Some("discarded")).count()})
         }).collect::<Vec<_>>()})
@@ -1019,6 +1028,20 @@ impl Cloud {
             }
             self.progress.store(0, Ordering::Relaxed);
         }
+    }
+    /// Downloads run one at a time in the order they were added. This moves a waiting
+    /// one to the head of the line, to run as soon as the current one finishes.
+    pub fn next(&self, id: &str) -> Value {
+        let mut moved = false;
+        if let Ok(mut jobs) = self.jobs.lock() {
+            if let Some(index) = jobs.iter().position(|job| job.id == id && job.state == "queued") {
+                let job = jobs.remove(index);
+                jobs.insert(0, job);
+                moved = true;
+                self.persist(&jobs);
+            }
+        }
+        json!({"moved": moved})
     }
     pub fn retry(&self, id: &str) -> Value {
         let mut queued = false;

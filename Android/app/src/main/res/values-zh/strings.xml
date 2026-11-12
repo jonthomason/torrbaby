@@ -205,6 +205,7 @@
     <string name="ui_a89d78db8f1d" formatted="false">优先下载</string>
     <string name="ui_20aeeeb840f5" formatted="false">下载已中断，请点击继续。</string>
     <string name="ui_c6cf3bcf805a" formatted="false">下载空间上限（GB）</string>
+    <string name="ui_1ef76bd142df" formatted="false">下一个下载</string>
     <string name="ui_f3c236f285e4" formatted="false">下载已暂停：可用存储空间不足。</string>
     <string name="ui_cfa51b7aec7b" formatted="false">下载的分段无法衔接。</string>
     <string name="ui_9c8fe84bfbc4" formatted="false">下载进度</string>
@@ -770,6 +771,7 @@
     <string name="ui_0736f273254e" formatted="false">等待节点</string>
     <string name="ui_83ed73bbc425" formatted="false">等待播放结束</string>
     <string name="ui_640215e9fe28" formatted="false">等待校验</string>
+    <string name="ui_f1184cd6731c" formatted="false">等待中 · 排第 %d 位</string>
     <string name="ui_0a444233849c" formatted="false">追更新剧集</string>
     <string name="ui_e304f9d1f888" formatted="false">观看已下载的电影和剧集。</string>
     <string name="ui_de9a3242d1b8" formatted="false">已看</string>
