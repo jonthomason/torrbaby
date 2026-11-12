@@ -149,7 +149,8 @@ fn picture(path: &Path, duration: f64, width: u64, height: u64) -> Option<(u64, 
     (tall < height || wide < width).then_some((wide, tall))
 }
 
-fn probe(path: &Path) -> Result<Value> {
+/// The bundled ffprobe's report on a file's streams and container.
+fn report(path: &Path) -> Result<Value> {
     let helper = helper().context("Format reader is not installed")?;
     let mut child = Command::new(helper).args(["-v", "error", "-show_streams", "-show_format", "-of", "json"]).arg(path)
         .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
@@ -163,7 +164,24 @@ fn probe(path: &Path) -> Result<Value> {
     };
     let bytes = reader.join().unwrap_or_default();
     ensure!(status.success(), "Format reading failed");
-    let report: Value = serde_json::from_slice(&bytes)?;
+    Ok(serde_json::from_slice(&bytes)?)
+}
+/// The tracks of a file of which only the start and end are present (the rest a hole):
+/// each sound track's format, layout and language, the picture, and the subtitle languages.
+/// Enough to judge a cloud video before fetching it.
+pub fn outline(path: &Path) -> Result<Value> {
+    let report = report(path)?;
+    let mut described = describe(&report);
+    let streams = report["streams"].as_array().cloned().unwrap_or_default();
+    let language = |stream: &Value| stream["tags"]["language"].as_str().filter(|l| !l.is_empty() && *l != "und").map(str::to_owned);
+    let spoken: Vec<Option<String>> = streams.iter().filter(|s| s["codec_type"] == "audio").map(language).collect();
+    for (track, spoken) in described["audio"].as_array_mut().into_iter().flatten().zip(spoken) { track["language"] = json!(spoken); }
+    ensure!(described["video"].is_object() || described["audio"].as_array().is_some_and(|a| !a.is_empty()), "No tracks could be read");
+    described["subtitles"] = json!(streams.iter().filter(|s| s["codec_type"] == "subtitle").map(|s| language(s).unwrap_or_else(|| "und".into())).collect::<Vec<_>>());
+    Ok(described)
+}
+fn probe(path: &Path) -> Result<Value> {
+    let report = report(path)?;
     let mut described = describe(&report);
     let (width, height) = (described["video"]["width"].as_u64().unwrap_or(0), described["video"]["height"].as_u64().unwrap_or(0));
     let duration = report["format"]["duration"].as_str().and_then(|d| d.parse::<f64>().ok()).unwrap_or(0.0);

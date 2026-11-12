@@ -567,6 +567,7 @@ async fn cloud_search(s: &Service, query: &str) -> Result<Value> {
         Err(error) => { eprintln!("Cloud search: no episode list for this title: {error}"); Value::Null }
     };
     crate::cloud::cover(&mut found, &show, season);
+    s.cloud.attach_measured(&mut found);
     Ok(found)
 }
 fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
@@ -648,6 +649,13 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             }
         }
         copies.sort_by_key(|(_, copy, _)| crate::cloud::preference(copy));
+        // The likeliest choices have their tracks read in the background, so their sound is known by the next look.
+        let unread: Vec<(String, String)> = copies.iter().filter(|(_, copy, _)| copy["measured"].is_null()).take(5)
+            .filter_map(|(share, copy, _)| Some((share["url"].as_str()?.to_owned(), copy["key"].as_str()?.to_owned()))).collect();
+        if !unread.is_empty() {
+            let service = s.clone();
+            tokio::spawn(async move { for (url, copy) in unread { if let Err(error) = service.cloud.probe(&url, &copy).await { eprintln!("Cloud search: could not read a copy's tracks: {error}"); } } });
+        }
         let items: Vec<crate::torrent_search::Item> = copies.into_iter().filter_map(|(share, copy, index)| {
             let url = share["url"].as_str()?;
             let id = url.rsplit('/').next()?.split('?').next()?;
@@ -1258,6 +1266,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         return s.cloud.status().await;
     }
     if method == Method::POST && path == "/v1/cloud/search" { return cloud_search(s, text(&body, "query")?).await; }
+    if method == Method::POST && path == "/v1/cloud/probe" { return s.cloud.probe(text(&body, "url")?, body["copy"].as_str().unwrap_or("")).await; }
     if method == Method::POST && path == "/v1/cloud/add" { return s.cloud.add(s, &body).await; }
     if method == Method::GET && path == "/v1/cloud/jobs" { return Ok(s.cloud.jobs()); }
     if let Some(job) = path.strip_prefix("/v1/cloud/jobs/") {

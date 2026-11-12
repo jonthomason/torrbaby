@@ -63,6 +63,11 @@ pub struct Cloud {
     pace: Mutex<(Instant, u64, f64)>,
     /// Jobs the member has cancelled while they were running.
     cancelled: Mutex<std::collections::HashSet<String>>,
+    /// What reading a copy's first video found, by share and copy; kept on disk.
+    probes_file: PathBuf,
+    probes: Mutex<HashMap<String, Value>>,
+    /// One copy is read at a time: each read briefly saves a video to the member's drive.
+    probing: tokio::sync::Mutex<()>,
 }
 
 static VIDEO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\.(mp4|mkv|ts|mov|m2ts|avi)$").expect("valid regex"));
@@ -284,6 +289,9 @@ impl Cloud {
             wake: tokio::sync::Notify::new(),
             pace: Mutex::new((Instant::now(), 0, 0.0)),
             cancelled: Mutex::new(std::collections::HashSet::new()),
+            probes: Mutex::new(std::fs::read(data.join("cloud-probes.json")).ok().and_then(|raw| serde_json::from_slice(&raw).ok()).unwrap_or_default()),
+            probes_file: data.join("cloud-probes.json"),
+            probing: tokio::sync::Mutex::new(()),
         })
     }
     fn cookie(&self) -> Option<String> {
@@ -470,6 +478,100 @@ impl Cloud {
             cache.insert(query, (Instant::now(), found.clone()));
         }
         Ok(found)
+    }
+    fn probe_key(url: &str, copy: &str) -> Option<String> { Some(format!("{}|{copy}", &SHARE.captures(url)?[1])) }
+    /// What an earlier read of this copy found, if there was one.
+    pub fn measured(&self, url: &str, copy: &str) -> Option<Value> {
+        self.probes.lock().ok()?.get(&Self::probe_key(url, copy)?).cloned()
+    }
+    /// Add what has been read of each copy to a search's results. Read tracks outrank
+    /// what names claim: the copy's sound, HDR format and codec are taken from them.
+    pub fn attach_measured(&self, found: &mut Value) {
+        for share in found["shares"].as_array_mut().into_iter().flatten() {
+            let url = share["url"].as_str().unwrap_or("").to_owned();
+            for copy in share["copies"].as_array_mut().into_iter().flatten() {
+                let Some(measured) = self.measured(&url, copy["key"].as_str().unwrap_or("")) else { continue };
+                // The fullest track speaks for the copy.
+                let best = measured["audio"].as_array().into_iter().flatten().max_by_key(|track| (track["channels"].as_u64().unwrap_or(0), track["format"].as_str().is_some_and(|f| f.contains("Atmos"))));
+                if let Some(best) = best {
+                    copy["audio"] = if best["format"].as_str().is_some_and(|f| f.contains("Atmos") || f.contains("DTS:X")) { json!("atmos") }
+                        else if best["channels"].as_u64().unwrap_or(0) > 2 { best["layout"].clone() } else { json!("stereo") };
+                }
+                if measured["video"].is_object() {
+                    copy["hdr"] = measured["video"]["hdr"].clone();
+                    if measured["video"]["codec"].as_str().is_some_and(|c| !c.is_empty()) { copy["codec"] = measured["video"]["codec"].clone(); }
+                }
+                copy["measured"] = measured;
+            }
+        }
+    }
+    /// Read the tracks of a copy's first episode without downloading it: the video is
+    /// saved to the member's drive for a moment, its first and last few megabytes are
+    /// fetched, and the bundled reader is run on those. Remembered, so each copy is read once.
+    pub async fn probe(&self, url: &str, copy: &str) -> Result<Value> {
+        let key = Self::probe_key(url, copy).context("Not a Quark share link")?;
+        let _turn = self.probing.lock().await;
+        if let Some(known) = self.measured(url, copy) { return Ok(known); }
+        let cookie = self.cookie().context("Sign in to Quark in Settings first")?;
+        let (id, token, _) = self.open(url).await?;
+        let contents = self.contents(&id, &token).await?;
+        let mut mine: Vec<Value> = Self::videos(&contents, "").0.into_iter().filter(|video| copy.is_empty() || video["copy"] == copy).collect();
+        mine.sort_by_key(|video| (video["episode"].is_null(), video["episode"].as_u64()));
+        let path = mine.first().and_then(|video| video["path"].as_str()).context("This copy is no longer in the share")?.to_owned();
+        let entry = contents.iter().find(|(listed, _)| *listed == path).map(|(_, entry)| entry.clone()).context("This copy is no longer in the share")?;
+        let size = entry["size"].as_u64().unwrap_or(0);
+        let staging = self.folder(&cookie, "0", STAGING).await?;
+        let mine = self.folder(&cookie, &staging, &format!("probe-{}", uuid::Uuid::new_v4().simple())).await?;
+        let extension = path.rsplit('.').next().unwrap_or("mkv").to_ascii_lowercase();
+        let local = std::env::temp_dir().join(format!("torrbaby-probe-{}.{extension}", uuid::Uuid::new_v4().simple()));
+        let read = async {
+            use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+            let saved = self.call("/share/sharepage/save", &[], Some(json!({"fid_list": [entry["fid"]], "fid_token_list": [entry["share_fid_token"]],
+                "to_pdir_fid": mine, "pwd_id": id, "stoken": token, "pdir_fid": "0", "scene": "link"})), Some(&cookie), false).await?;
+            let task = saved["data"]["task_id"].as_str().context("Quark did not start the save")?.to_owned();
+            let mut finished = false;
+            for attempt in 0..60u32 {
+                let state = self.call("/task", &[("task_id", task.clone()), ("retry_index", attempt.to_string())], None, Some(&cookie), false).await?;
+                if state["data"]["status"] == 2 { finished = true; break; }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            ensure!(finished, "Quark did not finish saving the video");
+            let listed = self.pages("/file/sort", &[("pdir_fid", mine.clone())], Some(&cookie)).await?;
+            let fid = listed.iter().find_map(|e| e["fid"].as_str()).context("A saved file is missing from the drive")?;
+            let link = self.call("/file/download", &[], Some(json!({"fids": [fid]})), Some(&cookie), true).await?;
+            let link = link["data"][0]["download_url"].as_str().context("Quark gave no download link")?.to_owned();
+            // MKV describes itself at the start, MP4 often at the end: both ends, the middle left a hole.
+            const EDGE: u64 = 4 << 20;
+            let mut file = tokio::fs::File::create(&local).await?;
+            file.set_len(size).await?;
+            let mut ranges = vec![(0, EDGE.min(size))];
+            if size > 2 * EDGE { ranges.push((size - EDGE, size)); }
+            for (start, end) in ranges {
+                let response = self.http.get(&link).header("User-Agent", DESKTOP).header("Referer", "https://pan.quark.cn/").header("Cookie", cookie.as_str())
+                    .header("Range", format!("bytes={start}-{}", end - 1)).timeout(Duration::from_secs(60)).send().await.map_err(|_| anyhow::anyhow!("Quark could not be reached"))?;
+                ensure!(response.status().is_success(), "Quark refused the download");
+                let bytes = response.bytes().await.map_err(|_| anyhow::anyhow!("Quark stopped answering"))?;
+                file.seek(std::io::SeekFrom::Start(start)).await?;
+                file.write_all(&bytes[..bytes.len().min((end - start) as usize)]).await?;
+            }
+            file.flush().await?;
+            drop(file);
+            let target = local.clone();
+            tokio::task::spawn_blocking(move || crate::media_format::outline(&target)).await?
+        }.await;
+        let _ = tokio::fs::remove_file(&local).await;
+        let _ = self.call("/file/delete", &[], Some(json!({"action_type": 2, "filelist": [mine], "exclude_fids": []})), Some(&cookie), false).await;
+        let mut measured = read?;
+        measured["file"] = json!(path.rsplit('/').next().unwrap_or(&path));
+        if let Ok(mut probes) = self.probes.lock() {
+            if probes.len() >= 5000 { probes.clear(); }
+            probes.insert(key, measured.clone());
+            if let Ok(raw) = serde_json::to_vec(&*probes) {
+                let staged = self.probes_file.with_extension("json.new");
+                if std::fs::write(&staged, raw).is_ok() { let _ = std::fs::rename(staged, &self.probes_file); }
+            }
+        }
+        Ok(measured)
     }
     fn persist(&self, jobs: &[Job]) {
         if let Ok(raw) = serde_json::to_vec(jobs) {
