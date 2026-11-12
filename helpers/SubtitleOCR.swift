@@ -34,7 +34,7 @@ func image(_ cue:Cue,_ root:URL) throws -> CGImage {
 // - After the warm-up a recognition failure ends the job without retrying. The
 //   server requeues jobs whose error contains textModelsChanged; a new process
 //   then warms up under the lock and finds the program the last compile left.
-// Keep this block identical in CreditsScanner.swift.
+// Keep this block identical in CreditsScanner.swift and BurnedSubtitles.swift.
 let textModelsChanged = "Text recognition models changed; retry later"
 func textWarmUpImage() -> CGImage? {
     let width = 960, height = 120

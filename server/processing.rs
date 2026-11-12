@@ -619,7 +619,7 @@ mod tests {
         // Once transcription reaches a verdict the file stays settled.
         db.connection.execute("UPDATE media_processing SET state='ready',subtitles_state='not_applicable' WHERE asset_id='silent'",[])?;
         std::fs::create_dir_all(crate::speech_subtitles::directory(&data))?;
-        std::fs::write(crate::speech_subtitles::record(&data,"silent","r1"),r#"{"state":"rejected","tried":["en","zh-Hans"]}"#)?;
+        std::fs::write(crate::speech_subtitles::record(&data,"silent","r1"),r#"{"state":"rejected","tried":["en","zh-Hans","burned"]}"#)?;
         assert_eq!(reopen_untranscribed(&db,&data)?,0);
         // A finished title transcribed by an older version is redone once.
         std::fs::write(crate::speech_subtitles::directory(&data).join("old.json"),r#"{"state":"ready","asset_id":"subtitled"}"#)?;

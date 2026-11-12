@@ -594,8 +594,8 @@ impl Manager {
                 job.source=Some(output.language);job.unreadable_cues=output.unreadable_cues;output.cues
             } else {
                 // Transcripts of a title's audio are text files the server wrote itself.
-                let speech=crate::speech_subtitles::is_transcript(self.root.parent().unwrap_or(&self.root),&job.input);
-                job.extraction_method=Some(if speech {"speech"} else {"text"}.into());
+                let made=crate::speech_subtitles::method(self.root.parent().unwrap_or(&self.root),&job.input);
+                job.extraction_method=Some(made.unwrap_or("text").into());
                 crate::native_subtitles::extract(&job.input,job.track).await?
             };
             if job.source.as_deref()==Some("auto") {job.source=Some(crate::ocr_subtitles::detect_language(&cues).await?);}

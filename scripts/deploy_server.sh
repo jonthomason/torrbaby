@@ -14,7 +14,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOST="${TORRBABY_SERVER_HOST:-diamond}"
 SERVICE="org.torrbaby.daemon"
-EXECUTABLES="torrbaby torrbaby-subtitle-translator torrbaby-subtitle-extractor torrbaby-media-segmenter torrbaby-subtitle-ocr torrbaby-credits-scanner torrbaby-speech-subtitles torrbaby-ffmpeg torrbaby-ffprobe"
+EXECUTABLES="torrbaby torrbaby-subtitle-translator torrbaby-subtitle-extractor torrbaby-media-segmenter torrbaby-subtitle-ocr torrbaby-credits-scanner torrbaby-burned-subtitles torrbaby-speech-subtitles torrbaby-ffmpeg torrbaby-ffprobe"
 
 # Runs on the server. Swaps bundles and proves the server answers, or undoes the swap.
 remote() {
@@ -24,6 +24,8 @@ MODE="$1"; SERVICE="$2"; EXECUTABLES="$3"
 cd "$HOME/Applications"
 LIVE="Torrbaby Server.app"; NEW="$LIVE.new"; OLD="$LIVE.previous"; BAD="$LIVE.failed"
 whole() { for name in $EXECUTABLES; do [[ -x "$1/Contents/MacOS/$name" ]] || { echo "Incomplete bundle on the server: $1 is missing $name" >&2; return 1; }; done; codesign --verify --deep --strict "$1"; }
+# The previous bundle is judged as it was built: it may predate a helper this one adds.
+sound() { [[ -x "$1/Contents/MacOS/torrbaby" ]] && codesign --verify --deep --strict "$1"; }
 restart() { launchctl kickstart -k "gui/$(id -u)/$SERVICE"; }
 # Up means the new process is running and has opened its port.
 up() {
@@ -34,7 +36,7 @@ up() {
     return 1
 }
 if [[ "$MODE" == rollback ]]; then
-    whole "$OLD" || { echo "No whole previous bundle to go back to" >&2; exit 1; }
+    sound "$OLD" || { echo "No whole previous bundle to go back to" >&2; exit 1; }
     rm -rf "$BAD"; mv "$LIVE" "$BAD"; mv "$OLD" "$LIVE"; restart
     up && { echo "Rolled back; the server is up."; exit 0; }
     echo "The previous bundle did not start either" >&2; exit 1
@@ -46,7 +48,7 @@ mv "$NEW" "$LIVE"
 restart
 if up; then echo "Deployed; the server is up."; exit 0; fi
 echo "The new server did not come up; putting the previous one back." >&2
-if whole "$OLD"; then
+if sound "$OLD"; then
     rm -rf "$BAD"; mv "$LIVE" "$BAD"; mv "$OLD" "$LIVE"; restart
     up && { echo "Previous server restored. The failed bundle is kept as $BAD." >&2; exit 1; }
 fi

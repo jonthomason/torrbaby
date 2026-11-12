@@ -1,9 +1,11 @@
-//! Subtitles transcribed from a title's English or Mandarin audio, for files that
-//! have no usable English or Chinese subtitles. Apple's on-device SpeechAnalyzer
-//! runs in a helper; the transcript is stored as a private SRT and then flows
-//! through the normal subtitle jobs (extraction, then on-device translation to
-//! the other language). The audio is tried as each language in turn: speech
-//! transcribed as the wrong language is plainly bad, and is rejected in seconds.
+//! Subtitles made from the title itself, for files that have no usable English or
+//! Chinese subtitles. Two sources, each run on this Mac by a helper:
+//! - the subtitles printed in the picture, as most Chinese dramas and films carry
+//!   them: read from frames of the video, exact where speech is misheard;
+//! - the speech, English or Mandarin, transcribed by Apple's SpeechAnalyzer.
+//! The result is stored as a private SRT and then flows through the normal
+//! subtitle jobs (extraction, then on-device translation to the other language).
+//! The sources are tried in turn; one that does not apply is rejected quickly.
 use crate::{api::Service, storage::now};
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
@@ -24,7 +26,12 @@ const MIN_WORDS_PER_MINUTE: f64 = 15.0;
 const MIN_CHARACTERS_PER_MINUTE: f64 = 40.0;
 /// The languages speech is transcribed in.
 const LANGUAGES: [&str; 2] = ["en", "zh-Hans"];
-const NOT_SPEECH: &str = "The audio is not English or Mandarin speech";
+/// Reading the subtitles printed in the picture.
+const PICTURE: &str = "burned";
+/// Everything tried, in the order a title with a Chinese name is tried.
+const STEPS: [&str; 3] = [PICTURE, "zh-Hans", "en"];
+const NOT_SPEECH: &str = "No subtitles in the picture, and the audio is not English or Mandarin speech";
+const NO_AUDIO: &str = "No decodable audio track";
 /// Concurrent transcriptions across the processing pool.
 static GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
@@ -39,7 +46,12 @@ pub enum Transcript {
 
 /// Transcripts live beside the subtitle cache, outside the media library.
 pub fn directory(data: &Path) -> PathBuf { data.join("transcripts") }
-pub fn is_transcript(data: &Path, path: &Path) -> bool { path.parent() == Some(directory(data).as_path()) }
+/// How a subtitle source the server made itself was made: "ocr" when read from the
+/// picture, "speech" when transcribed; None for any other file.
+pub fn method(data: &Path, path: &Path) -> Option<&'static str> {
+    if path.parent() != Some(directory(data).as_path()) { return None; }
+    Some(if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(".burned.srt")) { "ocr" } else { "speech" })
+}
 
 /// Named for the file's identity that survives a move or rename (device, inode,
 /// size, modification time), so filing a title does not transcribe it again.
@@ -55,19 +67,24 @@ fn key(data: &Path, asset: &str, revision: &str) -> String {
 /// for this file revision.
 pub fn decided(data: &Path, asset: &str, revision: &str) -> bool {
     std::fs::read(record(data, asset, revision)).ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .is_some_and(|saved| saved["state"] == "ready" || untried(&saved).is_empty())
+        .is_some_and(|saved| untried(&saved).is_empty())
 }
-/// The languages a rejected file has yet to be tried in. Rejections recorded when
-/// only English was transcribed carry no list: they were tried in English alone,
-/// which is how every Mandarin title came to have no subtitles.
+/// What a file has yet to be tried with. Records from when only English speech was
+/// transcribed carry no list: a rejection then had tried English alone, which is how
+/// every Mandarin title came to have no subtitles. A Mandarin transcript made before
+/// the picture was read is redone from the picture, which is far more accurate; an
+/// English transcript is kept as it is.
 fn untried(saved: &Value) -> Vec<&'static str> {
-    if saved["reason"] == "No decodable audio track" { return vec![]; }
-    let tried: Vec<&str> = match saved["tried"].as_array() {
-        Some(list) => list.iter().filter_map(Value::as_str).collect(),
-        None if saved["state"] == "rejected" => vec!["en"],
-        None => vec![],
+    let listed = saved["tried"].as_array().map(|list| list.iter().filter_map(Value::as_str).collect::<Vec<_>>());
+    let tried: Vec<&str> = match (saved["state"].as_str(), listed) {
+        (_, Some(list)) => list,
+        (Some("ready"), None) if saved["language"] == "zh-Hans" => vec!["zh-Hans", "en"],
+        (Some("ready"), None) => return vec![],
+        (_, None) if saved["reason"] == NO_AUDIO => vec!["en", "zh-Hans"],
+        (_, None) => vec!["en"],
     };
-    LANGUAGES.into_iter().filter(|language| !tried.contains(language)).collect()
+    if saved["state"] == "ready" { return if tried.contains(&PICTURE) { vec![] } else { vec![PICTURE] }; }
+    STEPS.into_iter().filter(|step| !tried.contains(step)).collect()
 }
 /// Chinese in the file's name: try Mandarin first.
 fn chinese_name(input: &Path) -> bool {
@@ -100,8 +117,8 @@ fn srt(cues: &[crate::subtitles::TimedCue]) -> String {
     crate::subtitles::webvtt(cues).trim_start_matches("WEBVTT\n\n").to_owned()
 }
 
-/// The transcript for this file revision, transcribing it now if needed.
-/// `report` receives (seconds transcribed, duration) while the helper runs.
+/// The subtitles for this file revision, making them now if needed.
+/// `report` receives (seconds done, duration) while a helper runs.
 pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl Fn(u64, u64)) -> Result<Transcript> {
     let id = asset["id"].as_str().context("Missing asset ID")?;
     let revision = crate::subtitle_jobs::revision(input)?;
@@ -109,101 +126,131 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
     std::fs::create_dir_all(&root)?;
     let name = key(&s.data_dir, id, &revision);
     let record = root.join(format!("{name}.json"));
-    let output = |language: &str| root.join(format!("{name}.{language}.srt"));
-    let mut remaining: Vec<&'static str> = LANGUAGES.to_vec();
-    if chinese_name(input) { remaining.reverse(); }
+    let language_of = |saved: &Value| LANGUAGES.into_iter().find(|l| saved["language"] == *l).unwrap_or("en");
+    // A Chinese name: the picture, then Mandarin. Otherwise English speech comes first.
+    let mut remaining: Vec<&'static str> = if chinese_name(input) { STEPS.to_vec() } else { vec!["en", PICTURE, "zh-Hans"] };
     let mut tried: Vec<&'static str> = Vec::new();
+    // A transcript already made, kept if the picture turns out to hold no subtitles.
+    let mut kept: Option<(Value, PathBuf, &'static str)> = None;
     if let Ok(bytes) = std::fs::read(&record) {
         let saved: Value = serde_json::from_slice(&bytes)?;
-        let language = LANGUAGES.into_iter().find(|l| saved["language"] == *l).unwrap_or("en");
-        if saved["state"] == "ready" && output(language).is_file() { return Ok(Transcript::Ready(output(language), language)); }
-        if saved["state"] == "rejected" {
-            let left = untried(&saved);
-            if left.is_empty() { return Ok(Transcript::Rejected(saved["reason"].as_str().unwrap_or(NOT_SPEECH).into())); }
-            tried = LANGUAGES.into_iter().filter(|l| !left.contains(l)).collect();
-            remaining.retain(|l| left.contains(l));
+        let left = untried(&saved);
+        let language = language_of(&saved);
+        let output = root.join(saved["output"].as_str().map(str::to_owned).unwrap_or_else(|| format!("{name}.{language}.srt")));
+        if saved["state"] == "ready" && output.is_file() {
+            if left.is_empty() { return Ok(Transcript::Ready(output, language)); }
+            kept = Some((saved.clone(), output, language));
+        } else if saved["state"] == "rejected" && left.is_empty() {
+            return Ok(Transcript::Rejected(saved["reason"].as_str().unwrap_or(NOT_SPEECH).into()));
+        }
+        if saved["state"] == "ready" || saved["state"] == "rejected" {
+            tried = STEPS.into_iter().filter(|step| !left.contains(step)).collect();
+            remaining.retain(|step| left.contains(step));
         }
     }
     if s.virtual_media.preparing() { return Ok(Transcript::Deferred); }
     let _permit = GATE.acquire().await?;
-    // AVFoundation cannot decode audio from Matroska, nor read audio samples
-    // over HTTP, so copy the chosen audio track's frames into a local raw
-    // stream. Cue times are then shifted by that track's first timestamp.
-    let mut temporary_audio = None;
-    let mut offset_ms = 0;
-    let media = if crate::container::is_matroska(input) {
-        let (source, directory, base) = (input.to_path_buf(), root.clone(), name.clone());
-        match tokio::task::spawn_blocking(move || extract_audio(&source, &directory, &base)).await?? {
-            Some((path, first_ms)) => { offset_ms = first_ms; temporary_audio = Some(path.clone()); path.to_str().context("Invalid audio path")?.to_owned() }
-            None => {
-                let reason = "No decodable audio track";
-                let temporary = root.join(format!("{name}.json.tmp"));
-                std::fs::write(&temporary, json!({"state":"rejected","reason":reason,"asset_id":id,"updated":now()}).to_string())?;
-                std::fs::rename(temporary, &record)?;
-                return Ok(Transcript::Rejected(reason.into()));
-            }
-        }
-    } else { input.to_str().context("Invalid media path")?.to_owned() };
     let save = |document: &Value| -> Result<()> {
         let temporary = root.join(format!("{name}.json.tmp"));
         std::fs::write(&temporary, document.to_string())?;
         std::fs::rename(temporary, &record)?; Ok(())
     };
-    let mut finding = Ok(Transcript::Rejected(NOT_SPEECH.into()));
+    // What the record says while nothing has been accepted: the kept transcript, or a rejection.
+    let unsettled = |tried: &[&str], reason: &str, stats: &Value| -> Value {
+        match &kept {
+            Some((saved, _, _)) => { let mut saved = saved.clone(); saved["tried"] = json!(tried); saved }
+            None => json!({"state":"rejected","reason":reason,"tried":tried,"asset_id":id,"stats":stats,"updated":now()}),
+        }
+    };
+    // The audio, prepared when the first speech step needs it: (what the helper reads,
+    // the track's first timestamp, a temporary file to remove).
+    let mut audio: Option<(String, u64, Option<PathBuf>)> = None;
+    let mut finding: Option<Result<Transcript>> = None;
     let mut reason = NOT_SPEECH.to_owned();
-    let mut last_stats = Value::Null;
-    for language in remaining {
-        let outcome = match hear(s, &root, &name, &media, language, &report).await {
-            Ok(Some(outcome)) => outcome,
-            Ok(None) => { finding = Ok(Transcript::Deferred); break; }
-            Err(error) => { finding = Err(error); break; }
-        };
-        if crate::subtitle_jobs::revision(input)? != revision { finding = Err(anyhow::anyhow!("Media changed during speech transcription")); break; }
-        tried.push(language);
-        let result = match outcome {
-            // No decodable audio is no better in another language; no speech heard may be.
-            Err(why) if why.is_empty() || why == "No decodable audio track" => {
-                save(&json!({"state":"rejected","reason":"No decodable audio track","asset_id":id,"updated":now()}))?;
-                finding = Ok(Transcript::Rejected("No decodable audio track".into())); break;
+    for step in remaining {
+        if tried.contains(&step) { continue; }
+        let heard = if step == PICTURE {
+            let media = input.to_str().context("Invalid media path")?;
+            run(s, &root, &name, "torrbaby-burned-subtitles", &[media], &report).await
+        } else {
+            if audio.is_none() {
+                // AVFoundation cannot decode audio from Matroska, nor read audio samples
+                // over HTTP, so copy the chosen audio track's frames into a local raw
+                // stream. Cue times are then shifted by that track's first timestamp.
+                audio = if crate::container::is_matroska(input) {
+                    let (source, directory, base) = (input.to_path_buf(), root.clone(), name.clone());
+                    match tokio::task::spawn_blocking(move || extract_audio(&source, &directory, &base)).await?? {
+                        Some((path, first_ms)) => Some((path.to_str().context("Invalid audio path")?.to_owned(), first_ms, Some(path))),
+                        None => None,
+                    }
+                } else { Some((input.to_str().context("Invalid media path")?.to_owned(), 0, None)) };
             }
-            Err(why) => { reason = why; save(&json!({"state":"rejected","reason":reason,"tried":tried,"asset_id":id,"updated":now()}))?; continue; }
+            match &audio {
+                Some((media, _, _)) => run(s, &root, &name, "torrbaby-speech-subtitles", &[media, step], &report).await,
+                None => Ok(Some(Err(NO_AUDIO.to_owned()))),
+            }
+        };
+        let outcome = match heard {
+            Ok(Some(outcome)) => outcome,
+            Ok(None) => { finding = Some(Ok(Transcript::Deferred)); break; }
+            Err(error) => { finding = Some(Err(error)); break; }
+        };
+        if crate::subtitle_jobs::revision(input)? != revision { finding = Some(Err(anyhow::anyhow!("Media changed while its subtitles were made"))); break; }
+        tried.push(step);
+        let result = match outcome {
+            Err(why) => {
+                // No audio to decode is no better in the other language.
+                if step != PICTURE && (why.is_empty() || why == NO_AUDIO) { for language in LANGUAGES { if !tried.contains(&language) { tried.push(language); } } }
+                if step != PICTURE { reason = if why.is_empty() { NO_AUDIO.to_owned() } else { why }; }
+                save(&unsettled(&tried, &reason, &Value::Null))?;
+                continue;
+            }
             Ok(result) => result,
         };
-        let stats = json!({"language":language,"confidence":result["confidence"],"words":result["words"],"characters":result["characters"],"duration_seconds":result["duration_seconds"],"speech_seconds":result["speech_seconds"]});
-        if !verdict(&result, language) {
-            tracing::info!(asset = id, %stats, "Speech transcription rejected");
-            reason = NOT_SPEECH.to_owned(); last_stats = stats;
-            save(&json!({"state":"rejected","reason":reason,"tried":tried,"asset_id":id,"stats":last_stats,"updated":now()}))?;
+        let stats = json!({"source":step,"confidence":result["confidence"],"words":result["words"],"characters":result["characters"],"duration_seconds":result["duration_seconds"],"speech_seconds":result["speech_seconds"],"cue_seconds":result["cue_seconds"]});
+        let accepted = if step == PICTURE { result["language"] == "zh-Hans" && result["method"] == "burned" } else { verdict(&result, step) };
+        if !accepted {
+            tracing::info!(asset = id, %stats, "Transcription rejected");
+            if step != PICTURE { reason = NOT_SPEECH.to_owned(); }
+            save(&unsettled(&tried, &reason, &stats))?;
             continue;
         }
+        let offset_ms = if step == PICTURE { 0 } else { audio.as_ref().map_or(0, |a| a.1) };
         let mut cues: Vec<crate::subtitles::TimedCue> = serde_json::from_value(result["cues"].clone())?;
         for cue in &mut cues { cue.start_ms += offset_ms; cue.end_ms += offset_ms; }
-        if !(!cues.is_empty() && cues.iter().all(|c| c.end_ms > c.start_ms && !c.text.trim().is_empty() && c.text.len() <= 16_384)) {
-            finding = Err(anyhow::anyhow!("Invalid speech transcript")); break;
+        if cues.is_empty() || !cues.iter().all(|c| c.end_ms > c.start_ms && !c.text.trim().is_empty() && c.text.len() <= 16_384) {
+            finding = Some(Err(anyhow::anyhow!("Invalid transcript"))); break;
         }
-        let temporary = root.join(format!("{name}.{language}.srt.tmp"));
+        let (language, file) = if step == PICTURE { ("zh-Hans", format!("{name}.zh-Hans.burned.srt")) } else { (step, format!("{name}.{step}.srt")) };
+        let temporary = root.join(format!("{file}.tmp"));
         std::fs::write(&temporary, srt(&cues))?;
-        std::fs::rename(temporary, output(language))?;
-        save(&json!({"state":"ready","language":language,"asset_id":id,"stats":stats,"cues":cues.len(),"updated":now()}))?;
-        tracing::info!(asset = id, %stats, cues = cues.len(), "Speech transcription finished");
-        finding = Ok(Transcript::Ready(output(language), language)); break;
+        std::fs::rename(temporary, root.join(&file))?;
+        save(&json!({"state":"ready","language":language,"method":if step == PICTURE {"burned"} else {"speech"},"output":file,"tried":tried,"asset_id":id,"stats":stats,"cues":cues.len(),"updated":now()}))?;
+        tracing::info!(asset = id, %stats, cues = cues.len(), "Transcription finished");
+        finding = Some(Ok(Transcript::Ready(root.join(file), language)));
+        break;
     }
-    if let Some(path) = &temporary_audio { let _ = std::fs::remove_file(path); }
-    if matches!(finding, Ok(Transcript::Rejected(_))) { finding = Ok(Transcript::Rejected(reason)); }
-    finding
+    if let Some((_, _, Some(path))) = &audio { let _ = std::fs::remove_file(path); }
+    match (finding, kept) {
+        (Some(finding), _) => finding,
+        (None, Some((_, output, language))) => Ok(Transcript::Ready(output, language)),
+        (None, None) => Ok(Transcript::Rejected(reason)),
+    }
 }
 
-/// Run the helper over the audio as one language. None: stopped for playback
-/// preparation. Err inside: the helper found no decodable audio or no speech.
-async fn hear(s: &Service, root: &Path, name: &str, media: &str, language: &str, report: &impl Fn(u64, u64)) -> Result<Option<Result<Value, String>>> {
+/// Run one helper over the title. None: stopped for playback preparation. Err inside:
+/// the helper found nothing of its kind (no subtitles in the picture, no decodable
+/// audio, no speech).
+async fn run(s: &Service, root: &Path, name: &str, helper: &str, arguments: &[&str], report: &impl Fn(u64, u64)) -> Result<Option<Result<Value, String>>> {
     let result_path = root.join(format!("{name}.result.tmp"));
     let progress = root.join(format!("{name}.progress"));
     let outcome = async {
-        let helper = std::env::current_exe()?.with_file_name("torrbaby-speech-subtitles");
+        let helper = std::env::current_exe()?.with_file_name(helper);
+        // Media first, then where to write, then the helper's own options.
         let mut child = tokio::process::Command::new("/usr/bin/nice").args(["-n", "15"]).arg(helper)
-            .arg(media).arg(&result_path).arg(&progress).arg(language)
+            .arg(arguments[0]).arg(&result_path).arg(&progress).args(&arguments[1..])
             .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(true).spawn()?;
-        let stderr = child.stderr.take().context("Missing transcriber errors")?;
+        let stderr = child.stderr.take().context("Missing helper errors")?;
         use tokio::io::AsyncReadExt;
         let errors = tokio::spawn(async move { let mut v = Vec::new(); stderr.take(8192).read_to_end(&mut v).await.map(|_| v) });
         let started = std::time::Instant::now();
@@ -219,12 +266,12 @@ async fn hear(s: &Service, root: &Path, name: &str, media: &str, language: &str,
                 child.kill().await?; let _ = child.wait().await; errors.abort();
                 return Ok(None);
             }
-            ensure!(started.elapsed() < Duration::from_secs(1800), "Speech transcription timed out");
+            ensure!(started.elapsed() < Duration::from_secs(3600), "Making subtitles from the title timed out");
         };
         let error = String::from_utf8_lossy(&errors.await??).trim().to_owned();
-        // 3: no decodable audio; 4: no speech at all (music, ambience).
+        // 3: nothing to decode; 4: nothing of this kind in the title (no speech, no subtitles in the picture).
         if matches!(status.code(), Some(3 | 4)) { return Ok(Some(Err(error))); }
-        ensure!(status.success(), "Speech transcription: {}", if error.is_empty() { "helper failed" } else { &error });
+        ensure!(status.success(), "Subtitles from the title: {}", if error.is_empty() { "helper failed" } else { &error });
         let bytes = std::fs::read(&result_path)?;
         ensure!(bytes.len() <= 16_777_216, "Transcript too large");
         Ok(Some(Ok(serde_json::from_slice::<Value>(&bytes)?)))
@@ -331,12 +378,17 @@ mod tests {
         assert!(!verdict(&json!({"confidence":0.9,"characters":120,"duration_seconds":600.0}), "zh-Hans"), "a few words in a music video");
     }
     #[test]
-    fn files_rejected_when_only_english_was_tried_are_tried_in_mandarin() {
-        assert_eq!(untried(&json!({"state":"rejected","reason":"The audio is not English speech"})), ["zh-Hans"]);
-        assert_eq!(untried(&json!({"state":"rejected","reason":"No speech was recognized"})), ["zh-Hans"]);
-        assert!(untried(&json!({"state":"rejected","reason":"No decodable audio track"})).is_empty());
-        assert!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["zh-Hans","en"]})).is_empty());
-        assert_eq!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["zh-Hans"]})), ["en"]);
+    fn earlier_verdicts_are_reopened_for_what_they_had_not_tried() {
+        // Rejected when only English was transcribed: the picture and Mandarin remain.
+        assert_eq!(untried(&json!({"state":"rejected","reason":"The audio is not English speech"})), ["burned", "zh-Hans"]);
+        // No audio to decode says nothing about the picture.
+        assert_eq!(untried(&json!({"state":"rejected","reason":"No decodable audio track"})), ["burned"]);
+        assert!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["burned","zh-Hans","en"]})).is_empty());
+        assert_eq!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["zh-Hans","en"]})), ["burned"]);
+        // A Mandarin transcript is redone from the picture once; an English one is kept.
+        assert_eq!(untried(&json!({"state":"ready","language":"zh-Hans"})), ["burned"]);
+        assert!(untried(&json!({"state":"ready","language":"zh-Hans","tried":["zh-Hans","burned"]})).is_empty());
+        assert!(untried(&json!({"state":"ready"})).is_empty() && untried(&json!({"state":"ready","language":"en"})).is_empty());
         assert!(chinese_name(Path::new("/tv/尚公主 - S01E05.mkv")) && !chinese_name(Path::new("/tv/Black Doves - S01E01.mkv")));
     }
     #[test]
@@ -359,8 +411,9 @@ mod tests {
         let back = crate::subtitles::parse_srt(&text)?;
         assert_eq!((back[0].start_ms, back[0].end_ms, back[0].text.as_str()), (1500, 3200, "Bond.\nJames Bond."));
         let data = Path::new("/data");
-        assert!(is_transcript(data, &directory(data).join("a.en.srt")));
-        assert!(!is_transcript(data, Path::new("/media/a.en.srt")));
+        assert_eq!(method(data, &directory(data).join("a.en.srt")), Some("speech"));
+        assert_eq!(method(data, &directory(data).join("a.zh-Hans.burned.srt")), Some("ocr"), "read from the picture, so named as images are");
+        assert_eq!(method(data, Path::new("/media/a.en.srt")), None);
         Ok(())
     }
 }
