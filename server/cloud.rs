@@ -576,6 +576,8 @@ impl Cloud {
             for i in 0..CONNECTIONS { let _ = tokio::fs::remove_file(format!("{}.part{i:02}", file.destination.display())).await; }
             let _ = tokio::fs::remove_file(format!("{}.joining", file.destination.display())).await;
         }
+        // A folder made for this job and still empty goes too; one holding episodes stays.
+        if let Some(folder) = job.files.first().and_then(|f| f.destination.parent()) { let _ = tokio::fs::remove_dir(folder).await; }
         let Some(cookie) = self.cookie() else { return };
         let Ok(staging) = self.folder(&cookie, "0", STAGING).await else { return };
         let Ok(entries) = self.pages("/file/sort", &[("pdir_fid", staging)], Some(&cookie)).await else { return };
