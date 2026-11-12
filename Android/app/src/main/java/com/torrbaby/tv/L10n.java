@@ -151,6 +151,7 @@ final class L10n {
     IDS.put("Create", R.string.ui_6e157c5da441);
     IDS.put("Create user", R.string.ui_bdbcfa0af077);
     IDS.put("Credits analysis incomplete", R.string.ui_3394786da6fb);
+    IDS.put("Credits not detected", R.string.ui_81a0a3c30d89);
     IDS.put("Currently unlimited", R.string.ui_f06a7a6fb077);
     IDS.put("DOWNLOAD", R.string.ui_564af6829fbc);
     IDS.put("DOWNLOADING", R.string.ui_45bfe6a546ee);
@@ -176,6 +177,8 @@ final class L10n {
     IDS.put("Disconnect", R.string.ui_ed28e0686e12);
     IDS.put("Disconnect this TV", R.string.ui_d9835d7b9245);
     IDS.put("Disconnect this TV?", R.string.ui_3e06b932237a);
+    IDS.put("Dismiss", R.string.ui_70afe9eff3f2);
+    IDS.put("Dismiss all", R.string.ui_a5c313167365);
     IDS.put("Dismiss notification", R.string.ui_dc83cd803134);
     IDS.put("Dolby Atmos", R.string.ui_daaf02ea1ed0);
     IDS.put("Done", R.string.ui_e9b450d14bc2);
@@ -420,6 +423,7 @@ final class L10n {
     IDS.put("Prioritize subtitles", R.string.ui_5af3161d2251);
     IDS.put("Process library automatically", R.string.ui_fffc6e1a0c19);
     IDS.put("Processing", R.string.ui_e63451d3cf90);
+    IDS.put("Processing failed", R.string.ui_7cd54dae216c);
     IDS.put("Profile colors must use #RRGGBB", R.string.ui_cee5b42e2dc8);
     IDS.put("Profile name must contain 1–80 printable characters", R.string.ui_79e0a2b26494);
     IDS.put("Profile not found", R.string.ui_c009b451b816);
@@ -511,6 +515,7 @@ final class L10n {
     IDS.put("Seeding target", R.string.ui_fd877c9a4fd7);
     IDS.put("Seeding will stop. All server files listed on this page will be permanently deleted for everyone. This cannot be undone.", R.string.ui_6f27fe72ee93);
     IDS.put("Seeding will stop. These server files will be permanently deleted. This cannot be undone.", R.string.ui_a7c66748478a);
+    IDS.put("Select to dismiss", R.string.ui_7bd7fdd7e26b);
     IDS.put("Selected", R.string.ui_9a976fc228b6);
     IDS.put("Serif", R.string.ui_a5c78a86fab1);
     IDS.put("Server", R.string.ui_cb0cb170d106);
@@ -564,6 +569,7 @@ final class L10n {
     IDS.put("Subtitle style", R.string.ui_2e86ef3a303d);
     IDS.put("Subtitles", R.string.ui_17770471cb9f);
     IDS.put("Subtitles & Translation", R.string.ui_9389df521f5d);
+    IDS.put("Subtitles not prepared", R.string.ui_5c9b86f89ddf);
     IDS.put("Subtitles on this TV", R.string.ui_fd035728d654);
     IDS.put("Subtitles on this device", R.string.ui_bb959ff245cd);
     IDS.put("Subtitles unavailable", R.string.ui_1f591ba0ae14);

@@ -140,6 +140,7 @@
     <string name="ui_6e157c5da441" formatted="false">Create</string>
     <string name="ui_bdbcfa0af077" formatted="false">Create user</string>
     <string name="ui_3394786da6fb" formatted="false">Credits analysis incomplete</string>
+    <string name="ui_81a0a3c30d89" formatted="false">Credits not detected</string>
     <string name="ui_f06a7a6fb077" formatted="false">Currently unlimited</string>
     <string name="ui_564af6829fbc" formatted="false">DOWNLOAD</string>
     <string name="ui_45bfe6a546ee" formatted="false">DOWNLOADING</string>
@@ -165,6 +166,8 @@
     <string name="ui_ed28e0686e12" formatted="false">Disconnect</string>
     <string name="ui_d9835d7b9245" formatted="false">Disconnect this TV</string>
     <string name="ui_3e06b932237a" formatted="false">Disconnect this TV?</string>
+    <string name="ui_70afe9eff3f2" formatted="false">Dismiss</string>
+    <string name="ui_a5c313167365" formatted="false">Dismiss all</string>
     <string name="ui_dc83cd803134" formatted="false">Dismiss notification</string>
     <string name="ui_daaf02ea1ed0" formatted="false">Dolby Atmos</string>
     <string name="ui_e9b450d14bc2" formatted="false">Done</string>
@@ -409,6 +412,7 @@
     <string name="ui_5af3161d2251" formatted="false">Prioritize subtitles</string>
     <string name="ui_fffc6e1a0c19" formatted="false">Process library automatically</string>
     <string name="ui_e63451d3cf90" formatted="false">Processing</string>
+    <string name="ui_7cd54dae216c" formatted="false">Processing failed</string>
     <string name="ui_cee5b42e2dc8" formatted="false">Profile colors must use #RRGGBB</string>
     <string name="ui_79e0a2b26494" formatted="false">Profile name must contain 1–80 printable characters</string>
     <string name="ui_c009b451b816" formatted="false">Profile not found</string>
@@ -500,6 +504,7 @@
     <string name="ui_fd877c9a4fd7" formatted="false">Seeding target</string>
     <string name="ui_6f27fe72ee93" formatted="false">Seeding will stop. All server files listed on this page will be permanently deleted for everyone. This cannot be undone.</string>
     <string name="ui_a7c66748478a" formatted="false">Seeding will stop. These server files will be permanently deleted. This cannot be undone.</string>
+    <string name="ui_7bd7fdd7e26b" formatted="false">Select to dismiss</string>
     <string name="ui_9a976fc228b6" formatted="false">Selected</string>
     <string name="ui_a5c78a86fab1" formatted="false">Serif</string>
     <string name="ui_cb0cb170d106" formatted="false">Server</string>
@@ -553,6 +558,7 @@
     <string name="ui_2e86ef3a303d" formatted="false">Subtitle style</string>
     <string name="ui_17770471cb9f" formatted="false">Subtitles</string>
     <string name="ui_9389df521f5d" formatted="false">Subtitles &amp; Translation</string>
+    <string name="ui_5c9b86f89ddf" formatted="false">Subtitles not prepared</string>
     <string name="ui_fd035728d654" formatted="false">Subtitles on this TV</string>
     <string name="ui_bb959ff245cd" formatted="false">Subtitles on this device</string>
     <string name="ui_1f591ba0ae14" formatted="false">Subtitles unavailable</string>

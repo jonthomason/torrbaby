@@ -33,6 +33,8 @@ public class MainActivity extends Activity {
   private ArrayList<String> collectionIds = new ArrayList<>();
   private JSONArray torrents;
   private JSONArray libraryOperations;
+  /** Processing errors and skipped-stage warnings for Needs attention; null until fetched. */
+  private JSONArray attention;
   private String libraryOperationsError = "";
   private final Map<String, Long> removedTorrents = new HashMap<>();
   private String torrentCategory = "Downloading";
@@ -986,6 +988,18 @@ public class MainActivity extends Activity {
     return null;
   }
 
+  /** Mark one attention item (or all, with id -1) as seen, then refresh the list. */
+  private void dismissAttention(JSONObject body, long id) {
+    Api requested = api;
+    io.execute(() -> {
+      try {
+        if (id < 0) body.put("all", true); else body.put("ids", new JSONArray().put(id));
+        requested.request("POST", "/v1/attention/dismiss", body);
+      } catch (Exception e) { runOnUiThread(() -> error(message(e))); return; }
+      runOnUiThread(this::fetchTorrents);
+    });
+  }
+
   private void torrentScreen() {
     torrentActions = new TorrentActions(this, api, io, this::fetchTorrents, this::torrentRemoved);
     Ui.pad(content, 35, 16);
@@ -1065,6 +1079,33 @@ public class MainActivity extends Activity {
     LinearLayout rows = Ui.column(this);
     scroll.addView(rows);
     int count = 0;
+    if (torrentCategory.equals("Needs attention") && attention != null && attention.length() > 0) {
+      Ui.add(rows, Ui.text(this, L10n.t("Processing") + " · " + attention.length(), 14, Ui.MUTED), -1, -2);
+      Ui.gap(rows, 10);
+      for (int i = 0; i < attention.length(); i++) {
+        JSONObject item = attention.optJSONObject(i);
+        if (item == null) continue;
+        count++;
+        LinearLayout row = Ui.column(this);
+        Ui.focus(row);
+        row.setOnFocusChangeListener((v, focused) -> Ui.secondaryContrast(v, focused));
+        Ui.pad(row, 16, 14);
+        Ui.add(row, Ui.title(this, item.optString("title"), 16), -1, -2);
+        Ui.gap(row, 6);
+        boolean error = item.optString("severity").equals("error");
+        Ui.add(row, Ui.text(this, L10n.t(item.optString("summary")), 14, error ? 0xffffb74d : Ui.MUTED), -1, -2);
+        Ui.add(row, Ui.text(this, L10n.t(item.optString("error")), 12, Ui.MUTED), -1, -2);
+        row.setOnClickListener(v -> new AlertDialog.Builder(this)
+            .setTitle(item.optString("title"))
+            .setMessage(L10n.t(item.optString("error")))
+            .setPositiveButton(L10n.t("Dismiss"), (d, w) -> dismissAttention(new JSONObject(), item.optLong("id")))
+            .setNeutralButton(L10n.t("Dismiss all"), (d, w) -> dismissAttention(new JSONObject(), -1))
+            .setNegativeButton(L10n.t("Cancel"), null)
+            .show());
+        Ui.add(rows, row, -1, -2);
+        Ui.gap(rows, 10);
+      }
+    }
     List<JSONObject> sorted = new ArrayList<>();
     for (int i = 0; torrents != null && i < torrents.length(); i++)
       if (torrents.optJSONObject(i) != null) sorted.add(torrents.optJSONObject(i));
@@ -1252,12 +1293,17 @@ public class MainActivity extends Activity {
           JSONArray torrentResult = null;
           try { torrentResult = requested.array("/v1/torrents"); }
           catch (Exception ignored) { }
+          JSONArray attentionResult = null;
+          try { attentionResult = requested.request("GET", "/v1/attention", null).getJSONArray("items"); }
+          catch (Exception ignored) { }
+          final JSONArray receivedAttention = attentionResult;
           final JSONArray receivedOperations = operationResult, receivedTorrents = torrentResult;
           final String operationError = operationFailure;
           runOnUiThread(() -> {
             torrentsLoading = false;
             if (requested != api || isDestroyed()) return;
             if (receivedOperations != null) libraryOperations = receivedOperations;
+            if (receivedAttention != null) attention = receivedAttention;
             libraryOperationsError = operationError;
             torrentStale = receivedTorrents == null;
             if (receivedTorrents != null) {

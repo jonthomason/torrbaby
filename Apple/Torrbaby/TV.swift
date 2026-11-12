@@ -709,6 +709,7 @@ private struct TVTorrentView: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @State private var category = "Downloading"
+    @State private var processingIssues = 0
     @AppStorage("torrentSort.downloading") private var downloadingSort = TorrentSort.progress
     @AppStorage("torrentSort.seeding") private var seedingSort = TorrentSort.ratio
     @AppStorage("torrentSort.complete") private var completeSort = TorrentSort.alphabetic
@@ -740,6 +741,7 @@ private struct TVTorrentView: View {
             ScrollView {
                 LazyVStack(spacing: 28) {
                     if category == "Seeding" { LibraryOperationStatus() }
+                    if category == "Needs attention" { ProcessingAttention(count: $processingIssues) }
                     ForEach(torrents) { torrent in
                         VStack(alignment: .leading, spacing: 18) {
                             Text(torrent.displayName).font(.headline).lineLimit(2)
@@ -769,7 +771,7 @@ private struct TVTorrentView: View {
                         }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
                             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 18)).focusable()
                     }
-                    if torrents.isEmpty && (category != "Seeding" || store.detachedLibraryOperations.isEmpty) { ContentUnavailableView("No torrents", systemImage: "arrow.down.circle") }
+                    if torrents.isEmpty && (category != "Seeding" || store.detachedLibraryOperations.isEmpty) && !(category == "Needs attention" && processingIssues > 0) { ContentUnavailableView("No torrents", systemImage: "arrow.down.circle") }
                 }.padding(70)
             }
         }.background(Theme.canvas)

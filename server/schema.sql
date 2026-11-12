@@ -70,6 +70,12 @@ CREATE TABLE IF NOT EXISTS processing_failures (
  occurrences INTEGER NOT NULL DEFAULT 1, first_seen REAL NOT NULL, last_seen REAL NOT NULL,
  resolved_at REAL, PRIMARY KEY(asset_id,revision,stage,error)
 );
+-- Problems the user has marked as seen in Needs attention. A file that changes
+-- (new revision) or a different error shows up again.
+CREATE TABLE IF NOT EXISTS attention_dismissals (
+ asset_id TEXT NOT NULL, revision TEXT NOT NULL, stage TEXT NOT NULL, error TEXT NOT NULL,
+ dismissed_at REAL NOT NULL, PRIMARY KEY(asset_id,revision,stage,error)
+);
 INSERT OR IGNORE INTO processing_failures(asset_id,revision,stage,error,occurrences,first_seen,last_seen)
  SELECT asset_id,revision,stage,error,MAX(1,attempts),updated,updated
  FROM media_processing WHERE state='failed' AND error IS NOT NULL;

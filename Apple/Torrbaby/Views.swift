@@ -406,6 +406,7 @@ struct TorrentListView: View {
     @FocusState private var searchFocused: Bool
     #endif
     @State private var removing: Torrent?
+    @State private var processingIssues = 0
     #if os(iOS)
     @AppStorage("compactMobileTorrentView") private var compact = true
     #else
@@ -454,7 +455,8 @@ struct TorrentListView: View {
                         ForEach(TorrentSort.choices(section.rawValue)) { Text(LocalizedStringKey($0.label)).tag($0) }
                     }.pickerStyle(.menu).fixedSize()
                 }
-                if filtered.isEmpty && (section != .seeding || store.detachedLibraryOperations.isEmpty) {
+                if section == .attention { ProcessingAttention(count: $processingIssues) }
+                if filtered.isEmpty && (section != .seeding || store.detachedLibraryOperations.isEmpty) && !(section == .attention && processingIssues > 0) {
                     ContentUnavailableView(search.isEmpty ? "All clear" : "No matches", systemImage: search.isEmpty ? "checkmark.circle" : "magnifyingglass", description: Text(LocalizedStringKey(search.isEmpty ? "" : "Try a different title.")))
                         .padding(.vertical, 40)
                 } else {

@@ -129,6 +129,21 @@ struct Job: Codable, Identifiable {
     let destination: String?
     var id: String { hash }
 }
+/// A processing problem in Needs attention: an error, or a warning that an optional stage
+/// (credits, subtitles) was skipped. Dismissing marks it as seen on the server.
+struct AttentionItem: Decodable, Identifiable {
+    let id: Int
+    let assetId: String
+    let title: String
+    let stage: String
+    let severity: String
+    let summary: String
+    let error: String
+    let occurrences: Int
+    let lastSeen: Double
+}
+struct AttentionList: Decodable { let items: [AttentionItem] }
+
 struct SubtitleQueueItem: Codable, Identifiable {
     let stage: String?
     let subtitlesState: String?

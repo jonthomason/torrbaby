@@ -40,6 +40,40 @@ fn sign_off(db:&Database,id:&str,revision:&str)->Result<bool> {
 }
 /// Set when the server begins shutting down, so work its helpers lose is requeued without an error.
 pub static SHUTTING_DOWN:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+/// Unresolved processing problems the user has not marked as seen, newest first: errors,
+/// and warnings for optional stages that were skipped. Files no longer in the library drop out.
+pub fn attention(db:&Database)->Result<Value> {
+    let rows=db.rows("SELECT f.rowid AS id,f.asset_id,f.stage,f.error,f.occurrences,f.first_seen,f.last_seen,json_extract(a.document,'$.path') AS path \
+        FROM processing_failures f JOIN library_assets a ON a.id=f.asset_id \
+        WHERE f.resolved_at IS NULL AND COALESCE(json_extract(a.document,'$.available'),0)=1 \
+        AND NOT EXISTS (SELECT 1 FROM attention_dismissals d WHERE d.asset_id=f.asset_id AND d.revision=f.revision AND d.stage=f.stage AND d.error=f.error) \
+        ORDER BY f.last_seen DESC LIMIT 500",[])?;
+    let items:Vec<Value>=rows.into_iter().map(|row|{
+        let stage=row["stage"].as_str().unwrap_or("");
+        let title=row["path"].as_str().and_then(|p|Path::new(p).file_stem()).map(|s|s.to_string_lossy().into_owned()).unwrap_or_default();
+        let (severity,summary)=match stage {
+            "credits_skipped"=>("warning","Credits not detected"),
+            "subtitles_skipped"=>("warning","Subtitles not prepared"),
+            _=>("error","Processing failed"),
+        };
+        json!({"id":row["id"],"asset_id":row["asset_id"],"title":title,"stage":stage,"severity":severity,"summary":summary,
+            "error":row["error"],"occurrences":row["occurrences"],"first_seen":row["first_seen"],"last_seen":row["last_seen"]})
+    }).collect();
+    Ok(json!({"items":items}))
+}
+/// Mark attention items as seen: `{"ids":[...]}`, or `{"all":true}` for every one listed.
+pub fn dismiss_attention(db:&Database,body:&Value)->Result<Value> {
+    let insert="INSERT OR IGNORE INTO attention_dismissals(asset_id,revision,stage,error,dismissed_at) SELECT asset_id,revision,stage,error,? FROM processing_failures";
+    let changed=if body["all"]==true {
+        db.connection.execute(&format!("{insert} WHERE resolved_at IS NULL"),[now()])?
+    } else {
+        let ids:Vec<i64>=body["ids"].as_array().context("Expected ids or all")?.iter().filter_map(Value::as_i64).take(1000).collect();
+        let mut total=0;
+        for id in ids {total+=db.connection.execute(&format!("{insert} WHERE rowid=?"),rusqlite::params![now(),id])?;}
+        total
+    };
+    Ok(json!({"dismissed":changed}))
+}
 /// Record an optional stage that failed (`credits_skipped`, `subtitles_skipped`) without
 /// failing the file, so repeated errors can be found and fixed later.
 fn log_failure(db:&Database,id:&str,revision:&str,stage:&str,error:&str)->Result<()> {
@@ -443,6 +477,28 @@ mod tests {
         let logged=db.rows("SELECT stage,resolved_at FROM processing_failures",[])?;
         assert_eq!((logged[0]["stage"].as_str(),logged[0]["resolved_at"].is_null()),(Some("credits_skipped"),true));
         assert_eq!(db.rows("SELECT state FROM media_processing WHERE asset_id='episode'",[])?[0]["state"],"ready");
+        Ok(())
+    }
+    #[test]
+    fn attention_lists_errors_and_skips_until_dismissed()->Result<()> {
+        let db=database()?;
+        for id in ["a","b"] {
+            db.connection.execute("INSERT INTO library_assets VALUES(?,?)",rusqlite::params![id,json!({"id":id,"available":true,"path":format!("/M/{id} - S01E01.mkv")}).to_string()])?;
+            enroll(&db,id,"r1")?;
+        }
+        fail(&db,"a","r1","decode failed")?;
+        log_failure(&db,"b","r1","credits_skipped","Video timestamps are irregular")?;
+        let items=attention(&db)?["items"].as_array().unwrap().clone();
+        assert_eq!(items.len(),2);
+        let skip=items.iter().find(|i|i["asset_id"]=="b").unwrap();
+        assert_eq!((skip["severity"].as_str(),skip["title"].as_str()),(Some("warning"),Some("b - S01E01")));
+        dismiss_attention(&db,&json!({"ids":[skip["id"]]}))?;
+        assert_eq!(attention(&db)?["items"].as_array().unwrap().len(),1);
+        // Seen stays seen when the same problem recurs.
+        log_failure(&db,"b","r1","credits_skipped","Video timestamps are irregular")?;
+        assert_eq!(attention(&db)?["items"].as_array().unwrap().len(),1);
+        dismiss_attention(&db,&json!({"all":true}))?;
+        assert!(attention(&db)?["items"].as_array().unwrap().is_empty());
         Ok(())
     }
     #[test]

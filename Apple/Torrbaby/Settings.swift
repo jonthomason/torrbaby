@@ -690,6 +690,73 @@ struct BackgroundSubtitlesView: View {
 }
 
 
+/// Processing errors and skipped-stage warnings in Needs attention, each dismissable as seen.
+struct ProcessingAttention: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    @Environment(\.scenePhase) private var phase
+    @Binding var count: Int
+    @State private var items: [AttentionItem] = []
+    private func load() async {
+        guard store.connected, let list: AttentionList = try? await store.request("GET", "/v1/attention", timeout: 8) else { return }
+        items = list.items; count = list.items.count
+    }
+    private func dismiss(_ body: [String: Any]) {
+        store.perform {
+            try await store.send("POST", "/v1/attention/dismiss", body: body)
+            await load()
+        }
+    }
+    var body: some View {
+        Group {
+            if !items.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("\(L10n.text("Processing")) · \(items.count)").font(.caption.weight(.semibold)).tracking(1.6).foregroundStyle(Theme.muted)
+                        Spacer()
+                        Button("Dismiss all") { dismiss(["all": true]) }.font(.caption.weight(.semibold)).disabled(store.busy)
+                    }
+                    ForEach(items) { item in
+                        #if os(tvOS)
+                        Button { dismiss(["ids": [item.id]]) } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Label { Text(verbatim: item.title).lineLimit(1) } icon: { Image(systemName: item.severity == "error" ? "exclamationmark.triangle.fill" : "info.circle") }
+                                Text(LocalizedStringKey(item.summary)).font(.caption)
+                                Text(L10n.text(item.error)).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                                Text("Select to dismiss").font(.caption2).foregroundStyle(.secondary)
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        #else
+                        HStack(alignment: .top, spacing: 12) {
+                            Image(systemName: item.severity == "error" ? "exclamationmark.triangle.fill" : "info.circle")
+                                .foregroundStyle(item.severity == "error" ? .orange : Theme.muted).padding(.top, 2)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(verbatim: item.title).font(.subheadline.weight(.semibold)).lineLimit(1).truncationMode(.middle)
+                                Text(LocalizedStringKey(item.summary)).font(.caption)
+                                Text(L10n.text(item.error)).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                            }
+                            Spacer(minLength: 8)
+                            Button { dismiss(["ids": [item.id]]) } label: { Image(systemName: "xmark.circle.fill").font(.title3) }
+                                .buttonStyle(.plain).foregroundStyle(Theme.muted)
+                                .accessibilityLabel(L10n.text("Dismiss"))
+                                #if os(macOS)
+                                .help(L10n.text("Dismiss"))
+                                #endif
+                        }.padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+                        #endif
+                    }
+                }
+            }
+        }
+        .task {
+            while !Task.isCancelled {
+                if phase == .active { await load() }
+                do { try await Task.sleep(for: .seconds(15)) } catch { return }
+            }
+        }
+    }
+}
+
 #if !os(tvOS)
 private struct FallbackAddressView: View {
     @EnvironmentObject var store: Store
