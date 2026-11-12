@@ -1898,8 +1898,6 @@ struct CloudJobRow: View {
                 }
             }
             HStack(spacing: 8) {
-                // Says what it is in words too; colour alone should not carry it.
-                Label("Quark Drive", systemImage: "icloud.and.arrow.down").foregroundStyle(Theme.muted)
                 Text(verbatim: job.state == "queued" && job.position != nil ? L10n.format("Waiting · %d in line", job.position ?? 1) : job.stateLabel).foregroundStyle(job.state == "failed" || job.state == "retrying" ? .orange : Theme.accent)
                 if let files = job.files, files > 1 { Text(L10n.format("%d of %d videos", job.filesDone ?? 0, files)).foregroundStyle(Theme.muted) }
                 if let total = job.totalBytes, total > 0 {

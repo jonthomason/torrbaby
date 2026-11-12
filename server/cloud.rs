@@ -926,7 +926,14 @@ impl Cloud {
         let _ = tokio::fs::remove_file(&notes).await;
         Ok(())
     }
-    async fn run(&self, s: &Service, job: &Job) -> Result<()> {
+    /// Whether a waiting download has been put ahead of this one ("Download next").
+    fn overtaken(&self, id: &str) -> bool {
+        self.jobs.lock().is_ok_and(|jobs| jobs.iter().position(|job| job.id == id).is_some_and(|mine| jobs[..mine].iter().any(|job| job.state == "queued")))
+    }
+    /// Run a job. True when it has finished; false when it stepped aside between two
+    /// videos for a download that was put ahead of it, to carry on afterwards from
+    /// where it stopped.
+    async fn run(&self, s: &Service, job: &Job) -> Result<bool> {
         let cookie = self.cookie().context("Sign in to Quark in Settings first")?;
         let pending: Vec<&JobFile> = job.files.iter().filter(|f| !f.done).collect();
         self.update(&job.id, |j| { j.state = "saving".into(); j.error = None; });
@@ -958,6 +965,7 @@ impl Cloud {
         self.progress.store(0, Ordering::Relaxed);
         let entity = self.entity(s, job).await;
         for file in &pending {
+            if self.overtaken(&job.id) { return Ok(false); }
             let name = file.path.rsplit('/').next().unwrap_or(&file.path);
             let entry = mine_files.iter().find(|e| e["file_name"] == name && e["size"].as_u64() == Some(file.size)).context("A saved file is missing from the drive")?;
             let present = tokio::fs::metadata(&file.destination).await.is_ok_and(|m| m.len() == file.size);
@@ -1012,7 +1020,7 @@ impl Cloud {
         }
         // The drive is only a staging post: remove the job's copy once it is in the library.
         let _ = self.call("/file/delete", &[], Some(json!({"action_type": 2, "filelist": [mine], "exclude_fids": []})), Some(&cookie), false).await;
-        Ok(())
+        Ok(true)
     }
     /// Run queued jobs one at a time for as long as the server lives.
     /// Run the downloads, and beside them the library scans they ask for: an episode is
@@ -1048,7 +1056,9 @@ impl Cloud {
                     if let Ok(mut jobs) = self.jobs.lock() { jobs.retain(|j| j.id != job.id); self.persist(&jobs); }
                     if let Err(error) = crate::api::scan_library(s).await { tracing::warn!(%error, "Library scan after a cancelled cloud download failed"); }
                 }
-                Some(Ok(())) => {
+                // Stepped aside for a download put ahead of it: back in line, where it will be next again.
+                Some(Ok(false)) => self.update(&job.id, |j| { j.state = "queued".into(); j.error = None; }),
+                Some(Ok(true)) => {
                     self.update(&job.id, |j| { j.state = "done".into(); j.error = None; });
                     if let Err(error) = crate::api::scan_library(s).await { tracing::warn!(%error, "Library scan after a cloud download failed"); }
                 }
@@ -1069,7 +1079,8 @@ impl Cloud {
         }
     }
     /// Downloads run one at a time in the order they were added. This moves a waiting
-    /// one to the head of the line, to run as soon as the current one finishes.
+    /// one to the head of the line. The one running finishes the video it is on, steps
+    /// aside, and carries on after the one moved ahead is done.
     pub fn next(&self, id: &str) -> Value {
         let mut moved = false;
         if let Ok(mut jobs) = self.jobs.lock() {

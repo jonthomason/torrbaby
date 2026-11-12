@@ -479,28 +479,6 @@ struct TorrentListView: View {
         guard section == .active || section == .complete else { return [] }
         return cloudJobs.filter { ($0.state == "done") == (section == .complete) && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search)) }
     }
-    private enum Entry: Identifiable {
-        case torrent(Torrent), job(CloudJob)
-        var id: String { switch self { case .torrent(let t): "t:" + t.id; case .job(let j): "j:" + j.id } }
-        var name: String { switch self { case .torrent(let t): t.displayName; case .job(let j): j.title } }
-        var progress: Double { switch self { case .torrent(let t): t.percentDone; case .job(let j): j.fraction } }
-        var added: Double { switch self { case .torrent(let t): t.addedDate; case .job(let j): j.created ?? 0 } }
-        var size: Double { switch self { case .torrent(let t): Double(t.size); case .job(let j): Double(j.totalBytes ?? 0) } }
-    }
-    /// Torrents and cloud downloads in one list, in the chosen order.
-    private var entries: [Entry] {
-        let sort = sortSelection.wrappedValue
-        return (filtered.map(Entry.torrent) + jobs.map(Entry.job)).sorted { a, b in
-            switch sort {
-            case .progress: if a.progress != b.progress { return a.progress > b.progress }
-            case .added: if a.added != b.added { return a.added > b.added }
-            case .size: if a.size != b.size { return a.size > b.size }
-            case .ratio, .alphabetic: break
-            }
-            let comparison = a.name.localizedStandardCompare(b.name)
-            return comparison == .orderedSame ? a.id < b.id : comparison == .orderedAscending
-        }
-    }
     private func loadCloudJobs() async {
         if let list: CloudJobList = try? await store.request("GET", "/v1/cloud/jobs", timeout: 15) { cloudJobs = list.jobs }
     }
@@ -556,10 +534,14 @@ struct TorrentListView: View {
                     Label("Couldn’t refresh torrents: " + error, systemImage: "exclamationmark.triangle")
                         .font(.callout).foregroundStyle(.orange)
                 }
-                HStack {
-                    if !jobs.isEmpty {
-                        Text(verbatim: (jobs.count == 1 ? L10n.text("1 DOWNLOAD") : L10n.format("%d DOWNLOADS", jobs.count)) + "  ·").font(.caption.weight(.semibold)).tracking(1.6).foregroundStyle(Theme.muted)
+                // Cloud downloads sit above the torrents, in the order they will run.
+                if !jobs.isEmpty {
+                    VStack(alignment: .leading, spacing: compact ? 4 : 10) {
+                        Text(verbatim: jobs.count == 1 ? L10n.text("1 DOWNLOAD") : L10n.format("%d DOWNLOADS", jobs.count)).font(.caption.weight(.semibold)).tracking(1.6).foregroundStyle(Theme.muted)
+                        ForEach(jobs) { job in CloudJobRow(job: job, changed: { Task { await loadCloudJobs() } }) }
                     }
+                }
+                HStack {
                     Text("\(filtered.count) \(filtered.count == 1 ? "TORRENT" : "TORRENTS")").font(.caption.weight(.semibold)).tracking(1.6).foregroundStyle(Theme.muted)
                     Spacer()
                     Picker("Sort", selection: sortSelection) {
@@ -568,17 +550,12 @@ struct TorrentListView: View {
                 }
                 if section == .attention { ProcessingAttention(count: $processingIssues) }
                 if section == .attention && !filtered.isEmpty { bulkBar }
-                if filtered.isEmpty && jobs.isEmpty && (section != .seeding || store.detachedLibraryOperations.isEmpty) && !(section == .attention && processingIssues > 0) {
+                if filtered.isEmpty && (section != .seeding || store.detachedLibraryOperations.isEmpty) && !(section == .attention && processingIssues > 0) {
                     ContentUnavailableView(search.isEmpty ? "All clear" : "No matches", systemImage: search.isEmpty ? "checkmark.circle" : "magnifyingglass", description: Text(LocalizedStringKey(search.isEmpty ? "" : "Try a different title.")))
                         .padding(.vertical, 40)
                 } else {
                     LazyVStack(spacing: compact ? 4 : 10) {
-                        ForEach(entries) { entry in
-                            switch entry {
-                            case .torrent(let torrent): listItem(torrent)
-                            case .job(let job): CloudJobRow(job: job, changed: { Task { await loadCloudJobs() } })
-                            }
-                        }
+                        ForEach(filtered) { torrent in listItem(torrent) }
                     }
                 }
             }.padding(24).frame(maxWidth: 1200).frame(maxWidth: .infinity)
