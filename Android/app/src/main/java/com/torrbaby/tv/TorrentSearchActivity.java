@@ -359,8 +359,12 @@ public final class TorrentSearchActivity extends Activity {
         }
         if(body.optString("title").isEmpty())return;
         add.setEnabled(false);add.setText(L10n.t("Adding…"));
-        io.execute(()->{try{api.request("POST","/v1/cloud/add",body);
-          runOnUiThread(()->{if(isDestroyed())return;add.setText(L10n.t("Added to downloads"));Toast.makeText(this,L10n.t("Follow its progress in Downloading."),Toast.LENGTH_LONG).show();});
+        io.execute(()->{try{JSONObject result=api.request("POST","/v1/cloud/add",body);
+          // Says so when it was already queued, or already in the library, instead of adding it again.
+          int had=result.optInt("already_have"),all=result.optInt("total");boolean nothing=result.optBoolean("already_queued")||result.isNull("job_id");
+          String warning=result.optBoolean("already_queued")?L10n.t("Already in the download queue."):had>0&&had>=all?String.format(L10n.locale(),L10n.t("Already in your library: all %d videos. Nothing to download."),all)
+            :had>0?String.format(L10n.locale(),L10n.t("%d of %d videos are already in your library; the rest will download."),had,all):null;
+          runOnUiThread(()->{if(isDestroyed())return;add.setText(L10n.t(nothing?"Add":"Added to downloads"));add.setEnabled(nothing);Toast.makeText(this,warning!=null?warning:L10n.t("Follow its progress in Downloading."),Toast.LENGTH_LONG).show();});
         }catch(Exception error){runOnUiThread(()->{if(isDestroyed())return;add.setEnabled(true);add.setText(L10n.t("Add"));
           new AlertDialog.Builder(this).setTitle(L10n.t("Couldn’t add torrent")).setMessage(MainActivity.message(error)).setPositiveButton(L10n.t("Close"),null).show();});}});
       }catch(JSONException ignored){}

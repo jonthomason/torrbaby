@@ -76,7 +76,7 @@ pub struct Cloud {
     searches: Mutex<HashMap<String, (Instant, Value)>>,
     wake: tokio::sync::Notify,
     /// When the download speed was last measured, the bytes fetched by then, and the speed.
-    pace: Mutex<(Instant, u64, f64)>,
+    pace: Mutex<std::collections::VecDeque<(Instant, u64)>>,
     /// Jobs the member has cancelled while they were running.
     cancelled: Mutex<std::collections::HashSet<String>>,
     /// What reading a copy's first video found, by share and copy; kept on disk.
@@ -329,7 +329,7 @@ impl Cloud {
             progress: AtomicU64::new(0),
             searches: Mutex::new(HashMap::new()),
             wake: tokio::sync::Notify::new(),
-            pace: Mutex::new((Instant::now(), 0, 0.0)),
+            pace: Mutex::new(std::collections::VecDeque::new()),
             cancelled: Mutex::new(std::collections::HashSet::new()),
             probes: Mutex::new(std::fs::read(data.join("cloud-probes.json")).ok().and_then(|raw| serde_json::from_slice(&raw).ok()).unwrap_or_default()),
             probes_file: data.join("cloud-probes.json"),
@@ -736,11 +736,16 @@ impl Cloud {
         // has come since it was last asked. Measured across its videos, not within one:
         // a video now takes seconds, and a figure reset at each one read far too low.
         let fetched = jobs.iter().find(|job| job.state == "downloading").map_or(0, |job| job.files.iter().filter(|f| f.done).map(|f| f.size).sum::<u64>() + running);
+        // Averaged over the last three minutes, so it is steady and the time left can be believed.
         let speed = self.pace.lock().map(|mut pace| {
-            let waited = pace.0.elapsed().as_secs_f64();
-            if fetched < pace.1 || waited > 120.0 { *pace = (Instant::now(), fetched, 0.0); }
-            else if waited >= 5.0 { let now = (fetched - pace.1) as f64 / waited; *pace = (Instant::now(), fetched, if pace.2 > 0.0 { pace.2 * 0.5 + now * 0.5 } else { now }); }
-            pace.2
+            let now = Instant::now();
+            if pace.back().is_some_and(|(_, last)| fetched < *last) { pace.clear(); }
+            if pace.back().is_none_or(|(at, _)| at.elapsed() >= Duration::from_secs(5)) { pace.push_back((now, fetched)); }
+            while pace.front().is_some_and(|(at, _)| at.elapsed() > Duration::from_secs(180)) && pace.len() > 2 { pace.pop_front(); }
+            match (pace.front(), pace.back()) {
+                (Some((first, from)), Some((last, to))) if last.duration_since(*first).as_secs_f64() >= 5.0 => (to - from) as f64 / last.duration_since(*first).as_secs_f64(),
+                _ => 0.0,
+            }
         }).unwrap_or(0.0);
         let waiting = jobs.iter().filter(|job| job.state == "queued").count();
         let mut place = 0usize;
@@ -815,12 +820,17 @@ impl Cloud {
             .find(|job| matches!(job.state.as_str(), "queued" | "saving" | "downloading" | "retrying") && SHARE.captures(&job.url).map(|c| c[1].to_owned()) == SHARE.captures(url).map(|c| c[1].to_owned())
                 && files.iter().all(|wanted| job.files.iter().any(|held| held.path == wanted.path)))
             .map(|job| job.id.clone()));
-        if let Some(existing) = covered { return Ok(json!({"job_id": existing, "already_queued": true})); }
+        if let Some(existing) = covered { return Ok(json!({"job_id": existing, "already_queued": true, "total": files.len()})); }
+        // Videos already in place, byte for byte the same length: there is nothing to fetch.
+        // When that is all of them nothing is queued, and the member is told instead.
+        let total = files.len();
+        let had = files.iter().filter(|file| std::fs::metadata(&file.destination).is_ok_and(|found| found.len() == file.size)).count();
+        if had == total { return Ok(json!({"job_id": Value::Null, "already_have": had, "total": total})); }
         let job = Job { id: uuid::Uuid::new_v4().simple().to_string(), url: url.to_owned(), title, state: "queued".into(), files, error: None, created: now(), attempts: 0 };
         let id = job.id.clone();
         { let mut jobs = self.jobs.lock().map_err(|_| anyhow::anyhow!("Cloud downloads unavailable"))?; jobs.push(job); self.persist(&jobs); }
         self.wake.notify_one();
-        Ok(json!({"job_id": id}))
+        Ok(json!({"job_id": id, "already_have": had, "total": total}))
     }
     /// Remove a job from the list. One that is running is cancelled first: the worker
     /// stops it, clears its partial files and its staging folder, then drops it.
@@ -837,6 +847,21 @@ impl Cloud {
             }
         }
         json!({"removed": removed, "cancelling": cancelling})
+    }
+    /// Clear the staging folder on the member's drive of anything that belongs to no
+    /// download still in hand: a track read cut short by a restart, a job long gone.
+    async fn sweep(&self) {
+        let Some(cookie) = self.cookie() else { return };
+        // Not while a track read is using its own folder there.
+        let Ok(_turn) = self.probing.try_lock() else { return };
+        let Ok(top) = self.pages("/file/sort", &[("pdir_fid", "0".into())], Some(&cookie)).await else { return };
+        let Some(staging) = top.iter().find(|e| e["dir"] == true && e["file_name"] == STAGING).and_then(|e| e["fid"].as_str()) else { return };
+        let Ok(entries) = self.pages("/file/sort", &[("pdir_fid", staging.to_owned())], Some(&cookie)).await else { return };
+        let kept: Vec<String> = self.jobs.lock().map(|jobs| jobs.iter().filter(|job| job.state != "done").map(|job| job.id.clone()).collect()).unwrap_or_default();
+        let stray: Vec<&str> = entries.iter().filter(|e| e["file_name"].as_str().is_some_and(|name| !kept.iter().any(|id| id == name))).filter_map(|e| e["fid"].as_str()).collect();
+        if stray.is_empty() { return; }
+        tracing::info!(count = stray.len(), "Clearing leftovers from the cloud staging folder");
+        let _ = self.call("/file/delete", &[], Some(json!({"action_type": 2, "filelist": stray, "exclude_fids": []})), Some(&cookie), false).await;
     }
     /// Leave nothing of an abandoned job behind: pieces of its unfinished videos, and its folder on the drive.
     async fn discard(&self, job: &Job) {
@@ -1045,11 +1070,15 @@ impl Cloud {
         tokio::join!(self.downloads(s), scans);
     }
     async fn downloads(&self, s: &Service) {
+        // The first tidy comes a minute after starting, once any interrupted job has been taken up again.
+        let mut swept = Instant::now() - Duration::from_secs(3540);
         loop {
             let next = self.jobs.lock().ok().and_then(|jobs| jobs.iter().find(|j| j.state == "queued").cloned());
             let Some(job) = next else {
                 // Torrents that were still seeding when their episodes were bettered are let go once they finish.
                 self.reap(s).await;
+                // Now and then, with nothing downloading, the staging folder is tidied.
+                if swept.elapsed() >= Duration::from_secs(3600) { self.sweep().await; swept = Instant::now(); }
                 tokio::select! { _ = self.wake.notified() => {}, _ = tokio::time::sleep(Duration::from_secs(60)) => {} }
                 continue;
             };

@@ -850,3 +850,6 @@ Queued: %d	已加入下载：%d
 Source	来源
 Download next	下一个下载
 Waiting · %d in line	等待中 · 排第 %d 位
+Already in the download queue.	已在下载队列中。
+Already in your library: all %d videos. Nothing to download.	这 %d 个视频已全部在你的资料库中，无需下载。
+%d of %d videos are already in your library; the rest will download.	%d / %d 个视频已在你的资料库中，其余将会下载。
