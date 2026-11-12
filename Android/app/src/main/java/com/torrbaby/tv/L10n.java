@@ -70,6 +70,7 @@ final class L10n {
     IDS.put("Allow cellular for 3 hours", R.string.ui_a2faebc19189);
     IDS.put("Allow downloads over cellular or hotspot", R.string.ui_0deb0259dcd9);
     IDS.put("Alphabetical", R.string.ui_9d12608fc0bd);
+    IDS.put("Already had as good: %d", R.string.ui_e1bc0ebdf8b8);
     IDS.put("Already in your torrents", R.string.ui_f2de57952082);
     IDS.put("Any resolution", R.string.ui_47efa5d4c257);
     IDS.put("Applies to torrents that use the server's default", R.string.ui_dcc38ee5a416);
@@ -514,6 +515,7 @@ final class L10n {
     IDS.put("Rename", R.string.ui_d3f4cb898fbe);
     IDS.put("Rename through Transmission", R.string.ui_f013e1dcb608);
     IDS.put("Rename torrent", R.string.ui_7d1e95ef4177);
+    IDS.put("Replaced with better: %d", R.string.ui_36e312c84c30);
     IDS.put("Resolution", R.string.ui_516aae52959d);
     IDS.put("Resume", R.string.ui_b3bd0b5a7049);
     IDS.put("Resume (%d hr %d min left)", R.string.ui_59a3c5eeef11);

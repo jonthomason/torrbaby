@@ -32,6 +32,10 @@ struct JobFile {
     destination: PathBuf,
     #[serde(default)]
     done: bool,
+    /// How the video met the library: "added", "replaced" a lesser copy of its
+    /// episode, or "discarded" because the library's copy was as good or better.
+    #[serde(default)]
+    outcome: Option<String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Job {
@@ -242,15 +246,36 @@ pub fn cover(found: &mut Value, show: &Value, wanted: Option<u64>) {
     }
     if show.is_object() { found["show"] = show.clone(); }
 }
-/// How well a copy suits a library, best first: every aired episode, then the sharpest
-/// picture, then surround sound, then the native frame rate (60 fps copies of dramas
-/// are interpolated), then the larger files.
+/// How well a copy suits a library, best first: every aired episode, then the native
+/// frame rate (60 fps copies of dramas are interpolated), then the sharpest picture,
+/// then surround sound, then the larger files.
 pub fn preference(copy: &Value) -> impl Ord + use<> {
     let held = copy["episodes"].as_array().map_or(0, Vec::len) as u64;
     let covered = match copy["aired"].as_u64() { Some(aired) => aired.saturating_sub(copy["missing"].as_array().map_or(0, Vec::len) as u64), None => held };
     let picture = match copy["resolution"].as_str() { Some("2160p") => 3, Some("1080p") => 2, Some("720p") => 1, _ => 0 };
     let sound = match copy["audio"].as_str() { Some("stereo") => 0, Some(_) => 2, None => 1 };
-    std::cmp::Reverse((copy["complete"] == true, copy["beyond"] != true, covered, picture, sound, copy["fps"].as_u64().is_none_or(|fps| fps < 49), copy["total_bytes"].as_u64().unwrap_or(0)))
+    // Native rate before sharpness: an interpolated copy is never the one wanted.
+    std::cmp::Reverse((copy["complete"] == true, copy["beyond"] != true, covered, copy["fps"].as_u64().is_none_or(|fps| fps < 49), picture, sound, copy["total_bytes"].as_u64().unwrap_or(0)))
+}
+/// Whether one copy of an episode is worth having over another, each given as its
+/// read tracks and its size. In order: a native frame rate beats an interpolated 50 or
+/// 60 (always: the member cannot stand the look); then the sharper picture; then a
+/// clearly higher bitrate, which for the same episode is a clearly larger file; then
+/// the fuller sound; then the larger file. Equal copies are not worth swapping.
+pub fn better(new: (&Value, u64), old: (&Value, u64)) -> bool {
+    let native = |m: &Value| m["video"]["fps"].as_f64().is_none_or(|fps| fps < 49.0);
+    let picture = |m: &Value| { let (w, h) = (m["video"]["width"].as_u64().unwrap_or(0), m["video"]["height"].as_u64().unwrap_or(0));
+        if w >= 3000 || h >= 2000 { 4 } else if w >= 1800 || h >= 1000 { 3 } else if w >= 1200 || h >= 700 { 2 } else if w > 0 || h > 0 { 1 } else { 0 } };
+    let sound = |m: &Value| m["audio"].as_array().into_iter().flatten().map(|track| {
+        let format = track["format"].as_str().unwrap_or("");
+        if format.contains("Atmos") || format.contains("DTS:X") { 4 } else if track["channels"].as_u64().unwrap_or(0) > 2 { 3 } else if track["channels"].as_u64().unwrap_or(0) == 2 { 2 } else { 1 }
+    }).max().unwrap_or(0);
+    if native(new.0) != native(old.0) { return native(new.0); }
+    if picture(new.0) != picture(old.0) { return picture(new.0) > picture(old.0); }
+    if new.1 as f64 > old.1 as f64 * 1.25 { return true; }
+    if old.1 as f64 > new.1 as f64 * 1.25 { return false; }
+    if sound(new.0) != sound(old.0) { return sound(new.0) > sound(old.0); }
+    new.1 > old.1
 }
 fn now() -> f64 { crate::storage::now() }
 /// Seconds since 1970 as an ISO 8601 UTC time.
@@ -525,7 +550,6 @@ impl Cloud {
         let extension = path.rsplit('.').next().unwrap_or("mkv").to_ascii_lowercase();
         let local = std::env::temp_dir().join(format!("torrbaby-probe-{}.{extension}", uuid::Uuid::new_v4().simple()));
         let read = async {
-            use tokio::io::{AsyncSeekExt, AsyncWriteExt};
             let saved = self.call("/share/sharepage/save", &[], Some(json!({"fid_list": [entry["fid"]], "fid_token_list": [entry["share_fid_token"]],
                 "to_pdir_fid": mine, "pwd_id": id, "stoken": token, "pdir_fid": "0", "scene": "link"})), Some(&cookie), false).await?;
             let task = saved["data"]["task_id"].as_str().context("Quark did not start the save")?.to_owned();
@@ -540,24 +564,7 @@ impl Cloud {
             let fid = listed.iter().find_map(|e| e["fid"].as_str()).context("A saved file is missing from the drive")?;
             let link = self.call("/file/download", &[], Some(json!({"fids": [fid]})), Some(&cookie), true).await?;
             let link = link["data"][0]["download_url"].as_str().context("Quark gave no download link")?.to_owned();
-            // MKV describes itself at the start, MP4 often at the end: both ends, the middle left a hole.
-            const EDGE: u64 = 4 << 20;
-            let mut file = tokio::fs::File::create(&local).await?;
-            file.set_len(size).await?;
-            let mut ranges = vec![(0, EDGE.min(size))];
-            if size > 2 * EDGE { ranges.push((size - EDGE, size)); }
-            for (start, end) in ranges {
-                let response = self.http.get(&link).header("User-Agent", DESKTOP).header("Referer", "https://pan.quark.cn/").header("Cookie", cookie.as_str())
-                    .header("Range", format!("bytes={start}-{}", end - 1)).timeout(Duration::from_secs(60)).send().await.map_err(|_| anyhow::anyhow!("Quark could not be reached"))?;
-                ensure!(response.status().is_success(), "Quark refused the download");
-                let bytes = response.bytes().await.map_err(|_| anyhow::anyhow!("Quark stopped answering"))?;
-                file.seek(std::io::SeekFrom::Start(start)).await?;
-                file.write_all(&bytes[..bytes.len().min((end - start) as usize)]).await?;
-            }
-            file.flush().await?;
-            drop(file);
-            let target = local.clone();
-            tokio::task::spawn_blocking(move || crate::media_format::outline(&target)).await?
+            self.sample(&cookie, &link, size, &local).await
         }.await;
         let _ = tokio::fs::remove_file(&local).await;
         let _ = self.call("/file/delete", &[], Some(json!({"action_type": 2, "filelist": [mine], "exclude_fids": []})), Some(&cookie), false).await;
@@ -572,6 +579,58 @@ impl Cloud {
             }
         }
         Ok(measured)
+    }
+    /// The tracks of a video on the drive, from its first and last few megabytes alone.
+    /// MKV describes itself at the start, MP4 often at the end: both ends are fetched
+    /// into a file of the full length, the middle left a hole, and the reader is run on it.
+    async fn sample(&self, cookie: &str, link: &str, size: u64, local: &Path) -> Result<Value> {
+        use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+        const EDGE: u64 = 4 << 20;
+        let mut file = tokio::fs::File::create(local).await?;
+        file.set_len(size).await?;
+        let mut ranges = vec![(0, EDGE.min(size))];
+        if size > 2 * EDGE { ranges.push((size - EDGE, size)); }
+        for (start, end) in ranges {
+            let response = self.http.get(link).header("User-Agent", DESKTOP).header("Referer", "https://pan.quark.cn/").header("Cookie", cookie)
+                .header("Range", format!("bytes={start}-{}", end - 1)).timeout(Duration::from_secs(60)).send().await.map_err(|_| anyhow::anyhow!("Quark could not be reached"))?;
+            ensure!(response.status().is_success(), "Quark refused the download");
+            let bytes = response.bytes().await.map_err(|_| anyhow::anyhow!("Quark stopped answering"))?;
+            file.seek(std::io::SeekFrom::Start(start)).await?;
+            file.write_all(&bytes[..bytes.len().min((end - start) as usize)]).await?;
+        }
+        file.flush().await?;
+        drop(file);
+        let target = local.to_owned();
+        tokio::task::spawn_blocking(move || crate::media_format::outline(&target)).await?
+    }
+    /// Other videos of the same episode already in the folder a video is headed for.
+    fn rivals(destination: &Path) -> Vec<PathBuf> {
+        let Some(name) = destination.file_name().and_then(|n| n.to_str()) else { return Vec::new() };
+        let (season, Some(number)) = episode(name) else { return Vec::new() };
+        let Some(folder) = destination.parent() else { return Vec::new() };
+        std::fs::read_dir(folder).into_iter().flatten().flatten().map(|entry| entry.path()).filter(|path| {
+            let other = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            path.is_file() && VIDEO.is_match(other) && !other.starts_with('.') && { let (s, n) = episode(other); n == Some(number) && s.unwrap_or(1) == season.unwrap_or(1) }
+        }).collect()
+    }
+    /// Whether a video on the drive should take the place of the library's copies of its
+    /// episode. Decided from the new video's ends, before any of it is downloaded.
+    /// An unreadable newcomer never displaces a file that plays.
+    async fn outranks(&self, cookie: &str, fid: &str, size: u64, rivals: &[PathBuf]) -> bool {
+        let Ok(link) = self.call("/file/download", &[], Some(json!({"fids": [fid]})), Some(cookie), true).await else { return false };
+        let Some(link) = link["data"][0]["download_url"].as_str() else { return false };
+        let extension = rivals[0].extension().and_then(|e| e.to_str()).unwrap_or("mkv");
+        let local = std::env::temp_dir().join(format!("torrbaby-compare-{}.{extension}", uuid::Uuid::new_v4().simple()));
+        let new = self.sample(cookie, link, size, &local).await;
+        let _ = tokio::fs::remove_file(&local).await;
+        let Ok(new) = new else { return false };
+        for rival in rivals {
+            let (path, length) = (rival.clone(), std::fs::metadata(rival).map(|m| m.len()).unwrap_or(0));
+            // A library copy that cannot be read is no reason to keep it.
+            let Ok(Ok(old)) = tokio::task::spawn_blocking(move || crate::media_format::outline(&path)).await else { continue };
+            if !better((&new, size), (&old, length)) { return false; }
+        }
+        true
     }
     fn persist(&self, jobs: &[Job]) {
         if let Ok(raw) = serde_json::to_vec(jobs) {
@@ -609,7 +668,9 @@ impl Cloud {
                 // The video being fetched now, and where the job's videos are filed.
                 "current": if active { job.files.iter().find(|f| !f.done).and_then(name) } else { None },
                 "folder": job.files.first().and_then(|f| f.destination.parent()).map(|p| p.to_string_lossy().into_owned()),
-                "attempts": job.attempts})
+                "attempts": job.attempts,
+                "replaced": job.files.iter().filter(|f| f.outcome.as_deref() == Some("replaced")).count(),
+                "discarded": job.files.iter().filter(|f| f.outcome.as_deref() == Some("discarded")).count()})
         }).collect::<Vec<_>>()})
     }
     /// Queue chosen videos of a share for the library. `files` are paths from a search
@@ -649,7 +710,7 @@ impl Cloud {
                 _ if film => format!("{title}.{extension}"),
                 _ => clean(path.rsplit('/').next().unwrap_or(&path)),
             };
-            JobFile { destination: folder.join(name), path, size, done: false }
+            JobFile { destination: folder.join(name), path, size, done: false, outcome: None }
         }).collect();
         let job = Job { id: uuid::Uuid::new_v4().simple().to_string(), url: url.to_owned(), title, state: "queued".into(), files, error: None, created: now(), attempts: 0 };
         let id = job.id.clone();
@@ -781,10 +842,24 @@ impl Cloud {
             let name = file.path.rsplit('/').next().unwrap_or(&file.path);
             let entry = mine_files.iter().find(|e| e["file_name"] == name && e["size"].as_u64() == Some(file.size)).context("A saved file is missing from the drive")?;
             let present = tokio::fs::metadata(&file.destination).await.is_ok_and(|m| m.len() == file.size);
-            if !present { self.fetch(&cookie, entry["fid"].as_str().unwrap_or(""), file.size, &file.destination).await?; }
+            let fid = entry["fid"].as_str().unwrap_or("");
+            // One copy of each episode is kept, the best: a newcomer is fetched only when it
+            // beats what the folder has, and then the lesser copies go. This is how a second
+            // download of a show fills its gaps and raises its quality without leaving duplicates.
+            let rivals = if present { Vec::new() } else { Self::rivals(&file.destination) };
+            let outcome = if present { "added" } else if rivals.is_empty() { self.fetch(&cookie, fid, file.size, &file.destination).await?; "added" }
+                else if self.outranks(&cookie, fid, file.size, &rivals).await {
+                    self.fetch(&cookie, fid, file.size, &file.destination).await?;
+                    for rival in rivals.iter().filter(|rival| **rival != file.destination) {
+                        tracing::info!(kept = %file.destination.display(), removed = %rival.display(), "A better copy of an episode replaced a lesser one");
+                        let _ = tokio::fs::remove_file(rival).await;
+                    }
+                    "replaced"
+                } else { "discarded" };
+            let present = present || outcome == "discarded";
             self.progress.store(0, Ordering::Relaxed);
             let path = file.path.clone();
-            self.update(&job.id, |j| { j.attempts = 0; if let Some(f) = j.files.iter_mut().find(|f| f.path == path) { f.done = true; } });
+            self.update(&job.id, |j| { j.attempts = 0; if let Some(f) = j.files.iter_mut().find(|f| f.path == path) { f.done = true; f.outcome = Some(outcome.into()); } });
             // Each episode reaches the library as it lands, not when the whole series has.
             if !present { if let Err(error) = crate::api::scan_library(s).await { tracing::warn!(%error, "Library scan after a cloud download failed"); } }
         }
@@ -885,6 +960,20 @@ mod tests {
         assert_eq!((copy["season"].as_u64(), copy["aired"].as_u64(), copy["total"].as_u64(), copy["complete"].as_bool()), (Some(1), Some(4), Some(34), Some(false)));
         assert_eq!(copy["missing"], json!([3]));
         assert_eq!(copy["beyond"], false);
+    }
+    #[test]
+    fn the_better_copy_of_an_episode_is_native_rate_then_sharper_then_larger_then_fuller() {
+        let copy = |width: u64, fps: f64, format: &str, channels: u64| json!({"video": {"width": width, "height": 0, "fps": fps}, "audio": [{"format": format, "channels": channels}]});
+        let (uhd, hd, smooth) = (copy(3840, 25.0, "AAC", 2), copy(1920, 25.0, "AAC", 2), copy(3840, 60.0, "Dolby Atmos", 6));
+        assert!(better((&uhd, 1_000), (&hd, 5_000)));
+        assert!(!better((&hd, 5_000), (&uhd, 1_000)));
+        // An interpolated copy loses to a native one whatever else it offers.
+        assert!(!better((&smooth, 9_000), (&hd, 1_000)));
+        assert!(better((&hd, 1_000), (&smooth, 9_000)));
+        // The same picture: a clearly larger file wins; near enough in size, the fuller sound does.
+        assert!(better((&uhd, 2_000), (&copy(3840, 25.0, "Dolby Atmos", 6), 1_000)));
+        assert!(better((&copy(3840, 25.0, "Dolby Atmos", 6), 1_000), (&uhd, 1_100)));
+        assert!(!better((&uhd, 1_000), (&uhd, 1_000)));
     }
     #[test]
     fn seasons_are_read_from_titles() {

@@ -1322,6 +1322,11 @@ public class MainActivity extends Activity {
         detail += " · " + (minutes >= 60 ? String.format(L10n.locale(), L10n.t("%dh %dm left"), minutes / 60, minutes % 60) : String.format(L10n.locale(), L10n.t("%dm left"), minutes));
       }
       Ui.add(row, Ui.text(this, detail, 14, state.equals("failed") || state.equals("retrying") ? 0xffffb74d : Ui.ACCENT), -1, -2);
+      // Episodes that took the place of a lesser copy, and ones skipped because the library's copy was as good.
+      List<String> outcomes = new ArrayList<>();
+      if (job.optInt("replaced") > 0) outcomes.add(String.format(L10n.locale(), L10n.t("Replaced with better: %d"), job.optInt("replaced")));
+      if (job.optInt("discarded") > 0) outcomes.add(String.format(L10n.locale(), L10n.t("Already had as good: %d"), job.optInt("discarded")));
+      if (!outcomes.isEmpty()) Ui.add(row, Ui.text(this, String.join(" · ", outcomes), 12, Ui.MUTED), -1, -2);
       if (!job.isNull("current") && !job.optString("current").isEmpty()) Ui.add(row, Ui.text(this, job.optString("current"), 12, Ui.MUTED), -1, -2);
       String error = job.isNull("error") ? "" : job.optString("error");
       if (!error.isEmpty()) Ui.add(row, Ui.text(this, error, 12, Ui.MUTED), -1, -2);

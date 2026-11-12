@@ -59,6 +59,7 @@
     <string name="ui_a2faebc19189" formatted="false">Allow cellular for 3 hours</string>
     <string name="ui_0deb0259dcd9" formatted="false">Allow downloads over cellular or hotspot</string>
     <string name="ui_9d12608fc0bd" formatted="false">Alphabetical</string>
+    <string name="ui_e1bc0ebdf8b8" formatted="false">Already had as good: %d</string>
     <string name="ui_f2de57952082" formatted="false">Already in your torrents</string>
     <string name="ui_47efa5d4c257" formatted="false">Any resolution</string>
     <string name="ui_dcc38ee5a416" formatted="false">Applies to torrents that use the server\'s default</string>
@@ -503,6 +504,7 @@
     <string name="ui_d3f4cb898fbe" formatted="false">Rename</string>
     <string name="ui_f013e1dcb608" formatted="false">Rename through Transmission</string>
     <string name="ui_7d1e95ef4177" formatted="false">Rename torrent</string>
+    <string name="ui_36e312c84c30" formatted="false">Replaced with better: %d</string>
     <string name="ui_516aae52959d" formatted="false">Resolution</string>
     <string name="ui_b3bd0b5a7049" formatted="false">Resume</string>
     <string name="ui_59a3c5eeef11" formatted="false">Resume (%d hr %d min left)</string>

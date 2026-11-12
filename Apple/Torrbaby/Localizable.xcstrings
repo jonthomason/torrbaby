@@ -14420,6 +14420,40 @@
           }
         }
       }
+    },
+    "Replaced with better: %d": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replaced with better: %d"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已替换为更好的版本：%d"
+          }
+        }
+      }
+    },
+    "Already had as good: %d": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Already had as good: %d"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已有同样好的版本：%d"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

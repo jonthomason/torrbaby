@@ -59,6 +59,7 @@
     <string name="ui_a2faebc19189" formatted="false">允许使用蜂窝网络 3 小时</string>
     <string name="ui_0deb0259dcd9" formatted="false">允许通过蜂窝网络或热点下载</string>
     <string name="ui_9d12608fc0bd" formatted="false">按名称排序</string>
+    <string name="ui_e1bc0ebdf8b8" formatted="false">已有同样好的版本：%d</string>
     <string name="ui_f2de57952082" formatted="false">已在种子列表中</string>
     <string name="ui_47efa5d4c257" formatted="false">任意分辨率</string>
     <string name="ui_dcc38ee5a416" formatted="false">适用于使用服务器默认设置的种子</string>
@@ -503,6 +504,7 @@
     <string name="ui_d3f4cb898fbe" formatted="false">重命名</string>
     <string name="ui_f013e1dcb608" formatted="false">通过 Transmission 重命名</string>
     <string name="ui_7d1e95ef4177" formatted="false">重命名种子</string>
+    <string name="ui_36e312c84c30" formatted="false">已替换为更好的版本：%d</string>
     <string name="ui_516aae52959d" formatted="false">分辨率</string>
     <string name="ui_b3bd0b5a7049" formatted="false">继续播放</string>
     <string name="ui_59a3c5eeef11" formatted="false">继续播放（剩余 %d 小时 %d 分钟）</string>
