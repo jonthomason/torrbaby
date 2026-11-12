@@ -1310,6 +1310,11 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             _ => bail!("Unsupported subtitle preferences method"),
         };
     }
+    if method == Method::GET {
+        if let Some(title) = path.strip_prefix("/v1/library/titles/").and_then(|p| p.strip_suffix("/missing-episodes")) {
+            return db.missing_episodes(title);
+        }
+    }
     if let Some(title) = path
         .strip_prefix("/v1/library/titles/")
         .and_then(|p| p.strip_suffix("/subtitle-preferences"))
@@ -1324,6 +1329,10 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
     match (method.as_str(),path) {
         ("GET","/v1/subtitle-preferences") => db.subtitle_preferences(None),
         ("PUT","/v1/subtitle-preferences") => db.save_subtitle_preferences(None, body),
+        ("GET","/v1/storage") => {
+            let config = effective.as_ref().context("Missing settings")?;
+            Ok(crate::volumes::report(&config.source,&config.movies,&config.tv))
+        },
         ("GET","/v1/library/revision") => Ok(json!({"revision":db.catalog_revision()?})),
         ("GET","/v1/processing") => crate::processing::summary(&db),
         ("GET","/v1/processing/failures") => Ok(json!({
@@ -1345,6 +1354,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             let config = effective.as_ref().context("Missing settings")?;
             Ok(json!({"version":env!("CARGO_PKG_VERSION"),"uptime_seconds":s.started.elapsed().as_secs(),
                 "settings":{"background_subtitles":config.background_subtitles,"source":config.source,"movies":config.movies,"tv":config.tv,"poll_seconds":config.poll_seconds,"paused":s.preview || config.paused},
+                "storage":crate::volumes::report(&config.source,&config.movies,&config.tv),
                 "credits_analysis":crate::credits::summary(&db)?,"subtitle_preparation":crate::media_inventory::summary(&db,&s.subtitle_jobs)?,"last_poll":state["last_poll"],"last_error":if s.preview { json!("Migration preview: organizer not enabled") } else {state["last_error"].clone()},"pending_scans":if state["library_scan"]["scanning"] == true {1} else {0},"scan_error":state["library_scan"]["error"],"jobs":state["jobs"]}))
         }
         ("GET","/v1/events") => Ok(db.state()?["events"].take()),

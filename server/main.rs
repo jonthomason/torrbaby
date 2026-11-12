@@ -39,6 +39,7 @@ mod telemetry;
 mod torrent_search;
 mod transmission;
 mod video_metadata;
+mod volumes;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::{

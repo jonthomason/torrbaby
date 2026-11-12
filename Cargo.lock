@@ -1884,6 +1884,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "hmac",
+ "libc",
  "matroska-demuxer",
  "oxideav-core",
  "oxideav-mp4",

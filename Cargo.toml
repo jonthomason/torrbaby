@@ -39,6 +39,7 @@ flate2 = "1"
 quick-xml = { version = "0.42.0", features = ["serialize"] }
 tl = "0.7.8"
 encoding_rs = "0.8"
+libc = "0.2"
 
 
 [patch.crates-io]

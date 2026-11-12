@@ -34,6 +34,41 @@ fn series_end_year(entity: &Value) -> Value {
 }
 
 impl Database {
+    /// A show's aired episodes with no file in the library, by season: what the episode
+    /// downloader should look for. Specials (season 0) and episodes not yet aired are left
+    /// out. A file still downloading counts as present, and a file named for several
+    /// episodes ("S01E01-E02") covers each of them.
+    pub fn missing_episodes(&self, title: &str) -> Result<Value> {
+        let entity = self.documents("entities")?.into_iter().find(|e| e["id"] == title).context("Unknown title")?;
+        if entity["kind"] != "tv" { bail!("Only a TV show has episodes"); }
+        let today: String = self.connection.query_row("SELECT date('now')", [], |row| row.get(0))?;
+        static RANGE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)S(\d{1,2})E(\d{1,4})((?:[-_ ]?E\d{1,4})+)").expect("valid regex"));
+        static NUMBER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"\d+").expect("valid regex"));
+        let mut present = std::collections::HashSet::<(u64, u64)>::new();
+        for asset in self.visible_assets()? {
+            if asset["entity_id"] != title || asset["available"] != true || asset["role"] == "extra" { continue; }
+            let (Some(season), Some(episode)) = (asset["season"].as_u64(), asset["episode"].as_u64()) else { continue };
+            present.insert((season, episode));
+            let name = asset["path"].as_str().and_then(|p| std::path::Path::new(p).file_name()?.to_str()).unwrap_or("");
+            if let Some(range) = RANGE.captures(name).filter(|c| c[1].parse::<u64>().ok() == Some(season) && c[2].parse::<u64>().ok() == Some(episode)) {
+                let last = NUMBER.find_iter(&range[3]).filter_map(|m| m.as_str().parse::<u64>().ok()).max().unwrap_or(episode);
+                for number in episode..=last.min(episode + 50) { present.insert((season, number)); }
+            }
+        }
+        let mut seasons = BTreeMap::<u64, (u64, Vec<Value>)>::new();
+        for episode in entity["episodes"].as_array().map(Vec::as_slice).unwrap_or(&[]) {
+            let (Some(season), Some(number)) = (episode["season"].as_u64(), episode["episode"].as_u64()) else { continue };
+            let aired = episode["airdate"].as_str().filter(|d| d.len() == 10 && **d <= *today.as_str());
+            if season == 0 || aired.is_none() { continue; }
+            let entry = seasons.entry(season).or_default();
+            entry.0 += 1;
+            if !present.contains(&(season, number)) {
+                entry.1.push(json!({"episode":number,"title":episode["title"],"airdate":aired}));
+            }
+        }
+        Ok(json!({"id":title,"title":entity["title"],"original_title":entity["original_title"],"year":title_year(&entity, std::path::Path::new("")),
+            "seasons":seasons.into_iter().map(|(season, (aired, missing))| json!({"season":season,"aired":aired,"missing":missing})).collect::<Vec<_>>()}))
+    }
     pub fn documents(&self, table: &str) -> Result<Vec<Value>> {
         let sql = match table {
             "assets" => "SELECT document FROM library_assets",
@@ -411,6 +446,22 @@ mod completion_tests {
         assert_eq!(parent("bonus")?, "show");
         // With nothing matched, the unmatched file still anchors its extras.
         assert_eq!(parent("lone-extra")?, "lone");
+        Ok(())
+    }
+
+    #[test]
+    fn missing_episodes_skip_owned_ranges_specials_and_unaired() -> Result<()> {
+        let db = Database { connection: rusqlite::Connection::open_in_memory()? };
+        db.connection.execute_batch(include_str!("schema.sql"))?;
+        db.connection.execute("INSERT INTO library_entities VALUES('show',?)",[r#"{"id":"show","kind":"tv","title":"Show",
+            "episodes":[{"season":0,"episode":1,"airdate":"2001-01-01"},{"season":1,"episode":1,"airdate":"2001-01-01"},{"season":1,"episode":2,"airdate":"2001-01-08"},
+            {"season":1,"episode":3,"airdate":"2001-01-15","title":"Three"},{"season":1,"episode":4,"airdate":"2001-01-22"},{"season":2,"episode":1,"airdate":"2999-01-01"},{"season":2,"episode":2}]}"#])?;
+        for (id, path, episode) in [("a", "/TV/Show - S01E01-E02 - Double.mkv", 1), ("b", "/TV/Show - S01E04.mkv", 4)] {
+            let asset = json!({"id":id,"available":true,"complete":id == "a","path":path,"entity_id":"show","status":"matched","season":1,"episode":episode});
+            db.connection.execute("INSERT INTO library_assets VALUES(?,?)", rusqlite::params![id, asset.to_string()])?;
+        }
+        let missing = db.missing_episodes("show")?;
+        assert_eq!(missing["seasons"], json!([{"season":1,"aired":4,"missing":[{"episode":3,"title":"Three","airdate":"2001-01-15"}]}]));
         Ok(())
     }
 
