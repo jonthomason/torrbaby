@@ -146,6 +146,20 @@ public final class TorrentSearchActivity extends Activity {
   private static boolean isCloud(JSONObject item) {
     JSONArray sources=item==null?null:item.optJSONArray("sources");return sources!=null&&sources.length()>0&&"quark".equals(sources.optJSONObject(0).optString("provider"));
   }
+  /** A share's title without its season, edition and quality, since it names the library folder. */
+  private static String libraryName(String title) {
+    String trimmed=title.replaceAll("\\s*(?:第[一二三四五六七八九十百\\d]+[季部]|[Ss]\\d{1,2}\\b|Season\\s*\\d|全\\d+集|\\d{3,4}[pP]\\b|4[Kk]\\b|特别版|未删减|完结|更新至).*$","").trim();
+    return trimmed.isEmpty()?title:trimmed;
+  }
+  /** The season a share's title names ("第二季", "S02", "Season 2"), for files that do not say; 0 when none. */
+  private static int seasonIn(String title) {
+    java.util.regex.Matcher m=java.util.regex.Pattern.compile("第([一二三四五六七八九十\\d]{1,3})季").matcher(title);
+    if(m.find()){String n=m.group(1);if(n.matches("\\d+"))return Integer.parseInt(n);String digits="一二三四五六七八九";
+      if(n.equals("十"))return 10;if(n.length()==2&&n.charAt(0)=='十'&&digits.indexOf(n.charAt(1))>=0)return 11+digits.indexOf(n.charAt(1));
+      if(n.length()==1&&digits.indexOf(n.charAt(0))>=0)return 1+digits.indexOf(n.charAt(0));return 0;}
+    m=java.util.regex.Pattern.compile("(?i)\\b(?:S|Season\\s*)(\\d{1,2})\\b").matcher(title);
+    return m.find()?Integer.parseInt(m.group(1)):0;
+  }
   private static String shareUrl(JSONObject item) { return item.optJSONArray("sources").optJSONObject(0).optString("url"); }
   private String summary(JSONObject item) {
     List<String> parts=new ArrayList<>();
@@ -215,7 +229,7 @@ public final class TorrentSearchActivity extends Activity {
     LinearLayout root=page();TextView name=Ui.title(this,title(item),24);name.setMaxLines(3);Ui.add(root,name,-1,-2);
     Ui.gap(root,8);Ui.add(root,Ui.text(this,summary(item),14,Ui.MUTED),-1,30);
     LinearLayout actions=Ui.row(this);Ui.add(actions,Ui.button(this,L10n.t("Back"),this::onBackPressed),100,44);Ui.gap(actions,12);
-    EditText saveAs=new EditText(this);saveAs.setSingleLine(true);saveAs.setText(title(item));saveAs.setTextColor(Ui.TEXT);saveAs.setHint(L10n.t("Save as"));saveAs.setHintTextColor(Ui.MUTED);
+    EditText saveAs=new EditText(this);saveAs.setSingleLine(true);saveAs.setText(libraryName(title(item)));saveAs.setTextColor(Ui.TEXT);saveAs.setHint(L10n.t("Save as"));saveAs.setHintTextColor(Ui.MUTED);
     actions.addView(saveAs,new LinearLayout.LayoutParams(0,Ui.dp(this,46),1));Ui.gap(actions,12);
     Button add=Ui.button(this,L10n.t("Add"),()->{});Ui.primary(add);Ui.add(actions,add,190,44);Ui.add(root,actions,-1,50);
     TextView note=Ui.text(this,L10n.t("Checking the share’s files…"),14,Ui.MUTED);Ui.add(root,note,-1,-2);
@@ -232,7 +246,7 @@ public final class TorrentSearchActivity extends Activity {
           for(int i=0;i<shareFiles[0].length();i++){JSONObject f=shareFiles[0].optJSONObject(i);if(!f.isNull("episode"))episodic=true;
             if(checked.get(i)){chosen.put(f.optString("path"));if(!f.isNull("season"))seasons.add(f.optInt("season"));}}
           if(chosen.length()==0){Toast.makeText(this,L10n.t("Choose videos to add"),Toast.LENGTH_SHORT).show();return;}
-          body.put("files",chosen);if(seasons.size()==1)body.put("season",seasons.iterator().next());if(episodic)body.put("kind","tv");
+          body.put("files",chosen);if(seasons.size()==1)body.put("season",seasons.iterator().next());else if(seasons.isEmpty()&&seasonIn(item.optString("name"))>0)body.put("season",seasonIn(item.optString("name")));if(episodic)body.put("kind","tv");
         }
         if(body.optString("title").isEmpty())return;
         add.setEnabled(false);add.setText(L10n.t("Adding…"));

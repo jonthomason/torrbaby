@@ -1486,12 +1486,35 @@ struct CloudShareView: View {
         }
         .navigationTitle(embedded ? "" : L10n.text("Quark Drive"))
         .task(id: item.id) {
-            name = item.title
+            name = Self.libraryName(item.title)
             defer { loading = false }
             let found: CloudSearch? = try? await store.request("POST", "/v1/cloud/search", body: ["query": query], timeout: 90)
             share = found?.shares.first { $0.url == item.shareURL }
             chosen = Set(share?.files.map(\.path) ?? [])
         }
+    }
+    /// A share's title without its season, edition and quality ("庆余年 第一季 特别版 4K" → "庆余年"),
+    /// since it names the library folder.
+    static func libraryName(_ title: String) -> String {
+        let trimmed = title.replacingOccurrences(of: #"\s*(?:第[一二三四五六七八九十百\d]+[季部]|[Ss]\d{1,2}\b|Season\s*\d|全\d+集|\d{3,4}[pP]\b|4[Kk]\b|特别版|未删减|完结|更新至).*$"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? title : trimmed
+    }
+    /// The season a share's title names ("第二季", "S02", "Season 2"), for files that do not say.
+    static func season(in title: String) -> Int? {
+        if let range = title.range(of: #"第([一二三四五六七八九十\d]{1,3})季"#, options: .regularExpression) {
+            let numeral = title[range].dropFirst().dropLast()
+            if let number = Int(numeral) { return number }
+            let digits: [Character: Int] = ["一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9]
+            if numeral == "十" { return 10 }
+            if numeral.hasPrefix("十"), let unit = numeral.last.flatMap({ digits[$0] }) { return 10 + unit }
+            if numeral.count == 1, let unit = numeral.first.flatMap({ digits[$0] }) { return unit }
+            return nil
+        }
+        if let range = title.range(of: #"(?i)\b(?:S|Season\s*)(\d{1,2})\b"#, options: .regularExpression) {
+            return Int(title[range].filter(\.isNumber))
+        }
+        return nil
     }
     private func add() async {
         guard let url = item.shareURL, !adding else { return }
@@ -1502,6 +1525,7 @@ struct CloudShareView: View {
             body["files"] = share.files.filter { chosen.contains($0.path) }.map(\.path)
             let seasons = Set(share.files.filter { chosen.contains($0.path) }.compactMap(\.season))
             if seasons.count == 1 { body["season"] = seasons.first }
+            else if seasons.isEmpty, let season = Self.season(in: item.name) { body["season"] = season }
             if share.files.contains(where: { $0.episode != nil }) { body["kind"] = "tv" }
         }
         do {
