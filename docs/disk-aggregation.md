@@ -1,7 +1,38 @@
 # Disk aggregation: one library across several drives
 
-Status: phase 1 done (2026-11-12); phase 2 next. Work happens in the
-`drive-aggregation` worktree, separate from release work. Written 2026-11-12, when Diamond had one 2 TB drive
+Status: all four phases built and tested with a disk image (2026-11-12), on the
+local `drive-aggregation` branch, not yet released. Waiting for the second drive
+for a real test. Work happens in the `drive-aggregation` worktree.
+
+## As built
+
+- `server/drives.rs`: every drive question. Markers (`<media>/.torrbaby-drive.json`)
+  are written for configured drives whose folders are present on a mounted
+  volume; never for a folder on the startup disk. Status: online, missing,
+  foreign (another drive's marker), elsewhere (mounted under another name).
+- Missing drive: the scan skips it; its records keep their state with
+  `available: false, offline: true`; the catalog keeps such titles listed and
+  marks them `offline`; processing neither fails nor reprocesses them; the
+  Watcher counts their episodes as present; cloud reaping and the organizer
+  leave their torrents alone. When the drive and its data are back, a torrent
+  Transmission stopped with "No data found" is checked and resumed.
+- Placement: `Drives::place`. Torrent name and size come from the .torrent or
+  the magnet (`dn`, `xl`); a magnet without them is re-placed once its metadata
+  arrives, before any data is written. If every drive is down to its reserve,
+  the one with the most space still takes what fits (2 GB margin), so a full
+  library slows rather than stops.
+- `server/drive_settings.rs`: `/v1/drives` list, candidates, add, change,
+  remove. The list is saved in the server's settings; the first add turns the
+  single set of folders into drive `primary`.
+- `server/drive_moves.rs`: `/v1/drives/moves`. Torrbaby copies and reads back
+  each file itself (rather than Transmission's move), keeps modification
+  times, points Transmission at the copy with `move: false`, carries finished
+  processing over (`processing::follow`), then deletes the originals.
+- Idle playback readers close after two minutes, so the server does not hold
+  files open and block an eject.
+- Clients: Apple Settings → Library → Drives; Manage Files → Move to Another
+  Drive; dimmed, unplayable titles on a missing drive (Apple and Android).
+  Android TV has no server administration, so drive settings are Apple-only. Written 2026-11-12, when Diamond had one 2 TB drive
 (`/Volumes/Alpha`, about 620 GB free) and a second 2 TB drive was expected.
 
 ## Decision
