@@ -166,6 +166,28 @@ fn report(path: &Path) -> Result<Value> {
     ensure!(status.success(), "Format reading failed");
     Ok(serde_json::from_slice(&bytes)?)
 }
+/// A file's Dolby Vision configuration, as the sample-description box an MP4 needs
+/// to say so: the box's name ("dvcC", or "dvvC" from profile 8 up), its 24 bytes
+/// (ETSI TS 103 572 / Dolby's ISOBMFF mapping), and whether the picture can only be
+/// shown as Dolby Vision. That last is profile 5 and any stream with no compatible
+/// base layer: decoded as ordinary HEVC its colours are wrong, so it must be tagged
+/// "dvh1" rather than "hvc1".
+pub fn dolby_vision(path: &Path) -> Option<([u8; 4], [u8; 24], bool)> {
+    let report = report(path).ok()?;
+    let streams = report["streams"].as_array()?;
+    let record = streams.iter().filter(|s| s["codec_type"] == "video").flat_map(|s| s["side_data_list"].as_array().cloned().unwrap_or_default())
+        .find(|d| d["side_data_type"].as_str().is_some_and(|t| t.contains("DOVI")))?;
+    let field = |name: &str| number(&record[name]).unwrap_or(0);
+    let (profile, level, compatible) = (field("dv_profile"), field("dv_level"), field("dv_bl_signal_compatibility_id"));
+    if profile == 0 && level == 0 { return None; }
+    let mut body = [0u8; 24];
+    body[0] = field("dv_version_major").max(1) as u8;
+    body[1] = field("dv_version_minor") as u8;
+    let packed = ((profile as u16 & 0x7f) << 9) | ((level as u16 & 0x3f) << 3) | ((field("rpu_present_flag") as u16 & 1) << 2) | ((field("el_present_flag") as u16 & 1) << 1) | (field("bl_present_flag") as u16 & 1);
+    body[2..4].copy_from_slice(&packed.to_be_bytes());
+    body[4] = (compatible as u8 & 0x0f) << 4;
+    Some((if profile > 7 { *b"dvvC" } else { *b"dvcC" }, body, profile == 5 || compatible == 0))
+}
 /// The tracks of a file of which only the start and end are present (the rest a hole):
 /// each sound track's format, layout and language, the picture, and the subtitle languages.
 /// Enough to judge a cloud video before fetching it.

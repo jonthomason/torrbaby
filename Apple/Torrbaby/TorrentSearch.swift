@@ -1122,7 +1122,8 @@ private struct TorrentSearchRow: View {
         HStack(alignment: .center, spacing: 10) {
             let episodic = item.hints.season != nil || item.hints.episodeCount != nil
             // A year borrowed from same-titled results is sent as a plain "Title Year S01" name.
-            SearchReleaseArtwork(name: item.hints.year == nil && artworkYear != nil ? "\(item.title) \(artworkYear!)\(episodic ? " S01" : "")" : item.name,
+            // A cloud share's own name says little; the series' title and year find its artwork.
+            SearchReleaseArtwork(name: item.cloud?.show != nil && item.hints.year != nil ? "\(item.title) \(item.hints.year!) S\(String(format: "%02d", item.hints.season ?? 1))" : item.hints.year == nil && artworkYear != nil ? "\(item.title) \(artworkYear!)\(episodic ? " S01" : "")" : item.name,
                 identity: "\(item.title.lowercased()):\((item.hints.year ?? artworkYear).map(String.init) ?? ""):\(episodic ? "tv:\(item.hints.season ?? 0)" : "movie")",
                 season: item.hints.season, onFacts: { facts = $0 })
             VStack(alignment: .leading, spacing: 2) {

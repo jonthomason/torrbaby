@@ -14896,6 +14896,57 @@
           }
         }
       }
+    },
+    "Next check: %s": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Next check: %s"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下次检查：%s"
+          }
+        }
+      }
+    },
+    "Last checked %s": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last checked %s"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上次检查：%s"
+          }
+        }
+      }
+    },
+    "Updated": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Updated"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新于"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

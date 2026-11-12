@@ -327,6 +327,7 @@ final class L10n {
     IDS.put("Language", R.string.ui_89b86ab0e66f);
     IDS.put("Languages", R.string.ui_db07be184479);
     IDS.put("Languages unavailable", R.string.ui_4ece8db0cba2);
+    IDS.put("Last checked %s", R.string.ui_b288f8c8e974);
     IDS.put("Leave Torrbaby?", R.string.ui_88a68e0e00b7);
     IDS.put("Library", R.string.ui_b8100f5ba8bd);
     IDS.put("Library & Organizing", R.string.ui_cbfda9ea6b27);
@@ -391,6 +392,7 @@ final class L10n {
     IDS.put("New episodes", R.string.ui_5478cfd5b4d6);
     IDS.put("New name", R.string.ui_9e627c7b1aec);
     IDS.put("Next Episode", R.string.ui_834ae0b1f228);
+    IDS.put("Next check: %s", R.string.ui_35da6a009052);
     IDS.put("Next episode", R.string.ui_882f1a46548e);
     IDS.put("Next episode…", R.string.ui_a3047eafa5d4);
     IDS.put("No available next episode", R.string.ui_a66974cfe156);
@@ -758,6 +760,7 @@ final class L10n {
     IDS.put("Up next", R.string.ui_567bfc4dad37);
     IDS.put("Up to date", R.string.ui_82fb1d5144a8);
     IDS.put("Update download", R.string.ui_1b0fb105245e);
+    IDS.put("Updated", R.string.ui_f2f8570ddd7b);
     IDS.put("Updated subtitles are available for this download.", R.string.ui_fcb0f4dbd866);
     IDS.put("Updating…", R.string.ui_3ab0d73100de);
     IDS.put("Upload", R.string.ui_8bdf057f91e7);

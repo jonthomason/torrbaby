@@ -37,6 +37,8 @@ public class MainActivity extends Activity {
   private JSONArray attention;
   /** Quark Drive downloads, and free space on the media drives, for Downloading. */
   private JSONArray cloudJobs;
+  /** Shows the server watches for new episodes, as GET /v1/watch reports them. */
+  private JSONObject watchList;
   private JSONObject storage;
   private String libraryOperationsError = "";
   private final Map<String, Long> removedTorrents = new HashMap<>();
@@ -1007,11 +1009,11 @@ public class MainActivity extends Activity {
     torrentActions = new TorrentActions(this, api, io, this::fetchTorrents, this::torrentRemoved);
     Ui.pad(content, 35, 16);
     LinearLayout controls = Ui.row(this);
-    for (String category : new String[] {"Downloading", "Seeding", "Complete", "Needs attention"}) {
+    for (String category : new String[] {"Downloading", "Seeding", "Complete", "Needs attention", "Watching"}) {
       Button button =
           Ui.button(
               this,
-              category,
+              L10n.t(category),
               () -> {
                 torrentCategory = category;
                 render();
@@ -1042,7 +1044,7 @@ public class MainActivity extends Activity {
       Button button =
           Ui.button(
               this,
-              choice,
+              L10n.t(choice),
               () -> {
                 getPreferences(MODE_PRIVATE)
                     .edit()
@@ -1062,7 +1064,7 @@ public class MainActivity extends Activity {
                 ? L10n.t("Offline · showing the last server status")
                 : torrentUpdated == 0
                     ? L10n.t("Server transfers")
-                    : "Server transfers · updated "
+                    : L10n.t("Server transfers") + " · " + L10n.t("Updated") + " "
                         + new java.text.SimpleDateFormat("HH:mm:ss", Locale.getDefault())
                             .format(new java.util.Date(torrentUpdated)),
             11,
@@ -1110,6 +1112,7 @@ public class MainActivity extends Activity {
       }
     }
     if (torrentCategory.equals("Downloading")) count += downloadingExtras(rows);
+    if (torrentCategory.equals("Watching")) count += watchingRows(rows);
     List<JSONObject> sorted = new ArrayList<>();
     for (int i = 0; torrents != null && i < torrents.length(); i++)
       if (torrents.optJSONObject(i) != null) sorted.add(torrents.optJSONObject(i));
@@ -1135,6 +1138,7 @@ public class MainActivity extends Activity {
       JSONObject fileOperation = item.optJSONObject("file_operation");
       boolean junk = fileOperation != null && fileOperation.optString("action").equals("junk");
       String issue = torrentIssue(item);
+      if (torrentCategory.equals("Watching")) continue;
       if (torrentCategory.equals("Needs attention")) { if (junk || issue == null) continue; }
       else if (fileOperation != null ? !torrentCategory.equals("Seeding") : torrentCategory.equals("Downloading")
           ? complete
@@ -1311,7 +1315,8 @@ public class MainActivity extends Activity {
       Ui.add(row, jobTitle, -1, -2);
       Ui.gap(row, 6);
       boolean active = state.equals("queued") || state.equals("saving") || state.equals("downloading") || state.equals("retrying");
-      String label = state.equals("retrying") ? L10n.t("Retrying shortly…") : state.equals("queued") ? L10n.t("Waiting") : state.equals("saving") ? L10n.t("Saving to Quark Drive…")
+      int place = job.isNull("position") ? 0 : job.optInt("position");
+      String label = state.equals("retrying") ? L10n.t("Retrying shortly…") : state.equals("queued") ? (place > 0 ? String.format(L10n.locale(), L10n.t("Waiting · %d in line"), place) : L10n.t("Waiting")) : state.equals("saving") ? L10n.t("Saving to Quark Drive…")
           : state.equals("downloading") ? L10n.t("Downloading") : state.equals("done") ? L10n.t("Downloaded") : L10n.t("Failed");
       String detail = L10n.t("Quark Drive") + " · " + label;
       if (job.optInt("files") > 1) detail += " · " + String.format(L10n.locale(), L10n.t("%d of %d videos"), job.optInt("files_done"), job.optInt("files"));
@@ -1337,6 +1342,8 @@ public class MainActivity extends Activity {
         // Stops the download and clears what it had fetched of unfinished videos.
         if (active) dialog.setNeutralButton(L10n.t("Cancel download"), (d, w) -> cloudJobAction("DELETE", "/v1/cloud/jobs/" + id));
         if (state.equals("failed") || state.equals("retrying")) dialog.setPositiveButton(L10n.t("Retry"), (d, w) -> cloudJobAction("POST", "/v1/cloud/jobs/" + id + "/retry"));
+        // Downloads run in the order added; this one jumps the line once the current video is done.
+        if (state.equals("queued") && place > 1) dialog.setPositiveButton(L10n.t("Download next"), (d, w) -> cloudJobAction("POST", "/v1/cloud/jobs/" + id + "/next"));
         if (state.equals("failed") || state.equals("done")) dialog.setNeutralButton(L10n.t("Dismiss"), (d, w) -> cloudJobAction("DELETE", "/v1/cloud/jobs/" + id));
         dialog.show();
       });
@@ -1344,6 +1351,83 @@ public class MainActivity extends Activity {
       Ui.gap(rows, 10);
     }
     return added;
+  }
+  /** "E01–E11 E13–E34": runs of consecutive episodes. */
+  private static String episodeRanges(JSONArray numbers) {
+    List<Integer> all = new ArrayList<>();
+    for (int i = 0; numbers != null && i < numbers.length(); i++) all.add(numbers.optInt(i));
+    Collections.sort(all);
+    List<String> runs = new ArrayList<>();
+    int start = -1, end = -1;
+    for (int n : all) {
+      if (start >= 0 && n <= end + 1) { end = Math.max(end, n); continue; }
+      if (start >= 0) runs.add(start == end ? String.format(Locale.ROOT, "E%02d", start) : String.format(Locale.ROOT, "E%02d–E%02d", start, end));
+      start = end = n;
+    }
+    if (start >= 0) runs.add(start == end ? String.format(Locale.ROOT, "E%02d", start) : String.format(Locale.ROOT, "E%02d–E%02d", start, end));
+    return runs.size() > 5 ? String.join(" ", runs.subList(0, 5)) + " …" : String.join(" ", runs);
+  }
+  /** The shows watched for new episodes: what each lacks, where it is looked for, and when it was last checked. */
+  private int watchingRows(LinearLayout rows) {
+    java.text.DateFormat when = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT, L10n.locale());
+    JSONArray shows = watchList == null ? null : watchList.optJSONArray("shows");
+    if (watchList != null && !watchList.isNull("next_check"))
+      Ui.add(rows, Ui.text(this, String.format(L10n.locale(), L10n.t("Next check: %s"), when.format(new Date((long) (watchList.optDouble("next_check") * 1000)))), 14, Ui.MUTED), -1, -2);
+    Ui.add(rows, Ui.text(this, L10n.t("Missing episodes are looked for around midday and in the evening."), 12, Ui.MUTED), -1, -2);
+    Ui.gap(rows, 10);
+    if (shows == null || shows.length() == 0) {
+      Ui.add(rows, Ui.title(this, L10n.t("No shows are being watched"), 18), -1, -2);
+      return 1;
+    }
+    Button check = Ui.button(this, L10n.t("Check now"), () -> cloudJobAction("POST", "/v1/watch/check"));
+    Ui.add(rows, check, 220, 44);
+    Ui.gap(rows, 10);
+    for (int i = 0; i < shows.length(); i++) {
+      JSONObject show = shows.optJSONObject(i);
+      if (show == null) continue;
+      String id = show.optString("id"), market = show.optString("market");
+      String name = show.optString("title");
+      if (!show.isNull("original_title") && !show.optString("original_title").isEmpty() && !show.optString("original_title").equals(name)) name += " · " + show.optString("original_title");
+      List<String> gaps = new ArrayList<>();
+      JSONArray missing = show.optJSONArray("missing");
+      for (int j = 0; missing != null && j < missing.length(); j++) {
+        JSONObject season = missing.optJSONObject(j);
+        gaps.add((missing.length() > 1 || season.optInt("season") > 1 ? String.format(L10n.locale(), L10n.t("Season %d"), season.optInt("season")) + " " : "") + episodeRanges(season.optJSONArray("episodes")));
+      }
+      List<String> facts = new ArrayList<>();
+      facts.add(L10n.t(market.equals("china") ? "China" : "World"));
+      if (show.optBoolean("airing")) facts.add(L10n.t("Airing now"));
+      if (show.optBoolean("auto")) facts.add(L10n.t("Added automatically"));
+      if (!show.isNull("checked")) facts.add(String.format(L10n.locale(), L10n.t("Last checked %s"), when.format(new Date((long) (show.optDouble("checked") * 1000)))));
+      if (show.optInt("found") > 0) facts.add(String.format(L10n.locale(), L10n.t("Queued: %d"), show.optInt("found")));
+      LinearLayout row = Ui.column(this);
+      Ui.focus(row);
+      row.setOnFocusChangeListener((v, focused) -> Ui.secondaryContrast(v, focused));
+      Ui.pad(row, 16, 14);
+      Ui.add(row, Ui.title(this, name, 16), -1, -2);
+      Ui.gap(row, 6);
+      Ui.add(row, Ui.text(this, gaps.isEmpty() ? L10n.t("Up to date") : L10n.t("Missing") + " " + String.join(" · ", gaps), 14, gaps.isEmpty() ? Ui.ACCENT : 0xffffb74d), -1, -2);
+      Ui.add(row, Ui.text(this, String.join(" · ", facts), 12, Ui.MUTED), -1, -2);
+      String problem = show.isNull("error") ? "" : show.optString("error");
+      if (!problem.isEmpty()) Ui.add(row, Ui.text(this, problem, 12, 0xffffb74d), -1, -2);
+      String shown = name;
+      // Where its episodes are looked for can be switched, and the show taken off the list.
+      row.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle(shown)
+          .setPositiveButton(L10n.t(market.equals("china") ? "World" : "China"), (d, w) -> watchAction("POST", "/v1/watch/" + id, market.equals("china") ? "world" : "china"))
+          .setNeutralButton(L10n.t("Stop watching"), (d, w) -> watchAction("DELETE", "/v1/watch/" + id, null))
+          .setNegativeButton(L10n.t("Close"), null).show());
+      Ui.add(rows, row, -1, -2);
+      Ui.gap(rows, 10);
+    }
+    return shows.length();
+  }
+  private void watchAction(String method, String path, String market) {
+    Api requested = api;
+    io.execute(() -> {
+      try { requested.request(method, path, market == null ? null : new JSONObject().put("market", market)); }
+      catch (Exception e) { runOnUiThread(() -> Toast.makeText(this, message(e), Toast.LENGTH_LONG).show()); }
+      runOnUiThread(this::fetchTorrents);
+    });
   }
   private void cloudJobAction(String method, String path) {
     Api requested = api;
@@ -1374,6 +1458,10 @@ public class MainActivity extends Activity {
           JSONObject storageResult = null;
           try { storageResult = requested.request("GET", "/v1/storage", null); }
           catch (Exception ignored) { }
+          JSONObject watchResult = null;
+          try { watchResult = requested.request("GET", "/v1/watch", null); }
+          catch (Exception ignored) { }
+          final JSONObject receivedWatch = watchResult;
           final JSONArray receivedJobs = jobsResult;
           final JSONObject receivedStorage = storageResult;
           final JSONArray receivedAttention = attentionResult;
@@ -1385,6 +1473,7 @@ public class MainActivity extends Activity {
             if (receivedOperations != null) libraryOperations = receivedOperations;
             if (receivedAttention != null) attention = receivedAttention;
             if (receivedJobs != null) cloudJobs = receivedJobs;
+            if (receivedWatch != null && receivedWatch.has("shows")) watchList = receivedWatch;
             if (receivedStorage != null) storage = receivedStorage;
             libraryOperationsError = operationError;
             torrentStale = receivedTorrents == null;

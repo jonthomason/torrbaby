@@ -853,3 +853,6 @@ Waiting · %d in line	等待中 · 排第 %d 位
 Already in the download queue.	已在下载队列中。
 Already in your library: all %d videos. Nothing to download.	这 %d 个视频已全部在你的资料库中，无需下载。
 %d of %d videos are already in your library; the rest will download.	%d / %d 个视频已在你的资料库中，其余将会下载。
+Next check: %s	下次检查：%s
+Last checked %s	上次检查：%s
+Updated	更新于

@@ -316,6 +316,7 @@
     <string name="ui_89b86ab0e66f" formatted="false">Language</string>
     <string name="ui_db07be184479" formatted="false">Languages</string>
     <string name="ui_4ece8db0cba2" formatted="false">Languages unavailable</string>
+    <string name="ui_b288f8c8e974" formatted="false">Last checked %s</string>
     <string name="ui_88a68e0e00b7" formatted="false">Leave Torrbaby?</string>
     <string name="ui_b8100f5ba8bd" formatted="false">Library</string>
     <string name="ui_cbfda9ea6b27" formatted="false">Library &amp; Organizing</string>
@@ -380,6 +381,7 @@
     <string name="ui_5478cfd5b4d6" formatted="false">New episodes</string>
     <string name="ui_9e627c7b1aec" formatted="false">New name</string>
     <string name="ui_834ae0b1f228" formatted="false">Next Episode</string>
+    <string name="ui_35da6a009052" formatted="false">Next check: %s</string>
     <string name="ui_882f1a46548e" formatted="false">Next episode</string>
     <string name="ui_a3047eafa5d4" formatted="false">Next episode…</string>
     <string name="ui_a66974cfe156" formatted="false">No available next episode</string>
@@ -747,6 +749,7 @@
     <string name="ui_567bfc4dad37" formatted="false">Up next</string>
     <string name="ui_82fb1d5144a8" formatted="false">Up to date</string>
     <string name="ui_1b0fb105245e" formatted="false">Update download</string>
+    <string name="ui_f2f8570ddd7b" formatted="false">Updated</string>
     <string name="ui_fcb0f4dbd866" formatted="false">Updated subtitles are available for this download.</string>
     <string name="ui_3ab0d73100de" formatted="false">Updating…</string>
     <string name="ui_8bdf057f91e7" formatted="false">Upload</string>

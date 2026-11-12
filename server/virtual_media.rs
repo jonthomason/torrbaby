@@ -35,6 +35,20 @@ struct Job {
 // preparation, and old indexes leave through normal cache reclamation.
 const PREPARATION_VERSION: u32 = 5;
 const LAYOUT_VERSION: u32 = 3;
+/// Dolby Vision files are indexed again, apart from their earlier index: their sample
+/// description now declares Dolby Vision, and the earlier one played in the wrong
+/// colours on Apple devices. Other files keep the index they have.
+const DOLBY_LAYOUT: u32 = 1;
+/// Whether a file carries Dolby Vision, remembered per file and state so the reader runs once.
+fn dolby(input: &Path) -> bool {
+    static KNOWN: std::sync::LazyLock<Mutex<HashMap<(PathBuf, String), bool>>> = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+    let Ok(revision) = crate::subtitle_jobs::revision(input) else { return false };
+    let key = (input.to_owned(), revision);
+    if let Some(known) = KNOWN.lock().ok().and_then(|known| known.get(&key).copied()) { return known; }
+    let found = crate::media_format::dolby_vision(input).is_some();
+    if let Ok(mut known) = KNOWN.lock() { if known.len() > 4096 { known.clear(); } known.insert(key, found); }
+    found
+}
 /// Disk budget for virtual-media indexes. Layout changes make every MKV rebuild
 /// once while older indexes still serve existing jobs, so leave ample headroom.
 const INDEX_BUDGET: u64 = 24 * 1024 * 1024 * 1024;
@@ -88,7 +102,7 @@ impl Manager {
     fn index_path(&self, job: &Job) -> Result<PathBuf> {
         use sha2::{Digest, Sha256};
         // Jobs from before random-access tables keep their original index.
-        let layout = if job.preparation_version >= PREPARATION_VERSION { 2 } else { 1 };
+        let layout = if job.preparation_version >= PREPARATION_VERSION { 2 } else { 1 } + if dolby(&job.input) { 100 * DOLBY_LAYOUT } else { 0 };
         let key: String = Sha256::digest(serde_json::to_vec(&(
             layout,
             &job.asset,
@@ -317,7 +331,7 @@ impl Manager {
         );
         let revision = crate::subtitle_jobs::revision(&input)?;
         let id: String = Sha256::digest(serde_json::to_vec(&(
-            LAYOUT_VERSION, asset, &input, &revision, &captions,
+            LAYOUT_VERSION + if dolby(&input) { 1000 * DOLBY_LAYOUT } else { 0 }, asset, &input, &revision, &captions,
         ))?)
         .iter()
         .map(|b| format!("{b:02x}"))

@@ -1,4 +1,3 @@
-#if !os(tvOS)
 import SwiftUI
 
 /// The shows the server watches for new episodes, as it reports them.
@@ -33,12 +32,19 @@ struct WatchList: Decodable {
 /// was last checked. The server checks twice a day; airing shows are added by themselves.
 struct WatchingView: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    var body: some View {
+        ScrollView { WatchingList().padding(24).frame(maxWidth: 1000).frame(maxWidth: .infinity) }
+            .navigationTitle("Watching")
+    }
+}
+/// The list itself, for a page of its own or a tab of the TV's torrents page.
+struct WatchingList: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @State private var list: WatchList?
     @State private var error: String?
     private func time(_ seconds: Double) -> String { Date(timeIntervalSince1970: seconds).formatted(date: .abbreviated, time: .shortened) }
     var body: some View {
-        ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -55,9 +61,7 @@ struct WatchingView: View {
                         .padding(.vertical, 40)
                 }
                 ForEach(list?.shows ?? []) { show in row(show) }
-            }.padding(24).frame(maxWidth: 1000).frame(maxWidth: .infinity)
-        }
-        .navigationTitle("Watching")
+            }
         .task(id: store.server) {
             while !Task.isCancelled {
                 await load()
@@ -104,6 +108,7 @@ struct WatchingView: View {
     }
 }
 
+#if !os(tvOS)
 /// The switch on a show's page.
 struct WatchToggle: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
