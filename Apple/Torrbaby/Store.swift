@@ -357,6 +357,8 @@ final class Store: ObservableObject {
            let address = profile["server"], let secret = profile["token"] {
             server = address
             token = secret
+            // Simulators without a lasting Keychain keep one device identity across launches.
+            if let id = profile["client_id"], UUID(uuidString: id) != nil { clientId = id }
             UserDefaults.standard.set(address, forKey: "server")
             try? Credentials.save(secret)
             try? FileManager.default.removeItem(atPath: path)

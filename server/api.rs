@@ -215,6 +215,8 @@ pub async fn serve(
         workers.push(tokio::spawn(async move {
             loop {
                 if let Err(error) = crate::drive_moves::tick(&moves).await { tracing::warn!(%error, "Moving files between drives"); }
+                // Files left open for playback would stop a drive from being ejected.
+                moves.virtual_media.release_idle(std::time::Duration::from_secs(120));
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             }
         }));

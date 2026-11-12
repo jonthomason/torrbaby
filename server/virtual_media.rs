@@ -50,6 +50,9 @@ pub struct Manager {
     gate: tokio::sync::Semaphore,
     background_gate: tokio::sync::Semaphore,
     readers: Mutex<HashMap<String, Arc<crate::virtual_captions::Reader>>>,
+    /// When each cached reader was last asked for. An idle one is closed, so its file is
+    /// not held open (an open file stops its drive from being ejected).
+    reader_use: Mutex<HashMap<String, std::time::Instant>>,
 }
 fn valid(id: &str) -> bool {
     id.len() == 64
@@ -83,6 +86,7 @@ impl Manager {
             gate: tokio::sync::Semaphore::new(1),
             background_gate: tokio::sync::Semaphore::new(4),
             readers: Mutex::new(HashMap::new()),
+            reader_use: Mutex::new(HashMap::new()),
         }))
     }
     fn index_path(&self, job: &Job) -> Result<PathBuf> {
@@ -116,6 +120,12 @@ impl Manager {
             preparation_version: PREPARATION_VERSION, captions: Vec::new(), missing_audio: None,
         };
         self.index_path(&job).is_ok_and(|path| path.is_dir())
+    }
+    /// Close cached readers nothing has used for a while and nothing is streaming from.
+    pub fn release_idle(&self, after: std::time::Duration) {
+        let (Ok(mut readers), Ok(mut used)) = (self.readers.lock(), self.reader_use.lock()) else { return };
+        readers.retain(|id, reader| Arc::strong_count(reader) > 1 || used.get(id).is_some_and(|at| at.elapsed() < after));
+        used.retain(|id, _| readers.contains_key(id));
     }
     pub fn idle(&self) -> bool {
         self.pending.lock().is_ok_and(|p| p.is_empty())
@@ -268,6 +278,7 @@ impl Manager {
             .readers
             .lock()
             .map_err(|_| anyhow::anyhow!("Playback index unavailable"))?;
+        if let Ok(mut used) = self.reader_use.lock() { used.insert(id.into(), std::time::Instant::now()); }
         if let Some(reader) = readers.get(id) {
             reader.validate_source()?;
             return Ok(reader.clone());

@@ -318,6 +318,10 @@ struct RootView: View {
     #endif
     @State private var showConnect = false
     @State private var torrentDraft: TorrentDraft?
+    #if DEBUG
+    struct DebugScreen: Identifiable { let id: String }
+    @State private var debugScreen: DebugScreen?
+    #endif
     var body: some View {
         NavigationSplitView(preferredCompactColumn: $preferredColumn) {
             VStack(alignment: .leading, spacing: sidebarSpacing) {
@@ -418,6 +422,24 @@ struct RootView: View {
         #endif
         .overlay(alignment: .bottom) { ContinueWatchingUndoBanner() }
         .sheet(isPresented: $showConnect) { LocalizedInterface { ConnectionView() } }
+        #if DEBUG
+        // Local screenshot checks only: TORRBABY_DEBUG_SCREEN=drives opens Settings → Library,
+        // =files:<asset id> opens that file's Manage Files, =title:<id> a title. Not in Release builds.
+        .sheet(item: $debugScreen) { screen in
+            LocalizedInterface {
+                NavigationStack {
+                    if screen.id == "drives" { SettingsPageView(page: .library, showConnect: $showConnect) }
+                    else if screen.id.hasPrefix("files:") { LibraryFileManagement(assetID: String(screen.id.dropFirst(6))) }
+                    else if screen.id.hasPrefix("title:") { LibraryDetail(titleID: String(screen.id.dropFirst(6))) }
+                }
+            }
+        }
+        .task {
+            if let screen = ProcessInfo.processInfo.environment["TORRBABY_DEBUG_SCREEN"], !screen.isEmpty {
+                try? await Task.sleep(for: .seconds(3)); debugScreen = DebugScreen(id: screen)
+            }
+        }
+        #endif
         .sheet(item: $torrentDraft) { draft in
              LocalizedInterface { AddTorrentView(initialMagnet: draft.magnet).id(draft.id) } }
         .onOpenURL { url in

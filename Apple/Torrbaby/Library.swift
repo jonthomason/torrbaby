@@ -733,11 +733,14 @@ struct LibraryDetail: View {
                 } else { Text(LocalizedStringKey(store.onMissingDrive(asset) ? "Drive not connected" : "Not downloaded")) }
             } icon: { Image(systemName: store.canPlay(asset) ? "play.fill" : store.onMissingDrive(asset) ? "externaldrive.badge.xmark" : "wifi.slash") }
                 .font(.headline).frame(minWidth: title.kind == "tv" && !stacksActions ? 120 : nil, alignment: .leading).frame(minHeight: 44)
-        }.libraryActionStyle(prominent: true).disabled(loading)
+        }.libraryActionStyle(prominent: true).disabled(loading || store.onMissingDrive(asset))
         #if !os(tvOS)
-        if title.kind == "tv" {
-            if let number=selectedSeason, number != LibraryTitle.extrasTab { DownloadSeasonControl(title: title, season: number) }
-        } else { DownloadAssetControl(asset: asset, title: title) }
+        // Nothing can be downloaded to this device while the server's drive is away.
+        if !store.onMissingDrive(asset) {
+            if title.kind == "tv" {
+                if let number=selectedSeason, number != LibraryTitle.extrasTab { DownloadSeasonControl(title: title, season: number) }
+            } else { DownloadAssetControl(asset: asset, title: title) }
+        }
         #endif
     }
     var title: LibraryTitle? { store.library?.titles.first { $0.id == titleID } }
@@ -1122,7 +1125,6 @@ struct LibraryFileManagement: View {
                         }
                     }.background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
                     Text("Personal watch history and downloaded copies on other devices are kept.").foregroundStyle(.secondary)
-                    DriveMoveSection(assetIDs: store.library?.titles.first(where: { $0.assets.contains { $0.id == assetID } })?.assets.map(\.id) ?? [assetID])
                     ForEach(preview.blockedReasons, id: \.self) { Text($0).foregroundStyle(.red) }
                     if preview.blockedReasons.isEmpty {
                         if preview.allowedActions.contains("junk") {
@@ -1142,6 +1144,11 @@ struct LibraryFileManagement: View {
                 if let error { Text(L10n.text(error)).foregroundStyle(.red) }
                 if error != nil || preview?.blockedReasons.isEmpty == false {
                     Button("Check again") { refreshID = UUID() }.disabled(submitting)
+                }
+                // Moving between drives does not depend on the removal check above.
+                if operation == nil {
+                    DriveMoveSection(assetIDs: store.library?.titles.first(where: { $0.assets.contains { $0.id == assetID } })?.assets.map(\.id) ?? [assetID])
+                        .padding(.top, 8)
                 }
                 #if os(tvOS)
                 // Always something to focus: with nothing focusable (loading, or every action

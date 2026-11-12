@@ -251,7 +251,8 @@ struct DriveMoveSection: View {
     @State private var error: String?
     private func name(_ id: String) -> String { preview?.choices.first { $0.id == id }?.name ?? id }
     var body: some View {
-        Group {
+        // A stack, not a Group: an empty Group never runs the task that loads it.
+        VStack(alignment: .leading, spacing: 10) {
             if let move {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Move to Another Drive").font(.headline)
