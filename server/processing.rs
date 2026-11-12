@@ -336,7 +336,9 @@ async fn process_file(s:&Service,mut asset:Value)->Result<()> {
     let previous={let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
         let row=db.rows("SELECT * FROM media_processing WHERE asset_id=?",[&id])?.pop().context("Missing processing record")?;
         db.connection.execute("UPDATE media_processing SET state='running',error=NULL,updated=? WHERE asset_id=?",rusqlite::params![now(),id])?;row};
-    asset["retrying"]=json!(previous["attempts"].as_i64().unwrap_or(0)>0);
+    // Retry failed subtitle jobs once per new attempt. The loop checks a running file every
+    // few seconds; retrying on each check restarted a failing OCR job forever.
+    asset["retrying"]=json!(previous["attempts"].as_i64().unwrap_or(0)>0 && previous["state"]!="running");
     let result=advance(s,&asset,&revision,&previous).await;
     if let Err(error)=result {
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
