@@ -2082,17 +2082,20 @@ public class MainActivity extends Activity {
         runOnUiThread(() -> {
           if (isDestroyed() || api != requested) return;
           base();
-          Ui.add(root, Ui.title(this, L10n.t("Who's watching?"), 30), -1, 56);
+          // Centred, like the Apple TV: a heading, a wide bar for each user, and Create user as wide as they are.
+          TextView heading = Ui.title(this, L10n.t("Who's watching?"), 30); heading.setGravity(Gravity.CENTER);
+          Ui.add(root, heading, -1, 56);
           ScrollView scroll = new ScrollView(this);
-          LinearLayout list = Ui.column(this);
-          scroll.addView(list);
+          LinearLayout list = Ui.column(this); list.setGravity(Gravity.CENTER_HORIZONTAL);
+          scroll.addView(list, new ScrollView.LayoutParams(-1, -2));
           root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
           for (int n = 0; n < people.length(); n++) {
             JSONObject person = people.optJSONObject(n);
             if (person == null) continue;
             LinearLayout card = Ui.row(this);card.setGravity(Gravity.CENTER_VERTICAL);
-            LinearLayout button = Ui.row(this);button.setGravity(Gravity.CENTER_VERTICAL);Ui.focus(button);Ui.pad(button,16,12);
-            button.addView(ProfileUi.avatar(this,person,64));Ui.gap(button,20);
+            LinearLayout button = Ui.row(this);button.setGravity(Gravity.CENTER_VERTICAL);Ui.focusPanel(button);Ui.pad(button,16,12);
+            // Tagged so the bar's focus colours leave the avatar's own colours alone.
+            TextView face=ProfileUi.avatar(this,person,64);face.setTag("avatar");button.addView(face);Ui.gap(button,20);
             TextView label = Ui.title(this,person.optString("name"),22);
             button.addView(label,new LinearLayout.LayoutParams(0,-2,1));
             if(requested.profile.equals(person.optString("id")))Ui.add(button,Ui.text(this,"✓",22,Ui.ACCENT),36,-2);
@@ -2103,23 +2106,32 @@ public class MainActivity extends Activity {
             });
             card.addView(button,new LinearLayout.LayoutParams(0,-2,1));Ui.gap(card,12);
             Button edit = Ui.button(this,"✎",()->editProfile(requested,person));edit.setContentDescription(L10n.t("Edit profile"));Ui.add(card,edit,48,48);
-            Ui.add(list,card,600,-2);Ui.gap(list,16);
+            Ui.add(list,card,820,-2);Ui.gap(list,14);
             if (n == 0) button.requestFocus();
           }
-          Ui.add(list, Ui.button(this, L10n.t("Create user"), () -> createProfile(requested)), 420, 56);
-          if (!requested.profile.isEmpty()) {
-            Ui.gap(list, 12);
-            Ui.add(list, Ui.button(this, L10n.t("Back to library"), () -> { selectingProfile = false; render(); }), 420, 56);
-          }
+          // No "back" button: the remote's Back key returns to the library, as does choosing the user in use.
+          TextView create = Ui.title(this, L10n.t("Create user"), 20); create.setGravity(Gravity.CENTER);
+          Ui.focusPanel(create); Ui.pad(create, 16, 16);
+          create.setOnClickListener(v -> createProfile(requested));
+          Ui.add(list, create, 820, -2);
         });
       } catch (Exception e) {
         runOnUiThread(() -> {
           if (isDestroyed() || api != requested) return;
           base();
-          Ui.add(root, Ui.title(this, L10n.t("Could not load users"), 28), -1, 56);
-          Ui.add(root, Ui.text(this, message(e), 16, Ui.MUTED), -1, -2);
-          Button retry = Ui.button(this, L10n.t("Try again"), () -> chooseProfile(switching));
-          Ui.add(root, retry, 260, 56);
+          // Said plainly, with what to check and one way forward.
+          root.setGravity(Gravity.CENTER_HORIZONTAL);
+          TextView problem = Ui.title(this, L10n.t("Can’t reach your server"), 28); problem.setGravity(Gravity.CENTER);
+          Ui.add(root, problem, -1, 56);
+          TextView advice = Ui.text(this, L10n.t("Check that the server is on and that this device is on the same network."), 16, Ui.MUTED); advice.setGravity(Gravity.CENTER);
+          Ui.add(root, advice, -1, -2);
+          TextView detail = Ui.text(this, message(e), 12, Ui.MUTED); detail.setGravity(Gravity.CENTER);
+          Ui.add(root, detail, -1, -2);
+          Ui.gap(root, 18);
+          TextView retry = Ui.title(this, L10n.t("Try again"), 20); retry.setGravity(Gravity.CENTER);
+          Ui.focusPanel(retry); Ui.pad(retry, 16, 16);
+          retry.setOnClickListener(v -> chooseProfile(switching));
+          Ui.add(root, retry, 420, -2);
           retry.requestFocus();
         });
       }
@@ -2463,6 +2475,8 @@ public class MainActivity extends Activity {
 
   @Override
   public void onBackPressed() {
+    // From the user chooser, Back returns to the library when a user is already in use.
+    if (selectingProfile && api != null && !api.profile.isEmpty() && !switchingProfile) { selectingProfile = false; render(); return; }
     if (showingCast) {
       showingCast = false; render();
       View cast = root.findViewWithTag("cast");
