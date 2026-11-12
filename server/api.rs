@@ -2316,17 +2316,6 @@ pub(crate) async fn scan_library(s: &Service) -> Result<()> {
                         }
                     }
                 }
-                // A variety show's part takes the provider's number for it.
-                if asset["issue"].is_u64() && asset["confirmed"] != true {
-                    if let Some(entity_id) = asset["entity_id"].as_str() {
-                        let entity: Option<String> = tx
-                            .query_row("SELECT document FROM library_entities WHERE id=?", [entity_id], |r| r.get(0))
-                            .optional()?;
-                        if let Some(entity) = entity.and_then(|text| serde_json::from_str::<Value>(&text).ok()) {
-                            crate::scanner::resolve_issue_part(&mut asset, &entity);
-                        }
-                    }
-                }
                 tx.execute(
                     "INSERT OR REPLACE INTO library_assets VALUES(?,?)",
                     rusqlite::params![id, asset.to_string()],
@@ -2403,7 +2392,6 @@ fn save_match(s: &Service, id: &str, entity: Value, confirmed: bool) -> Result<(
         return Ok(());
     }
     crate::scanner::resolve_episode_title(&mut asset, &entity);
-    crate::scanner::resolve_issue_part(&mut asset, &entity);
     let entity_id = entity["id"].as_str().context("Invalid metadata identity")?.to_owned();
     let entity_id = entity_id.as_str();
     asset["entity_id"] = json!(entity_id);

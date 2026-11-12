@@ -67,26 +67,15 @@ pub fn variety_labelled(stem: &str) -> bool {
     ISSUE_PART.is_match(stem) || ((ISSUE.is_match(stem) || DATED.is_match(stem)) && BONUS.is_match(stem))
 }
 
-/// Variety shows publish each weekly issue ("第3期") in parts, "第3期(一)" to "第3期(四)", which
-/// TMDB numbers one after another through the season ("Episode 3 (Part 1)" is S03E10). Around
-/// them come bonus videos: performance cuts, high-score stages, spin-offs, previews ("纯享",
-/// "高分舞台", "衍生", "超长抢先", "先导片"). A part keeps its issue and part number for
-/// `resolve_issue_part`; a bonus video is a special, listed with the extras under its label.
+/// A variety show's weekly episode ("第3期") comes in parts, "第3期(一)" to "第3期(四)", and
+/// around them bonus videos: performance cuts, high-score stages, spin-offs, previews ("纯享",
+/// "高分舞台", "衍生", "超长抢先", "先导片"). A part is one episode number and one part number,
+/// named "S03E03 - Part 2"; a bonus video is a special, listed with the extras under its label.
 pub fn variety(asset: &mut Value, path: &Path, roots: &[&str]) {
     let Some(object) = asset.as_object_mut() else { return };
     for key in ["issue", "issue_part", "label"] { object.remove(key); }
     let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { return };
-    if let Some(found) = ISSUE_PART.captures(stem) {
-        let numeral = &found[2];
-        let part = numeral.parse::<u64>().ok()
-            .or_else(|| "一二三四五六七八九十".chars().position(|c| numeral.starts_with(c)).map(|i| i as u64 + 1));
-        if let (Ok(issue), Some(part)) = (found[1].parse::<u64>(), part) {
-            object.insert("issue".into(), json!(issue));
-            object.insert("issue_part".into(), json!(part));
-        }
-        return;
-    }
-    if !variety_labelled(stem) { return; }
+    if ISSUE_PART.is_match(stem) || !variety_labelled(stem) { return; }
     // The show's folder names the show; a library root does not.
     let folder = path.parent().filter(|parent| !roots.iter().any(|root| *parent == Path::new(root)))
         .and_then(|parent| parent.file_name()).and_then(|name| name.to_str());
@@ -106,35 +95,49 @@ pub fn variety(asset: &mut Value, path: &Path, roots: &[&str]) {
     if !label.is_empty() { object.insert("label".into(), json!(label)); }
 }
 
-/// The name a variety show's part goes by, from its file: "第2期(三)", or with the
-/// description some releases carry, "第5期(一) 小海进修情商课句句点黄渤". The provider's titles for
-/// such parts ("Episode 2 (Part 3)") only repeat the numbering, beside the episode number.
-pub fn part_name(path: &str) -> Option<String> {
-    let stem = Path::new(path).file_stem()?.to_str()?;
-    let found = ISSUE_PART.find(stem)?;
+/// The episode, part and description a variety show's file name states in Chinese:
+/// "2026-07-31 【正片】第5期(一) 小海进修情商课句句点黄渤【4K】" is episode 5, part 1, "小海进修情商课句句点黄渤".
+pub fn issue_part(stem: &str) -> Option<(u64, u64, String)> {
+    let found = ISSUE_PART.captures(stem)?;
+    let numeral = &found[2];
+    let part = numeral.parse::<u64>().ok()
+        .or_else(|| "一二三四五六七八九十".chars().position(|c| numeral.starts_with(c)).map(|i| i as u64 + 1))?;
     static NOISE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"【[^】]*】|\[[^\]]*\]|(?i)[-. ]*(?:4k|2160p|1080p|高码率|60fps)[-. ]*").expect("valid regex")
     });
-    let rest = NOISE.replace_all(&stem[found.end()..], " ");
+    let rest = NOISE.replace_all(&stem[found.get(0)?.end()..], " ");
     // A wrapper around the label ("20260710(第2期(一))") leaves its closing bracket behind.
     let rest = rest.trim().trim_start_matches([')', '）']).trim_matches(|c: char| c.is_whitespace() || "-_.".contains(c));
-    let label = found.as_str().split_whitespace().collect::<String>();
-    Some(if rest.is_empty() { label } else { format!("{label} {rest}") })
+    Some((found[1].parse().ok()?, part, rest.to_owned()))
 }
 
-/// The provider's episode number for a variety show's part ("第3期(二)"), when the provider
-/// names the season's episodes by issue and part ("Episode 3 (Part 2)"). Otherwise the
-/// file's own number stands.
-pub fn resolve_issue_part(asset: &mut Value, entity: &Value) {
-    if entity["kind"] != "tv" { return; }
-    let (Some(issue), Some(part), Some(season)) = (asset["issue"].as_u64(), asset["issue_part"].as_u64(), asset["season"].as_u64()) else { return };
-    static TITLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^episode\s+(\d+)\s*\(\s*part\s*(\d+)\s*\)$").expect("valid regex"));
-    let found: Vec<&Value> = entity["episodes"].as_array().into_iter().flatten()
-        .filter(|e| e["season"].as_u64() == Some(season))
-        .filter(|e| e["title"].as_str().and_then(|t| TITLE.captures(t.trim()))
-            .is_some_and(|c| c[1].parse::<u64>().ok() == Some(issue) && c[2].parse::<u64>().ok() == Some(part)))
-        .collect();
-    if let [episode] = found.as_slice() { asset["episode"] = episode["episode"].clone(); }
+static PART: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?:^|[^a-z0-9])s\d{1,2}[ ._-]*e\d{1,3}\s*-\s*part\s*(\d{1,2})(?:\s*-\s*(.+?))?\s*$").expect("valid regex")
+});
+
+/// The part of its episode a file is, from "S03E05 - Part 2" or "第5期(二)".
+pub fn part(name: &str) -> Option<u64> {
+    let stem = Path::new(name).file_stem().and_then(|s| s.to_str()).unwrap_or(name);
+    PART.captures(stem).and_then(|found| found[1].parse().ok()).or_else(|| issue_part(stem).map(|(_, part, _)| part))
+}
+
+/// What a part is called in the library: "Part 2", or with its description,
+/// "Part 1 · 小海进修情商课句句点黄渤". The provider's titles for such parts only repeat numbering.
+pub fn part_title(path: &str) -> Option<String> {
+    let stem = Path::new(path).file_stem()?.to_str()?;
+    let (part, rest) = match PART.captures(stem) {
+        Some(found) => (found[1].parse::<u64>().ok()?, found.get(2).map(|m| m.as_str().trim().to_owned()).unwrap_or_default()),
+        None => issue_part(stem).map(|(_, part, rest)| (part, rest))?,
+    };
+    Some(if rest.is_empty() { format!("Part {part}") } else { format!("Part {part} · {rest}") })
+}
+
+/// The library name for a downloaded variety-show part: "Show - S03E05 - Part 1 - description.mp4".
+pub fn part_file_name(title: &str, season: u64, stem: &str, extension: &str) -> Option<String> {
+    let (episode, part, rest) = issue_part(stem)?;
+    let rest = rest.replace(['/', ':'], " ");
+    Some(if rest.is_empty() { format!("{title} - S{season:02}E{episode:02} - Part {part}.{extension}") }
+        else { format!("{title} - S{season:02}E{episode:02} - Part {part} - {rest}.{extension}") })
 }
 
 pub fn video(path: &Path) -> bool {
@@ -494,51 +497,46 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
 mod tests {
     use super::*;
     #[test]
-    fn variety_parts_take_the_providers_numbers_and_bonus_videos_become_extras() {
+    fn variety_parts_are_one_episode_and_one_part_and_bonus_videos_are_extras() {
         let folder = "/TV/喜剧之王单口季";
         let roots = ["/Downloads", "/Movies", "/TV"];
-        // TMDB: 第1期 has five parts (E01–E05), later issues four (第2期 is E06–E09).
-        let mut episodes: Vec<Value> = (1..=5).map(|part| json!({"season":3,"episode":part,"title":format!("Episode 1 (Part {part})")})).collect();
-        episodes.extend((1..=4).map(|part| json!({"season":3,"episode":5 + part,"title":format!("Episode 2 (Part {part})")})));
-        episodes.push(json!({"season":0,"episode":61,"title":"S3 Stage EP1-1"}));
-        let entity = json!({"kind":"tv","episodes":episodes});
         let scan = |name: &str| {
             let path = PathBuf::from(format!("{folder}/{name}"));
-            let mut asset = json!({});
+            let mut asset = json!({"issue": 2});
             if let Some(found) = EPISODE.captures(name) {
                 asset["season"] = json!(found[1].parse::<u64>().unwrap());
                 asset["episode"] = json!(found[2].parse::<u64>().unwrap());
             }
             variety(&mut asset, &path, &roots);
-            resolve_issue_part(&mut asset, &entity);
             asset
         };
-        let part = scan("喜剧之王单口季 - S03E01 - 2026.07.04-第1期(四).mp4");
-        assert_eq!((part["season"].clone(), part["episode"].clone()), (json!(3), json!(4)));
-        let part = scan("喜剧之王单口季 - S03E02 - 2026.07.11--第2期(三).mp4");
-        assert_eq!(part["episode"], json!(8));
-        assert_eq!(scan("喜剧之王单口季 - S03E02 - 2026.07.11-第2期（四）.mp4")["episode"], json!(9));
-        // An issue the provider has not split keeps the file's own number.
-        assert_eq!(scan("喜剧之王单口季 - S03E06 - 2026.08.07-第6期(一).mp4")["episode"], json!(6));
-        let bonus = scan("喜剧之王单口季 - S03E03 - 2026.07.17-第3期纯享上集.mp4");
-        assert_eq!((bonus["season"].clone(), bonus["episode"].clone()), (json!(0), Value::Null));
-        assert_eq!(bonus["label"], "2026.07.17-第3期纯享上集");
-        assert!(bonus["series_name"].is_null());
-        // A dated bonus video without a number is found through its show's folder.
+        // A part keeps its own episode number; nothing renumbers it.
+        let p = scan("喜剧之王单口季 - S03E02 - Part 4.mp4");
+        assert_eq!((p["season"].clone(), p["episode"].clone(), p["issue"].clone()), (json!(3), json!(2), Value::Null));
+        assert_eq!(part("喜剧之王单口季 - S03E02 - Part 4.mp4"), Some(4));
+        assert_eq!(part("2026.07.11--第2期(四).mp4"), Some(4));
+        assert_eq!(part("Friends - S01E02.mkv"), None);
+        assert_eq!(part_title("/TV/X/喜剧之王单口季 - S03E02 - Part 4.mp4").as_deref(), Some("Part 4"));
+        assert_eq!(part_title("/TV/X/喜剧之王单口季 - S03E05 - Part 1 - 小海进修情商课句句点黄渤.mp4").as_deref(), Some("Part 1 · 小海进修情商课句句点黄渤"));
+        assert_eq!(part_title("/TV/X/Friends - S01E02.mkv"), None);
+        // Downloads are named the same way, whatever the release called them.
+        let named = |stem: &str| part_file_name("喜剧之王单口季", 3, stem, "mp4");
+        assert_eq!(named("2026.07.04-第1期(四)").as_deref(), Some("喜剧之王单口季 - S03E01 - Part 4.mp4"));
+        assert_eq!(named("20260710(第2期(一))").as_deref(), Some("喜剧之王单口季 - S03E02 - Part 1.mp4"));
+        assert_eq!(named("2026.08.21-第8期(一)-4K.高码率").as_deref(), Some("喜剧之王单口季 - S03E08 - Part 1.mp4"));
+        assert_eq!(named("2026.07.24-第4期（二）").as_deref(), Some("喜剧之王单口季 - S03E04 - Part 2.mp4"));
+        assert_eq!(named("2026-07-31 【正片】第5期(一) 小海进修情商课句句点黄渤【4K】").as_deref(),
+            Some("喜剧之王单口季 - S03E05 - Part 1 - 小海进修情商课句句点黄渤.mp4"));
+        assert_eq!(named("2026.07.17-第3期纯享上集"), None);
+        // Bonus videos are extras under their label; one without a number finds its show by folder.
+        let bonus = scan("喜剧之王单口季 - 2026.07.17-第3期纯享上集.mp4");
+        assert_eq!((bonus["season"].clone(), bonus["episode"].clone(), bonus["label"].clone(), bonus["series_name"].clone()),
+            (json!(0), Value::Null, json!("2026.07.17-第3期纯享上集"), json!("喜剧之王单口季")));
         let loose = scan("喜剧之王单口季 - 2026.07.21-通告日.mp4");
-        assert_eq!((loose["season"].clone(), loose["series_name"].clone(), loose["label"].clone()),
-            (json!(0), json!("喜剧之王单口季"), json!("2026.07.21-通告日")));
-        // Ordinary episodes and plain films are left alone.
+        assert_eq!((loose["season"].clone(), loose["label"].clone()), (json!(0), json!("2026.07.21-通告日")));
         let plain = scan("Friends - S01E02.mkv");
         assert_eq!((plain["season"].clone(), plain["episode"].clone(), plain["label"].clone()), (json!(1), json!(2), Value::Null));
-        let name = |file: &str| part_name(&format!("{folder}/{file}"));
-        assert_eq!(name("喜剧之王单口季 - S03E02 - 2026.07.11-第2期(三).mp4").as_deref(), Some("第2期(三)"));
-        assert_eq!(name("喜剧之王单口季 - S03E08 - 2026.08.21-第8期(一)-4K.高码率.mp4").as_deref(), Some("第8期(一)"));
-        assert_eq!(name("喜剧之王单口季 - S03E02 - 20260710(第2期(一)).mp4").as_deref(), Some("第2期(一)"));
-        assert_eq!(name("喜剧之王单口季 - S03E05 - 2026-07-31 【正片】第5期(一) 小海进修情商课句句点黄渤【4K】.mp4").as_deref(), Some("第5期(一) 小海进修情商课句句点黄渤"));
-        assert_eq!(name("Friends - S01E02.mkv"), None);
         assert!(!variety_labelled("The Pilot (2020)"));
-        assert!(variety_labelled("2026.08.21-第8期(一)-4K.高码率"));
     }
     #[test]
     fn pending_package_keeps_identity_and_matches_through_completion_and_move() {

@@ -356,7 +356,7 @@ pub fn retag_hev1(path: &Path) -> Result<usize> {
 }
 /// Whether a job holds several videos for the episode this one belongs to.
 fn in_parts_of(job: &Job, file: &JobFile) -> bool {
-    let number = |f: &JobFile| f.destination.file_name().and_then(|n| n.to_str()).map(episode).filter(|e| e.1.is_some());
+    let number = |f: &JobFile| f.destination.file_name().and_then(|n| n.to_str()).map(|n| (episode(n), crate::scanner::part(n))).filter(|(e, _)| e.1.is_some());
     number(file).is_some_and(|mine| job.files.iter().filter(|other| number(other) == Some(mine)).count() > 1)
 }
 /// Whether one copy of an episode is worth having over another, each given as its
@@ -716,6 +716,8 @@ impl Cloud {
         std::fs::read_dir(folder).into_iter().flatten().flatten().map(|entry| entry.path()).filter(|path| {
             let other = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             path.is_file() && VIDEO.is_match(other) && !other.starts_with('.') && { let (s, n) = episode(other); n == Some(number) && s.unwrap_or(1) == season.unwrap_or(1) }
+                // Parts of one episode are not copies of each other.
+                && crate::scanner::part(other) == crate::scanner::part(name)
         }).collect()
     }
     /// Whether a video on the drive should take the place of the library's copies of its
@@ -755,7 +757,8 @@ impl Cloud {
         let (season, Some(number)) = episode(name) else { return Vec::new() };
         let Some(assets) = s.db.lock().ok().and_then(|db| db.documents("assets").ok()) else { return Vec::new() };
         assets.into_iter().filter(|asset| asset["entity_id"] == entity && asset["role"] != "extra" && asset["episode"].as_u64() == Some(number)
-            && asset["season"].as_u64().unwrap_or(1) == season.unwrap_or(1) && asset["path"].as_str().is_some_and(|path| Path::new(path) != destination)).collect()
+            && asset["season"].as_u64().unwrap_or(1) == season.unwrap_or(1) && asset["path"].as_str().is_some_and(|path| Path::new(path) != destination)
+            && asset["path"].as_str().map(crate::scanner::part) == Some(crate::scanner::part(name))).collect()
     }
     /// Torrents that are trying to fetch episodes this job has delivered, found by name.
     /// A torrent that has barely started has no files the library could map to an
@@ -935,9 +938,14 @@ impl Cloud {
             let (stated, number) = episode(&path);
             let leaf = visible(path.rsplit('/').next().unwrap_or(&path));
             let stem = clean(leaf.rsplit_once('.').map_or(leaf.as_str(), |(stem, _)| stem));
+            // A variety show's part is one episode and one part ("S03E05 - Part 1"); its bonus
+            // videos keep their own label without a number, and the library lists them as extras.
+            let part = (!film).then(|| crate::scanner::part_file_name(&title, stated.unwrap_or(season), &stem, &extension)).flatten();
+            let bonus = !film && part.is_none() && crate::scanner::variety_labelled(&stem);
             let name = match number {
-                // A part or bonus video keeps its label even alone: "第7期(二)" is not 第7期.
-                Some(number) if !film && (shared.get(&(stated.unwrap_or(season), number)).copied().unwrap_or(0) > 1 || crate::scanner::variety_labelled(&stem)) =>
+                _ if part.is_some() => part.unwrap_or_default(),
+                _ if bonus => format!("{title} - {stem}.{extension}"),
+                Some(number) if !film && shared.get(&(stated.unwrap_or(season), number)).copied().unwrap_or(0) > 1 =>
                     format!("{title} - S{:02}E{number:02} - {stem}.{extension}", stated.unwrap_or(season)),
                 Some(number) if !film => format!("{title} - S{:02}E{number:02}.{extension}", stated.unwrap_or(season)),
                 _ if film => format!("{title}.{extension}"),
@@ -1188,8 +1196,8 @@ impl Cloud {
             let mapped = if present || in_parts_of(job, file) { Vec::new() } else { Self::mapped(s, entity.as_deref(), &file.destination) };
             // The job's own videos are parts or siblings, never rivals of one another; and an
             // episode that comes in parts is not weighed against a whole copy, whose size says nothing about it.
-            let in_parts = file.destination.file_name().and_then(|n| n.to_str()).map(episode).is_some_and(|mine| mine.1.is_some()
-                && job.files.iter().filter(|other| other.destination.file_name().and_then(|n| n.to_str()).map(episode) == Some(mine)).count() > 1);
+            let key = |f: &JobFile| f.destination.file_name().and_then(|n| n.to_str()).map(|n| (episode(n), crate::scanner::part(n)));
+            let in_parts = key(file).is_some_and(|mine| mine.0.1.is_some() && job.files.iter().filter(|other| key(other) == Some(mine)).count() > 1);
             let exists = |path: &PathBuf| path.is_file() && *path != file.destination && !in_parts && !job.files.iter().any(|other| other.destination == *path);
             let mut rivals: Vec<PathBuf> = if present { Vec::new() } else { Self::rivals(&file.destination) };
             rivals.extend(mapped.iter().filter(|asset| asset["available"] == true && asset["complete"] != false).filter_map(|asset| asset["path"].as_str().map(PathBuf::from)));
