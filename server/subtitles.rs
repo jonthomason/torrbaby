@@ -320,10 +320,60 @@ pub fn webvtt(cues: &[TimedCue]) -> String {
 /// Amortize native session startup while retaining bounded JSON expansion.
 pub fn translation_batch_len(cues: &[TimedCue]) -> usize {
     let mut bytes = 0;
-    cues.iter().take(32).take_while(|cue| {
+    let count = cues.iter().take(32).take_while(|cue| {
         bytes += cue.text.len();
         bytes <= 128 * 1024
-    }).count()
+    }).count();
+    // A batch does not end in the middle of a sentence that runs on into the next line.
+    let mut end = count;
+    while end < cues.len() && end < count + 4 && continues(&cues[end - 1], &cues[end]) { end += 1; }
+    end
+}
+
+/// Whether a Chinese subtitle line runs on into the next: burned-in subtitles split one
+/// sentence over short lines with no punctuation ("还指望我对你们赵家" / "感恩戴德吗"), a
+/// second or so apart. A line ending in a full stop or a final particle (吗, 呢, 吧…) ends its sentence.
+fn continues(line: &TimedCue, next: &TimedCue) -> bool {
+    let text = line.text.trim();
+    let han = |t: &str| t.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c));
+    han(text) && han(&next.text)
+        && !text.ends_with(['。', '！', '？', '!', '?', '…', '」', '”', '吗', '呢', '吧', '啊', '呀', '嘛', '哦', '啦', '罢'])
+        && next.start_ms >= line.end_ms && next.start_ms - line.end_ms <= 1500
+        && text.chars().count() + next.text.trim().chars().count() <= 40
+}
+
+/// Lines translated together: runs of up to four Chinese lines that form one sentence.
+fn sentence_groups(cues: &[TimedCue], chinese: bool) -> Vec<std::ops::Range<usize>> {
+    let mut groups = Vec::new();
+    let mut start = 0;
+    while start < cues.len() {
+        let mut end = start + 1;
+        while chinese && end < cues.len() && end - start < 4 && continues(&cues[end - 1], &cues[end]) { end += 1; }
+        groups.push(start..end);
+        start = end;
+    }
+    groups
+}
+
+/// A sentence's translation spread back over the lines it came from, in proportion to
+/// each line's share of the original, broken between words. None when it will not divide.
+fn split_translation(text: &str, weights: &[usize]) -> Option<Vec<String>> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.len() < weights.len() { return None; }
+    let total: usize = weights.iter().sum::<usize>().max(1);
+    let mut parts = Vec::new();
+    let mut taken = 0;
+    let mut share = 0;
+    for (i, weight) in weights.iter().enumerate() {
+        share += weight;
+        let left = weights.len() - i - 1;
+        let end = if left == 0 { words.len() } else {
+            ((words.len() * share + total / 2) / total).clamp(taken + 1, words.len() - left)
+        };
+        parts.push(words[taken..end].join(" "));
+        taken = end;
+    }
+    Some(parts)
 }
 
 pub async fn translate_cues(
@@ -332,31 +382,48 @@ pub async fn translate_cues(
     target: &str,
     cues: &mut [TimedCue],
 ) -> Result<()> {
-    let mut remaining = cues;
-    while !remaining.is_empty() {
-        let count = translation_batch_len(remaining);
+    // Chinese lines that make one sentence are translated as one, then spread back
+    // over their original timings; a line out of context translates badly.
+    let groups = sentence_groups(cues, source.starts_with("zh"));
+    let texts: Vec<String> = groups.iter().map(|group| {
+        if group.len() == 1 { cues[group.start].text.clone() }
+        else { cues[group.clone()].iter().map(|cue| cue.text.trim()).collect::<Vec<_>>().join("，") }
+    }).collect();
+    let mut translated: Vec<String> = Vec::with_capacity(texts.len());
+    let mut at = 0;
+    while at < texts.len() {
+        let mut bytes = 0;
+        let count = texts[at..].iter().take(32).take_while(|text| { bytes += text.len(); bytes <= 128 * 1024 }).count();
         ensure!(count > 0, "Subtitle cue exceeds translation batch limit");
-        let (batch, rest) = remaining.split_at_mut(count);
-        remaining = rest;
         let request = TranslationRequest {
             source: source.into(),
             target: target.into(),
-            cues: batch
-                .iter()
-                .enumerate()
-                .map(|(i, cue)| Cue {
-                    id: i.to_string(),
-                    text: cue.text.clone(),
-                })
-                .collect(),
+            cues: texts[at..at + count].iter().enumerate().map(|(i, text)| Cue { id: i.to_string(), text: text.clone() }).collect(),
         };
         let response = translate(helper, request).await?;
-        for (cue, translated) in batch
-            .iter_mut()
-            .zip(response.cues.context("Missing translated cues")?)
-        {
-            cue.text = translated.text;
+        let batch = response.cues.context("Missing translated cues")?;
+        ensure!(batch.len() == count, "Missing translated cues");
+        translated.extend(batch.into_iter().map(|cue| cue.text));
+        at += count;
+    }
+    let mut alone: Vec<usize> = Vec::new();
+    for (group, text) in groups.iter().zip(&translated) {
+        if group.len() == 1 { cues[group.start].text = text.clone(); continue; }
+        let weights: Vec<usize> = cues[group.clone()].iter().map(|cue| cue.text.trim().chars().count().max(1)).collect();
+        match split_translation(text, &weights) {
+            Some(parts) => for (cue, part) in cues[group.clone()].iter_mut().zip(parts) { cue.text = part; },
+            None => alone.extend(group.clone()),
         }
+    }
+    // A sentence whose translation will not divide over its lines: each line on its own, as before.
+    for chunk in alone.chunks(32) {
+        let request = TranslationRequest {
+            source: source.into(),
+            target: target.into(),
+            cues: chunk.iter().enumerate().map(|(i, &index)| Cue { id: i.to_string(), text: cues[index].text.clone() }).collect(),
+        };
+        let response = translate(helper, request).await?;
+        for (&index, cue) in chunk.iter().zip(response.cues.context("Missing translated cues")?) { cues[index].text = cue.text; }
     }
     Ok(())
 }
@@ -569,6 +636,23 @@ pub fn read_sidecar(media: &Path, id: &str) -> Result<String> {
 
 #[cfg(test)]
 mod sidecar_tests {
+    #[test]
+    fn chinese_lines_of_one_sentence_are_translated_together_and_spread_back() {
+        let cue = |start: u64, end: u64, text: &str| TimedCue { start_ms: start, end_ms: end, text: text.into() };
+        let cues = [cue(0, 1000, "还指望我对你们赵家"), cue(1050, 2000, "感恩戴德吗"), cue(4000, 4500, "告辞吧"),
+            cue(5100, 6000, "好大的威风啊。"), cue(6050, 7000, "不过当初")];
+        assert_eq!(sentence_groups(&cues, true), vec![0..2, 2..3, 3..4, 4..5]);
+        assert_eq!(sentence_groups(&cues, false).len(), 5);
+        let parts = split_translation("And you still expect me to be grateful to your Zhao family?", &[9, 5]).unwrap();
+        assert_eq!(parts.len(), 2);
+        assert!(parts.iter().all(|p| !p.is_empty()));
+        assert_eq!(parts.join(" "), "And you still expect me to be grateful to your Zhao family?");
+        assert_eq!(split_translation("Go.", &[3, 3]), None);
+        // A batch is not cut inside a sentence.
+        let long: Vec<TimedCue> = (0..34).map(|i| cue(i * 1000, i * 1000 + 950, "台词")).collect();
+        assert_eq!(translation_batch_len(&long), 34);
+    }
+
     use super::*;
     #[test]
     fn sdh_is_recognized_from_sound_descriptions_and_speaker_labels() {
