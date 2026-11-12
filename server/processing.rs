@@ -35,7 +35,13 @@ fn sign_off(db:&Database,id:&str,revision:&str)->Result<bool> {
     // idle, an English artifact, or an empty job list can never sign off a file.
     let complete=db.connection.execute("UPDATE media_processing SET state='ready',stage='complete',completed_at=?,updated=?,error=NULL WHERE asset_id=? AND revision=? AND inventory_state='ready' AND subtitles_state IN ('ready','not_applicable','skipped') AND credits_state IN ('ready','not_applicable','skipped')",rusqlite::params![now(),now(),id,revision])?==1;
     // Skipped stages stay on record (unresolved) so their errors can be mined for fixes.
-    if complete {db.connection.execute("UPDATE processing_failures SET resolved_at=?,resolution='completed' WHERE asset_id=? AND revision=? AND resolved_at IS NULL AND stage NOT LIKE '%_skipped'",rusqlite::params![now(),id,revision])?;}
+    if complete {
+        // A skipped stage stays on record while it is still skipped; once it succeeds it is resolved too.
+        db.connection.execute("UPDATE processing_failures SET resolved_at=?,resolution='completed' WHERE asset_id=? AND revision=? AND resolved_at IS NULL \
+            AND (stage NOT LIKE '%_skipped' \
+              OR (stage='subtitles_skipped' AND (SELECT subtitles_state FROM media_processing WHERE asset_id=processing_failures.asset_id)!='skipped') \
+              OR (stage='credits_skipped' AND (SELECT credits_state FROM media_processing WHERE asset_id=processing_failures.asset_id)!='skipped'))",rusqlite::params![now(),id,revision])?;
+    }
     Ok(complete)
 }
 /// Set when the server begins shutting down, so work its helpers lose is requeued without an error.
@@ -491,6 +497,10 @@ mod tests {
         // The skip stays on record, unresolved, for mining.
         let logged=db.rows("SELECT stage,resolved_at FROM processing_failures",[])?;
         assert_eq!((logged[0]["stage"].as_str(),logged[0]["resolved_at"].is_null()),(Some("credits_skipped"),true));
+        // When a later attempt succeeds at that stage, the skip is resolved.
+        db.connection.execute("UPDATE media_processing SET credits_state='ready',state='queued' WHERE asset_id='episode'",[])?;
+        assert!(sign_off(&db,"episode","r1")?);
+        assert!(!db.rows("SELECT resolved_at FROM processing_failures",[])?[0]["resolved_at"].is_null());
         assert_eq!(db.rows("SELECT state FROM media_processing WHERE asset_id='episode'",[])?[0]["state"],"ready");
         Ok(())
     }
