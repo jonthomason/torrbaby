@@ -1,4 +1,3 @@
-#if !os(tvOS)
 import SwiftUI
 import CoreImage.CIFilterBuiltins
 #if os(iOS)
@@ -253,5 +252,4 @@ private struct CameraScanner: UIViewControllerRepresentable {
         controller.queue.async { [capture = controller.capture] in capture.stopRunning() }
     }
 }
-#endif
 #endif
