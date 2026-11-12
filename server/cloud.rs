@@ -808,6 +808,14 @@ impl Cloud {
             };
             JobFile { destination: folder.join(name), path, size, done: false, outcome: None }
         }).collect();
+        let files: Vec<JobFile> = files;
+        // Asked for twice (a second press of Download, or another device): the videos that a
+        // waiting or running download of this share already covers are not queued again.
+        let covered: Option<String> = self.jobs.lock().ok().and_then(|jobs| jobs.iter()
+            .find(|job| matches!(job.state.as_str(), "queued" | "saving" | "downloading" | "retrying") && SHARE.captures(&job.url).map(|c| c[1].to_owned()) == SHARE.captures(url).map(|c| c[1].to_owned())
+                && files.iter().all(|wanted| job.files.iter().any(|held| held.path == wanted.path)))
+            .map(|job| job.id.clone()));
+        if let Some(existing) = covered { return Ok(json!({"job_id": existing, "already_queued": true})); }
         let job = Job { id: uuid::Uuid::new_v4().simple().to_string(), url: url.to_owned(), title, state: "queued".into(), files, error: None, created: now(), attempts: 0 };
         let id = job.id.clone();
         { let mut jobs = self.jobs.lock().map_err(|_| anyhow::anyhow!("Cloud downloads unavailable"))?; jobs.push(job); self.persist(&jobs); }
