@@ -498,7 +498,10 @@ impl Cloud {
         let contents = self.contents(&id, &token).await?;
         // A result for one copy of a share that holds several takes that copy's videos only.
         let copy: Option<Vec<String>> = body["copy"].as_str().filter(|key| !key.is_empty()).map(|key| {
-            Self::videos(&contents, "").0.into_iter().filter(|video| video["copy"] == key).filter_map(|video| video["path"].as_str().map(str::to_owned)).collect()
+            let mine: Vec<Value> = Self::videos(&contents, "").0.into_iter().filter(|video| video["copy"] == key).collect();
+            // The whole copy means its episodes: a trailer beside them is not wanted unasked.
+            let numbered = wanted.is_none() && mine.iter().any(|video| video["episode"].is_u64());
+            mine.into_iter().filter(|video| !numbered || video["episode"].is_u64()).filter_map(|video| video["path"].as_str().map(str::to_owned)).collect()
         });
         let chosen: Vec<(String, u64)> = contents.into_iter()
             .filter(|(path, entry)| VIDEO.is_match(path) && entry["size"].as_u64().unwrap_or(0) >= 50_000_000)

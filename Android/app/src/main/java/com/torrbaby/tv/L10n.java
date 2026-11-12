@@ -11,10 +11,13 @@ final class L10n {
   private static Context localized;
   private static final Map<String,Integer> IDS = new HashMap<>();
   static {
+    IDS.put("%d episodes", R.string.ui_bb4f08e94b1c);
     IDS.put("%d episodes found", R.string.ui_0290129bc977);
+    IDS.put("%d min", R.string.ui_22cb980ab05c);
     IDS.put("%d min remaining", R.string.ui_b909e7d6e8c9);
     IDS.put("%d missing episodes on Quark Drive", R.string.ui_66bd1c71457f);
     IDS.put("%d of %d downloaded", R.string.ui_24d1fa07b247);
+    IDS.put("%d of %d episodes", R.string.ui_2dd21150b9d0);
     IDS.put("%d of %d releases", R.string.ui_5f03e85d806c);
     IDS.put("%d of %d videos", R.string.ui_cf5dae5645db);
     IDS.put("%d releases", R.string.ui_b4d8b30e51a8);
@@ -25,6 +28,7 @@ final class L10n {
     IDS.put("%d videos", R.string.ui_712d2e5c0047);
     IDS.put("%dh %dm left", R.string.ui_660a76df86fd);
     IDS.put("%dm left", R.string.ui_659748ef61cf);
+    IDS.put("1 episode", R.string.ui_54fc19e5c9f4);
     IDS.put("1 seed", R.string.ui_8256cd5880d0);
     IDS.put("1 video", R.string.ui_9fa45ef1a516);
     IDS.put("1h", R.string.ui_e9c9f7bc39bb);
@@ -53,6 +57,7 @@ final class L10n {
     IDS.put("Adding…", R.string.ui_ffb2e628b0e9);
     IDS.put("AirDrop is not available on this Mac.", R.string.ui_706a6ccef282);
     IDS.put("All", R.string.ui_6a72085653e4);
+    IDS.put("All %d aired episodes", R.string.ui_45133f937e3e);
     IDS.put("All clear", R.string.ui_360e1182021a);
     IDS.put("All episodes", R.string.ui_10c927f29963);
     IDS.put("All genres", R.string.ui_09ac5f615d7d);
@@ -247,6 +252,7 @@ final class L10n {
     IDS.put("Extracting subtitles", R.string.ui_f5febee5e9e1);
     IDS.put("Extracting text subtitles", R.string.ui_de30de94a734);
     IDS.put("Extras", R.string.ui_3b7782ff05e2);
+    IDS.put("Extras: %d", R.string.ui_af670b91a4a7);
     IDS.put("FILES", R.string.ui_9fb4f1d17ef8);
     IDS.put("Failed", R.string.ui_09fef5d8d9a3);
     IDS.put("Fallback", R.string.ui_b4a100ebc4c1);
@@ -344,6 +350,7 @@ final class L10n {
     IDS.put("Membership", R.string.ui_53bc9670e723);
     IDS.put("Menu bar", R.string.ui_2f28e570a801);
     IDS.put("Metadata is being gathered on Diamond", R.string.ui_9188f98eea10);
+    IDS.put("Missing", R.string.ui_92185dc52f71);
     IDS.put("Mono", R.string.ui_c5c5533844c5);
     IDS.put("Monospace", R.string.ui_216fcddff2f9);
     IDS.put("More", R.string.ui_4bab2d8fe13f);
@@ -425,6 +432,7 @@ final class L10n {
     IDS.put("Pause download", R.string.ui_1a699ae89a2c);
     IDS.put("Paused", R.string.ui_c7dfb6f1d9c5);
     IDS.put("Peers connected, but no activity for over 5 minutes", R.string.ui_32fbb44008c1);
+    IDS.put("Per episode", R.string.ui_b719891b0883);
     IDS.put("Permanently delete these files?", R.string.ui_eed277a1aa9d);
     IDS.put("Permanently delete this torrent’s downloaded files, including partial downloads.", R.string.ui_e9e82aac397b);
     IDS.put("Personal watch history and downloaded copies on other devices are kept.", R.string.ui_01b2675f9904);
@@ -647,6 +655,7 @@ final class L10n {
     IDS.put("The entire package will be hidden now, continue seeding, and be permanently deleted when seeding finishes.", R.string.ui_fa9822b1acbe);
     IDS.put("The file changed. Remove this download and add it again.", R.string.ui_b540d8e8df09);
     IDS.put("The saved connection could not be opened.", R.string.ui_d3fdb91c3f77);
+    IDS.put("The series has %d", R.string.ui_e075008957d5);
     IDS.put("The server did not supply this torrent's identity.", R.string.ui_9b8b91a1710b);
     IDS.put("The server is deleting this package.", R.string.ui_03a02769fe24);
     IDS.put("The server is taking longer than expected. Refresh to check the result.", R.string.ui_201454323279);

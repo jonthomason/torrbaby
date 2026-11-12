@@ -184,8 +184,49 @@ public final class TorrentSearchActivity extends Activity {
     return m.find()?Integer.parseInt(m.group(1)):0;
   }
   private static String shareUrl(JSONObject item) { return item.optJSONArray("sources").optJSONObject(0).optString("url"); }
+  /** "E01–E11 E13–E34": runs of consecutive episodes. */
+  private static String ranges(JSONArray numbers){
+    List<Integer> all=new ArrayList<>();for(int i=0;numbers!=null&&i<numbers.length();i++)all.add(numbers.optInt(i));Collections.sort(all);
+    List<String> runs=new ArrayList<>();int start=-1,end=-1;
+    for(int n:all){if(start>=0&&n<=end+1){end=Math.max(end,n);continue;}
+      if(start>=0)runs.add(start==end?String.format(Locale.ROOT,"E%02d",start):String.format(Locale.ROOT,"E%02d–E%02d",start,end));start=end=n;}
+    if(start>=0)runs.add(start==end?String.format(Locale.ROOT,"E%02d",start):String.format(Locale.ROOT,"E%02d–E%02d",start,end));
+    return runs.size()>5?String.join(" ",runs.subList(0,5))+" …":String.join(" ",runs);
+  }
+  /** Which episodes a cloud copy holds, against the series when it is known: "Complete · 34 episodes", "33 of 34 episodes · Missing E29". */
+  private static String cloudEpisodes(JSONObject cloud){
+    JSONArray held=cloud.optJSONArray("episodes");int count=held==null?0:held.length();
+    if(count==0){int videos=cloud.optInt("video_count");return videos==1?L10n.t("1 video"):String.format(L10n.locale(),L10n.t("%d videos"),videos);}
+    List<String> parts=new ArrayList<>();
+    if(cloud.optInt("season")>1)parts.add(String.format(L10n.locale(),L10n.t("Season %d"),cloud.optInt("season")));
+    int aired=cloud.optInt("aired"),total=cloud.optInt("total");JSONArray missing=cloud.optJSONArray("missing");int absent=missing==null?0:missing.length();
+    if(cloud.optBoolean("beyond")&&total>0){parts.add(String.format(L10n.locale(),L10n.t("%d episodes"),count));parts.add(String.format(L10n.locale(),L10n.t("The series has %d"),total));}
+    else if(aired>0){
+      if(cloud.optBoolean("complete"))parts.add(String.format(L10n.locale(),L10n.t(aired==total?"Complete · %d episodes":"All %d aired episodes"),aired));
+      else{parts.add(String.format(L10n.locale(),L10n.t("%d of %d episodes"),aired-absent,aired));parts.add(absent<=count?L10n.t("Missing")+" "+ranges(missing):ranges(held));}
+    } else {parts.add(count==1?L10n.t("1 episode"):String.format(L10n.locale(),L10n.t("%d episodes"),count));parts.add(ranges(held));}
+    if(cloud.optInt("extras")>0)parts.add(String.format(L10n.locale(),L10n.t("Extras: %d"),cloud.optInt("extras")));
+    return String.join(" · ",parts);
+  }
+  /** A cloud copy's picture, sound and size per episode. */
+  private String cloudQuality(JSONObject cloud){
+    List<String> parts=new ArrayList<>();JSONArray pictures=cloud.optJSONArray("pictures");
+    if(pictures!=null&&pictures.length()>1){List<String> sizes=new ArrayList<>();for(int i=0;i<pictures.length();i++)sizes.add(pictures.optJSONObject(i).optString("resolution")+" ×"+pictures.optJSONObject(i).optInt("count"));parts.add(String.join(", ",sizes));}
+    else if(!cloud.isNull("resolution"))parts.add(cloud.optString("resolution"));
+    if(!cloud.isNull("hdr"))parts.add(cloud.optString("hdr"));
+    if(cloud.optInt("fps")>=49)parts.add(cloud.optInt("fps")+" fps");
+    String audio=cloud.isNull("audio")?"":cloud.optString("audio");
+    if(audio.equals("atmos"))parts.add(L10n.t("Dolby Atmos"));else if(audio.equals("stereo"))parts.add(L10n.t("Stereo"));else if(!audio.isEmpty())parts.add(L10n.t("Surround")+" "+audio);
+    if(!cloud.isNull("codec"))parts.add(cloud.optString("codec"));
+    if(cloud.optInt("video_count")>1&&cloud.optLong("total_bytes")>0)parts.add(L10n.t("Per episode")+" "+android.text.format.Formatter.formatFileSize(this,cloud.optLong("total_bytes")/cloud.optInt("video_count")));
+    double mbps=cloud.optDouble("mbps",0);if(mbps>0)parts.add(String.format(Locale.ROOT,mbps>=9.95?"%.0f Mb/s":"%.1f Mb/s",mbps));
+    if(cloud.optInt("minutes")>0)parts.add(String.format(L10n.locale(),L10n.t("%d min"),cloud.optInt("minutes")));
+    return String.join(" · ",parts);
+  }
   private String summary(JSONObject item) {
     List<String> parts=new ArrayList<>();
+    JSONObject cloud=item.optJSONObject("cloud");
+    if(cloud!=null){parts.add(cloudEpisodes(cloud));if(!item.isNull("size_bytes"))parts.add(android.text.format.Formatter.formatFileSize(this,item.optLong("size_bytes")));return String.join(" · ",parts);}
     if(isCloud(item)&&item.optInt("video_count")>0)parts.add(item.optInt("video_count")==1?L10n.t("1 video"):String.format(L10n.locale(),L10n.t("%d videos"),item.optInt("video_count")));
     if(!item.isNull("size_bytes"))parts.add(android.text.format.Formatter.formatFileSize(this,item.optLong("size_bytes")));
     else if(!item.isNull("size_label") && !item.optString("size_label").isEmpty())parts.add(item.optString("size_label"));
@@ -195,6 +236,8 @@ public final class TorrentSearchActivity extends Activity {
     return String.join(" · ",parts);
   }
   private static String title(JSONObject item) {
+    JSONObject cloud=item.optJSONObject("cloud");
+    if(cloud!=null&&!cloud.isNull("show")&&!cloud.optString("show").isEmpty())return cloud.optString("show");
     String name=item.optString("name");
     if(name.startsWith("[BT下载][")) { int end=name.indexOf(']',7); if(end>7)return name.substring(7,end); }
     int bracket=name.indexOf('[');
@@ -241,7 +284,13 @@ public final class TorrentSearchActivity extends Activity {
       LinearLayout content=Ui.column(TorrentSearchActivity.this);
       TextView title=Ui.title(TorrentSearchActivity.this,title(item),20);title.setMaxLines(2);Ui.add(content,title,-1,-2);
       String info=summary(item);if(!info.isEmpty())Ui.add(content,Ui.text(TorrentSearchActivity.this,info,16,Ui.ACCENT),-1,-2);
-      Ui.add(content,Ui.text(TorrentSearchActivity.this,tags(item),13,Ui.MUTED),-1,-2);
+      JSONObject cloud=item.optJSONObject("cloud");
+      if(cloud!=null){
+        // Picture and sound, then the sharer's own description and when it was shared.
+        Ui.add(content,Ui.text(TorrentSearchActivity.this,cloudQuality(cloud),13,Ui.MUTED),-1,-2);
+        TextView said=Ui.text(TorrentSearchActivity.this,item.optString("name")+(item.isNull("added")||item.optString("added").isEmpty()?"":" · "+item.optString("added").substring(0,Math.min(10,item.optString("added").length()))),12,Ui.MUTED);
+        said.setMaxLines(1);said.setEllipsize(android.text.TextUtils.TruncateAt.END);Ui.add(content,said,-1,-2);
+      } else Ui.add(content,Ui.text(TorrentSearchActivity.this,tags(item),13,Ui.MUTED),-1,-2);
       row.addView(content,new LinearLayout.LayoutParams(0,-2,1));
       return row;
     }
@@ -251,6 +300,8 @@ public final class TorrentSearchActivity extends Activity {
     if(item==null)return;selectedItem=item;inDetail=true;int request=++generation;
     LinearLayout root=page();TextView name=Ui.title(this,title(item),24);name.setMaxLines(3);Ui.add(root,name,-1,-2);
     Ui.gap(root,8);Ui.add(root,Ui.text(this,summary(item),14,Ui.MUTED),-1,30);
+    JSONObject copy=item.optJSONObject("cloud");String copyKey=copy==null||copy.isNull("key")?"":copy.optString("key");
+    if(copy!=null){Ui.add(root,Ui.text(this,cloudQuality(copy),13,Ui.MUTED),-1,-2);Ui.add(root,Ui.text(this,item.optString("name"),12,Ui.MUTED),-1,-2);Ui.gap(root,6);}
     LinearLayout actions=Ui.row(this);Ui.add(actions,Ui.button(this,L10n.t("Back"),this::onBackPressed),100,44);Ui.gap(actions,12);
     EditText saveAs=new EditText(this);saveAs.setSingleLine(true);saveAs.setText(libraryName(title(item)));saveAs.setTextColor(Ui.TEXT);saveAs.setHint(L10n.t("Save as"));saveAs.setHintTextColor(Ui.MUTED);
     actions.addView(saveAs,new LinearLayout.LayoutParams(0,Ui.dp(this,46),1));Ui.gap(actions,12);
@@ -269,7 +320,10 @@ public final class TorrentSearchActivity extends Activity {
           for(int i=0;i<shareFiles[0].length();i++){JSONObject f=shareFiles[0].optJSONObject(i);if(!f.isNull("episode"))episodic=true;
             if(checked.get(i)){chosen.put(f.optString("path"));if(!f.isNull("season"))seasons.add(f.optInt("season"));}}
           if(chosen.length()==0){Toast.makeText(this,L10n.t("Choose videos to add"),Toast.LENGTH_SHORT).show();return;}
-          body.put("files",chosen);if(seasons.size()==1)body.put("season",seasons.iterator().next());else if(seasons.isEmpty()&&seasonIn(item.optString("name"))>0)body.put("season",seasonIn(item.optString("name")));if(episodic)body.put("kind","tv");
+          body.put("files",chosen);if(seasons.size()==1)body.put("season",seasons.iterator().next());else if(seasons.isEmpty()&&copy!=null&&copy.optInt("season")>0)body.put("season",copy.optInt("season"));else if(seasons.isEmpty()&&seasonIn(item.optString("name"))>0)body.put("season",seasonIn(item.optString("name")));if(episodic)body.put("kind","tv");
+        } else if(!copyKey.isEmpty()){
+          // Without the file list the server still takes this copy alone, not the whole share.
+          body.put("copy",copyKey);if(copy.optInt("season")>0)body.put("season",copy.optInt("season"));
         }
         if(body.optString("title").isEmpty())return;
         add.setEnabled(false);add.setText(L10n.t("Adding…"));
@@ -287,6 +341,8 @@ public final class TorrentSearchActivity extends Activity {
       JSONObject found=share;
       runOnUiThread(()->{if(isDestroyed()||request!=generation)return;
         JSONArray entries=found==null?null:found.optJSONArray("files");
+        // The videos of this result's copy; a share may hold the series several times over.
+        if(entries!=null&&!copyKey.isEmpty()){JSONArray mine=new JSONArray();for(int i=0;i<entries.length();i++)if(copyKey.equals(entries.optJSONObject(i).optString("copy")))mine.put(entries.optJSONObject(i));entries=mine;}
         if(entries==null||entries.length()==0){note.setText(L10n.t("This share’s file list is no longer available. Add brings in every video it holds."));return;}
         shareFiles[0]=entries;List<String> labels=new ArrayList<>();
         for(int i=0;i<entries.length();i++){JSONObject f=entries.optJSONObject(i);
@@ -294,7 +350,9 @@ public final class TorrentSearchActivity extends Activity {
           labels.add((episode.isEmpty()?"":episode+" · ")+f.optString("name")+(f.isNull("size_bytes")?"":"  ·  "+android.text.format.Formatter.formatFileSize(this,f.optLong("size_bytes"))));}
         note.setText(String.format(L10n.locale(),L10n.t("%d videos"),entries.length()));
         files.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_list_item_multiple_choice,labels){public View getView(int p,View old,ViewGroup parent){TextView row=(TextView)super.getView(p,old,parent);row.setTextColor(Ui.TEXT);row.setTextSize(14);return row;}});
-        for(int i=0;i<entries.length();i++)files.setItemChecked(i,true);
+        // Trailers and extras are listed but not chosen for you.
+        boolean numbered=false;for(int i=0;i<entries.length();i++)if(!entries.optJSONObject(i).isNull("episode"))numbered=true;
+        for(int i=0;i<entries.length();i++)files.setItemChecked(i,!numbered||!entries.optJSONObject(i).isNull("episode"));
       });});
   }
   private void details(JSONObject item) {

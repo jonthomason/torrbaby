@@ -36,6 +36,92 @@ struct TorrentReleaseHints: Decodable {
     }
     var summary: String { ([resolution, videoCodec, releaseSource].compactMap { $0 } + audio + languages).joined(separator: " · ") }
 }
+/// One copy of a series inside a cloud share, as the server measured it: sharers often
+/// bundle the same episodes in several qualities, and each is its own search result.
+struct CloudCopy: Decodable {
+    struct Picture: Decodable { let resolution: String; let count: Int }
+    var key: String? = nil
+    var folder: String? = nil
+    var resolution: String? = nil
+    /// Every picture size in the set with how many videos have it, most common first.
+    var pictures: [Picture]? = nil
+    var fps: Int? = nil
+    var hdr: String? = nil
+    var codec: String? = nil
+    /// "atmos", "5.1", "7.1" or "stereo", as the share's names state it; the drive does not measure sound.
+    var audio: String? = nil
+    var season: Int? = nil
+    var episodes: [Int]? = nil
+    /// Videos with no episode number: trailers and extras.
+    var extras: Int? = nil
+    var videoCount: Int? = nil
+    var totalBytes: Int64? = nil
+    var minutes: Int? = nil
+    var mbps: Double? = nil
+    /// The season's episodes aired so far and in all, when the series is known.
+    var aired: Int? = nil
+    var total: Int? = nil
+    var missing: [Int]? = nil
+    var complete: Bool? = nil
+    /// Numbered past the series' last episode: another cut, whose numbers will not line up.
+    var beyond: Bool? = nil
+    /// The series' own title.
+    var show: String? = nil
+
+    /// "E01–E11 E13–E34": runs of consecutive episodes.
+    static func ranges(_ numbers: [Int], limit: Int = 5) -> String {
+        var runs: [(Int, Int)] = []
+        for number in numbers.sorted() {
+            if let last = runs.last, number <= last.1 + 1 { runs[runs.count - 1].1 = max(last.1, number) } else { runs.append((number, number)) }
+        }
+        let text = runs.prefix(limit).map { $0.0 == $0.1 ? String(format: "E%02d", $0.0) : String(format: "E%02d–E%02d", $0.0, $0.1) }
+        return (text + (runs.count > limit ? ["…"] : [])).joined(separator: " ")
+    }
+    /// Which episodes the copy holds, against the series when it is known:
+    /// "Complete · 34 episodes", "33 of 34 episodes · Missing E29", "12 episodes · E01–E12".
+    var episodesLine: String {
+        let held = episodes ?? []
+        guard !held.isEmpty else { return (videoCount ?? 0) == 1 ? L10n.text("1 video") : L10n.format("%d videos", videoCount ?? 0) }
+        var parts: [String] = []
+        if let season, season > 1 { parts.append(L10n.format("Season %d", season)) }
+        if beyond == true, let total {
+            parts += [L10n.format("%d episodes", held.count), L10n.format("The series has %d", total)]
+        } else if let aired, aired > 0 {
+            let absent = missing ?? []
+            if complete == true { parts.append(aired == total ? L10n.format("Complete · %d episodes", aired) : L10n.format("All %d aired episodes", aired)) }
+            else {
+                parts.append(L10n.format("%d of %d episodes", aired - absent.count, aired))
+                // Whichever is shorter to read: what is absent, or what is there.
+                parts.append(absent.count <= held.count ? L10n.text("Missing") + " " + Self.ranges(absent) : Self.ranges(held))
+            }
+        } else {
+            parts += [held.count == 1 ? L10n.text("1 episode") : L10n.format("%d episodes", held.count), Self.ranges(held)]
+        }
+        if let extras, extras > 0 { parts.append(L10n.format("Extras: %d", extras)) }
+        return parts.joined(separator: " · ")
+    }
+    /// Picture, sound and size per episode: "2160p · Dolby Vision · Surround 5.1 · Per episode 1.8 GB · 5.1 Mb/s · 48 min".
+    var qualityLine: String {
+        var parts: [String] = []
+        if let pictures, pictures.count > 1 { parts.append(pictures.map { "\($0.resolution) ×\($0.count)" }.joined(separator: ", ")) }
+        else if let resolution { parts.append(resolution) }
+        if let hdr { parts.append(hdr) }
+        if let fps, fps >= 49 { parts.append("\(fps) fps") }
+        switch audio {
+        case "atmos": parts.append(L10n.text("Dolby Atmos"))
+        case "stereo": parts.append(L10n.text("Stereo"))
+        case let layout?: parts.append(L10n.text("Surround") + " " + layout)
+        default: break
+        }
+        if let codec { parts.append(codec) }
+        if let totalBytes, let count = videoCount, count > 1 {
+            parts.append(L10n.text("Per episode") + " " + ByteCountFormatter.string(fromByteCount: totalBytes / Int64(count), countStyle: .file))
+        }
+        if let mbps, mbps > 0 { parts.append(String(format: mbps >= 9.95 ? "%.0f\u{00A0}Mb/s" : "%.1f\u{00A0}Mb/s", mbps)) }
+        if let minutes, minutes > 0 { parts.append(L10n.format("%d min", minutes)) }
+        return parts.joined(separator: " · ")
+    }
+}
 struct TorrentSearchItem: Decodable, Identifiable {
     var infoHash: String
     let name: String
@@ -51,6 +137,8 @@ struct TorrentSearchItem: Decodable, Identifiable {
     /// A cloud-drive share (China): how many videos it holds, and when it was posted.
     var videoCount: Int? = nil
     var added: String? = nil
+    /// What this copy of the share holds; absent from servers that list a share as one result.
+    var cloud: CloudCopy? = nil
     var isCloud: Bool { sources.first?.provider == "quark" }
     var shareURL: String? { isCloud ? sources.first?.url : nil }
     /// "12 videos · 23.4 GB · 2025-03-02" for a cloud share.
@@ -63,6 +151,7 @@ struct TorrentSearchItem: Decodable, Identifiable {
     /// Parsed once per release name: several regular expressions, read many times per redraw.
     private static let titles = NSCache<NSString, NSString>()
     var title: String {
+        if let show = cloud?.show, !show.isEmpty { return show }
         if let known = Self.titles.object(forKey: name as NSString) { return known as String }
         let parsed = parsedTitle
         Self.titles.setObject(parsed as NSString, forKey: name as NSString)
@@ -85,13 +174,19 @@ struct TorrentSearchItem: Decodable, Identifiable {
         return readable.isEmpty ? name : readable
     }
     /// A whole season (or several), as opposed to individual episodes.
-    var isCompleteSeason: Bool { hints.episodeCount != nil || (hints.season != nil && hints.episode == nil) }
+    var isCompleteSeason: Bool {
+        // A cloud copy is a whole season only when it holds every aired episode.
+        if let cloud, cloud.aired != nil { return cloud.complete == true }
+        return hints.episodeCount != nil || (hints.season != nil && hints.episode == nil)
+    }
     var isSingleEpisode: Bool { hints.episode != nil && hints.episodeEnd == nil && hints.episodeCount == nil }
     func covers(season wanted: Int) -> Bool {
         guard let season = hints.season else { return false }
         return (season...max(season, hints.seasonEnd ?? season)).contains(wanted)
     }
     func covers(episode wanted: Int) -> Bool {
+        // A cloud copy's episodes are known one by one, gaps included.
+        if let held = cloud?.episodes { return held.contains(wanted) }
         guard let episode = hints.episode else { return false }
         return (episode...max(episode, hints.episodeEnd ?? episode)).contains(wanted)
     }
@@ -966,8 +1061,11 @@ private struct TorrentSearchRow: View {
     #else
     private let compactRow = false
     #endif
-    private var displayedSize: String { item.isCloud ? "" : item.size }
-    private var metadata: String { item.isCloud ? item.cloudSummary : [item.edition, item.quality, estimatedBitrate].filter { !$0.isEmpty }.joined(separator: " · ") }
+    private var displayedSize: String { item.isCloud && item.cloud == nil ? "" : item.size }
+    private var metadata: String {
+        if let cloud = item.cloud { return cloud.qualityLine }
+        return item.isCloud ? item.cloudSummary : [item.edition, item.quality, estimatedBitrate].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
     @State private var facts: SearchReleaseFacts?
     /// The picture's likely bitrate: the release's size over its running time, less a typical figure for its kind of audio.
     private var estimatedBitrate: String {
@@ -1004,6 +1102,12 @@ private struct TorrentSearchRow: View {
                 season: item.hints.season, onFacts: { facts = $0 })
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title).font(.title3.bold()).foregroundStyle(.primary).lineLimit(2)
+                if let cloud = item.cloud {
+                    // Which episodes it holds is what decides a choice, so it leads.
+                    Text(verbatim: cloud.episodesLine).font(.headline).monospacedDigit()
+                        .foregroundStyle(cloud.complete == true ? Theme.accent : cloud.aired == nil ? Color.primary : Color.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if !displayedSize.isEmpty || item.seeders != nil {
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                         if !displayedSize.isEmpty {
@@ -1018,19 +1122,39 @@ private struct TorrentSearchRow: View {
                 }
                 if !metadata.isEmpty { Text(metadata).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
                 if !tracks.isEmpty { Text(tracks).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                if item.cloud != nil {
+                    // The sharer's own description, and when it was shared.
+                    Text(verbatim: [item.name, item.added.map { String($0.prefix(10)) } ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
                 if let ownership {
                     Label(LocalizedStringKey(ownership), systemImage: "checkmark.circle.fill").font(.caption.weight(.semibold)).foregroundStyle(Theme.accent)
                 }
                 if let addError { Text(addError).font(.caption).foregroundStyle(.orange) }
+                if added && item.isCloud {
+                    Label("Follow its progress in Downloading.", systemImage: "checkmark.circle.fill").font(.caption.weight(.semibold)).foregroundStyle(Theme.accent)
+                }
             }
             if let onTrial, !item.isCloud, !item.magnet.isEmpty {
                 Spacer(minLength: 8)
                 Button(trialSelected.contains(item.magnet) ? "Selected" : "Add to trial") { onTrial("magnet",item.magnet,item.name,item.sourceKey) }
             }
             if item.isCloud {
-                // Choosing episodes happens on the share's page; this row just leads there.
                 Spacer(minLength: 8)
+                #if os(tvOS)
+                // Choosing episodes happens on the share's page; this row leads there.
                 Image(systemName: "icloud.and.arrow.down").foregroundStyle(Theme.accent).accessibilityLabel("Quark Drive")
+                #else
+                // Downloads every episode of this copy; the share's page is for choosing some.
+                if adding { ProgressView().controlSize(.small) }
+                else if added { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent).accessibilityLabel("Added to downloads") }
+                else {
+                    Button { Task { await addCloud() } } label: {
+                        if compactRow { Image(systemName: "icloud.and.arrow.down").frame(width: 22, height: 22) }
+                        else { Label("Download", systemImage: "icloud.and.arrow.down").labelStyle(.titleAndIcon) }
+                    }.buttonStyle(MonoButtonStyle(compact: true)).fixedSize().accessibilityLabel("Download")
+                }
+                #endif
             }
             #if !os(tvOS)
             // Add straight from the list; opening the details stays optional.
@@ -1049,6 +1173,23 @@ private struct TorrentSearchRow: View {
             }
             #endif
         }.padding(.vertical, 2).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+    }
+    /// Queue this copy's episodes as a cloud download, filed under the series' title.
+    private func addCloud() async {
+        guard !adding, !added, let url = item.shareURL else { return }
+        adding = true; addError = nil
+        defer { adding = false }
+        let name = CloudShareView.libraryName(item.title)
+        var body: [String: Any] = ["url": url, "title": name]
+        if let key = item.cloud?.key { body["copy"] = key }
+        if let season = item.cloud?.season ?? CloudShareView.season(in: item.name) { body["season"] = season }
+        if item.cloud?.episodes?.isEmpty == false { body["kind"] = "tv" }
+        do {
+            struct Job: Decodable { let jobId: String? }
+            let _: Job = try await store.request("POST", "/v1/cloud/add", body: body, timeout: 45)
+            added = true
+            store.notify("Added to downloads", detail: name)
+        } catch { addError = error.localizedDescription }
     }
     private func addMagnet() async {
         guard !adding, !added, !item.magnet.isEmpty else { return }
@@ -1383,9 +1524,24 @@ private struct MissingEpisodesSheet: View {
         let chinese = [originalTitle, show].compactMap { $0 }.first { $0.range(of: #"\p{Han}"#, options: .regularExpression) != nil }
         guard let query = chinese ?? (market == "china" ? show : nil) else { return }
         guard let found: CloudSearch = try? await store.request("POST", "/v1/cloud/search", body: ["query": query], timeout: 90) else { return }
-        let best = found.shares.map { share in
-            (share, share.files.filter { file in (file.season ?? season.season) == season.season && file.episode.map(wanted.contains) == true })
-        }.filter { !$0.1.isEmpty }.max { $0.1.count < $1.1.count }
+        // One copy of one share: the one holding the most missing episodes, then the chosen
+        // resolution, the sharper picture, surround sound and the native frame rate.
+        var options: [(CloudShare, [CloudShare.File], [Int])] = []
+        for share in found.shares {
+            let keys: [String?] = share.copies.map { $0.map(\.key) } ?? [nil]
+            for key in keys {
+                let copy = share.copies?.first { $0.key == key }
+                let files = share.files.filter { file in
+                    (key == nil || file.copy == key) && (file.season ?? copy?.season ?? season.season) == season.season && file.episode.map(wanted.contains) == true
+                }
+                guard !files.isEmpty else { continue }
+                let picture = ["2160p": 3, "1080p": 2, "720p": 1][copy?.resolution ?? ""] ?? 0
+                let sound = copy?.audio == nil ? 1 : copy?.audio == "stereo" ? 0 : 2
+                options.append((share, files, [Set(files.compactMap(\.episode)).count, resolution != "all" && copy?.resolution == resolution ? 1 : 0, picture, sound,
+                                               (copy?.fps ?? 0) >= 49 ? 0 : 1, Int(clamping: (copy?.totalBytes ?? 0) >> 20)]))
+            }
+        }
+        let best = options.max { $0.2.lexicographicallyPrecedes($1.2) }.map { ($0.0, $0.1) }
         guard let (share, files) = best else { return }
         // One file per episode: the largest copy when a share holds several.
         var byEpisode: [Int: CloudShare.File] = [:]
@@ -1413,6 +1569,8 @@ private struct MissingEpisodesSheet: View {
 struct CloudShare: Decodable {
     struct File: Decodable, Identifiable {
         let path: String; let name: String; let sizeBytes: Int64?; let season: Int?; let episode: Int?
+        /// Which of the share's copies the video belongs to.
+        var copy: String? = nil
         var id: String { path }
         var label: String {
             switch (season, episode) {
@@ -1428,6 +1586,7 @@ struct CloudShare: Decodable {
     let videoCount: Int?
     let totalBytes: Int64?
     let files: [File]
+    var copies: [CloudCopy]? = nil
 }
 struct CloudSearch: Decodable { let shares: [CloudShare] }
 
@@ -1446,11 +1605,22 @@ struct CloudShareView: View {
     @State private var adding = false
     @State private var message: String?
     @State private var added = false
-    private var chosenBytes: Int64 { share?.files.filter { chosen.contains($0.path) }.reduce(0) { $0 + ($1.sizeBytes ?? 0) } ?? 0 }
+    /// The videos of this result's copy; a share may hold the series several times over.
+    private var files: [CloudShare.File] {
+        guard let share else { return [] }
+        guard let key = item.cloud?.key else { return share.files }
+        return share.files.filter { $0.copy == key }
+    }
+    private var chosenBytes: Int64 { files.filter { chosen.contains($0.path) }.reduce(0) { $0 + ($1.sizeBytes ?? 0) } }
     var body: some View {
         List {
             SwiftUI.Section {
                 Text(item.title).font(.title2.bold()).textSelectionIfAvailable()
+                if let cloud = item.cloud {
+                    Text(verbatim: cloud.episodesLine).font(.headline).monospacedDigit()
+                        .foregroundStyle(cloud.complete == true ? Theme.accent : cloud.aired == nil ? Color.primary : Color.orange)
+                    if !cloud.qualityLine.isEmpty { Text(verbatim: cloud.qualityLine).font(.subheadline).foregroundStyle(.secondary) }
+                }
                 if !item.cloudSummary.isEmpty { Text(item.cloudSummary).font(.subheadline).foregroundStyle(.secondary) }
                 Text(item.name).font(.caption).foregroundStyle(.secondary).textSelectionIfAvailable()
                 LabeledContent("Save as") {
@@ -1467,9 +1637,9 @@ struct CloudShareView: View {
             }
             if loading {
                 HStack(spacing: 10) { ProgressView().controlSize(.small); Text("Checking the share’s files…").foregroundStyle(.secondary) }
-            } else if let share {
+            } else if share != nil {
                 SwiftUI.Section {
-                    ForEach(share.files) { file in
+                    ForEach(files) { file in
                         Button { if chosen.contains(file.path) { chosen.remove(file.path) } else { chosen.insert(file.path) } } label: {
                             HStack(spacing: 12) {
                                 Image(systemName: chosen.contains(file.path) ? "checkmark.circle.fill" : "circle")
@@ -1485,11 +1655,11 @@ struct CloudShareView: View {
                     }
                 } header: {
                     HStack {
-                        Text(L10n.format("%d of %d videos · %@", chosen.count, share.files.count, ByteCountFormatter.string(fromByteCount: chosenBytes, countStyle: .file)))
+                        Text(L10n.format("%d of %d videos · %@", chosen.count, files.count, ByteCountFormatter.string(fromByteCount: chosenBytes, countStyle: .file)))
                             .monospacedDigit()
                         Spacer()
-                        Button(LocalizedStringKey(chosen.count == share.files.count ? "Select none" : "Select all")) {
-                            chosen = chosen.count == share.files.count ? [] : Set(share.files.map(\.path))
+                        Button(LocalizedStringKey(chosen.count == files.count ? "Select none" : "Select all")) {
+                            chosen = chosen.count == files.count ? [] : Set(files.map(\.path))
                         }.buttonStyle(.borderless).disabled(added)
                     }.textCase(nil)
                 }
@@ -1503,7 +1673,8 @@ struct CloudShareView: View {
             defer { loading = false }
             let found: CloudSearch? = try? await store.request("POST", "/v1/cloud/search", body: ["query": query], timeout: 90)
             share = found?.shares.first { $0.url == item.shareURL }
-            chosen = Set(share?.files.map(\.path) ?? [])
+            // Trailers and extras are listed but not chosen for you.
+            chosen = Set(files.filter { $0.episode != nil || item.cloud?.episodes?.isEmpty != false }.map(\.path))
         }
     }
     /// A share's title without its season, edition and quality ("庆余年 第一季 特别版 4K" → "庆余年"),
@@ -1534,12 +1705,16 @@ struct CloudShareView: View {
         adding = true; message = nil
         defer { adding = false }
         var body: [String: Any] = ["url": url, "title": name.trimmingCharacters(in: .whitespaces)]
-        if let share {
-            body["files"] = share.files.filter { chosen.contains($0.path) }.map(\.path)
-            let seasons = Set(share.files.filter { chosen.contains($0.path) }.compactMap(\.season))
+        if share != nil {
+            body["files"] = files.filter { chosen.contains($0.path) }.map(\.path)
+            let seasons = Set(files.filter { chosen.contains($0.path) }.compactMap(\.season))
             if seasons.count == 1 { body["season"] = seasons.first }
-            else if seasons.isEmpty, let season = Self.season(in: item.name) { body["season"] = season }
-            if share.files.contains(where: { $0.episode != nil }) { body["kind"] = "tv" }
+            else if seasons.isEmpty, let season = item.cloud?.season ?? Self.season(in: item.name) { body["season"] = season }
+            if files.contains(where: { $0.episode != nil }) { body["kind"] = "tv" }
+        } else if let key = item.cloud?.key {
+            // Without the file list the server still takes this copy alone, not the whole share.
+            body["copy"] = key
+            if let season = item.cloud?.season { body["season"] = season }
         }
         do {
             struct Job: Decodable { let jobId: String? }

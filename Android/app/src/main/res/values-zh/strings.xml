@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="ui_bb4f08e94b1c" formatted="false">%d 集</string>
     <string name="ui_0290129bc977" formatted="false">找到 %d 集</string>
+    <string name="ui_22cb980ab05c" formatted="false">%d 分钟</string>
     <string name="ui_b909e7d6e8c9" formatted="false">剩余 %d 分钟</string>
     <string name="ui_66bd1c71457f" formatted="false">夸克网盘上有 %d 集缺失剧集</string>
     <string name="ui_24d1fa07b247" formatted="false">已下载 %d/%d</string>
+    <string name="ui_2dd21150b9d0" formatted="false">%d / %d 集</string>
     <string name="ui_5f03e85d806c" formatted="false">%d / %d 个资源</string>
     <string name="ui_cf5dae5645db" formatted="false">%d / %d 个视频</string>
     <string name="ui_b4d8b30e51a8" formatted="false">%d 个资源</string>
@@ -14,6 +17,7 @@
     <string name="ui_712d2e5c0047" formatted="false">%d 个视频</string>
     <string name="ui_660a76df86fd" formatted="false">剩余 %d 小时 %d 分钟</string>
     <string name="ui_659748ef61cf" formatted="false">剩余 %d 分钟</string>
+    <string name="ui_54fc19e5c9f4" formatted="false">1 集</string>
     <string name="ui_8256cd5880d0" formatted="false">1 个做种</string>
     <string name="ui_9fa45ef1a516" formatted="false">1 个视频</string>
     <string name="ui_e9c9f7bc39bb" formatted="false">1 小时</string>
@@ -42,6 +46,7 @@
     <string name="ui_ffb2e628b0e9" formatted="false">正在添加…</string>
     <string name="ui_706a6ccef282" formatted="false">此 Mac 上无法使用隔空投送。</string>
     <string name="ui_6a72085653e4" formatted="false">全部</string>
+    <string name="ui_45133f937e3e" formatted="false">已播出的 %d 集齐全</string>
     <string name="ui_360e1182021a" formatted="false">一切正常</string>
     <string name="ui_10c927f29963" formatted="false">全部集</string>
     <string name="ui_09ac5f615d7d" formatted="false">所有类型</string>
@@ -236,6 +241,7 @@
     <string name="ui_f5febee5e9e1" formatted="false">正在提取字幕</string>
     <string name="ui_de30de94a734" formatted="false">正在提取文本字幕</string>
     <string name="ui_3b7782ff05e2" formatted="false">花絮</string>
+    <string name="ui_af670b91a4a7" formatted="false">附加视频：%d</string>
     <string name="ui_9fb4f1d17ef8" formatted="false">文件</string>
     <string name="ui_09fef5d8d9a3" formatted="false">失败</string>
     <string name="ui_b4a100ebc4c1" formatted="false">备用连接</string>
@@ -333,6 +339,7 @@
     <string name="ui_53bc9670e723" formatted="false">会员</string>
     <string name="ui_2f28e570a801" formatted="false">菜单栏</string>
     <string name="ui_9188f98eea10" formatted="false">正在 Diamond 上获取影片信息</string>
+    <string name="ui_92185dc52f71" formatted="false">缺少</string>
     <string name="ui_c5c5533844c5" formatted="false">单声道</string>
     <string name="ui_216fcddff2f9" formatted="false">等宽字体</string>
     <string name="ui_4bab2d8fe13f" formatted="false">更多</string>
@@ -414,6 +421,7 @@
     <string name="ui_1a699ae89a2c" formatted="false">暂停下载</string>
     <string name="ui_c7dfb6f1d9c5" formatted="false">已暂停</string>
     <string name="ui_32fbb44008c1" formatted="false">已连接节点，但超过 5 分钟没有活动</string>
+    <string name="ui_b719891b0883" formatted="false">每集</string>
     <string name="ui_eed277a1aa9d" formatted="false">永久删除这些文件？</string>
     <string name="ui_e9e82aac397b" formatted="false">永久删除此种子已下载的文件，包括尚未完成的部分。</string>
     <string name="ui_01b2675f9904" formatted="false">保留个人观看记录和其他设备上的下载副本。</string>
@@ -636,6 +644,7 @@
     <string name="ui_fa9822b1acbe" formatted="false">整个下载包将立即隐藏，继续做种，并在做种完成后永久删除。</string>
     <string name="ui_b540d8e8df09" formatted="false">文件已更改，请移除此下载后重新添加。</string>
     <string name="ui_d3fdb91c3f77" formatted="false">无法打开已保存的连接。</string>
+    <string name="ui_e075008957d5" formatted="false">全剧共 %d 集</string>
     <string name="ui_9b8b91a1710b" formatted="false">服务器未提供此种子的标识。</string>
     <string name="ui_03a02769fe24" formatted="false">服务器正在删除此下载包。</string>
     <string name="ui_201454323279" formatted="false">服务器处理时间较长，请刷新查看结果。</string>
