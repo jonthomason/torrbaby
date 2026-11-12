@@ -147,10 +147,18 @@ final class DownloadStorage {
     private func reconcileFiles() throws {
         let partial = root.appendingPathComponent("partial")
         for file in try fm.contentsOfDirectory(at: partial, includingPropertiesForKeys: [.isRegularFileKey]) {
-            guard file.pathExtension == "completed",
-                  UUID(uuidString: file.deletingPathExtension().lastPathComponent) != nil,
-                  try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { continue }
-            try fm.removeItem(at: file)
+            guard try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { continue }
+            if file.pathExtension == "completed", UUID(uuidString: file.deletingPathExtension().lastPathComponent) != nil {
+                try fm.removeItem(at: file)   // staging name used by earlier builds
+            } else if file.pathExtension == "piece" {
+                // "<item>.<offset>.piece": fetched but not yet joined when the app stopped.
+                let parts = file.deletingPathExtension().lastPathComponent.split(separator: ".")
+                if parts.count == 2, let id = UUID(uuidString: String(parts[0])), let offset = Int64(parts[1]),
+                   items.contains(where: { $0.id == id && ![.ready, .removed, .removing].contains($0.state) }) {
+                    _ = try? Self.join(piece: file, to: partialURL(id), offset: offset)
+                }
+                try? fm.removeItem(at: file)
+            }
         }
         for item in items {
             let file = mediaURL(item)
@@ -240,6 +248,63 @@ final class DownloadStorage {
     }
     func resumeContextURL(_ id: UUID) -> URL {
         root.appendingPathComponent("partial").appendingPathComponent(id.uuidString + ".context")
+    }
+    /// Where in the file the running request began: the kept bytes at the time it started.
+    func baseURL(_ id: UUID) -> URL {
+        root.appendingPathComponent("partial").appendingPathComponent(id.uuidString + ".base")
+    }
+    /// Bytes of this file kept on the device. They belong to the file (its library entry
+    /// and revision), not to the address they were fetched from.
+    func keptBytes(_ id: UUID) -> Int64 { ownedPartialBytes(id) }
+    func setReceived(_ id: UUID, _ value: Int64) throws {
+        try update(id) { $0.received = min($0.size, max(0, value)) }
+    }
+    func discardKept(_ id: UUID) {
+        for file in [partialURL(id), baseURL(id), resumeURL(id), resumeContextURL(id)] { try? fm.removeItem(at: file) }
+    }
+    nonisolated static func fileSize(_ url: URL) -> Int64? {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+        guard attrs?[.type] as? FileAttributeType == .typeRegular else { return nil }
+        return (attrs?[.size] as? NSNumber)?.int64Value
+    }
+    /// Join a fetched piece to the kept bytes and return the new kept size. `offset` is where
+    /// the piece begins in the file; one that does not begin exactly where the kept bytes end
+    /// is refused, never guessed. Pure file work, safe off the main thread.
+    nonisolated static func join(piece: URL, to partial: URL, offset: Int64, count: Int64? = nil) throws -> Int64 {
+        let fm = FileManager.default
+        let have = fileSize(partial) ?? 0
+        guard have == offset else { throw StorageError(message: "Download pieces do not line up.") }
+        guard let size = fileSize(piece) else { throw StorageError(message: "The download is incomplete.") }
+        let take = min(size, max(0, count ?? size))
+        guard take > 0 else { return have }
+        if have == 0 {
+            // Nothing kept yet: the piece becomes the partial file without copying.
+            try? fm.removeItem(at: partial)
+            try fm.moveItem(at: piece, to: partial)
+            if take < size {
+                let handle = try FileHandle(forWritingTo: partial); defer { try? handle.close() }
+                try handle.truncate(atOffset: UInt64(take))
+            }
+            return take
+        }
+        let input = try FileHandle(forReadingFrom: piece); defer { try? input.close() }
+        let output = try FileHandle(forWritingTo: partial); defer { try? output.close() }
+        try output.seek(toOffset: UInt64(have))
+        var left = take
+        do {
+            while left > 0 {
+                let chunk = try autoreleasepool { try input.read(upToCount: Int(min(left, 4 << 20))) } ?? Data()
+                if chunk.isEmpty { break }
+                try output.write(contentsOf: chunk); left -= Int64(chunk.count)
+            }
+            try output.synchronize()
+            guard left == 0 else { throw StorageError(message: "The download is incomplete.") }
+        } catch {
+            // Leave the kept bytes exactly as they were.
+            try? output.truncate(atOffset: UInt64(have)); throw error
+        }
+        try? fm.removeItem(at: piece)
+        return have + take
     }
     /// Includes posters, partials, resume data and unknown leftovers, not just ready movies.
     func usedBytes() throws -> Int64 {
@@ -388,7 +453,7 @@ final class DownloadStorage {
     private func finishRemoval(_ id: UUID) throws {
         guard let item = items.first(where: { $0.id == id }) else { return }
         // Only UUID-derived paths owned by this store can be removed. No server paths.
-        for file in [mediaURL(item), partialURL(id), resumeURL(id), resumeContextURL(id)] where fm.fileExists(atPath: file.path) {
+        for file in [mediaURL(item), partialURL(id), resumeURL(id), resumeContextURL(id), baseURL(id)] where fm.fileExists(atPath: file.path) {
             try fm.removeItem(at: file)
         }
         // Retain watch progress until it has synced, independently of the media file.

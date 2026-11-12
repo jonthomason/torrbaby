@@ -23,6 +23,21 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     private var tasks: [UUID: URLSessionDownloadTask] = [:]
     private var restored = false
     private var rerouting: Set<UUID> = []
+    /// Where each running request's bytes begin in its file: what was already kept when it started.
+    private var segmentBase: [UUID: Int64] = [:]
+    /// Request bytes at the last checkpoint, so a failed one is not retried at once.
+    private var checkpointed: [UUID: Int64] = [:]
+    /// While the app is open, what a request has fetched is joined to the kept bytes this
+    /// often, so even a transfer the system drops outright loses little.
+    static let checkpointBytes: Int64 = {
+        #if DEBUG
+        // Tests exercise the join path on small files: -downloadCheckpointMB 50.
+        let megabytes = UserDefaults.standard.integer(forKey: "downloadCheckpointMB")
+        if megabytes > 0 { return Int64(megabytes) << 20 }
+        #endif
+        return 512 << 20
+    }()
+    nonisolated private static let files = DispatchQueue(label: "org.torrbaby.offline-files", qos: .utility)
     private var session: URLSession!
     nonisolated private let staging: URL
     var backgroundCompletion: (() -> Void)? { didSet { completeBackgroundEvents() } }
@@ -90,7 +105,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         let config = configuration ?? URLSessionConfiguration.background(withIdentifier: Self.sessionID)
         config.isDiscretionary = false
         config.sessionSendsLaunchEvents = true
-        config.httpMaximumConnectionsPerHost = 1
+        config.httpMaximumConnectionsPerHost = Self.simultaneous
         session = URLSession(configuration: config, delegate: self, delegateQueue: .main)
         pathMonitor.pathUpdateHandler = { [weak self] path in
             // A VPN tunnel reports the cost of the connection underneath it.
@@ -116,7 +131,9 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
                       let item = items.first(where: { $0.id == id }), item.state == .transferring,
                       let download = task as? URLSessionDownloadTask else { task.cancel(); continue }
                 tasks[id] = download
-                received[id] = max(0, download.countOfBytesReceived)
+                let base = storage.map { Self.readBase($0.baseURL(id)) } ?? 0
+                segmentBase[id] = base
+                received[id] = base + max(0, download.countOfBytesReceived)
             }
             for item in items where item.state == .transferring && tasks[item.id] == nil {
                 // The system dropped the transfer (an app update, a restart, a force quit).
@@ -140,8 +157,13 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
                     continue
                 }
                 if task.state == .suspended { task.resume() }
-            } else if task.state == .running {
-                task.suspend()
+            } else if waitingForWiFi {
+                if task.state == .running { task.suspend() }
+            } else if task.state == .suspended {
+                // The app has lost its own connection, which also happens whenever it leaves
+                // the foreground. The system transfer waits for the network by itself and
+                // carries on in the background, so it is never held for that.
+                task.resume()
             }
         }
         pump()
@@ -243,14 +265,31 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             request.timeoutInterval = 120
             let context = Data(SHA256.hash(data: Data("\(store.activeServer ?? store.server)|\(store.token)|\(!allowed)".utf8)))
             let task: URLSessionDownloadTask
-            if (try? Data(contentsOf: storage.resumeContextURL(item.id))) == context,
-               let data = try? Data(contentsOf: storage.resumeURL(item.id)) {
-                task = session.downloadTask(withResumeData: data)
+            let saved = try? Data(contentsOf: storage.resumeURL(item.id))
+            if let saved, (try? Data(contentsOf: storage.resumeContextURL(item.id))) == context {
+                // Same address as before: the system continues its own request.
+                task = session.downloadTask(withResumeData: saved)
+                segmentBase[item.id] = Self.readBase(storage.baseURL(item.id))
                 received[item.id] = item.received
             } else {
+                // Another address, or nothing to continue: keep what the last request fetched,
+                // then ask this address for the rest of the file only.
+                if let saved {
+                    _ = Self.salvage(resume: saved, partial: storage.partialURL(item.id),
+                                     base: Self.readBase(storage.baseURL(item.id)), revision: item.revision)
+                }
                 try? FileManager.default.removeItem(at: storage.resumeURL(item.id))
-                try storage.resetTransferBytes(item.id)
-                received[item.id] = 0
+                var kept = storage.keptBytes(item.id)
+                if kept > item.size { storage.discardKept(item.id); kept = 0 }
+                if kept == item.size {
+                    try storage.adopt(item.id, temporary: storage.partialURL(item.id), revision: item.revision)
+                    storage.discardKept(item.id); received.removeValue(forKey: item.id)
+                    reload(); return true
+                }
+                if kept > 0 { request.setValue("bytes=\(kept)-", forHTTPHeaderField: "Range") }
+                try Data(String(kept).utf8).write(to: storage.baseURL(item.id), options: .atomic)
+                try storage.setReceived(item.id, kept)
+                segmentBase[item.id] = kept; received[item.id] = kept; checkpointed[item.id] = 0
                 task = session.downloadTask(with: request)
             }
             try context.write(to: storage.resumeContextURL(item.id), options: .atomic)
@@ -273,18 +312,62 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             if rerouting.remove(id) != nil { try? storage.queue(id); reload(); pump() }
             return
         }
+        let partial = storage.partialURL(id), base = segmentBase[id] ?? Self.readBase(storage.baseURL(id)), revision = item.revision
         task.cancel { [weak self] data in
-            DispatchQueue.main.async {
-                guard let self, let storage = self.storage else { return }
-                if let data, self.items.first(where: { $0.id == id })?.state == .paused {
-                    do { try data.write(to: storage.resumeURL(id), options: .atomic) }
-                    catch { self.report(error) }
+            Self.files.async {
+                // Join what this request fetched to the kept bytes, so the next request can
+                // come from any address. Failing that, the resume data still serves this one.
+                let joined = data.map { Self.salvage(resume: $0, partial: partial, base: base, revision: revision) } ?? false
+                DispatchQueue.main.async {
+                    guard let self, let storage = self.storage else { return }
+                    let state = self.items.first(where: { $0.id == id })?.state
+                    if state == nil || state == .removed || state == .removing { storage.discardKept(id) }
+                    else if joined || data == nil {
+                        try? FileManager.default.removeItem(at: storage.resumeURL(id))
+                        let kept = storage.keptBytes(id)
+                        self.received[id] = kept; try? storage.setReceived(id, kept)
+                    } else if let data, state == .paused {
+                        do { try data.write(to: storage.resumeURL(id), options: .atomic) }
+                        catch { self.report(error) }
+                    }
+                    if self.tasks[id] === task { self.tasks.removeValue(forKey: id) }
+                    if self.rerouting.remove(id) != nil { try? storage.queue(id) }
+                    self.reload(); self.pump()
                 }
-                if self.tasks[id] === task { self.tasks.removeValue(forKey: id) }
-                if self.rerouting.remove(id) != nil { try? storage.queue(id) }
-                self.reload(); self.pump()
             }
         }
+    }
+    nonisolated private static func readBase(_ url: URL) -> Int64 {
+        (try? String(contentsOf: url, encoding: .utf8)).flatMap { Int64($0.trimmingCharacters(in: .whitespacesAndNewlines)) } ?? 0
+    }
+    /// What an interrupted request had fetched sits in a system temporary file that its
+    /// resume data names. Join those bytes to the kept bytes; true when they are joined.
+    /// The layout of resume data is not documented, so every step is checked and any
+    /// doubt leaves the kept bytes untouched (the request's own resume data is then used).
+    nonisolated private static func salvage(resume: Data, partial: URL, base: Int64, revision: String) -> Bool {
+        var info: [String: Any]?
+        if let plain = (try? PropertyListSerialization.propertyList(from: resume, format: nil)) as? [String: Any], plain["$archiver"] == nil {
+            info = plain
+        } else if let unarchiver = try? NSKeyedUnarchiver(forReadingFrom: resume) {
+            unarchiver.requiresSecureCoding = false
+            info = unarchiver.decodeObject(forKey: "NSKeyedArchiveRootObjectKey") as? [String: Any]
+            unarchiver.finishDecoding()
+        }
+        guard let info else { return false }
+        let plainTag = { (tag: String) in tag.replacingOccurrences(of: "W/", with: "").trimmingCharacters(in: CharacterSet(charactersIn: "\" ")) }
+        if let tag = info["NSURLSessionResumeEntityTag"] as? String, !revision.isEmpty, plainTag(tag) != plainTag(revision) { return false }
+        guard let fetched = (info["NSURLSessionResumeBytesReceived"] as? NSNumber)?.int64Value, fetched > 0 else { return false }
+        var candidates: [URL] = []
+        if let path = info["NSURLSessionResumeInfoLocalPath"] as? String { candidates.append(URL(fileURLWithPath: path)) }
+        if let name = info["NSURLSessionResumeInfoTempFileName"] as? String, !name.contains("/") {
+            candidates.append(URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(name))
+            if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first, let bundle = Bundle.main.bundleIdentifier {
+                candidates.append(caches.appendingPathComponent("com.apple.nsurlsessiond/Downloads/\(bundle)/\(name)"))
+            }
+        }
+        guard let piece = candidates.first(where: { (DownloadStorage.fileSize($0) ?? 0) > 0 }),
+              let size = DownloadStorage.fileSize(piece) else { return false }
+        return (try? DownloadStorage.join(piece: piece, to: partial, offset: base, count: min(size, fetched))) != nil
     }
     func resume(_ id: UUID) {
         guard tasks[id] == nil else { return }
@@ -298,6 +381,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         do { try storage.remove(id) }
         catch { self.report(error); return }
         tasks[id]?.cancel(); tasks.removeValue(forKey: id); received.removeValue(forKey: id)
+        segmentBase.removeValue(forKey: id); checkpointed.removeValue(forKey: id)
         reload(); pump()
     }
     func pin(_ id: UUID, keep: Bool) {
@@ -466,9 +550,15 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             guard self.tasks[id] === downloadTask else { return }
             // Publishing every callback re-rendered each download control many times a second.
             guard Date().timeIntervalSince(self.lastUsageRefresh) >= 1 else { return }
-            self.received[id] = totalBytesWritten
+            self.received[id] = (self.segmentBase[id] ?? 0) + totalBytesWritten
             self.lastUsageRefresh = Date()
             self.reload()
+            if totalBytesWritten - (self.checkpointed[id] ?? 0) >= Self.checkpointBytes, self.appIsActive {
+                // Bank this request's bytes and carry on with a fresh one from there.
+                self.checkpointed[id] = totalBytesWritten
+                self.pause(id, requeue: true)
+                return
+            }
             if let storage = self.storage {
                 do {
                     if try storage.availableBytes() < self.policy.freeSpaceBytes || !self.policy.permits(used: self.used) {
@@ -480,37 +570,75 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     }
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         guard let id = downloadTask.taskDescription.flatMap(UUID.init(uuidString:)) else { return }
-        let destination = staging.appendingPathComponent(UUID().uuidString + ".completed")
+        let base = Self.readBase(staging.appendingPathComponent(id.uuidString + ".base"))
+        let partial = staging.appendingPathComponent(id.uuidString + ".partial")
+        // Named for its item and offset, so a piece fetched just before the app stops is joined at next launch.
+        let destination = staging.appendingPathComponent("\(id.uuidString).\(base).piece")
         let response = downloadTask.response as? HTTPURLResponse
         let move: Result<URL, Error> = Result {
             // The delegate's temporary file disappears on return; move it synchronously.
+            try? FileManager.default.removeItem(at: destination)
             try FileManager.default.moveItem(at: location, to: destination)
             return destination
         }
         DispatchQueue.main.async {
             self.finishing += 1
-            defer {
+            let done = {
                 self.finishing -= 1
                 if self.tasks[id] === downloadTask { self.tasks.removeValue(forKey: id) }
                 self.reload(); self.pump(); self.completeBackgroundEvents()
             }
+            // The kept bytes survive every failure here; only this request's piece is given up.
+            let fail = { (error: Error, keep: Bool) in
+                try? FileManager.default.removeItem(at: destination)
+                if let storage = self.storage {
+                    try? FileManager.default.removeItem(at: storage.resumeURL(id))
+                    if !keep { storage.discardKept(id) }
+                    let kept = storage.keptBytes(id)
+                    self.received[id] = kept
+                    try? storage.pause(id, received: kept, error: error.localizedDescription)
+                }
+                done()
+            }
             do {
                 let file = try move.get()
-                defer { try? FileManager.default.removeItem(at: file) }
                 // Background callbacks can precede task restoration, but a known
                 // replacement task must never be finalized by an older callback.
-                if let current = self.tasks[id], current !== downloadTask { return }
-                guard let response, (200...299).contains(response.statusCode) else {
-                    throw APIError(message: response?.statusCode == 412 ? "The file changed. Remove this download and add it again." : "Download failed. Reconnect and try again.")
+                if let current = self.tasks[id], current !== downloadTask { try? FileManager.default.removeItem(at: file); done(); return }
+                guard let storage = self.storage, let item = self.items.first(where: { $0.id == id }) else {
+                    try? FileManager.default.removeItem(at: file); done(); return
                 }
-                try self.storage?.adopt(id, temporary: file, revision: response.value(forHTTPHeaderField: "ETag") ?? "")
-                self.received.removeValue(forKey: id)
-                if let storage = self.storage { try? FileManager.default.removeItem(at: storage.resumeURL(id)) }
-            } catch {
-                self.received[id] = 0
-                if let storage = self.storage { try? FileManager.default.removeItem(at: storage.resumeURL(id)) }
-                try? self.storage?.pause(id, received: 0, error: error.localizedDescription)
-            }
+                if response?.statusCode == 412 {
+                    // The server's file is a different one now; bytes of the old one cannot be continued.
+                    fail(APIError(message: "The file changed. Remove this download and add it again."), false); return
+                }
+                guard let response, (200...299).contains(response.statusCode) else {
+                    throw APIError(message: "Download failed. Reconnect and try again.")
+                }
+                if let tag = response.value(forHTTPHeaderField: "ETag"), !tag.isEmpty, tag != item.revision {
+                    fail(APIError(message: "The file changed. Remove this download and add it again."), false); return
+                }
+                guard let size = DownloadStorage.fileSize(file) else { throw APIError(message: "Download failed. Reconnect and try again.") }
+                // A piece that completes the file from where the kept bytes end is joined to
+                // them; a whole file (a server that ignored the range) replaces them.
+                let offset: Int64
+                if base + size == item.size { offset = base }
+                else if size == item.size { offset = 0; try? FileManager.default.removeItem(at: partial) }
+                else { throw APIError(message: "Download failed. Reconnect and try again.") }
+                let revision = item.revision
+                Self.files.async {
+                    let joined = Result { try DownloadStorage.join(piece: file, to: partial, offset: offset) }
+                    DispatchQueue.main.async {
+                        do {
+                            _ = try joined.get()
+                            try storage.adopt(id, temporary: partial, revision: revision)
+                            storage.discardKept(id)
+                            self.received.removeValue(forKey: id); self.segmentBase.removeValue(forKey: id); self.checkpointed.removeValue(forKey: id)
+                            done()
+                        } catch { fail(error, true) }
+                    }
+                }
+            } catch { fail(error, true) }
         }
     }
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
@@ -528,18 +656,38 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
                   NSURLErrorNotConnectedToInternet, NSURLErrorInternationalRoamingOff,
                   NSURLErrorDataNotAllowed].contains(code))
             if lostConnection { self.store?.connectionError = error.localizedDescription }
-            if let storage = self.storage {
-                if let resume { try? resume.write(to: storage.resumeURL(id), options: .atomic) }
-                else {
-                    try? FileManager.default.removeItem(at: storage.resumeURL(id))
-                    self.received[id] = 0
-                }
-                try? storage.pause(id, received: self.received[id] ?? 0,
-                                   error: lostConnection ? nil : "Download interrupted. Tap resume.")
-                if lostConnection { try? storage.queue(id) }
+            // The system ended it (an app update, a restart): nothing is wrong, so it carries on.
+            let systemEnded = (error as NSError).domain == NSURLErrorDomain && code == NSURLErrorCancelled
+                && (error as NSError).userInfo[NSURLErrorBackgroundTaskCancelledReasonKey] != nil
+            guard let storage = self.storage, let item = self.items.first(where: { $0.id == id }) else {
+                self.tasks.removeValue(forKey: id); self.reload(); self.pump(); return
             }
-            self.tasks.removeValue(forKey: id); self.reload(); self.pump()
+            let finish = { (joined: Bool) in
+                if joined || resume == nil {
+                    // Joined to the kept bytes, or nothing recoverable from this request: either
+                    // way the file continues from what is kept, from any address.
+                    try? FileManager.default.removeItem(at: storage.resumeURL(id))
+                    self.received[id] = storage.keptBytes(id)
+                } else if let resume { try? resume.write(to: storage.resumeURL(id), options: .atomic) }
+                try? storage.pause(id, received: self.received[id] ?? storage.keptBytes(id),
+                                   error: lostConnection || systemEnded ? nil : "Download interrupted. Tap resume.")
+                if lostConnection || systemEnded { try? storage.queue(id) }
+                self.tasks.removeValue(forKey: id); self.reload(); self.pump()
+            }
+            guard let resume else { finish(false); return }
+            let partial = storage.partialURL(id), base = self.segmentBase[id] ?? Self.readBase(storage.baseURL(id)), revision = item.revision
+            Self.files.async {
+                let joined = Self.salvage(resume: resume, partial: partial, base: base, revision: revision)
+                DispatchQueue.main.async { finish(joined) }
+            }
         }
+    }
+    private var appIsActive: Bool {
+        #if os(iOS)
+        return UIApplication.shared.applicationState == .active
+        #else
+        return true
+        #endif
     }
     nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         DispatchQueue.main.async { self.backgroundEventsFinished = true; self.completeBackgroundEvents() }
