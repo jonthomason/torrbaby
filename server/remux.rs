@@ -362,7 +362,8 @@ fn remux_pass(input: &Path, output: &Path, max_bytes: u64, mapping: Mapping,
         source.metadata()?.is_file(),
         "Expected a regular input file"
     );
-    let mut mkv = MatroskaFile::open(BufReader::new(source))?;
+    drop(source);
+    let mut mkv = MatroskaFile::open(BufReader::new(crate::matroska::Bounded::open(input)?))?;
     let scale = mkv.info().timestamp_scale().get();
     let mut tracks = BTreeMap::new();
     // Audio formats this passthrough cannot carry (for example DTS, which
@@ -578,7 +579,7 @@ fn remux_pass(input: &Path, output: &Path, max_bytes: u64, mapping: Mapping,
                 }
             }
         }
-        mkv = MatroskaFile::open(BufReader::new(File::open(input)?))?;
+        mkv = MatroskaFile::open(BufReader::new(crate::matroska::Bounded::open(input)?))?;
     }
     let selected_audio = tracks
         .values()

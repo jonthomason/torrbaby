@@ -36,7 +36,7 @@ pub fn decode(input: &Path, track: u64, out: &Path) -> Result<()> {
     fs::create_dir(out)?;
     let started = Instant::now();
     let before = fs::metadata(input)?;
-    let mut mkv = MatroskaFile::open(BufReader::new(fs::File::open(input)?))?;
+    let mut mkv = MatroskaFile::open(BufReader::new(crate::matroska::Bounded::open(input)?))?;
     let scale = mkv.info().timestamp_scale().get();
     let t = mkv
         .tracks()

@@ -33,7 +33,11 @@ struct Job {
 // index paths. Earlier ready jobs keep their own index, so resumed downloads
 // never mix layouts; titles get the new layout lazily on their next
 // preparation, and old indexes leave through normal cache reclamation.
-const PREPARATION_VERSION: u32 = 5;
+// Version 6 stops reading at the end of the Matroska segment, so files with bytes
+// appended after it no longer fail; those earlier failures are retried once.
+const PREPARATION_VERSION: u32 = 6;
+/// The preparation version from which indexes carry random-access tables (see version 5).
+const RANDOM_ACCESS_VERSION: u32 = 5;
 const LAYOUT_VERSION: u32 = 3;
 /// Dolby Vision files are indexed again, apart from their earlier index: their sample
 /// description now declares Dolby Vision, and the earlier one played in the wrong
@@ -102,7 +106,7 @@ impl Manager {
     fn index_path(&self, job: &Job) -> Result<PathBuf> {
         use sha2::{Digest, Sha256};
         // Jobs from before random-access tables keep their original index.
-        let layout = if job.preparation_version >= PREPARATION_VERSION { 2 } else { 1 } + if dolby(&job.input) { 100 * DOLBY_LAYOUT } else { 0 };
+        let layout = if job.preparation_version >= RANDOM_ACCESS_VERSION { 2 } else { 1 } + if dolby(&job.input) { 100 * DOLBY_LAYOUT } else { 0 };
         let key: String = Sha256::digest(serde_json::to_vec(&(
             layout,
             &job.asset,

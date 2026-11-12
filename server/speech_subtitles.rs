@@ -213,7 +213,8 @@ fn extract_audio(input: &Path, directory: &Path, name: &str) -> Result<Option<(P
     use std::io::Write;
     let file = std::fs::File::open(input)?;
     ensure!(file.metadata()?.is_file(), "Expected a regular media file");
-    let mut mkv = MatroskaFile::open(std::io::BufReader::new(file)).context("Read Matroska container")?;
+    drop(file);
+    let mut mkv = MatroskaFile::open(std::io::BufReader::new(crate::matroska::Bounded::open(input)?)).context("Read Matroska container")?;
     let scale = mkv.info().timestamp_scale().get();
     let candidates: Vec<_> = mkv.tracks().iter().filter(|t| t.track_type() == TrackType::Audio
         && matches!(t.codec_id(), "A_AAC" | "A_AC3" | "A_EAC3")

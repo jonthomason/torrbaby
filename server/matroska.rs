@@ -68,10 +68,75 @@ pub(crate) fn decode_private(encodings: Option<&[ContentEncoding]>, data: &[u8],
     decode_content(encodings, SCOPE_PRIVATE, data, limit)
 }
 
-fn open(path: &Path) -> Result<MatroskaFile<BufReader<File>>> {
-    let file = File::open(path)?;
-    ensure!(file.metadata()?.is_file(), "Expected a regular media file");
-    MatroskaFile::open(BufReader::new(file)).context("Read Matroska container")
+/// A Matroska file, read only as far as its segment ends. Files passed around on
+/// cloud drives often have a few kilobytes of random bytes appended after the video,
+/// to make each copy look unique; read as Matroska, those bytes are now and then a
+/// malformed element and the whole file was refused. A player stops at the segment's
+/// end, and so does this.
+pub struct Bounded { file: File, end: u64 }
+impl Bounded {
+    pub fn open(path: &Path) -> std::io::Result<Self> {
+        let mut file = File::open(path)?;
+        let length = file.metadata()?.len();
+        let end = Self::segment_end(&mut file).filter(|end| *end <= length).unwrap_or(length);
+        std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(0))?;
+        Ok(Self { file, end })
+    }
+    /// Where the file's one segment ends: after the EBML header, the segment's own stated size.
+    fn segment_end(file: &mut File) -> Option<u64> {
+        use std::io::{Read, Seek, SeekFrom};
+        // An EBML number: its length is the position of the first set bit.
+        fn number(file: &mut File, keep_marker: bool) -> Option<(u64, bool)> {
+            let mut first = [0u8; 1];
+            file.read_exact(&mut first).ok()?;
+            let length = first[0].leading_zeros() as usize + 1;
+            if length > 8 { return None; }
+            let mut value = if keep_marker { first[0] as u64 } else { (first[0] as u64) & ((1u64 << (8 - length)) - 1) };
+            let mut ones = !keep_marker && value == (1u64 << (8 - length)) - 1;
+            for _ in 1..length {
+                let mut next = [0u8; 1];
+                file.read_exact(&mut next).ok()?;
+                value = (value << 8) | next[0] as u64;
+                ones &= next[0] == 0xFF;
+            }
+            Some((value, ones))
+        }
+        file.seek(SeekFrom::Start(0)).ok()?;
+        let (header, _) = number(file, true)?;
+        if header != 0x1A45_DFA3 { return None; }
+        let (size, _) = number(file, false)?;
+        file.seek(SeekFrom::Current(i64::try_from(size).ok()?)).ok()?;
+        let (segment, _) = number(file, true)?;
+        if segment != 0x1853_8067 { return None; }
+        // A size of all ones means "until the end of the file".
+        let (size, unknown) = number(file, false)?;
+        if unknown { return None; }
+        file.stream_position().ok()?.checked_add(size)
+    }
+}
+impl std::io::Read for Bounded {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let at = std::io::Seek::stream_position(&mut self.file)?;
+        let room = self.end.saturating_sub(at).min(buffer.len() as u64) as usize;
+        if room == 0 { return Ok(0); }
+        self.file.read(&mut buffer[..room])
+    }
+}
+impl std::io::Seek for Bounded {
+    fn seek(&mut self, to: std::io::SeekFrom) -> std::io::Result<u64> {
+        match to {
+            // The end is the segment's, not the file's.
+            std::io::SeekFrom::End(offset) => {
+                let target = (self.end as i64).checked_add(offset).filter(|t| *t >= 0).ok_or_else(|| std::io::Error::other("Seek before the start"))?;
+                self.file.seek(std::io::SeekFrom::Start(target as u64))
+            }
+            other => self.file.seek(other),
+        }
+    }
+}
+fn open(path: &Path) -> Result<MatroskaFile<BufReader<Bounded>>> {
+    ensure!(path.metadata()?.is_file(), "Expected a regular media file");
+    MatroskaFile::open(BufReader::new(Bounded::open(path)?)).context("Read Matroska container")
 }
 
 /// Codec inventory and timing statistics only; never emit compressed payloads or dialogue.
@@ -443,6 +508,37 @@ pub async fn tracks_worker(path: &Path) -> Result<Value> {
 }
 
 /// Minimal Matroska writer for subtitle tracks with content encodings (tests only).
+#[cfg(test)]
+mod bounded_tests {
+    use super::*;
+    use std::io::{Read, Seek, SeekFrom};
+    #[test]
+    fn bytes_after_the_segment_are_never_read() -> Result<()> {
+        // An EBML header (4 bytes of body), a segment of 6 bytes, then junk a sharer appended.
+        let mut bytes = vec![0x1A, 0x45, 0xDF, 0xA3, 0x84, 1, 2, 3, 4, 0x18, 0x53, 0x80, 0x67, 0x86, 9, 9, 9, 9, 9, 9];
+        let end = bytes.len() as u64;
+        bytes.extend([0xEE; 40]);
+        let path = std::env::temp_dir().join(format!("torrbaby-bounded-{}.mkv", uuid::Uuid::new_v4()));
+        std::fs::write(&path, &bytes)?;
+        let mut reader = Bounded::open(&path)?;
+        let mut all = Vec::new();
+        reader.read_to_end(&mut all)?;
+        assert_eq!(all.len() as u64, end);
+        assert_eq!(reader.seek(SeekFrom::End(0))?, end);
+        assert_eq!(reader.seek(SeekFrom::End(-2))?, end - 2);
+        let mut rest = Vec::new();
+        reader.read_to_end(&mut rest)?;
+        assert_eq!(rest, [9, 9]);
+        // A segment of unknown size runs to the end of the file, as before.
+        let open_ended = [0x1A, 0x45, 0xDF, 0xA3, 0x80, 0x18, 0x53, 0x80, 0x67, 0xFF, 7, 7, 7];
+        std::fs::write(&path, open_ended)?;
+        let mut whole = Vec::new();
+        Bounded::open(&path)?.read_to_end(&mut whole)?;
+        assert_eq!(whole.len(), open_ended.len());
+        std::fs::remove_file(&path)?;
+        Ok(())
+    }
+}
 #[cfg(test)]
 pub(crate) mod fixture {
     pub fn element(id: u32, body: &[u8]) -> Vec<u8> {
