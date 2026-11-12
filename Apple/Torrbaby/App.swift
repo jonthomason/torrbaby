@@ -88,6 +88,8 @@ struct TorrbabyApp: App {
 /// text, and small-radius rounded rectangles. The purple wordmark is the only colour.
 enum Theme {
     static let accent = Color.white
+    /// Marks a cloud-drive download among the torrents.
+    static let cloud = Color(red: 0.36, green: 0.76, blue: 1.0)
     static let onAccent = Color.black
     static let canvas = Color.black
     static let sidebar = Color(white: 0.055)

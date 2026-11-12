@@ -515,7 +515,7 @@ struct TorrentListView: View {
                     }.font(.caption.monospacedDigit())
                 }
                 TransferHistoryView(compact: compact)
-                if section == .active { MediaDriveSpace(compact: compact); CloudJobsSection() }
+                if section == .active { MediaDriveSpace(compact: compact) }
                 if section == .seeding { LibraryOperationStatus(search: search) }
                 if let error = store.torrentError {
                     Label("Couldn’t refresh torrents: " + error, systemImage: "exclamationmark.triangle")
@@ -528,6 +528,8 @@ struct TorrentListView: View {
                         ForEach(TorrentSort.choices(section.rawValue)) { Text(LocalizedStringKey($0.label)).tag($0) }
                     }.pickerStyle(.menu).fixedSize()
                 }
+                // Quark downloads lead the list they belong to, in their own colour.
+                if section == .active { CloudJobsSection() }
                 if section == .attention { ProcessingAttention(count: $processingIssues) }
                 if section == .attention && !filtered.isEmpty { bulkBar }
                 if filtered.isEmpty && (section != .seeding || store.detachedLibraryOperations.isEmpty) && !(section == .attention && processingIssues > 0) {

@@ -592,7 +592,8 @@ impl Cloud {
         let speed = self.pace.lock().map(|mut pace| {
             let waited = pace.0.elapsed().as_secs_f64();
             if running < pace.1 { *pace = (Instant::now(), running, pace.2); }
-            else if waited >= 2.0 { *pace = (Instant::now(), running, (running - pace.1) as f64 / waited); }
+            // Smoothed, so the time left does not lurch with every burst and pause.
+            else if waited >= 2.0 { let now = (running - pace.1) as f64 / waited; *pace = (Instant::now(), running, if pace.2 > 0.0 { pace.2 * 0.7 + now * 0.3 } else { now }); }
             pace.2
         }).unwrap_or(0.0);
         json!({"jobs": jobs.iter().rev().take(50).map(|job| {

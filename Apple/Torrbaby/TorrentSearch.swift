@@ -1595,6 +1595,14 @@ struct CloudShare: Decodable {
         let path: String; let name: String; let sizeBytes: Int64?; let season: Int?; let episode: Int?
         /// Which of the share's copies the video belongs to.
         var copy: String? = nil
+        var width: Int? = nil
+        var height: Int? = nil
+        /// The picture size the drive measured for this video.
+        var resolution: String? {
+            let (w, h) = (width ?? 0, height ?? 0)
+            guard w > 0 || h > 0 else { return nil }
+            return w >= 3000 || h >= 2000 ? "2160p" : w >= 1800 || h >= 1000 ? "1080p" : w >= 1200 || h >= 700 ? "720p" : "480p"
+        }
         var id: String { path }
         var label: String {
             switch (season, episode) {
@@ -1701,6 +1709,10 @@ struct CloudShareView: View {
                                     Text(verbatim: file.name).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                                 }
                                 Spacer(minLength: 8)
+                                // An episode in another quality than the rest of its set is called out.
+                                if let size = file.resolution, let usual = item.cloud?.resolution, size != usual {
+                                    Text(verbatim: size).font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                                }
                                 if let size = file.sizeBytes { Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file)).font(.caption).monospacedDigit().foregroundStyle(.secondary) }
                             }.contentShape(Rectangle())
                         }.buttonStyle(.plain).disabled(added)
@@ -1822,7 +1834,7 @@ struct CloudJobsSection: View {
         Group {
             if !jobs.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
-                    Label("Quark Drive", systemImage: "icloud.and.arrow.down").font(.caption.weight(.semibold)).tracking(1.4).foregroundStyle(Theme.muted)
+                    Label("Quark Drive", systemImage: "icloud.and.arrow.down").font(.caption.weight(.semibold)).tracking(1.4).foregroundStyle(Theme.cloud)
                     ForEach(jobs) { job in row(job) }
                 }
             }
@@ -1838,7 +1850,8 @@ struct CloudJobsSection: View {
     private func row(_ job: CloudJob) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text(verbatim: job.title).font(.headline).lineLimit(2)
+                Label { Text(verbatim: job.title).lineLimit(2) } icon: { Image(systemName: "icloud.and.arrow.down") }
+                    .font(.headline).foregroundStyle(Theme.cloud)
                 Spacer(minLength: 8)
                 if job.state == "failed" || job.state == "retrying" {
                     Button("Retry") { act("POST", "/v1/cloud/jobs/\(job.id)/retry") }.buttonStyle(MonoButtonStyle(compact: true)).fixedSize()
@@ -1852,7 +1865,7 @@ struct CloudJobsSection: View {
                 }
             }
             HStack(spacing: 8) {
-                Text(verbatim: job.stateLabel).foregroundStyle(job.state == "failed" || job.state == "retrying" ? .orange : Theme.accent)
+                Text(verbatim: job.stateLabel).foregroundStyle(job.state == "failed" || job.state == "retrying" ? .orange : Theme.cloud)
                 if let files = job.files, files > 1 { Text(L10n.format("%d of %d videos", job.filesDone ?? 0, files)).foregroundStyle(Theme.muted) }
                 if let total = job.totalBytes, total > 0 {
                     Text(L10n.format("%@ of %@", ByteCountFormatter.string(fromByteCount: job.doneBytes ?? 0, countStyle: .file), ByteCountFormatter.string(fromByteCount: total, countStyle: .file)))
@@ -1865,11 +1878,13 @@ struct CloudJobsSection: View {
                 }
             }.font(.caption).monospacedDigit()
             if let total = job.totalBytes, total > 0, job.state != "done" {
-                ProgressView(value: Double(job.doneBytes ?? 0), total: Double(total)).tint(job.state == "failed" ? .orange : Theme.accent)
+                ProgressView(value: Double(job.doneBytes ?? 0), total: Double(total)).tint(job.state == "failed" ? .orange : Theme.cloud)
             }
             if let current = job.current, !current.isEmpty { Text(verbatim: current).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
             if let error = job.error, !error.isEmpty { Text(verbatim: error).font(.caption).foregroundStyle(.orange) }
-        }.padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+        }.padding(12).padding(.leading, 6).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+            // A coloured edge sets these apart from the torrents below at a glance.
+            .overlay(alignment: .leading) { UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 10).fill(Theme.cloud).frame(width: 4) }
     }
     private func act(_ method: String, _ path: String) {
         Task {

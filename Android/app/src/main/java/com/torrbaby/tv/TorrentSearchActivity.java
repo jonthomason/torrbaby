@@ -379,7 +379,10 @@ public final class TorrentSearchActivity extends Activity {
         shareFiles[0]=entries;List<String> labels=new ArrayList<>();
         for(int i=0;i<entries.length();i++){JSONObject f=entries.optJSONObject(i);
           String episode=f.isNull("episode")?"":f.isNull("season")?String.format(L10n.locale(),L10n.t("Ep %d"),f.optInt("episode")):String.format(L10n.locale(),L10n.t("Season %d Ep %d"),f.optInt("season"),f.optInt("episode"));
-          labels.add((episode.isEmpty()?"":episode+" · ")+f.optString("name")+(f.isNull("size_bytes")?"":"  ·  "+android.text.format.Formatter.formatFileSize(this,f.optLong("size_bytes"))));}
+          int w=f.optInt("width"),h=f.optInt("height");String size=w<=0&&h<=0?"":w>=3000||h>=2000?"2160p":w>=1800||h>=1000?"1080p":w>=1200||h>=700?"720p":"480p";
+          // An episode in another quality than the rest of its set is called out.
+          boolean odd=!size.isEmpty()&&copy!=null&&!copy.isNull("resolution")&&!size.equals(copy.optString("resolution"));
+          labels.add((episode.isEmpty()?"":episode+" · ")+f.optString("name")+(odd?"  ·  "+size:"")+(f.isNull("size_bytes")?"":"  ·  "+android.text.format.Formatter.formatFileSize(this,f.optLong("size_bytes"))));}
         note.setText(String.format(L10n.locale(),L10n.t("%d videos"),entries.length()));
         files.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_list_item_multiple_choice,labels){public View getView(int p,View old,ViewGroup parent){TextView row=(TextView)super.getView(p,old,parent);row.setTextColor(Ui.TEXT);row.setTextSize(14);return row;}});
         // Trailers and extras are listed but not chosen for you.

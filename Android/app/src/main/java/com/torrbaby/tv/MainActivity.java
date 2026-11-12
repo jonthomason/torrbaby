@@ -1306,7 +1306,9 @@ public class MainActivity extends Activity {
       Ui.focus(row);
       row.setOnFocusChangeListener((v, focused) -> Ui.secondaryContrast(v, focused));
       Ui.pad(row, 16, 14);
-      Ui.add(row, Ui.title(this, job.optString("title"), 16), -1, -2);
+      // Quark downloads are told from the torrents around them by their colour.
+      TextView jobTitle = Ui.title(this, job.optString("title"), 16); jobTitle.setTextColor(0xff5cc2ff);
+      Ui.add(row, jobTitle, -1, -2);
       Ui.gap(row, 6);
       boolean active = state.equals("queued") || state.equals("saving") || state.equals("downloading") || state.equals("retrying");
       String label = state.equals("retrying") ? L10n.t("Retrying shortly…") : state.equals("queued") ? L10n.t("Waiting") : state.equals("saving") ? L10n.t("Saving to Quark Drive…")
@@ -1319,7 +1321,7 @@ public class MainActivity extends Activity {
         int minutes = (int) Math.max(1, (job.optLong("eta") + 30) / 60);
         detail += " · " + (minutes >= 60 ? String.format(L10n.locale(), L10n.t("%dh %dm left"), minutes / 60, minutes % 60) : String.format(L10n.locale(), L10n.t("%dm left"), minutes));
       }
-      Ui.add(row, Ui.text(this, detail, 14, state.equals("failed") || state.equals("retrying") ? 0xffffb74d : Ui.ACCENT), -1, -2);
+      Ui.add(row, Ui.text(this, detail, 14, state.equals("failed") || state.equals("retrying") ? 0xffffb74d : 0xff5cc2ff), -1, -2);
       if (!job.isNull("current") && !job.optString("current").isEmpty()) Ui.add(row, Ui.text(this, job.optString("current"), 12, Ui.MUTED), -1, -2);
       String error = job.isNull("error") ? "" : job.optString("error");
       if (!error.isEmpty()) Ui.add(row, Ui.text(this, error, 12, Ui.MUTED), -1, -2);
