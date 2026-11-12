@@ -65,7 +65,9 @@ static SHARE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^https://pan\.quar
 pub fn episode(name: &str) -> (Option<u64>, Option<u64>) {
     static SEASONED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)s(\d{1,2})[ ._-]?e(\d{1,3})").expect("valid regex"));
     static NAMED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:第\s*(\d{1,3})\s*[集话話期]|\bep?[ ._-]?(\d{1,3})\b)").expect("valid regex"));
-    static NOISE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(\d{3,4}p|\d{2,3}fps|[48]k|(19|20)\d{2}|[hx]\.?26[45]|ddp?\d\.\d|aac\d\.\d|\d+bit|\d\.\d)").expect("valid regex"));
+    static NOISE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(\d{3,4}p|\d{2,3}fps|[48]k|(19|20)\d{2}|[hx]\.?26[45]|ddp?\d\.\d|aac\d\.\d|\d+bit)").expect("valid regex"));
+    // Audio layouts such as "5.1". Removed only after the labels above, or "01.4K" loses its "1.4".
+    static DECIMAL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:^|[^0-9])\d\.\d").expect("valid regex"));
     static BARE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:^|[^0-9])(\d{1,3})(?:[^0-9]|$)").expect("valid regex"));
     let stem = name.rsplit('/').next().unwrap_or(name);
     let stem = stem.rsplit_once('.').map_or(stem, |(stem, _)| stem);
@@ -74,6 +76,7 @@ pub fn episode(name: &str) -> (Option<u64>, Option<u64>) {
         return (None, found.get(1).or(found.get(2)).and_then(|m| m.as_str().parse().ok()));
     }
     let plain = NOISE.replace_all(stem, " ");
+    let plain = DECIMAL.replace_all(&plain, " ");
     (None, BARE.captures(&plain).and_then(|found| found[1].parse().ok()).filter(|n| *n > 0))
 }
 
@@ -503,6 +506,10 @@ mod tests {
         assert_eq!(episode("Zhu.Yu.EP05.1080p.mkv"), (None, Some(5)));
         assert_eq!(episode("The.Wandering.Earth.II.2023.BluRay.2160p.DTS.mkv"), (None, None));
         assert_eq!(episode("繁花.2023.4K.60fps.E30.mkv"), (None, Some(30)));
+        assert_eq!(episode("九重紫/4K/01.4K.mp4"), (None, Some(1)));
+        assert_eq!(episode("28.4k.mp4"), (None, Some(28)));
+        assert_eq!(episode("01 4K.mp4"), (None, Some(1)));
+        assert_eq!(episode("12.5.1.mkv"), (None, Some(12)));
     }
     #[test]
     fn titles_are_searched_with_and_without_their_separators() {
