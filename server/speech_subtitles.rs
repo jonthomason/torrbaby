@@ -27,7 +27,9 @@ const MIN_CHARACTERS_PER_MINUTE: f64 = 40.0;
 /// The languages speech is transcribed in.
 const LANGUAGES: [&str; 2] = ["en", "zh-Hans"];
 /// Reading the subtitles printed in the picture.
-const PICTURE: &str = "burned";
+/// ("burned" was this step's name for one evening, while it could not find the picture
+/// in files that open with an empty video stream; verdicts under that name do not count.)
+const PICTURE: &str = "picture";
 /// Everything tried, in the order a title with a Chinese name is tried.
 const STEPS: [&str; 3] = [PICTURE, "zh-Hans", "en"];
 const NOT_SPEECH: &str = "No subtitles in the picture, and the audio is not English or Mandarin speech";
@@ -128,7 +130,7 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
     let record = root.join(format!("{name}.json"));
     let language_of = |saved: &Value| LANGUAGES.into_iter().find(|l| saved["language"] == *l).unwrap_or("en");
     // A Chinese name: the picture, then Mandarin. Otherwise English speech comes first.
-    let mut remaining: Vec<&'static str> = if chinese_name(input) { STEPS.to_vec() } else { vec!["en", PICTURE, "zh-Hans"] };
+    let mut remaining: Vec<&'static str> = if chinese_name(Path::new(asset["path"].as_str().unwrap_or_default())) || chinese_name(input) { STEPS.to_vec() } else { vec!["en", PICTURE, "zh-Hans"] };
     let mut tried: Vec<&'static str> = Vec::new();
     // A transcript already made, kept if the picture turns out to hold no subtitles.
     let mut kept: Option<(Value, PathBuf, &'static str)> = None;
@@ -380,14 +382,15 @@ mod tests {
     #[test]
     fn earlier_verdicts_are_reopened_for_what_they_had_not_tried() {
         // Rejected when only English was transcribed: the picture and Mandarin remain.
-        assert_eq!(untried(&json!({"state":"rejected","reason":"The audio is not English speech"})), ["burned", "zh-Hans"]);
+        assert_eq!(untried(&json!({"state":"rejected","reason":"The audio is not English speech"})), ["picture", "zh-Hans"]);
         // No audio to decode says nothing about the picture.
-        assert_eq!(untried(&json!({"state":"rejected","reason":"No decodable audio track"})), ["burned"]);
-        assert!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["burned","zh-Hans","en"]})).is_empty());
-        assert_eq!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["zh-Hans","en"]})), ["burned"]);
+        assert_eq!(untried(&json!({"state":"rejected","reason":"No decodable audio track"})), ["picture"]);
+        assert!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["picture","zh-Hans","en"]})).is_empty());
+        assert_eq!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["zh-Hans","en"]})), ["picture"]);
+        assert_eq!(untried(&json!({"state":"ready","language":"zh-Hans","tried":["en","burned","zh-Hans"]})), ["picture"], "a verdict from before the picture could be found");
         // A Mandarin transcript is redone from the picture once; an English one is kept.
-        assert_eq!(untried(&json!({"state":"ready","language":"zh-Hans"})), ["burned"]);
-        assert!(untried(&json!({"state":"ready","language":"zh-Hans","tried":["zh-Hans","burned"]})).is_empty());
+        assert_eq!(untried(&json!({"state":"ready","language":"zh-Hans"})), ["picture"]);
+        assert!(untried(&json!({"state":"ready","language":"zh-Hans","tried":["zh-Hans","picture"]})).is_empty());
         assert!(untried(&json!({"state":"ready"})).is_empty() && untried(&json!({"state":"ready","language":"en"})).is_empty());
         assert!(chinese_name(Path::new("/tv/尚公主 - S01E05.mkv")) && !chinese_name(Path::new("/tv/Black Doves - S01E01.mkv")));
     }

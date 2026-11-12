@@ -109,36 +109,38 @@ func ideographs(_ text: String) -> Int { text.unicodeScalars.filter { (0x4E00...
 
 func tool(_ name: String, _ folder: URL) -> URL { folder.appendingPathComponent(name) }
 
-/// Width, height and duration of the first video stream.
-func describe(_ media: String, _ tools: URL) throws -> (width: Int, height: Int, duration: Double) {
+/// Width and height of each video stream, in order, and the title's duration. Some
+/// files open with a stream that holds no picture (a cover, a stub in another codec).
+func describe(_ media: String, _ tools: URL) throws -> (streams: [(width: Int, height: Int)], duration: Double) {
     let process = Process(); let pipe = Pipe()
     process.executableURL = tool("torrbaby-ffprobe", tools)
-    process.arguments = ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height:format=duration", "-of", "default=noprint_wrappers=1", media]
+    process.arguments = ["-v", "error", "-select_streams", "v", "-show_entries", "stream=width,height:format=duration", "-of", "default=noprint_wrappers=1", media]
     process.standardOutput = pipe; process.standardError = FileHandle.nullDevice; process.standardInput = FileHandle.nullDevice
     try process.run()
     let text = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
     process.waitUntilExit()
-    var values: [String: Double] = [:]
+    var widths: [Int] = [], heights: [Int] = [], duration = 0.0
     for line in text.split(separator: "\n") {
         let parts = line.split(separator: "=", maxSplits: 1)
-        if parts.count == 2, let value = Double(parts[1]), values[String(parts[0])] == nil { values[String(parts[0])] = value }
+        guard parts.count == 2, let value = Double(parts[1]) else { continue }
+        switch parts[0] { case "width": widths.append(Int(value)); case "height": heights.append(Int(value)); case "duration": duration = value; default: break }
     }
-    guard let width = values["width"], let height = values["height"], let duration = values["duration"],
-          width >= 320, height >= 240, duration > 0, duration < 12 * 3600 else { throw Failure(message: "No decodable video", status: 3) }
-    return (Int(width), Int(height), duration)
+    let streams = zip(widths, heights).map { (width: $0, height: $1) }
+    guard !streams.isEmpty, streams.count <= 8, duration > 0, duration < 12 * 3600 else { throw Failure(message: "No decodable video", status: 3) }
+    return (streams, duration)
 }
 
 /// Grey frames of one horizontal strip of the picture (`top` to `bottom`, as fractions
 /// of its height), `rate` a second, each `width` by `height` bytes, handed to `each`
 /// with its index. `each` returns false to stop early.
-func frames(_ media: String, _ tools: URL, start: Double, length: Double?, top: Double, bottom: Double, rate: Double,
+func frames(_ media: String, _ tools: URL, stream: Int, start: Double, length: Double?, top: Double, bottom: Double, rate: Double,
             width: Int, height: Int, each: (Int, Data) -> Bool) throws {
     let process = Process(); let pipe = Pipe()
     process.executableURL = tool("torrbaby-ffmpeg", tools)
     var arguments = ["-v", "error", "-nostdin", "-hwaccel", "videotoolbox", "-ss", String(format: "%.3f", start)]
     if let length { arguments += ["-t", String(format: "%.3f", length)] }
     let crop = String(format: "crop=iw:ih*%.4f:0:ih*%.4f", bottom - top, top)
-    arguments += ["-i", media, "-map", "0:v:0", "-an", "-sn", "-dn",
+    arguments += ["-i", media, "-map", "0:v:\(stream)", "-an", "-sn", "-dn",
                   "-vf", "fps=\(rate),\(crop),scale=\(width):\(height),format=gray", "-f", "rawvideo", "-"]
     process.arguments = arguments
     process.standardOutput = pipe; process.standardError = FileHandle.nullDevice; process.standardInput = FileHandle.nullDevice
@@ -249,20 +251,24 @@ func cues(from shown: [String], rate: Double) -> [TextCue] {
 }
 
 func extract(media: String, output: URL, progress: URL, tools: URL) throws {
-    let (videoWidth, videoHeight, duration) = try describe(media, tools)
+    let (streams, duration) = try describe(media, tools)
     do { try prepareTextRecognition() } catch { modelsChanged(" (warm-up: \(error))") }
     let even = { (value: Double) -> Int in max(16, Int(value / 2) * 2) }
     let width = 1280
     // First pass: is there a line of Chinese, centred, at one height, in the lower third?
-    let searchHeight = even(Double(width) * (searchBottom - searchTop) * Double(videoHeight) / Double(videoWidth))
-    var found: [Line] = [], decoded = 0
-    for place in [0.3, 0.5, 0.7] {
-        try frames(media, tools, start: duration * place, length: min(40, duration / 4), top: searchTop, bottom: searchBottom, rate: 2,
+    // The picture is the first video stream that decodes.
+    var found: [Line] = [], decoded = 0, stream = 0, videoWidth = 0, videoHeight = 0, searchHeight = 0
+    for (index, size) in streams.enumerated() where decoded == 0 && size.width >= 320 && size.height >= 240 {
+      (stream, videoWidth, videoHeight) = (index, size.width, size.height)
+      searchHeight = even(Double(width) * (searchBottom - searchTop) * Double(videoHeight) / Double(videoWidth))
+      for place in [0.3, 0.5, 0.7] {
+        try frames(media, tools, stream: stream, start: duration * place, length: min(40, duration / 4), top: searchTop, bottom: searchBottom, rate: 2,
                    width: width, height: searchHeight) { _, data in
             decoded += 1
             found += read(data, width, searchHeight).filter { abs($0.midX - 0.5) < 0.07 && ideographs($0.text) >= 2 }
             return true
         }
+      }
     }
     guard decoded > 0 else { throw Failure(message: "No decodable video", status: 3) }
     var bins: [Int: [Line]] = [:]
@@ -281,7 +287,7 @@ func extract(media: String, output: URL, progress: URL, tools: URL) throws {
     let rowHeight = line / (bottom - top), lower = (bottom - centre) / (bottom - top), upper = lower + rowHeight * 1.15
 
     var shown: [String] = [], previous: [UInt8] = [], last = "", lastReport = -60.0
-    try frames(media, tools, start: 0, length: nil, top: top, bottom: bottom, rate: sampleRate, width: width, height: stripHeight) { index, data in
+    try frames(media, tools, stream: stream, start: 0, length: nil, top: top, bottom: bottom, rate: sampleRate, width: width, height: stripHeight) { index, data in
         let picture = coarse(data, width, stripHeight)
         if !same(picture, previous) {
             let lines = read(data, width, stripHeight).filter { line in
