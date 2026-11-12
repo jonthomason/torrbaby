@@ -213,37 +213,84 @@ impl Cloud {
             "title": title, "note": note, "posted": posted,
             "video_count": videos.len(), "total_bytes": total, "files": videos.into_iter().take(400).collect::<Vec<_>>()}))
     }
-    /// Shares for a title that hold real video, newest first. Answers are reused for half an hour.
+    /// Ways a title may be written in a listing: as typed, without its separators
+    /// ("星汉灿烂·月升沧海" is as often "星汉灿烂月升沧海"), and its first part alone.
+    fn spellings(query: &str) -> Vec<String> {
+        const SEPARATORS: &[char] = &['·', '•', '・', ':', '：', '-', '—', '－', '_', '/', '|', '，', ',', '。', '.', '《', '》', '「', '」', '(', ')', '（', '）', '[', ']', '【', '】'];
+        let joined: String = query.chars().filter(|c| !SEPARATORS.contains(c) && !c.is_whitespace()).collect();
+        let first = query.split(|c: char| SEPARATORS.contains(&c)).map(str::trim).find(|part| part.chars().count() >= 2).unwrap_or("").to_owned();
+        let mut all = vec![query.to_owned(), joined, first];
+        all.retain(|s| !s.is_empty());
+        let mut seen = std::collections::HashSet::new();
+        all.retain(|s| seen.insert(s.clone()));
+        all
+    }
+    async fn listed(&self, words: &str) -> Result<Vec<(String, String, String)>> {
+        let mut url = reqwest::Url::parse(&format!("{}/api/search", self.search_url))?;
+        url.query_pairs_mut().append_pair("kw", words).append_pair("res", "merge").append_pair("src", "plugin").append_pair("cloud_types", "quark");
+        let answer: Value = self.http.get(url).timeout(Duration::from_secs(40)).send().await.map_err(|_| anyhow::anyhow!("The link search service is not running"))?
+            .json().await.map_err(|_| anyhow::anyhow!("The link search service did not answer as expected"))?;
+        let merged = if answer["data"].is_object() { &answer["data"]["merged_by_type"] } else { &answer["merged_by_type"] };
+        Ok(merged["quark"].as_array().into_iter().flatten().filter_map(|row| {
+            let url = row["url"].as_str().filter(|u| SHARE.is_match(u))?.to_owned();
+            Some((url, row["datetime"].as_str().unwrap_or("").to_owned(), row["note"].as_str().unwrap_or("").to_owned()))
+        }).collect())
+    }
+    /// Shares for a title that hold real video. The same release is shared by many
+    /// people, so identical ones are merged; the answer comes back within a time limit
+    /// with whatever has been checked, and is reused for half an hour.
     pub async fn search(&self, query: &str) -> Result<Value> {
         let query = query.split_whitespace().collect::<Vec<_>>().join(" ");
         ensure!((1..=100).contains(&query.chars().count()), "Enter a title to search for");
         if let Some((at, found)) = self.searches.lock().map_err(|_| anyhow::anyhow!("Search unavailable"))?.get(&query) {
             if at.elapsed() < Duration::from_secs(1800) { return Ok(found.clone()); }
         }
-        let mut url = reqwest::Url::parse(&format!("{}/api/search", self.search_url))?;
-        url.query_pairs_mut().append_pair("kw", &query).append_pair("res", "merge").append_pair("src", "plugin").append_pair("cloud_types", "quark");
-        let answer: Value = self.http.get(url).timeout(Duration::from_secs(90)).send().await.map_err(|_| anyhow::anyhow!("The link search service is not running"))?
-            .json().await.map_err(|_| anyhow::anyhow!("The link search service did not answer as expected"))?;
-        let merged = if answer["data"].is_object() { &answer["data"]["merged_by_type"] } else { &answer["merged_by_type"] };
-        let mut rows: Vec<(String, String, String)> = merged["quark"].as_array().into_iter().flatten().filter_map(|row| {
-            let url = row["url"].as_str().filter(|u| SHARE.is_match(u))?.to_owned();
-            Some((url, row["datetime"].as_str().unwrap_or("").to_owned(), row["note"].as_str().unwrap_or("").to_owned()))
-        }).collect();
+        let started = Instant::now();
+        let mut rows = Vec::new();
+        let mut failure = None;
+        // Listings for the title as typed come first; other spellings add to them.
+        for (index, words) in Self::spellings(&query).iter().enumerate() {
+            match self.listed(words).await {
+                Ok(found) => { let _ = index; rows.extend(found); }
+                Err(error) => failure = Some(error),
+            }
+        }
+        if rows.is_empty() { if let Some(error) = failure { return Err(error); } }
         let listed = rows.len();
-        rows.sort_by(|a, b| b.1.cmp(&a.1));
         let mut seen = std::collections::HashSet::new();
         rows.retain(|(url, _, _)| seen.insert(SHARE.captures(url).map(|c| c[1].to_owned())));
-        rows.truncate(60);
+        rows.truncate(80);
         // Nearly every listed link is dead or holds something else, so each is opened.
+        // Opening stops at the time limit or once there is a good choice of releases.
         use futures_util::StreamExt;
-        let checked = rows.len();
-        let mut shares: Vec<Value> = futures_util::stream::iter(rows.into_iter().map(|(url, posted, note)| async move { self.inspect(&url, &posted, &note).await }))
-            .buffer_unordered(6).filter_map(|share| async move { share }).collect().await;
-        shares.sort_by(|a, b| b["posted"].as_str().cmp(&a["posted"].as_str()));
-        let found = json!({"query": query, "listed": listed, "checked": checked, "shares": shares});
-        let mut cache = self.searches.lock().map_err(|_| anyhow::anyhow!("Search unavailable"))?;
-        if cache.len() >= 64 { cache.clear(); }
-        cache.insert(query, (Instant::now(), found.clone()));
+        let mut opened = futures_util::stream::iter(rows.into_iter().map(|(url, posted, note)| async move { self.inspect(&url, &posted, &note).await })).buffer_unordered(8);
+        let mut releases: Vec<Value> = Vec::new();
+        let mut checked = 0usize;
+        while started.elapsed() < Duration::from_secs(18) {
+            let Ok(next) = tokio::time::timeout(Duration::from_secs(18).saturating_sub(started.elapsed()), opened.next()).await else { break };
+            let Some(share) = next else { break };
+            checked += 1;
+            let Some(mut share) = share else { continue };
+            // Same number of videos and the same total size: the same release, shared again.
+            if let Some(same) = releases.iter_mut().find(|r| r["video_count"] == share["video_count"] && r["total_bytes"] == share["total_bytes"]) {
+                let (newer, older) = if share["posted"].as_str() > same["posted"].as_str() { (&mut share, same.clone()) } else { (&mut same.clone(), share.clone()) };
+                let mut mirrors = newer["mirrors"].as_array().cloned().unwrap_or_default();
+                mirrors.push(older["url"].clone());
+                mirrors.extend(older["mirrors"].as_array().cloned().unwrap_or_default());
+                newer["mirrors"] = json!(mirrors);
+                *same = newer.clone();
+            } else { releases.push(share); }
+            if releases.len() >= 12 { break; }
+        }
+        drop(opened);
+        releases.sort_by(|a, b| b["total_bytes"].as_u64().cmp(&a["total_bytes"].as_u64()));
+        let found = json!({"query": query, "listed": listed, "checked": checked, "shares": releases});
+        // A search that ran out of time with nothing to show is not worth remembering.
+        if found["shares"].as_array().is_some_and(|s| !s.is_empty()) {
+            let mut cache = self.searches.lock().map_err(|_| anyhow::anyhow!("Search unavailable"))?;
+            if cache.len() >= 64 { cache.clear(); }
+            cache.insert(query, (Instant::now(), found.clone()));
+        }
         Ok(found)
     }
     fn persist(&self, jobs: &[Job]) {
@@ -457,6 +504,12 @@ mod tests {
         assert_eq!(episode("Zhu.Yu.EP05.1080p.mkv"), (None, Some(5)));
         assert_eq!(episode("The.Wandering.Earth.II.2023.BluRay.2160p.DTS.mkv"), (None, None));
         assert_eq!(episode("繁花.2023.4K.60fps.E30.mkv"), (None, Some(30)));
+    }
+    #[test]
+    fn titles_are_searched_with_and_without_their_separators() {
+        assert_eq!(Cloud::spellings("星汉灿烂·月升沧海"), ["星汉灿烂·月升沧海", "星汉灿烂月升沧海", "星汉灿烂"]);
+        assert_eq!(Cloud::spellings("逐玉"), ["逐玉"]);
+        assert_eq!(Cloud::spellings("庆余年 第二季"), ["庆余年 第二季", "庆余年第二季"]);
     }
     #[test]
     fn dates_are_iso_times() {
