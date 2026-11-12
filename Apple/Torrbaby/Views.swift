@@ -28,7 +28,7 @@ struct SubtitleQueueView: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @Environment(\.scenePhase) private var phase
-    private let groups = [("Waiting", ["queued", "scanning", "interrupted"]), ("Finished", ["ready"]), ("Needs attention", ["failed", "stale", "expired"])]
+    private let groups = [("Needs attention", ["failed", "stale", "expired"]), ("Waiting", ["queued", "scanning", "interrupted"]), ("Finished", ["ready"])]
     var body: some View {
         List {
             if let error = store.subtitleQueueError {
@@ -40,62 +40,36 @@ struct SubtitleQueueView: View {
                 Label("Waiting for playback to finish", systemImage: "play.circle")
             }
             if let preparation = store.status?.subtitlePreparation {
+                // Files being processed scroll with the rest; several run at once.
+                let running = (preparation.queue ?? []).filter { $0.state == "running" }
+                if !running.isEmpty {
+                    SwiftUI.Section("\(L10n.text("Now processing")) · \(running.count)") {
+                        ForEach(running) { item in row(item) }
+                    }
+                }
                 ForEach(groups, id: \.0) { group in
-                    let items = (preparation.queue ?? []).filter { group.1.contains($0.state) }
+                    // A file whose last attempt failed needs attention even while a retry waits.
+                    let items = (preparation.queue ?? []).filter { item in
+                        item.state != "running" && (group.0 == "Needs attention"
+                            ? group.1.contains(item.state) || item.error != nil
+                            : group.1.contains(item.state) && item.error == nil)
+                    }
                     if !items.isEmpty {
                         SwiftUI.Section("\(L10n.text(group.0)) · \(items.count)") {
                             ForEach(items) { item in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text(item.title).font(.headline).lineLimit(2)
-                                    HStack {
-                                        Label(LocalizedStringKey(item.stageLabel), systemImage: "captions.bubble")
-                                        Spacer()
-                                        Text(LocalizedStringKey(item.state == "scanning" ? "Checking languages…" : item.state.capitalized))
-                                    }.font(.caption).foregroundStyle(.secondary)
-                                    if item.totalCues > 0 && item.state != "ready" {
-                                        ProgressView(value: Double(item.completedCues), total: Double(item.totalCues))
-                                        Text(item.progressText).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                                    }
-                                    if item.subtitlesState == "not_applicable" { Text("No supported subtitle source").font(.caption).foregroundStyle(.secondary) }
-                                    if let error = item.error { Text(L10n.text(error)).font(.caption).foregroundStyle(.orange) }
-                                }.padding(.vertical, 6)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .contentShape(Rectangle())
-                                .onTapGesture { prioritize(item) }
-                                .accessibilityAction(named: "Prioritize processing") { prioritize(item) }
-                                #if os(macOS)
-                                .help(item.state == "ready" || item.state == "running" ? "" : "Click to prioritize this title in the processing queue")
-                                #endif
+                                row(item)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { prioritize(item) }
+                                    .accessibilityAction(named: "Prioritize processing") { prioritize(item) }
+                                    #if os(macOS)
+                                    .help(item.state == "ready" ? "" : "Click to prioritize this title in the processing queue")
+                                    #endif
                             }
                         }
                     }
                 }
                 if preparation.queue?.isEmpty != false { Text("No processing jobs").foregroundStyle(.secondary) }
             } else { ProgressView("Loading processing queue…") }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            // Several files process at once; show each of them.
-            let running = (store.status?.subtitlePreparation?.queue ?? []).filter { $0.state == "running" }
-            if !running.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("Now processing", systemImage: "captions.bubble").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    ForEach(running) { item in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(item.title).font(.headline).lineLimit(2)
-                            HStack {
-                                Text(LocalizedStringKey(item.stageLabel))
-                                Spacer()
-                                if item.totalCues > 0 { Text(item.progressText).monospacedDigit() }
-                            }.font(.caption).foregroundStyle(.secondary)
-                            if item.totalCues > 0 {
-                                ProgressView(value: Double(item.completedCues), total: Double(item.totalCues))
-                            } else { ProgressView().controlSize(.small) }
-                        }
-                    }
-                }
-                .padding().frame(maxWidth: .infinity, alignment: .leading)
-                .background(Theme.panel)
-            }
         }
         .canvasBackground()
         .navigationTitle(L10n.text("Processing"))
@@ -106,6 +80,24 @@ struct SubtitleQueueView: View {
                 do { try await Task.sleep(for: .seconds(2)) } catch { return }
             }
         }
+    }
+    /// One compact row: the title on one line, then stage and progress, then any problem.
+    @ViewBuilder private func row(_ item: SubtitleQueueItem) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(1).truncationMode(.middle)
+            HStack(spacing: 8) {
+                Text(LocalizedStringKey(item.state == "scanning" ? "Checking languages…" : item.stageLabel)).lineLimit(1)
+                Spacer()
+                if item.totalCues > 0 && item.state != "ready" { Text(item.progressText).monospacedDigit() }
+                else if item.state != "running" { Text(LocalizedStringKey(item.state.capitalized)) }
+            }.font(.caption).foregroundStyle(.secondary)
+            if item.state == "running" || (item.totalCues > 0 && item.state != "ready") {
+                if item.totalCues > 0 { ProgressView(value: Double(item.completedCues), total: Double(item.totalCues)).controlSize(.mini) }
+                else { ProgressView().controlSize(.mini) }
+            }
+            if item.subtitlesState == "not_applicable" { Text("No supported subtitle source").font(.caption).foregroundStyle(.secondary) }
+            if let error = item.error { Text(L10n.text(error)).font(.caption).foregroundStyle(.orange).lineLimit(2) }
+        }.padding(.vertical, 2).frame(maxWidth: .infinity, alignment: .leading)
     }
     private func prioritize(_ item: SubtitleQueueItem) {
         guard item.state != "ready", item.state != "running",
