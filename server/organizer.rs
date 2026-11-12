@@ -227,7 +227,9 @@ pub(crate) async fn add_at(s: &Service, body: &Value, directory:Option<&Path>) -
         None => false,
         Some(v) => v.as_bool().context("paused must be boolean")?,
     };
-    let mut params = json!({"download_dir":directory.map(|p|p.to_string_lossy().into_owned()).unwrap_or_else(||Drives::of(&config).primary().downloads.to_string_lossy().into_owned()),"paused":paused});
+    let mut params = json!({"paused":paused});
+    // The release's name and size, when known before Transmission has its metadata.
+    let mut release: (Option<String>, u64) = (None, 0);
     if let Some(magnet) = magnet {
         if !magnet.starts_with("magnet:?") {
             bail!("Expected a magnet link");
@@ -235,10 +237,19 @@ pub(crate) async fn add_at(s: &Service, body: &Value, directory:Option<&Path>) -
         if let Some(listing) = crate::torrent_search::private_listing(magnet) {
             // A private site's result: its .torrent is fetched here, with the member's passkey.
             let bytes = s.torrent_search.private_metainfo(&listing).await?;
+            if let Some((name, size)) = metainfo_summary(&bytes) { release = (Some(name), size); }
             params["metainfo"] = json!(base64::engine::general_purpose::STANDARD.encode(bytes));
             // Marked so it is seeded by the site's rules, not the general target.
             params["labels"] = json!([crate::torrent_search::PRIVATE_LABEL]);
-        } else { params["filename"] = json!(magnet); }
+        } else {
+            if let Ok(url) = reqwest::Url::parse(magnet) {
+                for (key, value) in url.query_pairs() {
+                    if key == "dn" { release.0 = Some(value.to_string()); }
+                    if key == "xl" { release.1 = value.parse().unwrap_or(0); }
+                }
+            }
+            params["filename"] = json!(magnet);
+        }
     } else if let Some(raw) = torrent_url {
         let url=reqwest::Url::parse(raw)?;
         let attachment=url.path().strip_prefix("/attach-download-").and_then(|s|s.strip_suffix(".htm"));
@@ -247,9 +258,21 @@ pub(crate) async fn add_at(s: &Service, body: &Value, directory:Option<&Path>) -
             && attachment.is_some_and(|id| !id.is_empty() && id.len()<=12 && id.bytes().all(|b|b.is_ascii_digit())), "Invalid torrent attachment URL");
         params["filename"] = json!(raw);
     } else if let Some(metainfo) = metainfo {
-        base64::engine::general_purpose::STANDARD.decode(metainfo)?;
+        let bytes = base64::engine::general_purpose::STANDARD.decode(metainfo)?;
+        if let Some((name, size)) = metainfo_summary(&bytes) { release = (Some(name), size); }
         params["metainfo"] = json!(metainfo);
     }
+    let download_dir = match directory {
+        Some(directory) => directory.to_path_buf(),
+        None => {
+            let (entities, assets) = {
+                let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+                (db.documents("entities")?, db.documents("assets")?)
+            };
+            Drives::of(&config).place_named(&entities, &assets, release.0.as_deref(), release.1)?.downloads.clone()
+        }
+    };
+    params["download_dir"] = json!(download_dir.to_string_lossy());
     let _guard = s.mutation_lock.lock().await;
     let added = s.rpc.add(params).await;
     s.invalidate_torrents(); // An unconfirmed add may still finish in Transmission.
@@ -268,6 +291,54 @@ pub(crate) async fn add_at(s: &Service, body: &Value, directory:Option<&Path>) -
     s.event("torrent_added", json!({"result":result}))?;
     s.invalidate_torrents();
     Ok(result)
+}
+
+/// The name and total size in a .torrent file.
+fn metainfo_summary(bytes: &[u8]) -> Option<(String, u64)> {
+    // A minimal bencode reader: (value end, and for the info dictionary its name and lengths).
+    fn skip(b: &[u8], at: usize, depth: usize) -> Option<usize> {
+        if depth > 64 { return None; }
+        match *b.get(at)? {
+            b'i' => Some(at + b[at..].iter().position(|c| *c == b'e')? + 1),
+            b'l' | b'd' => { let mut at = at + 1; while *b.get(at)? != b'e' { at = skip(b, at, depth + 1)?; } Some(at + 1) }
+            b'0'..=b'9' => { let colon = at + b[at..].iter().position(|c| *c == b':')?; let len: usize = std::str::from_utf8(&b[at..colon]).ok()?.parse().ok()?; colon.checked_add(1 + len).filter(|end| *end <= b.len()) }
+            _ => None,
+        }
+    }
+    fn text(b: &[u8], at: usize) -> Option<&[u8]> {
+        let colon = at + b[at..].iter().position(|c| *c == b':')?;
+        let len: usize = std::str::from_utf8(&b[at..colon]).ok()?.parse().ok()?;
+        b.get(colon + 1..colon + 1 + len)
+    }
+    fn int(b: &[u8], at: usize) -> Option<u64> {
+        if b.get(at) != Some(&b'i') { return None; }
+        let end = at + b[at..].iter().position(|c| *c == b'e')?;
+        std::str::from_utf8(&b[at + 1..end]).ok()?.parse().ok()
+    }
+    /// Each key and the offset of its value in the dictionary at `at`.
+    fn entries(b: &[u8], at: usize) -> Option<Vec<(&[u8], usize)>> {
+        if b.get(at) != Some(&b'd') { return None; }
+        let (mut at, mut out) = (at + 1, Vec::new());
+        while *b.get(at)? != b'e' { let key = text(b, at)?; let value = skip(b, at, 0)?; out.push((key, value)); at = skip(b, value, 0)?; }
+        Some(out)
+    }
+    let info = entries(bytes, 0)?.into_iter().find(|(k, _)| *k == b"info")?.1;
+    let fields = entries(bytes, info)?;
+    let field = |name: &[u8]| fields.iter().find(|(k, _)| *k == name).map(|(_, at)| *at);
+    let name = String::from_utf8_lossy(text(bytes, field(b"name.utf-8").or(field(b"name"))?)?).into_owned();
+    let size = match field(b"files") {
+        Some(mut at) => {
+            at += 1;
+            let mut total = 0u64;
+            while *bytes.get(at)? != b'e' {
+                total = total.saturating_add(entries(bytes, at)?.into_iter().find(|(k, _)| *k == b"length").and_then(|(_, v)| int(bytes, v))?);
+                at = skip(bytes, at, 0)?;
+            }
+            total
+        }
+        None => int(bytes, field(b"length")?)?,
+    };
+    Some((name, size))
 }
 
 /// Caller holds mutation_lock, including for automated renames.
@@ -470,6 +541,7 @@ pub async fn tick(s: &Service) -> Result<()> {
         // A torrent on a drive that is not connected waits for it, untouched.
         if drives.offline(Path::new(t["download_dir"].as_str().unwrap_or("")), &online) { continue; }
         reconnect(s, t).await;
+        settle_placement(s, &drives, t).await;
         if s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.hidden_package(hash)? { continue; }
         let previous = job(s, hash)?;
         if previous["phase"] == "ignored" {
@@ -559,6 +631,30 @@ async fn reconnect(s: &Service, t: &Value) {
     match s.rpc.call("torrent_verify", ids.clone()).await.and(Ok(())) {
         Ok(()) => { let _ = s.rpc.call("torrent_start", ids).await; tracing::info!(hash, "Drive is back: checking and resuming a torrent"); }
         Err(error) => tracing::warn!(hash, %error, "Could not resume a torrent after its drive returned"),
+    }
+}
+
+/// A magnet's size and name arrive with its metadata, after it was placed. Before any
+/// data is written, move it once if its drive turns out to lack room, or if its show is
+/// on another drive with room. Moving an empty torrent is free.
+async fn settle_placement(s: &Service, drives: &Drives, t: &Value) {
+    static SETTLED: std::sync::LazyLock<std::sync::Mutex<HashSet<String>>> = std::sync::LazyLock::new(Default::default);
+    let (Some(hash), Some(dir)) = (t["hash_string"].as_str(), t["download_dir"].as_str()) else { return };
+    if t["metadata_percent_complete"].as_f64() != Some(1.0) || t["downloaded_ever"].as_u64().unwrap_or(1) != 0
+        || t["percent_done"].as_f64().unwrap_or(1.0) > 0.0 { return; }
+    let Some(current) = drives.downloading_into(Path::new(dir)) else { return };
+    if !SETTLED.lock().is_ok_and(|mut settled| settled.insert(hash.to_owned())) { return; }
+    if drives.all().len() < 2 { return; }
+    let size: u64 = files(t).map(|f| f.iter().filter_map(|f| f["length"].as_u64()).sum()).unwrap_or(0);
+    let Some((entities, assets)) = s.db.lock().ok().and_then(|db| Some((db.documents("entities").ok()?, db.documents("assets").ok()?))) else { return };
+    let name = t["name"].as_str();
+    let prefer = name.and_then(|n| crate::drives::show_for_name(&entities, &assets, n)).and_then(|show| drives.show_drive(&assets, &show));
+    let Ok(best) = drives.place(prefer.as_deref(), size) else { return };
+    let moves = best.id != current.id && (!Drives::has_room(current, size) || prefer.as_deref() == Some(best.id.as_str()));
+    if !moves { return; }
+    match s.rpc.call("torrent_set_location", json!({"ids":[hash],"location":best.downloads,"move":true})).await {
+        Ok(_) => tracing::info!(hash, from = current.id, to = best.id, "Placed a new torrent once its size was known"),
+        Err(error) => tracing::warn!(hash, %error, "Could not place a new torrent on another drive"),
     }
 }
 
@@ -884,6 +980,15 @@ async fn auto_name(s: &Service, config: &Config, hash: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_torrent_file_gives_its_name_and_size() {
+        let single = b"d8:announce3:url4:infod6:lengthi1500e4:name8:Film.mkv12:piece lengthi16e6:pieces0:ee";
+        assert_eq!(metainfo_summary(single), Some(("Film.mkv".into(), 1500)));
+        let many = b"d4:infod5:filesld6:lengthi10e4:pathl5:a.mkveed6:lengthi20e4:pathl5:b.mkveee4:name4:Show6:pieces0:ee";
+        assert_eq!(metainfo_summary(many), Some(("Show".into(), 30)));
+        assert_eq!(metainfo_summary(b"not bencode"), None);
+        assert_eq!(metainfo_summary(b"d4:infod4:name"), None);
+    }
     #[test]
     fn a_finished_torrent_is_filed_on_the_drive_it_downloaded_to() {
         let root = std::env::temp_dir().join(format!("torrbaby-plan-{}", uuid::Uuid::new_v4()));

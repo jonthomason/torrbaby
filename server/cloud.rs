@@ -788,7 +788,12 @@ impl Cloud {
         let config = s.effective_config()?;
         // One video without an episode number is a film; anything else is a series.
         let film = chosen.len() == 1 && episode(&chosen[0].0).1.is_none() && body["kind"] != "tv" || body["kind"] == "movie";
-        let folder = crate::drives::Drives::of(&config).primary().library(!film).join(&title);
+        // With its show when the library has it, else on the drive with the most room.
+        let bytes: u64 = chosen.iter().map(|(_, size)| size).sum();
+        let (entities, assets) = { let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?; (db.documents("entities")?, db.documents("assets")?) };
+        let drives = crate::drives::Drives::of(&config);
+        let prefer = if film { None } else { crate::drives::show_titled(&entities, &assets, &title).and_then(|show| drives.show_drive(&assets, &show)) };
+        let folder = drives.place(prefer.as_deref(), bytes)?.library(!film).join(&title);
         let files = chosen.into_iter().map(|(path, size)| {
             let extension = path.rsplit('.').next().unwrap_or("mkv").to_ascii_lowercase();
             let (stated, number) = episode(&path);
@@ -849,7 +854,7 @@ impl Cloud {
         let link = self.call("/file/download", &[], Some(json!({"fids": [fid]})), Some(cookie), true).await?;
         let url = link["data"][0]["download_url"].as_str().context("Quark gave no download link")?.to_owned();
         let parent = destination.parent().context("Invalid destination")?;
-        tokio::fs::create_dir_all(parent).await?;
+        crate::drives::create_media_folder(parent)?;
         let step = size.div_ceil(CONNECTIONS).max(1);
         let part = |i: u64| PathBuf::from(format!("{}.part{i:02}", destination.display()));
         let ranges: Vec<(u64, u64, u64)> = (0..CONNECTIONS).map(|i| (i, i * step, ((i + 1) * step).min(size))).filter(|(_, start, end)| start < end).collect();

@@ -110,6 +110,14 @@ fn on_its_volume(path: &Path) -> bool {
     }
 }
 
+/// Create a folder for new media, unless it belongs on a volume that is not mounted:
+/// then it would be made on the startup disk instead, out of sight of its drive.
+pub fn create_media_folder(folder: &Path) -> anyhow::Result<()> {
+    anyhow::ensure!(on_its_volume(folder), "Its drive is not connected");
+    std::fs::create_dir_all(folder)?;
+    Ok(())
+}
+
 /// Missing drives whose Needs attention item has been dismissed, until they return.
 static DISMISSED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::LazyLock::new(Default::default);
 /// Drive items in Needs attention use ids from here up, clear of processing rows.
@@ -177,6 +185,39 @@ impl Drives {
     pub fn in_library(&self, path: &Path) -> bool {
         self.root_of(path).is_some_and(|(_, role, _)| role != Role::Downloads)
     }
+    /// Where a new download goes (docs/disk-aggregation.md, placement rules): `prefer`
+    /// (the drive with the show) when it has room; else the drive with the most free space.
+    /// Only connected drives that take new downloads are considered, and each keeps its
+    /// reserve free. When every drive is down to its reserve, the one with the most space
+    /// still takes a download that fits, so a full library slows down rather than stops.
+    /// `bytes` is 0 when the size is not known yet.
+    pub fn place(&self, prefer: Option<&str>, bytes: u64) -> anyhow::Result<&Drive> {
+        let candidates: Vec<(&Drive, u64)> = self.0.iter().filter(|d| d.accept_new && d.online())
+            .filter_map(|d| capacity(&d.media).map(|(_, free)| (d, free))).collect();
+        anyhow::ensure!(!candidates.is_empty(), "No connected drive takes new downloads");
+        let roomy = |(d, free): &&(&Drive, u64)| *free >= bytes.saturating_add(d.reserve_bytes);
+        if let Some((d, _)) = candidates.iter().filter(roomy).find(|(d, _)| Some(d.id.as_str()) == prefer) { return Ok(d); }
+        if let Some((d, _)) = candidates.iter().filter(roomy).max_by_key(|(_, free)| *free) { return Ok(d); }
+        let (d, free) = candidates.iter().max_by_key(|(_, free)| *free).expect("candidates is not empty");
+        anyhow::ensure!(*free > bytes.saturating_add(MARGIN_BYTES), "Not enough free space on any drive");
+        Ok(d)
+    }
+    /// Whether `drive` can take `bytes` more and keep its reserve.
+    pub fn has_room(drive: &Drive, bytes: u64) -> bool {
+        capacity(&drive.media).is_some_and(|(_, free)| free >= bytes.saturating_add(drive.reserve_bytes))
+    }
+    /// The drive holding the newest season of a show already in the library.
+    pub fn show_drive(&self, assets: &[Value], entity: &str) -> Option<String> {
+        assets.iter().filter(|a| a["entity_id"] == entity && a["role"] != "extra")
+            .filter_map(|a| Some((a["season"].as_u64().unwrap_or(0), self.drive_of(Path::new(a["path"].as_str()?))?)))
+            .max_by_key(|(season, _)| *season).map(|(_, d)| d.id.clone())
+    }
+    /// Where a new download named `name` goes: with its show when the library has it.
+    pub fn place_named(&self, entities: &[Value], assets: &[Value], name: Option<&str>, bytes: u64) -> anyhow::Result<&Drive> {
+        let show = name.and_then(|name| show_for_name(entities, assets, name));
+        let prefer = show.as_deref().and_then(|show| self.show_drive(assets, show));
+        self.place(prefer.as_deref(), bytes)
+    }
     /// The ids of the drives connected now.
     pub fn online(&self) -> std::collections::HashSet<String> {
         self.0.iter().filter(|d| d.online()).map(|d| d.id.clone()).collect()
@@ -218,6 +259,26 @@ impl Drives {
             "volumes": volumes.iter().map(|v| json!({"name":v.name,"mount":v.mount,"total_bytes":v.total_bytes,"free_bytes":v.free_bytes,"roles":v.roles,"available":v.total_bytes > 0})).collect::<Vec<_>>(),
         })
     }
+}
+
+/// Never fill a drive closer than this, even when every drive is down to its reserve.
+const MARGIN_BYTES: u64 = 2_000_000_000;
+
+/// The show in the library a release name belongs to, by its title.
+pub fn show_for_name(entities: &[Value], assets: &[Value], name: &str) -> Option<String> {
+    let (title, _, kind) = crate::metadata::parse_name(name);
+    if kind != "tv" { return None; }
+    show_titled(entities, assets, &title)
+}
+/// The show in the library with this title.
+pub fn show_titled(entities: &[Value], assets: &[Value], title: &str) -> Option<String> {
+    let wanted = crate::metadata::normalized(title);
+    if wanted.is_empty() { return None; }
+    let named = |value: &Value| value.as_str().is_some_and(|t| crate::metadata::normalized(t) == wanted);
+    entities.iter().find(|e| e["kind"] == "tv" && (named(&e["title"]) || named(&e["original_title"])))
+        .and_then(|e| e["id"].as_str().map(str::to_owned))
+        .or_else(|| assets.iter().find(|a| named(&a["series_name"]) && a["entity_id"].is_string())
+            .and_then(|a| a["entity_id"].as_str().map(str::to_owned)))
 }
 
 /// `/Volumes/Beta/Media` is on "Beta".
@@ -348,6 +409,46 @@ mod tests {
         legacy_too["drives"] = json!([{"id":"a","media":"/A"}]);
         assert!(serde_json::from_value::<Config>(legacy_too).unwrap().validate().is_err(), "both forms");
         assert!(!refused(json!([{"id":"a","media":"/A"},{"id":"b","media":"/B"}])));
+    }
+
+    #[test]
+    fn new_downloads_go_with_their_show_else_to_the_most_room_and_never_to_a_missing_drive() {
+        let root = std::env::temp_dir().join(format!("torrbaby-place-{}", uuid::Uuid::new_v4()));
+        let media = |d: &str| root.join(d).join("Media");
+        for d in ["Alpha", "Beta", "Gamma"] { for f in ["Downloads", "Movies", "TV"] { std::fs::create_dir_all(media(d).join(f)).unwrap(); } }
+        let free = capacity(&root).unwrap().1;
+        let drives = |list: Value| Drives::of(&config(json!({"source":"","movies":"","tv":"","drives":list})));
+        let plain = |id: &str, d: &str| json!({"id":id,"media":media(d)});
+        // One disk underneath, so which has "most room" varies from read to read.
+        let three = drives(json!([plain("alpha","Alpha"), plain("beta","Beta"), plain("gamma","Gamma")]));
+        assert!(three.place(None, 1).is_ok());
+        assert_eq!(three.place(Some("gamma"), 1).unwrap().id, "gamma", "a show stays where it is");
+        // A drive down to its reserve takes nothing while another has room, even for its show.
+        let full = drives(json!([{"id":"alpha","media":media("Alpha"),"reserve_bytes":u64::MAX / 4}, plain("beta","Beta")]));
+        assert_eq!(full.place(Some("alpha"), 1_000).unwrap().id, "beta");
+        // Retired drives and missing drives are skipped.
+        let retired = drives(json!([{"id":"alpha","media":media("Alpha"),"accept_new":false}, plain("beta","Beta")]));
+        assert_eq!(retired.place(Some("alpha"), 1).unwrap().id, "beta");
+        let missing = drives(json!([{"id":"alpha","media":root.join("Unplugged/Media")}, plain("beta","Beta")]));
+        assert_eq!(missing.place(Some("alpha"), 1).unwrap().id, "beta");
+        assert!(!root.join("Unplugged").exists());
+        // Every drive at its reserve: the most room still takes what fits; nothing takes what does not.
+        let tight = drives(json!([{"id":"alpha","media":media("Alpha"),"reserve_bytes":free}]));
+        assert_eq!(tight.place(None, 1).unwrap().id, "alpha");
+        assert!(tight.place(None, free).is_err());
+        let none = drives(json!([{"id":"alpha","media":media("Alpha"),"accept_new":false}]));
+        assert!(none.place(None, 1).is_err());
+        // Episodes follow the drive with the show's newest season.
+        let entities = vec![json!({"id":"tmdb:tv:1","kind":"tv","title":"The Show"}), json!({"id":"tmdb:movie:2","kind":"movie","title":"The Show"})];
+        let assets = vec![json!({"entity_id":"tmdb:tv:1","season":1,"path":media("Alpha").join("TV/The Show/S01E01.mkv")}),
+                          json!({"entity_id":"tmdb:tv:1","season":2,"path":media("Gamma").join("TV/The Show/S02E01.mkv")})];
+        assert_eq!(show_for_name(&entities, &assets, "The.Show.S02E05.1080p.WEB.mkv").as_deref(), Some("tmdb:tv:1"));
+        assert_eq!(show_for_name(&entities, &assets, "Another.Show.S01E01.mkv"), None);
+        assert_eq!(show_for_name(&entities, &assets, "The.Show.2019.1080p.mkv"), None, "a film is not an episode");
+        assert_eq!(three.place_named(&entities, &assets, Some("The.Show.S02E05.mkv"), 1).unwrap().id, "gamma");
+        let only_beta = drives(json!([{"id":"alpha","media":media("Alpha"),"reserve_bytes":u64::MAX / 4}, plain("beta","Beta"), {"id":"gamma","media":media("Gamma"),"reserve_bytes":u64::MAX / 4}]));
+        assert_eq!(only_beta.place_named(&entities, &assets, Some("The.Show.S03E01.mkv"), 1).unwrap().id, "beta", "the show's drive is full");
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[test]

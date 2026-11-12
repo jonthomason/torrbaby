@@ -66,7 +66,7 @@ pub fn parse_name(name: &str) -> (String, String, &'static str) {
         if season.is_some() || chinese_episode.is_some() || SERIES_PACK.is_match(name) { "tv" } else { "movie" },
     )
 }
-fn normalized(value: &str) -> String {
+pub(crate) fn normalized(value: &str) -> String {
     value
         .chars()
         .filter(|c| c.is_alphanumeric())

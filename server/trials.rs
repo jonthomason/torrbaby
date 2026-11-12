@@ -31,7 +31,7 @@ pub async fn create(s:&Service,body:&Value)->Result<Value> {
   ensure!(source.get("magnet").and_then(Value::as_str).and_then(crate::torrent_search::private_listing).is_none(),"Private-site releases cannot be trialled: the site forbids leaving a torrent early");
  }
  let id=uuid::Uuid::new_v4().to_string();
- let root=crate::drives::Drives::of(&s.effective_config()?).primary().downloads.join(".torrbaby-trials").join(&id);
+ let root=crate::drives::Drives::of(&s.effective_config()?).place(None,0)?.downloads.join(".torrbaby-trials").join(&id);
  let candidates:Vec<_>=sources.iter().enumerate().map(|(i,v)|json!({"name":v["name"],"source":v["source"],"listing_key":v["listing_key"],"directory":root.join(i.to_string()),"state":"pending","bytes":0,"speed":0,"peers":0,"sending":0})).collect();
  let v=json!({"id":id,"state":"starting","created":now(),"duration":SECONDS,"byte_limit":CAP,"candidates":candidates});
  save(s,&v)?;Ok(v)
@@ -135,7 +135,9 @@ async fn advance(s:&Service,v:&mut Value)->Result<()> {
   if let Some(hash)=&winner {
    let c=v["candidates"].as_array().into_iter().flatten().find(|c|c["hash"]==*hash).context("Winner missing")?;
    let t=crate::organizer::torrent(s,hash).await?;
-   let destination=crate::drives::Drives::of(&s.effective_config()?).primary().downloads.to_string_lossy().into_owned();
+   // The winner joins its own drive's downloads: a rename, never a copy across drives.
+   let drives=crate::drives::Drives::of(&s.effective_config()?);
+   let destination=drives.drive_of(Path::new(t["download_dir"].as_str().unwrap_or(""))).unwrap_or(drives.primary()).downloads.to_string_lossy().into_owned();
    if t["download_dir"]!=destination {
     ensure!(owned(c,&t),"Trial ownership changed; cleanup stopped");
     for file in t["files"].as_array().into_iter().flatten() {
