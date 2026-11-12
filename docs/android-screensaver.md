@@ -1,100 +1,79 @@
-# Projector screensaver: a small standalone app
+# Projector screensaver (JMGO)
 
-Status: planned, not started. Written 2026-11-12. **This is not part of
-Torrbaby.** It is a separate, very simple Android app with its own project
-folder (proposed: `~/src/scenic-screensaver`). This note lives here only
-because the JMGO cleanup that led to it happened in a Torrbaby session. The JMGO
-comes first; the TCL waits until the screensaver has been in use on the JMGO for
-a while, and until we have working ADB on the TCL.
+Status: in use on the JMGO since 2026-11-12. **This is not part of Torrbaby.**
+It is a standalone open-source app with its clips stored on the projector. This
+note lives here only because the JMGO cleanup that led to it happened in a
+Torrbaby session. The TCL waits until it has been in use on the JMGO for a
+while, and until we have working ADB on the TCL.
 
 ## Why
 
 The JMGO's own screensaver (`com.jmgo.os.dream`) showed ads and downloaded
 content in the background. It has been removed for user 0 (see "JMGO cleanup"
-below), and the projector currently uses Android's plain colour screensaver.
-The goal is something like the Apple TV's aerial screensaver: slow,
-high-quality video, crossfading between clips, with the time shown.
+below). The goal was something like the Apple TV's aerial screensaver: slow,
+high-quality video with the time shown, and no network use.
 
-## What the user sees
+## What is installed
 
-- After the projector's normal idle time, the screensaver starts.
-- It plays scenic clips one after another, with a slow crossfade (about 2 s)
-  between them, in random order without recent repeats.
-- It shows a small, dim clock in a corner. Optionally, in a clip's last
-  seconds, it shows the place name from the clip's file name.
-- Any key on the remote wakes the projector, as Android's screensaver
-  framework already does.
-- It has no network access at all: the app does not request the `INTERNET`
-  permission. It only plays files already on the device.
+Instead of writing our own app, we use **Aerial Views** 1.8.5
+(github.com/theothernt/AerialViews, GPL-3.0), built from source on the Mac:
 
-## The app
+- The F-Droid flavour, with the Firebase Performance plugin removed so the APK
+  contains no Firebase code. Gradle 9.8.0 came from the Tencent mirror, with its
+  checksum verified.
+- Installed as the debug build `com.neilturner.aerialviews.debug`.
+- The Apple, Amazon and community video sources are turned off. Only local
+  videos are on, limited to the folder `/Movies/Screensaver/`.
+- Settings live in
+  `shared_prefs/com.neilturner.aerialviews.debug_preferences.xml` and were set
+  with `run-as`. `startup_screensaver_on_launch=true` (opening the app starts
+  the screensaver); holding OK opens its settings.
 
-- One `DreamService` plus a tiny settings screen (or none at first).
-  Package: e.g. `com.jonthomason.scenic`. Minimum Android 11 (the JMGO's
-  version).
-- It plays every video file in its clip folder,
-  `/sdcard/Android/data/com.jonthomason.scenic/files/clips/`. That is the app's
-  own storage, so it needs no storage permission.
-- Two ExoPlayer (Media3) instances alternate, so the next clip is prepared
-  before the crossfade starts. Use hardware decoding, with HEVC 4K preferred.
-- The place name comes from the file name:
-  `Earth from the ISS - Pacific at night.mp4` is shown as
-  "Earth from the ISS · Pacific at night". An optional
-  `Earth from the ISS - Pacific at night.zh.txt` beside it gives the Chinese
-  name, shown when the system language is Chinese.
-- If the folder is empty, it shows a plain black screen with the clock, never
-  an error.
-- Interface strings come in EN and 中文, although there are almost none.
-
-## Getting clips onto the projector
-
-There is no server and no syncing. Clips are copied straight to the projector
-from the Mac with ADB:
+Made the system screensaver over ADB (no root), and the firmware keeps it
+across restarts:
 
 ```sh
-adb -s 192.168.1.206:5555 push clips/ /sdcard/Android/data/com.jonthomason.scenic/files/clips/
+adb shell settings put secure screensaver_components com.neilturner.aerialviews.debug/com.neilturner.aerialviews.ui.screensaver.DreamActivity
+adb shell settings put secure screensaver_default_component com.neilturner.aerialviews.debug/com.neilturner.aerialviews.ui.screensaver.DreamActivity
+adb shell settings put system screen_off_timeout 600000   # 10 minutes; was 1999999999
 ```
 
-A small script in the app's repo (`push_clips.sh`) does this, skips clips
-already there, and lists what is on the device. Adding or removing clips is
-just copying or deleting files. The JMGO has about 50 GB free; keep the
-collection under about 25 GB.
+Start it by hand with `adb shell service call dreams 1`, or by opening Aerial
+Views on the projector.
 
-## Footage
+## Clips
 
-Use only footage we are allowed to use. **Not Apple's aerial videos**: they are
-Apple's copyrighted content and not licensed for other apps.
+The clips are in `/sdcard/Movies/Screensaver/` on the projector, 30 seconds each,
+with no audio. 4K sources are HEVC at 18 Mb/s (`hevc_videotoolbox`); 1080p
+sources are HEVC at 8 Mb/s. File names are bilingual, for example
+`Aurora at night · 夜间极光.mp4`, so the file name works as a caption if
+Aerial Views' location overlay is turned on. After pushing new files, make sure MediaStore has indexed them
+(Aerial Views finds local videos through it).
 
-- **NASA**: Earth from the ISS and similar footage. It is public domain, and
-  the closest match to Apple's space clips.
-- **Freely licensed stock**, such as Pexels and Pixabay. Their licences allow
-  free use. There are plenty of slow 4K drone shots of coastlines, mountains,
-  forests, cities at night and Chinese landscapes.
-- Keep a `SOURCES.md` in the clip folder on the Mac: each clip's source,
-  licence and original URL.
+Use only footage we are allowed to use. **Not Apple's aerial videos**: they
+are Apple's copyrighted content.
 
-Starter set: 20–30 clips, 1–2 minutes each. Prepare each on the Mac as HEVC 4K
-at about 15–25 Mb/s with the audio removed (`ffmpeg -an`). That is roughly
-15–25 GB.
+- **NASA**: Earth from the ISS ("4K Earth Views Extended Cut", JSC 2021).
+  Public domain.
+- **Wikimedia Commons**: CC BY and CC BY-SA drone and orbital footage. These
+  licences require attribution, which is in the table below. A copy of this
+  table is on the projector as `SOURCES.txt` in the clip folder.
 
-## Making it the screensaver (once, over ADB, no root)
+| Source on Commons | Author | Licence |
+| --- | --- | --- |
+| Aerial imagery of fjords and rivers in Arctic Norway | anotherview | CC BY 3.0 |
+| Alexander Gerst's Earth timelapses (2017 reissue) | European Space Agency | CC BY-SA 3.0 IGO |
+| Drone flyover video of Mount Hiei | Benlisquare | CC BY-SA 4.0 |
+| Fall foliage colors in Virginia - 4k Drone view | Sudeep Gowda | CC BY 3.0 |
+| Flying the Drone around the Great Wall of China near Jinshan Ridge | Johnny Xmas | CC BY 3.0 |
+| Lala Lake, Romania - 4K Aerial | Marian Cepeha | CC BY 3.0 |
+| Piz Neir, aerial video 4k | Capricorn4049 | CC BY-SA 4.0 |
+| Rheinfall (Rhine Falls) | Harry TheSea | CC BY 3.0 |
 
-```sh
-adb shell settings put secure screensaver_components com.jonthomason.scenic/.ScenicDream
-adb shell settings put secure screensaver_default_component com.jonthomason.scenic/.ScenicDream
-```
-
-We have already confirmed that the JMGO firmware keeps this setting across
-restarts. The idle timeout is the projector's own setting.
-
-## Acceptance (JMGO)
-
-- After idle, the screensaver starts within the normal timeout, plays the local
-  clips, crossfades smoothly, and wakes on any key.
-- The app has no network permission. Confirm with `dumpsys package`, and check
-  that `netstats` shows no traffic for its uid.
-- The setting and the clips survive a restart.
-- It keeps running for at least a week before it goes on the TCL.
+Clips cut from these were trimmed and re-encoded, and the Lala Lake clips were
+cropped to remove the letterbox and logos. Commons rate-limits large downloads
+(HTTP 429): download one file at a time with a descriptive User-Agent, and wait
+if it refuses.
 
 ## JMGO cleanup so far (2026-11-12, no root)
 
@@ -104,11 +83,26 @@ restarts. The idle timeout is the projector's own setting.
   `cmd package install-existing <app>`.
 - Removed this way: `fusion.android.tv.demo` (retail demo), `com.jmgo.os.guide`,
   `com.jmgo.os.gamecenter`, `com.jmgo.browser`, `com.jmgo.helpcenter` and
-  `com.jmgo.os.dream` (the ad-filled screensaver). Screensaver set to
-  `com.android.dreams.basic/.Colors`.
+  `com.jmgo.os.dream` (the ad-filled screensaver).
 - `com.jmgo.ai.voice` (the voice assistant, a system-uid app kept updated by
   `com.jmgo.update`) is restored by the firmware at boot even after removal.
-  Only DNS-level blocking (iFlytek, Umeng) can limit it without root.
+- The shell cannot disable another app's components, so iQiyi still starts
+  itself at boot (`QYBootCompleteReceiver`). That is accepted.
 - Kept on purpose: iQiyi, Tencent Video, CIBN, screen mirroring
   (`com.jmgo.holacast.x`), and every projector-hardware app (`hippo`, `spider`,
   keystone, focus, brightness, colour, eye protection, remote).
+- The UniFi gateway has a firewall policy, "JMGO projector: block vendor and
+  trackers", that blocks the projector from reaching holatek.cn, jmgo.com,
+  jmgo.cn, jianguo.tv, umeng.com, umengcloud.com, mob.com, bugly.qq.com,
+  sorstek.com and xfyun.cn. It matches the projector by MAC address
+  `d2:c6:d0:81:c8:72`, which is a private (randomised) MAC: if the projector's
+  Wi-Fi MAC changes, the rule silently stops applying. iQiyi, Tencent Video and
+  Baidu were confirmed still working.
+
+## The JMGO home screen
+
+The JMGO launcher (`com.jmgo.launcher`) does not read Android TV's
+channels/preview programs. Its carousel is fed by JMGO's servers and by a few
+hard-coded partner content providers (CIBN, Mango TV, Coocaa), so a third-party
+app such as Torrbaby cannot put cards on it. Showing Torrbaby titles on the home
+screen would need a replacement launcher.
