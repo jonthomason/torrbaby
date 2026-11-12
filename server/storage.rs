@@ -42,6 +42,7 @@ impl Database {
             fs::set_permissions(&backup, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
         }
         connection.execute_batch(include_str!("schema.sql"))?;
+        add_column(&connection, "processing_failures", "resolution", "TEXT")?;
         let mut database = Self { connection };
         database.migrate_profiles(version)?;
         database.initialize_catalog_revision()?;
@@ -256,5 +257,13 @@ fn validate_name(name: &str) -> Result<()> {
     if name.trim().is_empty() || name.chars().count() > 80 {
         bail!("Client name must contain 1–80 characters");
     }
+    Ok(())
+}
+
+/// Add a column to an existing table once; new databases get it from here too.
+pub(crate) fn add_column(connection: &Connection, table: &str, column: &str, kind: &str) -> Result<()> {
+    let exists: bool = connection.query_row(
+        &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name=?)"), [column], |r| r.get(0))?;
+    if !exists { connection.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind}"), [])?; }
     Ok(())
 }

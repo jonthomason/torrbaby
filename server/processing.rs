@@ -35,7 +35,7 @@ fn sign_off(db:&Database,id:&str,revision:&str)->Result<bool> {
     // idle, an English artifact, or an empty job list can never sign off a file.
     let complete=db.connection.execute("UPDATE media_processing SET state='ready',stage='complete',completed_at=?,updated=?,error=NULL WHERE asset_id=? AND revision=? AND inventory_state='ready' AND subtitles_state IN ('ready','not_applicable','skipped') AND credits_state IN ('ready','not_applicable','skipped')",rusqlite::params![now(),now(),id,revision])?==1;
     // Skipped stages stay on record (unresolved) so their errors can be mined for fixes.
-    if complete {db.connection.execute("UPDATE processing_failures SET resolved_at=? WHERE asset_id=? AND revision=? AND resolved_at IS NULL AND stage NOT LIKE '%_skipped'",rusqlite::params![now(),id,revision])?;}
+    if complete {db.connection.execute("UPDATE processing_failures SET resolved_at=?,resolution='completed' WHERE asset_id=? AND revision=? AND resolved_at IS NULL AND stage NOT LIKE '%_skipped'",rusqlite::params![now(),id,revision])?;}
     Ok(complete)
 }
 /// Set when the server begins shutting down, so work its helpers lose is requeued without an error.
@@ -97,6 +97,15 @@ fn not_video(db:&Database,id:&str,revision:&str)->Result<()> {
 }
 /// Reopen the credits stage of files analysed by an older credits method, even if
 /// they were signed off: a method upgrade should reach the whole library.
+/// Retire problems that no longer apply, keeping them on record with the reason: the file
+/// has changed since (`superseded`), or it has left the library (`removed`).
+pub(crate) fn retire_obsolete_failures(db:&Database)->Result<usize> {
+    let superseded=db.connection.execute("UPDATE processing_failures SET resolved_at=?,resolution='superseded' WHERE resolved_at IS NULL \
+        AND EXISTS(SELECT 1 FROM media_processing m WHERE m.asset_id=processing_failures.asset_id AND m.revision!=processing_failures.revision)",[now()])?;
+    let removed=db.connection.execute("UPDATE processing_failures SET resolved_at=?,resolution='removed' WHERE resolved_at IS NULL \
+        AND NOT EXISTS(SELECT 1 FROM library_assets a WHERE a.id=processing_failures.asset_id)",[now()])?;
+    Ok(superseded+removed)
+}
 pub(crate) fn reopen_outdated(db:&Database)->Result<usize> {
     Ok(db.connection.execute("UPDATE media_processing SET credits_state='pending',stage='credits',state=CASE WHEN state IN ('ready','failed') THEN 'queued' ELSE state END,retry_after=0,attempts=0,completed_at=NULL,error=NULL,updated=? WHERE credits_state IN ('ready','failed','incomplete','skipped') AND state!='running' AND asset_id IN (SELECT asset_id FROM credits_analysis WHERE version<?)",rusqlite::params![now(),crate::credits::VERSION])?)
 }
@@ -223,6 +232,7 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
                 not_video(&db,id,&revision)?;
             }
             reopen_outdated(&db)?;
+            retire_obsolete_failures(&db)?;
             reopen_untranscribed(&db,&s.data_dir)?;
             if let Ok(mut e)=ENROLLED.lock() {*e=Some((revision,now()));}
         }
@@ -453,7 +463,7 @@ pub fn summary(db:&Database)->Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn database()->Result<Database>{let db=Database{connection:rusqlite::Connection::open_in_memory()?};db.connection.execute_batch(include_str!("schema.sql"))?;Ok(db)}
+    fn database()->Result<Database>{let db=Database{connection:rusqlite::Connection::open_in_memory()?};db.connection.execute_batch(include_str!("schema.sql"))?;crate::storage::add_column(&db.connection,"processing_failures","resolution","TEXT")?;Ok(db)}
     #[test]
     fn failure_history_survives_retries_and_completion()->Result<()> {
         let db=database()?;enroll(&db,"episode","r1")?;
@@ -478,6 +488,20 @@ mod tests {
         let logged=db.rows("SELECT stage,resolved_at FROM processing_failures",[])?;
         assert_eq!((logged[0]["stage"].as_str(),logged[0]["resolved_at"].is_null()),(Some("credits_skipped"),true));
         assert_eq!(db.rows("SELECT state FROM media_processing WHERE asset_id='episode'",[])?[0]["state"],"ready");
+        Ok(())
+    }
+    #[test]
+    fn obsolete_failures_are_retired_with_a_reason()->Result<()> {
+        let db=database()?;
+        db.connection.execute("INSERT INTO library_assets VALUES('a',?)",[json!({"id":"a","available":true,"path":"/M/a.mkv"}).to_string()])?;
+        enroll(&db,"a","r2")?;
+        for (asset,revision,error) in [("a","r1","old"),("a","r2","current"),("gone","r1","missing")] {
+            db.connection.execute("INSERT INTO processing_failures(asset_id,revision,stage,error,first_seen,last_seen) VALUES(?,?,'inventory',?,1,1)",[asset,revision,error])?;
+        }
+        assert_eq!(retire_obsolete_failures(&db)?,2);
+        let rows=db.rows("SELECT error,resolution FROM processing_failures ORDER BY error",[])?;
+        let reason=|e:&str|rows.iter().find(|r|r["error"]==e).unwrap()["resolution"].clone();
+        assert_eq!((reason("old"),reason("missing"),reason("current")),(json!("superseded"),json!("removed"),Value::Null));
         Ok(())
     }
     #[test]
