@@ -1837,7 +1837,7 @@ struct CloudJobsSection: View {
         // and then the downloads are never asked for.
         VStack(alignment: .leading, spacing: 10) {
             if !jobs.isEmpty {
-                Label("Quark Drive", systemImage: "icloud.and.arrow.down").font(.caption.weight(.semibold)).tracking(1.4).foregroundStyle(Theme.cloud)
+                Label("Quark Drive", systemImage: "icloud.and.arrow.down").font(.caption.weight(.semibold)).tracking(1.4).foregroundStyle(Theme.muted)
                 ForEach(jobs) { job in row(job) }
             }
         }
@@ -1854,8 +1854,8 @@ struct CloudJobsSection: View {
     private func row(_ job: CloudJob) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Label { Text(verbatim: job.title).lineLimit(2) } icon: { Image(systemName: "icloud.and.arrow.down") }
-                    .font(.headline).foregroundStyle(Theme.cloud)
+                // Blue titles are cloud downloads, green ones torrents; nothing else is coloured.
+                Text(verbatim: job.title).font(.headline).foregroundStyle(Theme.cloud).lineLimit(2).textSelectionIfAvailable()
                 Spacer(minLength: 8)
                 if job.state == "failed" || job.state == "retrying" {
                     Button("Retry") { act("POST", "/v1/cloud/jobs/\(job.id)/retry") }.buttonStyle(MonoButtonStyle(compact: true)).fixedSize()
@@ -1869,7 +1869,7 @@ struct CloudJobsSection: View {
                 }
             }
             HStack(spacing: 8) {
-                Text(verbatim: job.stateLabel).foregroundStyle(job.state == "failed" || job.state == "retrying" ? .orange : Theme.cloud)
+                Text(verbatim: job.stateLabel).foregroundStyle(job.state == "failed" || job.state == "retrying" ? .orange : Theme.accent)
                 if let files = job.files, files > 1 { Text(L10n.format("%d of %d videos", job.filesDone ?? 0, files)).foregroundStyle(Theme.muted) }
                 if let total = job.totalBytes, total > 0 {
                     Text(L10n.format("%@ of %@", ByteCountFormatter.string(fromByteCount: job.doneBytes ?? 0, countStyle: .file), ByteCountFormatter.string(fromByteCount: total, countStyle: .file)))
@@ -1882,13 +1882,14 @@ struct CloudJobsSection: View {
                 }
             }.font(.caption).monospacedDigit()
             if let total = job.totalBytes, total > 0, job.state != "done" {
-                ProgressView(value: Double(job.doneBytes ?? 0), total: Double(total)).tint(job.state == "failed" ? .orange : Theme.cloud)
+                ProgressView(value: Double(job.doneBytes ?? 0), total: Double(total)).tint(job.state == "failed" ? .orange : Theme.accent)
             }
-            if let current = job.current, !current.isEmpty { Text(verbatim: current).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+            if let current = job.current, !current.isEmpty { Text(verbatim: current).font(.caption).foregroundStyle(.secondary).lineLimit(1).textSelectionIfAvailable() }
             if let error = job.error, !error.isEmpty { Text(verbatim: error).font(.caption).foregroundStyle(.orange) }
-        }.padding(12).padding(.leading, 6).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
-            // A coloured edge sets these apart from the torrents below at a glance.
-            .overlay(alignment: .leading) { UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 10).fill(Theme.cloud).frame(width: 4) }
+        }.padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+            #if !os(tvOS)
+            .contextMenu { Button { Clipboard.copy(job.title) } label: { Label("Copy name", systemImage: "doc.on.doc") } }
+            #endif
     }
     private func act(_ method: String, _ path: String) {
         Task {

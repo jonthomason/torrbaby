@@ -14369,6 +14369,23 @@
           }
         }
       }
+    },
+    "Copy name": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy name"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "复制名称"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

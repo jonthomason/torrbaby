@@ -88,8 +88,9 @@ struct TorrbabyApp: App {
 /// text, and small-radius rounded rectangles. The purple wordmark is the only colour.
 enum Theme {
     static let accent = Color.white
-    /// Marks a cloud-drive download among the torrents.
-    static let cloud = Color(red: 0.36, green: 0.76, blue: 1.0)
+    /// Title colours that tell a cloud-drive download from a torrent in the same list.
+    static let cloud = Color(red: 0.52, green: 0.76, blue: 1.0)
+    static let torrent = Color(red: 0.55, green: 0.86, blue: 0.62)
     static let onAccent = Color.black
     static let canvas = Color.black
     static let sidebar = Color(white: 0.055)
@@ -367,3 +368,15 @@ private struct StalePlaybackWindow: View {
     }
 }
 #endif
+
+enum Clipboard {
+    /// Put text on the system clipboard; the TV has none.
+    static func copy(_ text: String) {
+        #if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        #elseif os(iOS)
+        UIPasteboard.general.string = text
+        #endif
+    }
+}

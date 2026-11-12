@@ -152,6 +152,7 @@ final class L10n {
     IDS.put("Connection", R.string.ui_6512ee1541e9);
     IDS.put("Connection settings", R.string.ui_618aac54b120);
     IDS.put("Continue watching", R.string.ui_8fca30f77496);
+    IDS.put("Copy name", R.string.ui_138ab007258c);
     IDS.put("Could not connect.", R.string.ui_c0d06c3ff543);
     IDS.put("Could not find your server", R.string.ui_3498c19c828e);
     IDS.put("Could not load users", R.string.ui_47dd74c0c423);

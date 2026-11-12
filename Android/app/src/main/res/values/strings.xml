@@ -141,6 +141,7 @@
     <string name="ui_6512ee1541e9" formatted="false">Connection</string>
     <string name="ui_618aac54b120" formatted="false">Connection settings</string>
     <string name="ui_8fca30f77496" formatted="false">Continue watching</string>
+    <string name="ui_138ab007258c" formatted="false">Copy name</string>
     <string name="ui_c0d06c3ff543" formatted="false">Could not connect.</string>
     <string name="ui_3498c19c828e" formatted="false">Could not find your server</string>
     <string name="ui_47dd74c0c423" formatted="false">Could not load users</string>

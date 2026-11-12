@@ -595,6 +595,9 @@ struct TorrentListView: View {
                   NavigationLink(value: torrent.id) { row(torrent) }.buttonStyle(.plain)
               } }
               .contextMenu {
+                  // The whole row is a link, so its text cannot be selected; copying is offered here.
+                  Button { Clipboard.copy(torrent.displayName) } label: { Label("Copy name", systemImage: "doc.on.doc") }
+                  Divider()
                   Button { store.action(torrent, "start") } label: {
                       Label("Start", systemImage: "play.fill")
                   }.disabled(store.busy || !store.connected || torrent.status != 0 || torrent.fileOperation != nil)
@@ -714,7 +717,7 @@ struct TorrentRow: View {
           HStack(alignment: .top, spacing: 16) {
             TorrentThumbnail(torrent: torrent).frame(width: 46, height: 64)
             VStack(alignment: .leading, spacing: 9) {
-                Text(torrent.displayName).font(.system(size: 15, weight: .semibold)).lineLimit(2).multilineTextAlignment(.leading)
+                Text(torrent.displayName).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.torrent).lineLimit(2).multilineTextAlignment(.leading)
                 HStack(spacing: 8) {
                     Text(LocalizedStringKey(torrent.stateName)).foregroundStyle(color)
                     Text("·").foregroundStyle(Theme.muted)
@@ -749,7 +752,7 @@ struct CompactTorrentRow: View {
           HStack(spacing: 12) {
             TorrentThumbnail(torrent: torrent).frame(width: 32, height: 46)
             VStack(alignment: .leading, spacing: 4) {
-                Text(torrent.displayName).font(.system(size: 13, weight: .medium)).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                Text(torrent.displayName).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.torrent).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                 HStack(spacing: 6) {
                     Text(LocalizedStringKey(torrent.stateName)).foregroundStyle(torrent.needsAttention ? .orange : torrent.completed ? Theme.muted : Theme.accent)
                         .frame(width: 76, alignment: .leading)
@@ -801,7 +804,7 @@ private struct MobileTorrentRow: View {
             HStack(alignment: .top, spacing: 12) {
                 TorrentThumbnail(torrent: torrent).frame(width: 38, height: 54)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(torrent.displayName).font(.system(size: 14, weight: .semibold))
+                    Text(torrent.displayName).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.torrent)
                         .lineLimit(compact ? 2 : 3).multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     HStack {
