@@ -260,6 +260,7 @@ final class L10n {
     IDS.put("Ep %d", R.string.ui_ec4a7319deb9);
     IDS.put("Ep %d–%d", R.string.ui_da66b520661a);
     IDS.put("Episode", R.string.ui_8669aa56ebc3);
+    IDS.put("Episode %d", R.string.ui_ff8b7f3b6044);
     IDS.put("Episode order", R.string.ui_4d9e959a49a6);
     IDS.put("Episodes", R.string.ui_49d641ba8893);
     IDS.put("Episodes to keep per show", R.string.ui_1300ab995b0b);

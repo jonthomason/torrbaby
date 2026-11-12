@@ -555,8 +555,13 @@ private struct TVMediaDetail: View {
                 }
                 Image(systemName: "play.circle.fill").font(.largeTitle)
                 VStack(alignment: .leading, spacing: 10) {
-                    if let episode = asset.episode { Text("Episode \(episode)").font(.caption) }
-                    Text(asset.name ?? title.title).font(.headline).lineLimit(2)
+                    // An episode with no title of its own is headed by its number, once.
+                    if let episode = asset.episode {
+                        if let name = asset.ownName {
+                            Text("Episode \(episode)").font(.caption)
+                            Text(name).font(.headline).lineLimit(2)
+                        } else { Text("Episode \(episode)").font(.headline) }
+                    } else { Text(asset.name ?? title.title).font(.headline).lineLimit(2) }
                     if !asset.summary.isEmpty { Text(asset.summary).font(.caption).lineLimit(2) }
                     if !asset.complete { Text("Downloading").font(.caption).foregroundStyle(Theme.muted) }
                     if asset.position > 0 && asset.duration > 0 {
@@ -580,7 +585,7 @@ private struct TVMediaDetail: View {
                 try await store.registerClient()
                 let link = try await store.mediaPlaybackLink(asset: asset, titleID: title.id) { preparation = $0 }
                 playback = Playback(sessionId: link.sessionId, resumePosition: fromBeginning ? 0 : (link.resumePosition ?? 0),
-                    url: try store.endpoint(link.path), name: asset.episode == nil ? title.title : title.title + " · " + (asset.name ?? "Episode \(asset.episode!)"), libraryAssetID: asset.id, libraryTitleID: title.id)
+                    url: try store.endpoint(link.path), name: asset.episode == nil ? title.title : title.title + " · " + (asset.ownName ?? L10n.format("Ep %d", asset.episode!)), libraryAssetID: asset.id, libraryTitleID: title.id)
             } catch { if !Task.isCancelled { store.actionError = error.localizedDescription } }
         }
     }

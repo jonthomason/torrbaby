@@ -1777,13 +1777,13 @@ public class MainActivity extends Activity {
       LinearLayout row = Ui.row(this);
       row.setTag("seasons");
       scroll.addView(row);
-      // A single season needs no selector; the guide starts directly below the synopsis.
-      if (seasons.size() < 2) scroll.setVisibility(View.GONE);
+      // Shown even for a single season, so every show's page has the same shape.
+      if (seasons.isEmpty()) scroll.setVisibility(View.GONE);
       for (int number : seasons) {
         Button button =
             Ui.button(
                 this,
-                number == EXTRAS ? L10n.t("Extras") : number == 0 ? L10n.t("Specials") : "Season " + number,
+                number == EXTRAS ? L10n.t("Extras") : number == 0 ? L10n.t("Specials") : String.format(L10n.locale(), L10n.t("Season %d"), number),
                 () -> {
                   season = number;
                   for(int i=0;i<row.getChildCount();i++) {
@@ -1936,11 +1936,15 @@ public class MainActivity extends Activity {
     Ui.add(row, playIcon, 36, 36);
     Ui.gap(row, 14);
     LinearLayout text = Ui.column(this);
-    if (a.episode > 0) {
-      Ui.add(text, Ui.text(this, "Episode " + a.episode, 12, Ui.MUTED), -1, -2);
+    // An episode with no title of its own is headed by its number, once. TMDB lists most
+    // Chinese dramas with only the number again ("Episode 1", "第1集") as each title.
+    String number = a.episode > 0 ? String.format(L10n.locale(), L10n.t("Episode %d"), a.episode) : null;
+    boolean titled = number == null || !a.name.trim().matches("(?i)^(episode|ep\\.?|第)\\s*#?\\d+(\\.\\d+)?\\s*[集话話期回]?$") && !a.name.trim().isEmpty();
+    if (number != null && titled) {
+      Ui.add(text, Ui.text(this, number, 12, Ui.MUTED), -1, -2);
       Ui.gap(text, 5);
     }
-    TextView name = Ui.title(this, a.name, 18);
+    TextView name = Ui.title(this, titled ? a.name : number, 18);
     name.setMaxLines(2);
     Ui.add(text, name, -1, -2);
     if (!a.summary.isEmpty()) {

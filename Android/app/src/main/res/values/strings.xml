@@ -249,6 +249,7 @@
     <string name="ui_ec4a7319deb9" formatted="false">Ep %d</string>
     <string name="ui_da66b520661a" formatted="false">Ep %d–%d</string>
     <string name="ui_8669aa56ebc3" formatted="false">Episode</string>
+    <string name="ui_ff8b7f3b6044" formatted="false">Episode %d</string>
     <string name="ui_4d9e959a49a6" formatted="false">Episode order</string>
     <string name="ui_49d641ba8893" formatted="false">Episodes</string>
     <string name="ui_1300ab995b0b" formatted="false">Episodes to keep per show</string>
