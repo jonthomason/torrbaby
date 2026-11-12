@@ -34,8 +34,46 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     /// report, so nothing starts before the connection is known to be unmetered.
     @Published private(set) var metered = true
     private let pathMonitor = NWPathMonitor()
-    /// Transfers wait for an unmetered connection unless the device setting allows otherwise.
-    var waitingForWiFi: Bool { policy.wifiOnly && metered }
+    /// Whether cellular, hotspot and Low Data Mode networks may be used right now. On iPhone and
+    /// iPad that is a three-hour allowance that also ends on joining Wi-Fi; the Mac keeps a setting.
+    var meteredAllowed: Bool {
+        #if os(iOS)
+        return (policy.meteredUntil ?? 0) > Date().timeIntervalSince1970
+        #else
+        return !policy.wifiOnly
+        #endif
+    }
+    /// Transfers wait for an unmetered connection unless metered use is allowed.
+    var waitingForWiFi: Bool { metered && !meteredAllowed }
+    static let meteredAllowance: TimeInterval = 3 * 3600
+    private var meteredExpiry: Timer?
+    /// Allow cellular and hotspot downloads for three hours. Transfers that were started for
+    /// Wi-Fi only are restarted so their requests may use cellular.
+    func allowMeteredForAWhile() {
+        guard var next = storage?.policy else { return }
+        next.meteredUntil = Date().addingTimeInterval(Self.meteredAllowance).timeIntervalSince1970
+        do { try storage?.setPolicy(next); reload() } catch { self.error = error.localizedDescription; return }
+        for (id, task) in tasks where (task.originalRequest?.allowsCellularAccess ?? true) == false { pause(id, requeue: true) }
+        scheduleMeteredExpiry(); connectionChanged()
+    }
+    /// End the allowance (asked for, expired, or Wi-Fi joined). A transfer under way keeps its
+    /// progress; while the app runs it pauses whenever the network is metered.
+    func endMeteredAllowance() {
+        meteredExpiry?.invalidate(); meteredExpiry = nil
+        guard var next = storage?.policy, next.meteredUntil != nil else { return }
+        next.meteredUntil = nil
+        do { try storage?.setPolicy(next); reload() } catch { self.error = error.localizedDescription; return }
+        connectionChanged()
+    }
+    private func scheduleMeteredExpiry() {
+        meteredExpiry?.invalidate(); meteredExpiry = nil
+        guard let until = policy.meteredUntil else { return }
+        let delay = until - Date().timeIntervalSince1970
+        guard delay > 0 else { endMeteredAllowance(); return }
+        meteredExpiry = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.endMeteredAllowance() }
+        }
+    }
     func stateLabel(_ item: DownloadStorage.Item) -> String {
         if waitingForWiFi && (item.state == .queued || item.state == .transferring) { return "Waiting for Wi-Fi" }
         return item.state == .transferring ? "Downloading" : item.state.rawValue.capitalized
@@ -61,7 +99,12 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             #endif
             DispatchQueue.main.async {
                 guard let self, self.metered != metered else { return }
-                self.metered = metered; self.connectionChanged()
+                self.metered = metered
+                #if os(iOS)
+                // Joining Wi-Fi ends a cellular allowance.
+                if !metered && self.policy.meteredUntil != nil { self.endMeteredAllowance() }
+                #endif
+                self.connectionChanged()
             }
         }
         pathMonitor.start(queue: .global(qos: .utility))
@@ -77,7 +120,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             for item in items where item.state == .transferring && tasks[item.id] == nil {
                 try? storage?.pause(item.id, received: item.received, error: "Transfer interrupted. Tap resume.")
             }
-            restored = true; reload(); connectionChanged()
+            restored = true; reload(); scheduleMeteredExpiry(); connectionChanged()
         }
     }
     func attach(_ store: Store) { self.store = store; connectionChanged() }
@@ -174,11 +217,12 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             var request = URLRequest(url: try store.endpoint("/v1/library/assets/\(item.assetID)/download" + suffix))
             request.setValue("Bearer " + store.token, forHTTPHeaderField: "Authorization")
             request.setValue(item.revision, forHTTPHeaderField: "If-Match")
-            request.allowsCellularAccess = !policy.wifiOnly
-            request.allowsExpensiveNetworkAccess = !policy.wifiOnly
-            request.allowsConstrainedNetworkAccess = !policy.wifiOnly
+            let allowed = meteredAllowed
+            request.allowsCellularAccess = allowed
+            request.allowsExpensiveNetworkAccess = allowed
+            request.allowsConstrainedNetworkAccess = allowed
             request.timeoutInterval = 120
-            let context = Data(SHA256.hash(data: Data("\(store.activeServer ?? store.server)|\(store.token)|\(policy.wifiOnly)".utf8)))
+            let context = Data(SHA256.hash(data: Data("\(store.activeServer ?? store.server)|\(store.token)|\(!allowed)".utf8)))
             let task: URLSessionDownloadTask
             if (try? Data(contentsOf: storage.resumeContextURL(item.id))) == context,
                let data = try? Data(contentsOf: storage.resumeURL(item.id)) {

@@ -170,11 +170,24 @@ struct DownloadSettingsView: View {
                     LabeledContent("Keep free (GB)") { TextField("Keep free (GB)", value: $reserve, format: .number).labelsHidden().multilineTextAlignment(.trailing) }
                     Toggle("Delete after playback", isOn: $deleteAfter)
                 }
+                #if os(iOS)
+                SwiftUI.Section {
+                    if queue.meteredAllowed, let until = queue.policy.meteredUntil {
+                        LabeledContent(L10n.text("Cellular downloads allowed until"), value: Date(timeIntervalSince1970: until).formatted(date: .omitted, time: .shortened))
+                        Button("Stop now") { queue.endMeteredAllowance() }
+                    } else {
+                        Button("Allow cellular for 3 hours") { queue.allowMeteredForAWhile() }
+                    }
+                } footer: {
+                    Text("Downloads wait for Wi-Fi. Allowing cellular also covers a Personal Hotspot or a Low Data Mode network, and ends after 3 hours or when you join Wi-Fi.")
+                }
+                #else
                 SwiftUI.Section {
                     Toggle("Allow downloads over cellular or hotspot", isOn: $allowMetered)
                 } footer: {
                     Text("When off, downloads wait for Wi-Fi and never use cellular data, a Personal Hotspot or a Low Data Mode network.")
                 }
+                #endif
             }.formStyle(.grouped).canvasBackground().navigationTitle("Download storage")
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -184,7 +197,10 @@ struct DownloadSettingsView: View {
                             policy.useAvailableSpace = useAvailableSpace
                             policy.limitBytes = Int64(limit * 1_000_000_000)
                             policy.freeSpaceBytes = Int64(reserve * 1_000_000_000)
-                            policy.wifiOnly = !allowMetered; policy.deleteAfterPlayback = deleteAfter
+                            #if os(macOS)
+                            policy.wifiOnly = !allowMetered
+                            #endif
+                            policy.deleteAfterPlayback = deleteAfter
                             queue.setPolicy(policy); dismiss()
                         }.disabled(!limit.isFinite || !reserve.isFinite || limit < 0 || reserve < 0 || limit > 100_000 || reserve > 100_000)
                     }

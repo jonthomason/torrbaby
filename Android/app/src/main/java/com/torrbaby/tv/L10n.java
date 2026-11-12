@@ -48,6 +48,7 @@ final class L10n {
     IDS.put("All releases", R.string.ui_ef3238d2ee68);
     IDS.put("All resolutions", R.string.ui_f1f67dc07e63);
     IDS.put("All seasons", R.string.ui_5666605dbc6a);
+    IDS.put("Allow cellular for 3 hours", R.string.ui_a2faebc19189);
     IDS.put("Allow downloads over cellular or hotspot", R.string.ui_0deb0259dcd9);
     IDS.put("Alphabetical", R.string.ui_9d12608fc0bd);
     IDS.put("Already in your torrents", R.string.ui_f2de57952082);
@@ -74,6 +75,7 @@ final class L10n {
     IDS.put("Cancel download", R.string.ui_67bb11d08df2);
     IDS.put("Cancel trial", R.string.ui_87f8cd8360cc);
     IDS.put("Cast", R.string.ui_60745aef336b);
+    IDS.put("Cellular downloads allowed until", R.string.ui_6b9dfc21816d);
     IDS.put("Change", R.string.ui_64fbd995d3b6);
     IDS.put("Change server connection", R.string.ui_d4223134a9c8);
     IDS.put("Change server seeding target?", R.string.ui_bf83da1053c7);
@@ -193,6 +195,7 @@ final class L10n {
     IDS.put("Downloading first", R.string.ui_af948f4e4aee);
     IDS.put("Downloads", R.string.ui_a862c2b21b5e);
     IDS.put("Downloads unavailable", R.string.ui_022410e4af2e);
+    IDS.put("Downloads wait for Wi-Fi. Allowing cellular also covers a Personal Hotspot or a Low Data Mode network, and ends after 3 hours or when you join Wi-Fi.", R.string.ui_fbe756da9c9b);
     IDS.put("Edit connection", R.string.ui_b3171b22b733);
     IDS.put("Edit profile", R.string.ui_15141eab3a28);
     IDS.put("Enable device notifications", R.string.ui_9c98222b05e5);
@@ -537,6 +540,7 @@ final class L10n {
     IDS.put("Stereo", R.string.ui_f4f390b6d363);
     IDS.put("Stop", R.string.ui_9e253470c876);
     IDS.put("Stop downloading first", R.string.ui_76a8ecfbed37);
+    IDS.put("Stop now", R.string.ui_43719e09ba7f);
     IDS.put("Stop tracking the torrent in Transmission. Keep all downloaded files on Diamond.", R.string.ui_8cf498a528c2);
     IDS.put("Streaming is unavailable on fallback. Download this title to watch it.", R.string.ui_3c3bc1c865fc);
     IDS.put("Style", R.string.ui_99a0efc6cfd8);

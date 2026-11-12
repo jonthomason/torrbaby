@@ -9,15 +9,20 @@ final class DownloadStorage {
         var freeSpaceBytes: Int64 = 0
         var useAvailableSpace = true
         var deleteAfterPlayback = true
+        /// The Mac's standing choice for hotspots. iPhone and iPad use `meteredUntil` instead.
         var wifiOnly = true
+        /// On iPhone and iPad, cellular and hotspot downloads are allowed only until this time
+        /// (seconds since 1970), at most three hours after the user allows them.
+        var meteredUntil: Double? = nil
         init() {}
-        private enum CodingKeys: String, CodingKey { case limitBytes, freeSpaceBytes, useAvailableSpace, deleteAfterPlayback, wifiOnly }
+        private enum CodingKeys: String, CodingKey { case limitBytes, freeSpaceBytes, useAvailableSpace, deleteAfterPlayback, wifiOnly, meteredUntil }
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             limitBytes = try c.decode(Int64.self, forKey: .limitBytes)
             freeSpaceBytes = try c.decode(Int64.self, forKey: .freeSpaceBytes)
             deleteAfterPlayback = try c.decode(Bool.self, forKey: .deleteAfterPlayback)
             wifiOnly = try c.decode(Bool.self, forKey: .wifiOnly)
+            meteredUntil = try c.decodeIfPresent(Double.self, forKey: .meteredUntil)
             if let available = try c.decodeIfPresent(Bool.self, forKey: .useAvailableSpace) {
                 useAvailableSpace = available
             } else {
