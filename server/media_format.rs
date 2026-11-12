@@ -178,15 +178,26 @@ pub fn dolby_vision(path: &Path) -> Option<([u8; 4], [u8; 24], bool)> {
     let record = streams.iter().filter(|s| s["codec_type"] == "video").flat_map(|s| s["side_data_list"].as_array().cloned().unwrap_or_default())
         .find(|d| d["side_data_type"].as_str().is_some_and(|t| t.contains("DOVI")))?;
     let field = |name: &str| number(&record[name]).unwrap_or(0);
-    let (profile, level, compatible) = (field("dv_profile"), field("dv_level"), field("dv_bl_signal_compatibility_id"));
+    dolby_record(field("dv_version_major"), field("dv_version_minor"), field("dv_profile"), field("dv_level"),
+        field("rpu_present_flag") != 0, field("el_present_flag") != 0, field("bl_present_flag") != 0, field("dv_bl_signal_compatibility_id"))
+}
+/// The Dolby Vision configuration box for a stream: its name, its 24 bytes, and whether
+/// the stream can only be shown as Dolby Vision (profile 5, or no compatible base layer).
+pub fn dolby_record(major: u64, minor: u64, profile: u64, level: u64, rpu: bool, enhancement: bool, base: bool, compatible: u64) -> Option<([u8; 4], [u8; 24], bool)> {
     if profile == 0 && level == 0 { return None; }
     let mut body = [0u8; 24];
-    body[0] = field("dv_version_major").max(1) as u8;
-    body[1] = field("dv_version_minor") as u8;
-    let packed = ((profile as u16 & 0x7f) << 9) | ((level as u16 & 0x3f) << 3) | ((field("rpu_present_flag") as u16 & 1) << 2) | ((field("el_present_flag") as u16 & 1) << 1) | (field("bl_present_flag") as u16 & 1);
+    body[0] = major.max(1) as u8;
+    body[1] = minor as u8;
+    let packed = ((profile as u16 & 0x7f) << 9) | ((level as u16 & 0x3f) << 3) | ((rpu as u16) << 2) | ((enhancement as u16) << 1) | base as u16;
     body[2..4].copy_from_slice(&packed.to_be_bytes());
     body[4] = (compatible as u8 & 0x0f) << 4;
     Some((if profile > 7 { *b"dvvC" } else { *b"dvcC" }, body, profile == 5 || compatible == 0))
+}
+/// Whether a Dolby Vision configuration box's bytes describe a stream that can only be shown as Dolby Vision.
+pub fn dolby_exclusive(record: &[u8]) -> bool {
+    if record.len() < 5 { return false; }
+    let packed = u16::from_be_bytes([record[2], record[3]]);
+    (packed >> 9) == 5 || (record[4] >> 4) == 0
 }
 /// The tracks of a file of which only the start and end are present (the rest a hole):
 /// each sound track's format, layout and language, the picture, and the subtitle languages.
@@ -265,6 +276,23 @@ pub async fn tick(s: &Service) -> Result<usize> {
     Ok(described)
 }
 
+#[cfg(test)]
+mod dolby_tests {
+    use super::*;
+    #[test]
+    fn profile_5_is_declared_and_marked_as_dolby_vision_only() {
+        // Tigers Sniff the Rose: profile 5, level 7, RPU and base layer, no compatible base.
+        let (name, body, exclusive) = dolby_record(1, 0, 5, 7, true, false, true, 0).expect("a record");
+        assert_eq!((&name, exclusive), (b"dvcC", true));
+        assert_eq!(&body[..5], &[1, 0, 0x0A, 0x3D, 0x00]);
+        assert!(dolby_exclusive(&body));
+        // Profile 8.1 has an HDR10 base layer: it stays playable as plain HEVC, with its box.
+        let (name, body, exclusive) = dolby_record(1, 0, 8, 6, true, false, true, 1).expect("a record");
+        assert_eq!((&name, exclusive), (b"dvvC", false));
+        assert!(!dolby_exclusive(&body));
+        assert!(dolby_record(0, 0, 0, 0, false, false, false, 0).is_none());
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

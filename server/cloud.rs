@@ -321,13 +321,17 @@ pub fn retag_hev1(path: &Path) -> Result<usize> {
     for (body, stop) in spans {
         // stsd: version and flags, entry count, then the entries.
         for (kind, entry, end) in boxes(&mut file, body + 8, stop)? {
-            if &kind != b"hev1" { continue; }
+            if ![*b"hev1", *b"dvhe", *b"hvc1"].contains(&kind) { continue; }
             let mut sets = std::collections::BTreeSet::new();
+            // Dolby Vision that cannot be shown as plain HEVC (profile 5) must be named "dvh1".
+            let mut exclusive = false;
             for (inner, config, config_end) in boxes(&mut file, entry + 78, end)? {
-                if &inner != b"hvcC" || config_end - config < 23 || config_end - config > 1 << 20 { continue; }
+                if config_end - config > 1 << 20 { continue; }
                 let mut record = vec![0u8; (config_end - config) as usize];
                 file.seek(SeekFrom::Start(config))?;
                 file.read_exact(&mut record)?;
+                if &inner == b"dvcC" || &inner == b"dvvC" { exclusive |= crate::media_format::dolby_exclusive(&record); }
+                if &inner != b"hvcC" || record.len() < 23 { continue; }
                 let mut at = 23;
                 for _ in 0..record[22] {
                     if at + 3 > record.len() { break; }
@@ -337,9 +341,12 @@ pub fn retag_hev1(path: &Path) -> Result<usize> {
                     for _ in 0..count { if at + 2 > record.len() { break; } at += 2 + u16::from_be_bytes([record[at], record[at + 1]]) as usize; }
                 }
             }
-            if [32u8, 33, 34].iter().all(|kind| sets.contains(kind)) {
+            let complete = [32u8, 33, 34].iter().all(|kind| sets.contains(kind));
+            // Parameter sets in the description allow the out-of-band names; without them the entry stays as it is.
+            let wanted: [u8; 4] = if exclusive || &kind == b"dvhe" { *b"dvh1" } else { *b"hvc1" };
+            if kind != wanted && (complete || &kind == b"hvc1") {
                 file.seek(SeekFrom::Start(entry - 4))?;
-                file.write_all(b"hvc1")?;
+                file.write_all(&wanted)?;
                 retagged += 1;
             }
         }
@@ -1386,6 +1393,26 @@ mod tests {
     #[test]
     fn hev1_video_is_retagged_only_when_its_description_holds_the_parameter_sets() -> Result<()> {
         fn atom(kind: &[u8; 4], body: &[u8]) -> Vec<u8> { let mut out = ((body.len() + 8) as u32).to_be_bytes().to_vec(); out.extend(kind); out.extend(body); out }
+        let dolby = |name: &[u8; 4], tag: &[u8; 4], profile: u64, compatible: u64| {
+            let mut config = vec![0u8; 22];
+            config.push(3);
+            for kind in [32u8, 33, 34] { config.extend([kind, 0, 1, 0, 2, 0xAA, 0xBB]); }
+            let mut entry = vec![0u8; 78];
+            entry.extend(atom(b"hvcC", &config));
+            entry.extend(atom(name, &crate::media_format::dolby_record(1, 0, profile, 6, true, false, true, compatible).expect("a record").1));
+            let mut stsd = vec![0, 0, 0, 0, 0, 0, 0, 1];
+            stsd.extend(atom(tag, &entry));
+            atom(b"moov", &atom(b"trak", &atom(b"mdia", &atom(b"minf", &atom(b"stbl", &atom(b"stsd", &stsd))))))
+        };
+        // Dolby Vision profile 5 must be named dvh1, whatever it arrived as; profile 8 stays plain HEVC.
+        let vision = std::env::temp_dir().join(format!("torrbaby-retag-dv-{}.mp4", uuid::Uuid::new_v4()));
+        for (tag, profile, compatible, becomes) in [(b"hev1", 5, 0, &b"dvh1"[..]), (b"hvc1", 5, 0, b"dvh1"), (b"dvhe", 5, 0, b"dvh1"), (b"hev1", 8, 1, b"hvc1"), (b"hvc1", 8, 1, b"hvc1")] {
+            std::fs::write(&vision, dolby(if profile > 7 { b"dvvC" } else { b"dvcC" }, tag, profile, compatible))?;
+            let _ = retag_hev1(&vision)?;
+            let after = std::fs::read(&vision)?;
+            assert_eq!(&after[60..64], becomes, "{} profile {profile}", String::from_utf8_lossy(tag));
+        }
+        std::fs::remove_file(&vision)?;
         let build = |sets: &[u8]| {
             let mut config = vec![0u8; 22];
             config.push(sets.len() as u8);
