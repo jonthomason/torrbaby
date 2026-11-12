@@ -91,9 +91,9 @@ struct SubtitleQueueView: View {
                 if item.totalCues > 0 && item.state != "ready" { Text(item.progressText).monospacedDigit() }
                 else if item.state != "running" { Text(LocalizedStringKey(item.state.capitalized)) }
             }.font(.caption).foregroundStyle(.secondary)
-            if item.state == "running" || (item.totalCues > 0 && item.state != "ready") {
-                if item.totalCues > 0 { ProgressView(value: Double(item.completedCues), total: Double(item.totalCues)).controlSize(.mini) }
-                else { ProgressView().controlSize(.mini) }
+            // Only stages that count their work show a bar; the others say what they are doing.
+            if item.totalCues > 0 && item.state != "ready" {
+                ProgressView(value: Double(item.completedCues), total: Double(item.totalCues)).controlSize(.mini)
             }
             if item.subtitlesState == "not_applicable" { Text("No supported subtitle source").font(.caption).foregroundStyle(.secondary) }
             if let error = item.error { Text(L10n.text(error)).font(.caption).foregroundStyle(.orange).lineLimit(2) }
