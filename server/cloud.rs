@@ -882,9 +882,8 @@ impl Cloud {
         let done: Arc<Vec<AtomicU64>> = Arc::new(known.iter().map(|have| AtomicU64::new(*have)).collect());
         let total = || done.iter().map(|d| d.load(Ordering::Relaxed)).sum::<u64>();
         self.progress.store(total(), Ordering::Relaxed);
-        let note = |done: &Vec<AtomicU64>| serde_json::to_vec(&json!({"size": size, "done": done.iter().map(|d| d.load(Ordering::Relaxed)).collect::<Vec<_>>()})).unwrap_or_default();
         let pieces = ranges.iter().map(|&(i, start, end)| {
-            let (url, working, notes, done) = (url.clone(), working.clone(), notes.clone(), done.clone());
+            let (url, working, done) = (url.clone(), working.clone(), done.clone());
             async move {
                 for _attempt in 0..6u32 {
                     let have = done[i].load(Ordering::Relaxed);
@@ -895,30 +894,33 @@ impl Cloud {
                     if !response.status().is_success() { tokio::time::sleep(Duration::from_secs(3)).await; continue; }
                     let mut file = tokio::fs::OpenOptions::new().write(true).open(&working).await?;
                     file.seek(std::io::SeekFrom::Start(start + have)).await?;
-                    let (mut room, mut written, mut noted) = (end - start - have, have, Instant::now());
+                    let mut room = end - start - have;
                     while let Ok(Some(chunk)) = response.chunk().await {
                         let take = (chunk.len() as u64).min(room) as usize;
                         file.write_all(&chunk[..take]).await?;
-                        room -= take as u64; written += take as u64;
+                        room -= take as u64;
+                        done[i].fetch_add(take as u64, Ordering::Relaxed);
                         self.progress.fetch_add(take as u64, Ordering::Relaxed);
-                        // Only data that has reached the disk is noted as had.
-                        if noted.elapsed() >= Duration::from_secs(4) || room == 0 {
-                            file.flush().await?; file.sync_data().await?;
-                            done[i].store(written, Ordering::Relaxed);
-                            let _ = tokio::fs::write(&notes, note(&done)).await;
-                            noted = Instant::now();
-                        }
                         if room == 0 { break; }
                     }
-                    file.flush().await?; file.sync_data().await?;
-                    // What arrived after the last note and before the connection dropped is fetched again.
-                    self.progress.fetch_sub(written - done[i].load(Ordering::Relaxed), Ordering::Relaxed);
+                    file.flush().await?;
                 }
                 ensure!(done[i].load(Ordering::Relaxed) == end - start, "The download kept stopping");
                 Ok(())
             }
         });
-        futures_util::future::try_join_all(pieces).await?;
+        // Beside the connections, one note-taker: every several seconds it has the file
+        // put safely on disk, then records how far each stretch had come before that.
+        // One sync for the whole file, not one per connection, so the disk is not kept busy syncing.
+        let noting = async {
+            let Ok(file) = tokio::fs::OpenOptions::new().write(true).open(&working).await else { return std::future::pending::<()>().await };
+            loop {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                let reached: Vec<u64> = done.iter().map(|d| d.load(Ordering::Relaxed)).collect();
+                if file.sync_data().await.is_ok() { let _ = tokio::fs::write(&notes, serde_json::to_vec(&json!({"size": size, "done": reached})).unwrap_or_default()).await; }
+            }
+        };
+        tokio::select! { fetched = futures_util::future::try_join_all(pieces) => { fetched?; }, _ = noting => {} }
         ensure!(tokio::fs::metadata(&working).await?.len() == size && total() == size, "The downloaded file is the wrong size");
         tokio::fs::rename(&working, destination).await?;
         let _ = tokio::fs::remove_file(&notes).await;
