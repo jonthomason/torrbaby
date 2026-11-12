@@ -35,12 +35,13 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     @Published private(set) var metered = true
     private let pathMonitor = NWPathMonitor()
     /// Whether cellular, hotspot and Low Data Mode networks may be used right now. On iPhone and
-    /// iPad that is a three-hour allowance that also ends on joining Wi-Fi; the Mac keeps a setting.
+    /// iPad that is a three-hour allowance that also ends on joining Wi-Fi. The Mac has no
+    /// cellular of its own, so it does not hold downloads back.
     var meteredAllowed: Bool {
         #if os(iOS)
         return (policy.meteredUntil ?? 0) > Date().timeIntervalSince1970
         #else
-        return !policy.wifiOnly
+        return true
         #endif
     }
     /// Transfers wait for an unmetered connection unless metered use is allowed.

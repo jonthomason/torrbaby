@@ -9,7 +9,7 @@ final class DownloadStorage {
         var freeSpaceBytes: Int64 = 0
         var useAvailableSpace = true
         var deleteAfterPlayback = true
-        /// The Mac's standing choice for hotspots. iPhone and iPad use `meteredUntil` instead.
+        /// Kept for the stored format; iPhone and iPad use `meteredUntil` and the Mac ignores it.
         var wifiOnly = true
         /// On iPhone and iPad, cellular and hotspot downloads are allowed only until this time
         /// (seconds since 1970), at most three hours after the user allows them.

@@ -159,7 +159,6 @@ struct DownloadSettingsView: View {
     @State private var limit = 20.0
     @State private var reserve = 0.0
     @State private var useAvailableSpace = true
-    @State private var allowMetered = false
     @State private var deleteAfter = true
     var body: some View {
         NavigationStack {
@@ -181,12 +180,6 @@ struct DownloadSettingsView: View {
                 } footer: {
                     Text("Downloads wait for Wi-Fi. Allowing cellular also covers a Personal Hotspot or a Low Data Mode network, and ends after 3 hours or when you join Wi-Fi.")
                 }
-                #else
-                SwiftUI.Section {
-                    Toggle("Allow downloads over cellular or hotspot", isOn: $allowMetered)
-                } footer: {
-                    Text("When off, downloads wait for Wi-Fi and never use cellular data, a Personal Hotspot or a Low Data Mode network.")
-                }
                 #endif
             }.formStyle(.grouped).canvasBackground().navigationTitle("Download storage")
                 .toolbar {
@@ -197,9 +190,6 @@ struct DownloadSettingsView: View {
                             policy.useAvailableSpace = useAvailableSpace
                             policy.limitBytes = Int64(limit * 1_000_000_000)
                             policy.freeSpaceBytes = Int64(reserve * 1_000_000_000)
-                            #if os(macOS)
-                            policy.wifiOnly = !allowMetered
-                            #endif
                             policy.deleteAfterPlayback = deleteAfter
                             queue.setPolicy(policy); dismiss()
                         }.disabled(!limit.isFinite || !reserve.isFinite || limit < 0 || reserve < 0 || limit > 100_000 || reserve > 100_000)
@@ -209,7 +199,7 @@ struct DownloadSettingsView: View {
             useAvailableSpace = queue.policy.useAvailableSpace
             limit = Double(queue.policy.limitBytes) / 1_000_000_000
             reserve = Double(queue.policy.freeSpaceBytes) / 1_000_000_000
-            allowMetered = !queue.policy.wifiOnly; deleteAfter = queue.policy.deleteAfterPlayback
+            deleteAfter = queue.policy.deleteAfterPlayback
         }
         #if os(macOS)
         .frame(width: 460, height: 400)
