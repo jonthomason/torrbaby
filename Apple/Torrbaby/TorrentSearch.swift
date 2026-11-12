@@ -1841,6 +1841,10 @@ struct CloudJob: Decodable, Identifiable {
     var discarded: Int? = nil
     /// Its place in the line while waiting: 1 runs next.
     var position: Int? = nil
+    /// The show's English title, when the library or the metadata service knows it.
+    var english: String? = nil
+    /// "Pursuit of Jade · 逐玉": both names, so the row can be read either way.
+    var displayTitle: String { english.map { $0 + " · " + title } ?? title }
     var outcomeLine: String {
         [(replaced ?? 0) > 0 ? L10n.format("Replaced with better: %d", replaced ?? 0) : "", (discarded ?? 0) > 0 ? L10n.format("Already had as good: %d", discarded ?? 0) : ""]
             .filter { !$0.isEmpty }.joined(separator: " · ")
@@ -1904,7 +1908,7 @@ struct CloudJobRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 // Blue titles are cloud downloads, green ones torrents; nothing else is coloured.
-                Text(verbatim: job.title).font(.headline).foregroundStyle(Theme.cloud).lineLimit(2).textSelectionIfAvailable()
+                Text(verbatim: job.displayTitle).font(.headline).foregroundStyle(Theme.cloud).lineLimit(2).textSelectionIfAvailable()
                 Spacer(minLength: 8)
                 if job.state == "failed" || job.state == "retrying" {
                     Button("Retry") { act("POST", "/v1/cloud/jobs/\(job.id)/retry") }.buttonStyle(MonoButtonStyle(compact: true)).fixedSize()

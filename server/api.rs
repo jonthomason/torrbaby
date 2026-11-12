@@ -1282,7 +1282,19 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
     }
     if method == Method::POST && path == "/v1/cloud/probe" { return s.cloud.probe(text(&body, "url")?, body["copy"].as_str().unwrap_or("")).await; }
     if method == Method::POST && path == "/v1/cloud/add" { return s.cloud.add(s, &body).await; }
-    if method == Method::GET && path == "/v1/cloud/jobs" { return Ok(s.cloud.jobs()); }
+    if method == Method::GET && path == "/v1/cloud/jobs" {
+        // A download is named in the language it was found in; the library's English
+        // title is given beside it once the library knows the show, or the metadata service does.
+        let mut listed = s.cloud.jobs();
+        let entities = s.db.lock().ok().and_then(|db| db.documents("entities").ok()).unwrap_or_default();
+        for job in listed["jobs"].as_array_mut().into_iter().flatten() {
+            let Some(title) = job["title"].as_str().map(str::to_owned) else { continue };
+            let known = entities.iter().find(|e| e["original_title"] == title.as_str()).and_then(|e| e["title"].as_str()).map(str::to_owned);
+            let english = match known { Some(found) => Some(found), None => s.metadata.series_english_title(&title).await };
+            if let Some(english) = english.filter(|english| *english != title) { job["english"] = json!(english); }
+        }
+        return Ok(listed);
+    }
     if let Some(job) = path.strip_prefix("/v1/cloud/jobs/") {
         if method == Method::DELETE { return Ok(s.cloud.dismiss(job)); }
         if let (true, Some(job)) = (method == Method::POST, job.strip_suffix("/retry")) { return Ok(s.cloud.retry(job)); }

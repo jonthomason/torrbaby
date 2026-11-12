@@ -1314,7 +1314,7 @@ public class MainActivity extends Activity {
       row.setOnFocusChangeListener((v, focused) -> Ui.secondaryContrast(v, focused));
       Ui.pad(row, 16, 14);
       // Quark downloads are told from the torrents around them by their colour.
-      TextView jobTitle = Ui.title(this, job.optString("title"), 16); jobTitle.setTextColor(0xff85c2ff);
+      TextView jobTitle = Ui.title(this, (job.isNull("english") || job.optString("english").isEmpty() ? "" : job.optString("english") + " · ") + job.optString("title"), 16); jobTitle.setTextColor(0xff85c2ff);
       Ui.add(row, jobTitle, -1, -2);
       Ui.gap(row, 6);
       boolean active = state.equals("queued") || state.equals("saving") || state.equals("downloading") || state.equals("retrying");
