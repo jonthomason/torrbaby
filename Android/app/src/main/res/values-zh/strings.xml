@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="ui_6f96f2ca6923" formatted="false">%d 个下载</string>
     <string name="ui_bb4f08e94b1c" formatted="false">%d 集</string>
     <string name="ui_0290129bc977" formatted="false">找到 %d 集</string>
     <string name="ui_22cb980ab05c" formatted="false">%d 分钟</string>
@@ -17,6 +18,7 @@
     <string name="ui_712d2e5c0047" formatted="false">%d 个视频</string>
     <string name="ui_660a76df86fd" formatted="false">剩余 %d 小时 %d 分钟</string>
     <string name="ui_659748ef61cf" formatted="false">剩余 %d 分钟</string>
+    <string name="ui_c428b17e2512" formatted="false">1 个下载</string>
     <string name="ui_54fc19e5c9f4" formatted="false">1 集</string>
     <string name="ui_8256cd5880d0" formatted="false">1 个做种</string>
     <string name="ui_9fa45ef1a516" formatted="false">1 个视频</string>

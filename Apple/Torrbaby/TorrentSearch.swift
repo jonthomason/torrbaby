@@ -1812,6 +1812,9 @@ struct CloudJob: Decodable, Identifiable {
     var rate: Int64? = nil
     var eta: Int? = nil
     var current: String? = nil
+    /// When it was added, in seconds since 1970.
+    var created: Double? = nil
+    var fraction: Double { (totalBytes ?? 0) > 0 ? Double(doneBytes ?? 0) / Double(totalBytes ?? 1) : 0 }
     var isActive: Bool { ["queued", "saving", "downloading", "retrying"].contains(state) }
     var stateLabel: String {
         switch state {
@@ -1838,7 +1841,7 @@ struct CloudJobsSection: View {
         VStack(alignment: .leading, spacing: 10) {
             if !jobs.isEmpty {
                 Label("Quark Drive", systemImage: "icloud.and.arrow.down").font(.caption.weight(.semibold)).tracking(1.4).foregroundStyle(Theme.muted)
-                ForEach(jobs) { job in row(job) }
+                ForEach(jobs) { job in CloudJobRow(job: job, changed: reload) }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1851,6 +1854,19 @@ struct CloudJobsSection: View {
             }
         }
     }
+    private func reload() {
+        Task { if let list: JobList = try? await store.request("GET", "/v1/cloud/jobs", timeout: 15) { jobs = list.jobs } }
+    }
+}
+/// One cloud-drive download: its title in the downloads' colour, progress, speed, time
+/// left, the video being fetched, and Cancel, Retry or Dismiss. Sits among the torrents.
+struct CloudJobRow: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    let job: CloudJob
+    /// Called after an action, so the list can be fetched again at once.
+    var changed: () -> Void = {}
+    var body: some View { row(job) }
     private func row(_ job: CloudJob) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
@@ -1869,6 +1885,8 @@ struct CloudJobsSection: View {
                 }
             }
             HStack(spacing: 8) {
+                // Says what it is in words too; colour alone should not carry it.
+                Label("Quark Drive", systemImage: "icloud.and.arrow.down").foregroundStyle(Theme.muted)
                 Text(verbatim: job.stateLabel).foregroundStyle(job.state == "failed" || job.state == "retrying" ? .orange : Theme.accent)
                 if let files = job.files, files > 1 { Text(L10n.format("%d of %d videos", job.filesDone ?? 0, files)).foregroundStyle(Theme.muted) }
                 if let total = job.totalBytes, total > 0 {
@@ -1896,7 +1914,7 @@ struct CloudJobsSection: View {
         Task {
             struct Ignored: Decodable {}
             do { let _: Ignored = try await store.request(method, path, timeout: 20) } catch { store.actionError = error.localizedDescription }
-            if let list: JobList = try? await store.request("GET", "/v1/cloud/jobs", timeout: 15) { jobs = list.jobs }
+            changed()
         }
     }
 }

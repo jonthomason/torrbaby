@@ -14386,6 +14386,40 @@
           }
         }
       }
+    },
+    "1 DOWNLOAD": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 DOWNLOAD"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 个下载"
+          }
+        }
+      }
+    },
+    "%d DOWNLOADS": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d DOWNLOADS"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d 个下载"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

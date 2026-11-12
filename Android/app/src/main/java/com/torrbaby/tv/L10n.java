@@ -11,6 +11,7 @@ final class L10n {
   private static Context localized;
   private static final Map<String,Integer> IDS = new HashMap<>();
   static {
+    IDS.put("%d DOWNLOADS", R.string.ui_6f96f2ca6923);
     IDS.put("%d episodes", R.string.ui_bb4f08e94b1c);
     IDS.put("%d episodes found", R.string.ui_0290129bc977);
     IDS.put("%d min", R.string.ui_22cb980ab05c);
@@ -28,6 +29,7 @@ final class L10n {
     IDS.put("%d videos", R.string.ui_712d2e5c0047);
     IDS.put("%dh %dm left", R.string.ui_660a76df86fd);
     IDS.put("%dm left", R.string.ui_659748ef61cf);
+    IDS.put("1 DOWNLOAD", R.string.ui_c428b17e2512);
     IDS.put("1 episode", R.string.ui_54fc19e5c9f4);
     IDS.put("1 seed", R.string.ui_8256cd5880d0);
     IDS.put("1 video", R.string.ui_9fa45ef1a516);
