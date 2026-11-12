@@ -33,12 +33,20 @@ fn finished(value:&str)->bool {matches!(value,"ready"|"not_applicable"|"skipped"
 fn sign_off(db:&Database,id:&str,revision:&str)->Result<bool> {
     // The SQL predicate is deliberately the final authority: a worker becoming
     // idle, an English artifact, or an empty job list can never sign off a file.
-    let complete=db.connection.execute("UPDATE media_processing SET state='ready',stage='complete',completed_at=?,updated=?,error=NULL WHERE asset_id=? AND revision=? AND inventory_state='ready' AND subtitles_state IN ('ready','not_applicable') AND credits_state IN ('ready','not_applicable','skipped')",rusqlite::params![now(),now(),id,revision])?==1;
-    if complete {db.connection.execute("UPDATE processing_failures SET resolved_at=? WHERE asset_id=? AND revision=? AND resolved_at IS NULL",rusqlite::params![now(),id,revision])?;}
+    let complete=db.connection.execute("UPDATE media_processing SET state='ready',stage='complete',completed_at=?,updated=?,error=NULL WHERE asset_id=? AND revision=? AND inventory_state='ready' AND subtitles_state IN ('ready','not_applicable','skipped') AND credits_state IN ('ready','not_applicable','skipped')",rusqlite::params![now(),now(),id,revision])?==1;
+    // Skipped stages stay on record (unresolved) so their errors can be mined for fixes.
+    if complete {db.connection.execute("UPDATE processing_failures SET resolved_at=? WHERE asset_id=? AND revision=? AND resolved_at IS NULL AND stage NOT LIKE '%_skipped'",rusqlite::params![now(),id,revision])?;}
     Ok(complete)
 }
 /// Set when the server begins shutting down, so work its helpers lose is requeued without an error.
 pub static SHUTTING_DOWN:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+/// Record an optional stage that failed (`credits_skipped`, `subtitles_skipped`) without
+/// failing the file, so repeated errors can be found and fixed later.
+fn log_failure(db:&Database,id:&str,revision:&str,stage:&str,error:&str)->Result<()> {
+    db.connection.execute("INSERT INTO processing_failures(asset_id,revision,stage,error,first_seen,last_seen) VALUES(?,?,?,?,?,?) ON CONFLICT(asset_id,revision,stage,error) DO UPDATE SET occurrences=occurrences+1,last_seen=excluded.last_seen,resolved_at=NULL",rusqlite::params![id,revision,stage,error,now(),now()])?;
+    tracing::warn!(asset=id,stage,error,"Processing stage skipped");
+    Ok(())
+}
 fn fail(db:&Database,id:&str,revision:&str,error:&str)->Result<()> {
     db.connection.execute("INSERT INTO processing_failures(asset_id,revision,stage,error,first_seen,last_seen) SELECT asset_id,revision,stage,?,?,? FROM media_processing WHERE asset_id=? AND revision=? ON CONFLICT(asset_id,revision,stage,error) DO UPDATE SET occurrences=occurrences+1,last_seen=excluded.last_seen,resolved_at=NULL",rusqlite::params![error,now(),now(),id,revision])?;
     db.connection.execute("UPDATE media_processing SET state='failed',error=?,retry_after=?,updated=?,attempts=attempts+1 WHERE asset_id=? AND revision=?",rusqlite::params![error,now()+3600.0,now(),id,revision])?;Ok(())
@@ -322,13 +330,26 @@ async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()>
     anyhow::ensure!(matches!(container,Container::Matroska|Container::Mp4),"Unsupported media container for processing");
     let mut external=false;
     if !finished(prior["subtitles_state"].as_str().unwrap_or("")) {
-        let progress=crate::media_inventory::process(s,asset).await?;
-        let state=progress["state"].as_str().unwrap_or("queued");
+        let progress=match crate::media_inventory::process(s,asset).await {
+            Ok(progress)=>progress,
+            // Shutdown, a file mid-move and a model swap are retried, not skipped.
+            Err(error) if SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst) || !path.exists() || transient(&error.to_string()) => return Err(error),
+            Err(error)=>json!({"state":"failed","error":error.to_string()}),
+        };
+        let mut state=progress["state"].as_str().unwrap_or("queued");
+        // Subtitles are not essential to playing the file: log the failure and go on.
+        if state=="failed" && transient(progress["error"].as_str().unwrap_or("")) {
+            anyhow::bail!("{}",progress["error"].as_str().unwrap_or(""));
+        }
+        if state=="failed" {
+            let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+            log_failure(&db,id,revision,"subtitles_skipped",progress["error"].as_str().unwrap_or("Subtitle preparation failed"))?;
+            state="skipped";
+        }
         let done=finished(state);
         {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
             db.connection.execute("UPDATE media_processing SET inventory_state='ready',subtitles_state=?,stage=?,detail=?,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![if done{state}else{"pending"},if done{"credits"}else{progress["stage"].as_str().unwrap_or("subtitles")},progress.to_string(),now(),id,revision])?;
         }
-        anyhow::ensure!(state!="failed","{}",progress["error"].as_str().unwrap_or("Subtitle preparation failed"));
         // While the external lane translates, use this slot for credits analysis.
         external=state=="external";
         if !done && !external {return Ok(());}
@@ -351,7 +372,7 @@ async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()>
         let mut state=credits["state"].as_str().unwrap_or("pending");
         // Credits only place the Next Episode offer; a scan that fails is dropped, not a failure.
         if matches!(state,"failed"|"incomplete") {
-            tracing::info!(asset=id,error=credits["error"].as_str().unwrap_or(""),"Credits analysis skipped");
+            log_failure(&db,id,revision,"credits_skipped",credits["error"].as_str().unwrap_or("Credits analysis incomplete"))?;
             state="skipped";
         }
         db.connection.execute("UPDATE media_processing SET stage='credits',credits_state=?,detail=?,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![state,credits.to_string(),now(),id,revision])?;
@@ -411,11 +432,16 @@ mod tests {
         Ok(())
     }
     #[test]
-    fn a_skipped_credits_scan_still_lets_the_file_finish()->Result<()> {
+    fn skipped_credits_and_subtitles_still_let_the_file_finish()->Result<()> {
         let db=database()?;enroll(&db,"episode","r1")?;
         db.connection.execute("UPDATE media_processing SET inventory_state='ready',subtitles_state='ready',credits_state='skipped' WHERE asset_id='episode'",[])?;
         assert!(finished("skipped"));
+        log_failure(&db,"episode","r1","credits_skipped","Video timestamps are irregular")?;
+        db.connection.execute("UPDATE media_processing SET subtitles_state='skipped' WHERE asset_id='episode'",[])?;
         assert!(sign_off(&db,"episode","r1")?);
+        // The skip stays on record, unresolved, for mining.
+        let logged=db.rows("SELECT stage,resolved_at FROM processing_failures",[])?;
+        assert_eq!((logged[0]["stage"].as_str(),logged[0]["resolved_at"].is_null()),(Some("credits_skipped"),true));
         assert_eq!(db.rows("SELECT state FROM media_processing WHERE asset_id='episode'",[])?[0]["state"],"ready");
         Ok(())
     }
