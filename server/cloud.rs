@@ -94,8 +94,14 @@ pub struct Cloud {
 static VIDEO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\.(mp4|mkv|ts|mov|m2ts|avi)$").expect("valid regex"));
 static SHARE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^https://pan\.quark\.cn/s/([0-9a-zA-Z]{6,40})").expect("valid regex"));
 
+/// A name without the invisible characters some sharers thread through it to defeat
+/// matching: "0\u{200b}1.mkv" reads "01.mkv" to the eye and must to the server too.
+pub fn visible(name: &str) -> String {
+    name.chars().filter(|c| !matches!(c, '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}')).collect()
+}
 /// Season and episode a file name states, if any: "S01E02", "第12集", "EP12", "12.mkv".
 pub fn episode(name: &str) -> (Option<u64>, Option<u64>) {
+    let name = &visible(name);
     static SEASONED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)s(\d{1,2})[ ._-]?e(\d{1,3})").expect("valid regex"));
     static NAMED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:第\s*(\d{1,3})\s*[集话話期]|\bep?[ ._-]?(\d{1,3})\b)").expect("valid regex"));
     static NOISE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(\d{3,4}p|\d{2,3}fps|[48]k|(19|20)\d{2}|[hx]\.?26[45]|ddp?\d\.\d|aac\d\.\d|\d+bit)").expect("valid regex"));
@@ -200,7 +206,7 @@ pub fn copies(videos: &mut [Value], listing: &str) -> Vec<Value> {
     let mut found: Vec<Value> = order.into_iter().map(|key| {
         let members: Vec<&Value> = groups[&key].iter().map(|i| &videos[*i]).collect();
         let first = members[0];
-        let said = format!("{} {} {listing}", first["path"].as_str().unwrap_or(""), members.last().and_then(|v| v["path"].as_str()).unwrap_or(""));
+        let said = visible(&format!("{} {} {listing}", first["path"].as_str().unwrap_or(""), members.last().and_then(|v| v["path"].as_str()).unwrap_or("")));
         let folder = key.rsplitn(3, '|').nth(2).unwrap_or("");
         // The set is described by what most of its videos are; the rest are counted beside it.
         let mut pictures: Vec<(&'static str, usize)> = Vec::new();
@@ -246,7 +252,7 @@ pub fn cover(found: &mut Value, show: &Value, wanted: Option<u64>) {
     for share in found["shares"].as_array_mut().into_iter().flatten() {
         let named = stated_season(share["title"].as_str().unwrap_or(""));
         for copy in share["copies"].as_array_mut().into_iter().flatten() {
-            let season = copy["season"].as_u64().or_else(|| stated_season(copy["folder"].as_str().unwrap_or(""))).or(named).or(wanted)
+            let season = copy["season"].as_u64().or_else(|| stated_season(&visible(copy["folder"].as_str().unwrap_or("")))).or(named).or(wanted)
                 .or((seasons.len() == 1).then(|| seasons[0]["season"].as_u64()).flatten()).unwrap_or(1);
             copy["season"] = json!(season);
             let Some(known) = seasons.iter().find(|s| s["season"].as_u64() == Some(season)) else { continue };
@@ -439,7 +445,7 @@ impl Cloud {
     fn videos(files: &[(String, Value)], listing: &str) -> (Vec<Value>, Vec<Value>) {
         let mut videos: Vec<Value> = files.iter().filter(|(path, entry)| VIDEO.is_match(path) && entry["size"].as_u64().unwrap_or(0) >= 50_000_000).map(|(path, entry)| {
             let (season, number) = episode(path);
-            json!({"path": path, "name": path.rsplit('/').next().unwrap_or(path), "size_bytes": entry["size"], "season": season, "episode": number,
+            json!({"path": path, "name": visible(path.rsplit('/').next().unwrap_or(path)), "size_bytes": entry["size"], "season": season, "episode": number,
                 "width": entry["video_width"], "height": entry["video_height"], "fps": entry["fps"], "duration": entry["duration"]})
         }).collect();
         let copies = copies(&mut videos, listing);
@@ -1152,6 +1158,10 @@ mod tests {
         assert_eq!(episode("The.Wandering.Earth.II.2023.BluRay.2160p.DTS.mkv"), (None, None));
         assert_eq!(episode("繁花.2023.4K.60fps.E30.mkv"), (None, Some(30)));
         assert_eq!(episode("九重紫/4K/01.4K.mp4"), (None, Some(1)));
+        // Invisible characters threaded through a name do not hide its number.
+        assert_eq!(episode("S\u{200b}1\u{200c}|2160p|/\u{200c}/3\u{200b}\u{200b}\u{200c}\u{200d}8\u{200c}\u{200d}.mkv"), (None, Some(38)));
+        assert_eq!(episode("0\u{200b}\u{feff}1.mkv"), (None, Some(1)));
+        assert_eq!(visible("逐\u{200d}玉"), "逐玉");
         assert_eq!(episode("28.4k.mp4"), (None, Some(28)));
         assert_eq!(episode("01 4K.mp4"), (None, Some(1)));
         assert_eq!(episode("12.5.1.mkv"), (None, Some(12)));
