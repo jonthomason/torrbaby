@@ -25,10 +25,12 @@
     <string name="ui_abe7e96d75c0" formatted="false">加入试下载</string>
     <string name="ui_ebf1fd2504e7" formatted="false">添加种子</string>
     <string name="ui_b68734c25910" formatted="false">已添加</string>
+    <string name="ui_f9b608af67f4" formatted="false">已添加到下载</string>
     <string name="ui_a98648e9368b" formatted="false">已添加到 Transmission</string>
     <string name="ui_802e94122566" formatted="false">正在添加下载</string>
     <string name="ui_9295ef6a9cf8" formatted="false">正在添加下载…</string>
     <string name="ui_ffb2e628b0e9" formatted="false">正在添加…</string>
+    <string name="ui_706a6ccef282" formatted="false">此 Mac 上无法使用隔空投送。</string>
     <string name="ui_6a72085653e4" formatted="false">全部</string>
     <string name="ui_360e1182021a" formatted="false">一切正常</string>
     <string name="ui_10c927f29963" formatted="false">全部集</string>
@@ -190,6 +192,7 @@
     <string name="ui_9b4592f9ae45" formatted="false">下载中</string>
     <string name="ui_af948f4e4aee" formatted="false">已优先下载</string>
     <string name="ui_a862c2b21b5e" formatted="false">下载</string>
+    <string name="ui_47bca62b54c5" formatted="false">下载功能不可用。</string>
     <string name="ui_c20a8912f0ca" formatted="false">下载正在等待 Wi-Fi</string>
     <string name="ui_022410e4af2e" formatted="false">下载不可用</string>
     <string name="ui_fbe756da9c9b" formatted="false">下载会等待 Wi-Fi。允许蜂窝网络时也包括个人热点和低数据模式网络，3 小时后或连接 Wi-Fi 时结束。</string>
@@ -359,6 +362,7 @@
     <string name="ui_6eef6648406c" formatted="false">无</string>
     <string name="ui_811931bba8d1" formatted="false">未配置</string>
     <string name="ui_5fe04f57e34d" formatted="false">未下载</string>
+    <string name="ui_d93783e0c5db" formatted="false">下载存储空间不足，无法保存此影片。</string>
     <string name="ui_0008c8375b5d" formatted="false">无进展</string>
     <string name="ui_5a28f15df569" formatted="false">暂不可用</string>
     <string name="ui_602f15feebf4" formatted="false">没有可添加的内容</string>
@@ -371,6 +375,7 @@
     <string name="ui_cdac56f89fbf" formatted="false">离线 · 显示上次的服务器状态</string>
     <string name="ui_e0049a66519c" formatted="false">开启</string>
     <string name="ui_6c913a0dd748" formatted="false">在已连接的设备上</string>
+    <string name="ui_b56b38b02274" formatted="false">只能共享已完成的下载。</string>
     <string name="ui_976905271718" formatted="false">打开 Torrbaby</string>
     <string name="ui_1d24f33a5d2e" formatted="false">在 iPhone 或 iPad 上打开 Torrbaby，选择“扫描连接码”。</string>
     <string name="ui_170cbab1dce2" formatted="false">正在打开视频…</string>
@@ -515,6 +520,8 @@
     <string name="ui_c7f73bb54d92" formatted="false">设置</string>
     <string name="ui_aef97bb06af4" formatted="false">设置已保存</string>
     <string name="ui_c0f6e98ebf63" formatted="false">设置 → 关联设备</string>
+    <string name="ui_09ca55ca52d2" formatted="false">共享</string>
+    <string name="ui_0fdbeb649276" formatted="false">通过隔空投送共享…</string>
     <string name="ui_d97d1ee339e4" formatted="false">显示</string>
     <string name="ui_4589080623ff" formatted="false">显示下载和上传速度</string>
     <string name="ui_3437b8727d9f" formatted="false">查看种子</string>
@@ -603,6 +610,8 @@
     <string name="ui_951eb7043b7a" formatted="false">此版本没有可下载的种子。</string>
     <string name="ui_d9c227c96cdb" formatted="false">这将从所有用户的媒体库中移除此文件。</string>
     <string name="ui_ecd01d877069" formatted="false">此服务器尚未为此网络启用自动连接。</string>
+    <string name="ui_db17ebebbe1c" formatted="false">此共享下载无效。</string>
+    <string name="ui_0c77f0cf970a" formatted="false">此共享下载需要更新版本的 Torrbaby。</string>
     <string name="ui_8607ce0e91d1" formatted="false">服务器上没有此影片的完整媒体文件。</string>
     <string name="ui_d1431bac909d" formatted="false">此影片尚未下载。请重新连接媒体库后播放。</string>
     <string name="ui_2e1fcceaec2e" formatted="false">此种子已不在 Transmission 中。</string>

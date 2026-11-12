@@ -210,6 +210,36 @@ final class DownloadStorage {
         var next = manifest; next.items.append(item); try save(next)
         return item
     }
+    /// A finished download received from another device over AirDrop. `media` (already on
+    /// this volume) is moved in; the item is ready at once. Watch progress is never received.
+    func importReady(server: String, assetID: String, titleID: String, title: String, name: String,
+                     season: Int?, episode: Int?, revision: String, fileExtension: String,
+                     episodeOrder: [EpisodeNumber]?, media: URL) throws -> Item {
+        let ext = fileExtension.lowercased()
+        guard ["mp4", "m4v", "mov", "mkv", "webm", "avi", "ts", "m2ts"].contains(ext),
+              !server.isEmpty, !assetID.isEmpty, !revision.isEmpty, !title.isEmpty else { throw StorageError(message: "This shared download is not valid.") }
+        if let existing = items.first(where: { $0.server == server && $0.assetID == assetID && $0.state == .ready }) {
+            try? fm.removeItem(at: media)
+            return existing
+        }
+        for stale in items where stale.server == server && stale.assetID == assetID && stale.state != .removed && stale.state != .removing {
+            try remove(stale.id)
+        }
+        let attrs = try fm.attributesOfItem(atPath: media.path)
+        guard attrs[.type] as? FileAttributeType == .typeRegular,
+              let size = (attrs[.size] as? NSNumber)?.int64Value, size > 0 else { throw StorageError(message: "This shared download is not valid.") }
+        guard policy.permits(used: try accountedBytes(), additional: size) else {
+            throw StorageError(message: "Not enough download storage for this title.")
+        }
+        var item = Item(id: UUID(), server: server, assetID: assetID, titleID: titleID, title: title, name: name,
+                        season: season, episode: episode, revision: revision, size: size, fileExtension: ext)
+        item.state = .ready; item.received = size; item.episodeOrder = episodeOrder
+        let destination = mediaURL(item)
+        try fm.moveItem(at: media, to: destination)
+        do { var next = manifest; next.items.append(item); try save(next) }
+        catch { try? fm.removeItem(at: destination); throw error }
+        return item
+    }
     func mediaURL(_ item: Item) -> URL {
         root.appendingPathComponent("media").appendingPathComponent(item.id.uuidString + "." + item.fileExtension)
     }

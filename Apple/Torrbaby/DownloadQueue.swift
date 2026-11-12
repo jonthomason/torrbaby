@@ -205,6 +205,89 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             await cachePoster(for: item)
         } catch { self.report(error) }
     }
+    // MARK: Sharing over AirDrop
+    /// What travels in a `.torrbaby` package: the finished file and enough to list it. Never
+    /// watch progress. `server` lets a recipient on the same server treat it as its own download.
+    struct SharedDownload: Codable {
+        var version = 1
+        let server: String
+        let serverPrimary: String
+        let assetID: String
+        let titleID: String
+        let title: String
+        let name: String
+        let season: Int?
+        let episode: Int?
+        let episodeOrder: [EpisodeNumber]?
+        let revision: String
+        let fileExtension: String
+        let media: String
+        let poster: String?
+    }
+    /// Build a `.torrbaby` package for a finished download. The media is an APFS clone, so it
+    /// takes no time or extra space. Earlier packages are cleared after six hours.
+    func sharePackage(_ id: UUID) throws -> URL {
+        guard let storage, let item = items.first(where: { $0.id == id && $0.state == .ready }) else {
+            throw DownloadStorage.StorageError(message: "Only finished downloads can be shared.")
+        }
+        let fm = FileManager.default
+        let shares = fm.temporaryDirectory.appendingPathComponent("Share", isDirectory: true)
+        for old in (try? fm.contentsOfDirectory(at: shares, includingPropertiesForKeys: [.creationDateKey])) ?? [] {
+            if let created = try? old.resourceValues(forKeys: [.creationDateKey]).creationDate, created < Date().addingTimeInterval(-6 * 3600) { try? fm.removeItem(at: old) }
+        }
+        let label = (item.season != nil && item.episode != nil ? "\(item.title) " + String(format: "S%02dE%02d", item.season!, item.episode!) : item.title)
+            .components(separatedBy: CharacterSet(charactersIn: "/:\\")).joined(separator: " ").prefix(120)
+        let package = shares.appendingPathComponent(UUID().uuidString, isDirectory: true).appendingPathComponent(label + ".torrbaby", isDirectory: true)
+        try fm.createDirectory(at: package, withIntermediateDirectories: true)
+        let media = "media." + item.fileExtension
+        try fm.copyItem(at: storage.mediaURL(item), to: package.appendingPathComponent(media))
+        var poster: String?
+        if let key = item.posterKey, let url = storage.posterURL(key), fm.fileExists(atPath: url.path) {
+            try fm.copyItem(at: url, to: package.appendingPathComponent("poster.jpg")); poster = "poster.jpg"
+        }
+        let original = item.server.hasPrefix("shared:") ? String(item.server.dropFirst(7)) : item.server
+        let manifest = SharedDownload(server: original, serverPrimary: ServerRoutes.primaryAddress(for: original), assetID: item.assetID,
+                                      titleID: item.titleID, title: item.title, name: item.name, season: item.season, episode: item.episode,
+                                      episodeOrder: item.episodeOrder, revision: item.revision, fileExtension: item.fileExtension,
+                                      media: media, poster: poster)
+        try JSONEncoder().encode(manifest).write(to: package.appendingPathComponent("manifest.json"), options: .atomic)
+        return package
+    }
+    /// Add a received `.torrbaby` package to Downloads. From the same server it becomes an
+    /// ordinary download of that title; otherwise it is a standalone copy. Returns the title.
+    @discardableResult
+    func importShared(_ url: URL) throws -> String {
+        guard let storage else { throw DownloadStorage.StorageError(message: "Downloads are unavailable.") }
+        let fm = FileManager.default
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+        let manifestData = try Data(contentsOf: url.appendingPathComponent("manifest.json"))
+        guard manifestData.count <= 1_000_000 else { throw DownloadStorage.StorageError(message: "This shared download is not valid.") }
+        let shared = try JSONDecoder().decode(SharedDownload.self, from: manifestData)
+        let safe = { (name: String) in !name.isEmpty && !name.contains("/") && !name.hasPrefix(".") }
+        guard shared.version == 1, safe(shared.media), shared.poster.map(safe) ?? true else {
+            throw DownloadStorage.StorageError(message: "This shared download needs a newer version of Torrbaby.")
+        }
+        let sameServer = store.map { !$0.server.isEmpty && ($0.server == shared.server || $0.primaryAddress == shared.serverPrimary) } ?? false
+        let server = sameServer ? store!.server : "shared:" + shared.server
+        // Work on our own copy (a clone on the same volume); the received package may be the user's file.
+        let staging = storage.root.appendingPathComponent("partial").appendingPathComponent(UUID().uuidString + "." + shared.fileExtension)
+        try fm.copyItem(at: url.appendingPathComponent(shared.media), to: staging)
+        let item: DownloadStorage.Item
+        do {
+            item = try storage.importReady(server: server, assetID: shared.assetID, titleID: shared.titleID, title: shared.title, name: shared.name,
+                                           season: shared.season, episode: shared.episode, revision: shared.revision,
+                                           fileExtension: shared.fileExtension, episodeOrder: shared.episodeOrder, media: staging)
+        } catch { try? fm.removeItem(at: staging); throw error }
+        if let poster = shared.poster, let data = try? Data(contentsOf: url.appendingPathComponent(poster)), data.count <= 524_288 {
+            let key = SHA256.hash(data: Data((server + "\n" + shared.titleID).utf8)).map { String(format: "%02x", $0) }.joined()
+            try? storage.savePoster(item.id, key: key, data: data)
+        }
+        // iOS hands over a copy in the app's Inbox; it is ours to remove.
+        if url.path.contains("/Documents/Inbox/") { try? fm.removeItem(at: url) }
+        reload()
+        return shared.title
+    }
     func artworkURL(_ id: UUID) -> URL? {
         guard let storage, let key = items.first(where: { $0.id == id })?.posterKey else { return nil }
         return storage.posterURL(key)

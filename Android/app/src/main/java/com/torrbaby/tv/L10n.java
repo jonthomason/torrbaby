@@ -36,10 +36,12 @@ final class L10n {
     IDS.put("Add to trial", R.string.ui_abe7e96d75c0);
     IDS.put("Add torrent", R.string.ui_ebf1fd2504e7);
     IDS.put("Added", R.string.ui_b68734c25910);
+    IDS.put("Added to Downloads", R.string.ui_f9b608af67f4);
     IDS.put("Added to Transmission", R.string.ui_a98648e9368b);
     IDS.put("Adding download", R.string.ui_802e94122566);
     IDS.put("Adding download…", R.string.ui_9295ef6a9cf8);
     IDS.put("Adding…", R.string.ui_ffb2e628b0e9);
+    IDS.put("AirDrop is not available on this Mac.", R.string.ui_706a6ccef282);
     IDS.put("All", R.string.ui_6a72085653e4);
     IDS.put("All clear", R.string.ui_360e1182021a);
     IDS.put("All episodes", R.string.ui_10c927f29963);
@@ -201,6 +203,7 @@ final class L10n {
     IDS.put("Downloading", R.string.ui_9b4592f9ae45);
     IDS.put("Downloading first", R.string.ui_af948f4e4aee);
     IDS.put("Downloads", R.string.ui_a862c2b21b5e);
+    IDS.put("Downloads are unavailable.", R.string.ui_47bca62b54c5);
     IDS.put("Downloads are waiting for Wi-Fi", R.string.ui_c20a8912f0ca);
     IDS.put("Downloads unavailable", R.string.ui_022410e4af2e);
     IDS.put("Downloads wait for Wi-Fi. Allowing cellular also covers a Personal Hotspot or a Low Data Mode network, and ends after 3 hours or when you join Wi-Fi.", R.string.ui_fbe756da9c9b);
@@ -370,6 +373,7 @@ final class L10n {
     IDS.put("None", R.string.ui_6eef6648406c);
     IDS.put("Not configured", R.string.ui_811931bba8d1);
     IDS.put("Not downloaded", R.string.ui_5fe04f57e34d);
+    IDS.put("Not enough download storage for this title.", R.string.ui_d93783e0c5db);
     IDS.put("Not progressing", R.string.ui_0008c8375b5d);
     IDS.put("Not yet available", R.string.ui_5a28f15df569);
     IDS.put("Nothing to add", R.string.ui_602f15feebf4);
@@ -382,6 +386,7 @@ final class L10n {
     IDS.put("Offline · showing the last server status", R.string.ui_cdac56f89fbf);
     IDS.put("On", R.string.ui_e0049a66519c);
     IDS.put("On your connected device", R.string.ui_6c913a0dd748);
+    IDS.put("Only finished downloads can be shared.", R.string.ui_b56b38b02274);
     IDS.put("Open Torrbaby", R.string.ui_976905271718);
     IDS.put("Open Torrbaby on your iPhone or iPad and choose Scan connection code.", R.string.ui_1d24f33a5d2e);
     IDS.put("Opening video…", R.string.ui_170cbab1dce2);
@@ -526,6 +531,8 @@ final class L10n {
     IDS.put("Settings", R.string.ui_c7f73bb54d92);
     IDS.put("Settings saved", R.string.ui_aef97bb06af4);
     IDS.put("Settings → Link a device", R.string.ui_c0f6e98ebf63);
+    IDS.put("Share", R.string.ui_09ca55ca52d2);
+    IDS.put("Share with AirDrop…", R.string.ui_0fdbeb649276);
     IDS.put("Show", R.string.ui_d97d1ee339e4);
     IDS.put("Show download and upload rates", R.string.ui_4589080623ff);
     IDS.put("Show torrent", R.string.ui_3437b8727d9f);
@@ -614,6 +621,8 @@ final class L10n {
     IDS.put("This release has no downloadable torrent.", R.string.ui_951eb7043b7a);
     IDS.put("This removes the file from everyone’s library.", R.string.ui_d9c227c96cdb);
     IDS.put("This server has not enabled automatic connection for this network.", R.string.ui_ecd01d877069);
+    IDS.put("This shared download is not valid.", R.string.ui_db17ebebbe1c);
+    IDS.put("This shared download needs a newer version of Torrbaby.", R.string.ui_0c77f0cf970a);
     IDS.put("This title has no complete media files on the server.", R.string.ui_8607ce0e91d1);
     IDS.put("This title isn’t downloaded. Reconnect to your library to play it.", R.string.ui_d1431bac909d);
     IDS.put("This torrent is no longer in Transmission.", R.string.ui_2e1fcceaec2e);

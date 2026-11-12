@@ -360,6 +360,13 @@ struct RootView: View {
         .onOpenURL { url in
             if url.scheme?.lowercased() == "magnet" {
                 torrentDraft = TorrentDraft(magnet: canonicalMagnet(url.absoluteString))
+            } else if url.isFileURL && url.pathExtension.lowercased() == "torrbaby" {
+                // A download shared over AirDrop: add it to Downloads and show it there.
+                do {
+                    let title = try DownloadQueue.shared.importShared(url)
+                    store.notify("Added to Downloads", detail: title, torrentHash: nil)
+                    navigate(Location(section: .downloads))
+                } catch { store.actionError = error.localizedDescription }
             }
         }
         .overlay(alignment: .bottom) {

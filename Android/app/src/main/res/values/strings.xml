@@ -25,10 +25,12 @@
     <string name="ui_abe7e96d75c0" formatted="false">Add to trial</string>
     <string name="ui_ebf1fd2504e7" formatted="false">Add torrent</string>
     <string name="ui_b68734c25910" formatted="false">Added</string>
+    <string name="ui_f9b608af67f4" formatted="false">Added to Downloads</string>
     <string name="ui_a98648e9368b" formatted="false">Added to Transmission</string>
     <string name="ui_802e94122566" formatted="false">Adding download</string>
     <string name="ui_9295ef6a9cf8" formatted="false">Adding download…</string>
     <string name="ui_ffb2e628b0e9" formatted="false">Adding…</string>
+    <string name="ui_706a6ccef282" formatted="false">AirDrop is not available on this Mac.</string>
     <string name="ui_6a72085653e4" formatted="false">All</string>
     <string name="ui_360e1182021a" formatted="false">All clear</string>
     <string name="ui_10c927f29963" formatted="false">All episodes</string>
@@ -190,6 +192,7 @@
     <string name="ui_9b4592f9ae45" formatted="false">Downloading</string>
     <string name="ui_af948f4e4aee" formatted="false">Downloading first</string>
     <string name="ui_a862c2b21b5e" formatted="false">Downloads</string>
+    <string name="ui_47bca62b54c5" formatted="false">Downloads are unavailable.</string>
     <string name="ui_c20a8912f0ca" formatted="false">Downloads are waiting for Wi-Fi</string>
     <string name="ui_022410e4af2e" formatted="false">Downloads unavailable</string>
     <string name="ui_fbe756da9c9b" formatted="false">Downloads wait for Wi-Fi. Allowing cellular also covers a Personal Hotspot or a Low Data Mode network, and ends after 3 hours or when you join Wi-Fi.</string>
@@ -359,6 +362,7 @@
     <string name="ui_6eef6648406c" formatted="false">None</string>
     <string name="ui_811931bba8d1" formatted="false">Not configured</string>
     <string name="ui_5fe04f57e34d" formatted="false">Not downloaded</string>
+    <string name="ui_d93783e0c5db" formatted="false">Not enough download storage for this title.</string>
     <string name="ui_0008c8375b5d" formatted="false">Not progressing</string>
     <string name="ui_5a28f15df569" formatted="false">Not yet available</string>
     <string name="ui_602f15feebf4" formatted="false">Nothing to add</string>
@@ -371,6 +375,7 @@
     <string name="ui_cdac56f89fbf" formatted="false">Offline · showing the last server status</string>
     <string name="ui_e0049a66519c" formatted="false">On</string>
     <string name="ui_6c913a0dd748" formatted="false">On your connected device</string>
+    <string name="ui_b56b38b02274" formatted="false">Only finished downloads can be shared.</string>
     <string name="ui_976905271718" formatted="false">Open Torrbaby</string>
     <string name="ui_1d24f33a5d2e" formatted="false">Open Torrbaby on your iPhone or iPad and choose Scan connection code.</string>
     <string name="ui_170cbab1dce2" formatted="false">Opening video…</string>
@@ -515,6 +520,8 @@
     <string name="ui_c7f73bb54d92" formatted="false">Settings</string>
     <string name="ui_aef97bb06af4" formatted="false">Settings saved</string>
     <string name="ui_c0f6e98ebf63" formatted="false">Settings → Link a device</string>
+    <string name="ui_09ca55ca52d2" formatted="false">Share</string>
+    <string name="ui_0fdbeb649276" formatted="false">Share with AirDrop…</string>
     <string name="ui_d97d1ee339e4" formatted="false">Show</string>
     <string name="ui_4589080623ff" formatted="false">Show download and upload rates</string>
     <string name="ui_3437b8727d9f" formatted="false">Show torrent</string>
@@ -603,6 +610,8 @@
     <string name="ui_951eb7043b7a" formatted="false">This release has no downloadable torrent.</string>
     <string name="ui_d9c227c96cdb" formatted="false">This removes the file from everyone’s library.</string>
     <string name="ui_ecd01d877069" formatted="false">This server has not enabled automatic connection for this network.</string>
+    <string name="ui_db17ebebbe1c" formatted="false">This shared download is not valid.</string>
+    <string name="ui_0c77f0cf970a" formatted="false">This shared download needs a newer version of Torrbaby.</string>
     <string name="ui_8607ce0e91d1" formatted="false">This title has no complete media files on the server.</string>
     <string name="ui_d1431bac909d" formatted="false">This title isn’t downloaded. Reconnect to your library to play it.</string>
     <string name="ui_2e1fcceaec2e" formatted="false">This torrent is no longer in Transmission.</string>

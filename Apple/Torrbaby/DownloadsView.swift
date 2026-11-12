@@ -1,5 +1,10 @@
 #if !os(tvOS)
 import SwiftUI
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 struct DownloadsView: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
@@ -15,6 +20,7 @@ struct DownloadsView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hintRow: UUID?
     @State private var hintOffset: CGFloat = 0
+    private func share(_ id: UUID) { shareDownload(id) }
     var body: some View {
         List {
             SwiftUI.Section {
@@ -106,6 +112,15 @@ struct DownloadsView: View {
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         Button("Delete", role: .destructive) { queue.remove(item.id) }.tint(.red)
                     }
+                    .swipeActions(edge: .leading) {
+                        if item.state == .ready { Button("Share") { share(item.id) }.tint(Theme.accent) }
+                    }
+                    .contextMenu {
+                        if item.state == .ready {
+                            Button { share(item.id) } label: { Label("Share with AirDrop…", systemImage: "square.and.arrow.up") }
+                        }
+                        Button(role: .destructive) { queue.remove(item.id) } label: { Label("Delete", systemImage: "trash") }
+                    }
                 }
             }
         }.listStyle(.plain).scrollContentBackground(.hidden).background(Theme.canvas)
@@ -165,6 +180,28 @@ private struct DownloadPoster: View {
             }.frame(width: geometry.size.width, height: geometry.size.height).clipped()
         }.task(id: url) { data = url.flatMap { try? Data(contentsOf: $0) } }
     }
+}
+
+/// Hand a finished download to AirDrop as a `.torrbaby` package another Torrbaby opens.
+@MainActor func shareDownload(_ id: UUID) {
+    let queue = DownloadQueue.shared
+    let url: URL
+    do { url = try queue.sharePackage(id) } catch { queue.error = error.localizedDescription; return }
+    #if os(iOS)
+    let controller = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first(where: { $0.activationState == .foregroundActive }),
+          var top = scene.keyWindow?.rootViewController else { return }
+    while let next = top.presentedViewController { top = next }
+    if let popover = controller.popoverPresentationController {
+        popover.sourceView = top.view
+        popover.sourceRect = CGRect(x: top.view.bounds.midX, y: top.view.bounds.midY, width: 0, height: 0)
+        popover.permittedArrowDirections = []
+    }
+    top.present(controller, animated: true)
+    #elseif os(macOS)
+    if let airDrop = NSSharingService(named: .sendViaAirDrop), airDrop.canPerform(withItems: [url]) { airDrop.perform(withItems: [url]) }
+    else { queue.error = "AirDrop is not available on this Mac." }
+    #endif
 }
 
 /// The Downloads screen's shortcut to Settings → Downloads.
