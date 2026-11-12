@@ -529,7 +529,7 @@ struct TorrentListView: View {
                     }.pickerStyle(.menu).fixedSize()
                 }
                 // Quark downloads lead the list they belong to, in their own colour.
-                if section == .active { CloudJobsSection() }
+                if section == .active { CloudJobsSection(sectionSpacing: 24) }
                 if section == .attention { ProcessingAttention(count: $processingIssues) }
                 if section == .attention && !filtered.isEmpty { bulkBar }
                 if filtered.isEmpty && (section != .seeding || store.detachedLibraryOperations.isEmpty) && !(section == .attention && processingIssues > 0) {

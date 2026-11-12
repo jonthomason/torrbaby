@@ -1829,16 +1829,20 @@ struct CloudJobsSection: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @State private var jobs: [CloudJob] = []
+    /// The gap its container leaves between sections, taken back while there is nothing to show.
+    var sectionSpacing: CGFloat = 0
     private struct JobList: Decodable { let jobs: [CloudJob] }
     var body: some View {
-        Group {
+        // Always a view, even with no downloads: a task on an empty group never starts,
+        // and then the downloads are never asked for.
+        VStack(alignment: .leading, spacing: 10) {
             if !jobs.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("Quark Drive", systemImage: "icloud.and.arrow.down").font(.caption.weight(.semibold)).tracking(1.4).foregroundStyle(Theme.cloud)
-                    ForEach(jobs) { job in row(job) }
-                }
+                Label("Quark Drive", systemImage: "icloud.and.arrow.down").font(.caption.weight(.semibold)).tracking(1.4).foregroundStyle(Theme.cloud)
+                ForEach(jobs) { job in row(job) }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.bottom, jobs.isEmpty ? -sectionSpacing : 0)
         .task(id: store.server) {
             while !Task.isCancelled {
                 if let list: JobList = try? await store.request("GET", "/v1/cloud/jobs", timeout: 15) { jobs = list.jobs }
