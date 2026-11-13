@@ -154,13 +154,20 @@ these calls.
 "Move to drive…" is for a show or a movie, chosen by the user. Use it to balance
 drives or to empty one before retiring it.
 
-- If the files belong to a torrent, use `torrent_set_location move:true` and let
-  Transmission copy and verify. Otherwise copy, verify size and hash, switch the
-  asset's path, then delete the original. Never delete before verifying the copy.
-- A file being played or processed is skipped or waited for, never moved
-  underneath an open handle.
-- Progress uses the existing library operations machinery, the same as Junk and
-  delete.
+- Torrent files and loose files move the same way (`server/drive_moves.rs`).
+  Torrbaby copies each file beside its destination under a temporary name
+  (`….torrbaby-moving`), then reads the copy back and compares its sha256. Once
+  every file of the unit has matched, the copies are renamed into place. In the
+  same step Transmission is pointed at them with `torrent_set_location move:false`
+  and the asset paths switch, all under the lock that library scans take.
+  Originals are deleted afterwards, and only while both drives are connected.
+  Transmission never copies or verifies anything itself. (The first design was to
+  let it copy with `move:true`. That was dropped because Transmission gives no
+  verified hand-off and can't wait for playback.)
+- A file being played or processed is waited for, never moved underneath an open
+  handle.
+- Progress has its own list and endpoint (`/v1/drives/moves`, saved in
+  `drive-moves.json`), not the library operations machinery.
 - Asset IDs are unchanged, so history, subtitles and credits follow the file.
 
 ## Phases
