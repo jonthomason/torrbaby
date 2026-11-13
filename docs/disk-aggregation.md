@@ -6,9 +6,10 @@ for a real test. Work happens in the `drive-aggregation` worktree.
 
 ## As built
 
-Deployed 2026-11-13 (server 811519e, Apple 226, Android 97). Diamond still has
-one drive. It was tested on disk images and on a test setup with a real
-Transmission, not yet on a second physical drive.
+Deployed 2026-11-13 (server 811519e, Apple 226, Android 97). Beta (4 TB, APFS)
+was added from Settings that afternoon. Alpha's 1.75 TB was emptied onto it with
+server 5941851 (f5e03ea). That run failed once, at 1,436 GB, on a file planned
+twice; it was started again and fixed in 2912a1e.
 
 - `server/drives.rs`: every drive question.
   - Markers (`<media>/.torrbaby-drive.json`) are written for configured drives
@@ -67,8 +68,27 @@ Transmission, not yet on a second physical drive.
     waiting lets later moves go on. Manage Files refuses a title mid-move.
   - Saves and renames are flushed to disk, and a stale moving mark is cleared at
     start.
+  - Emptying a drive (`{"from": <drive>}`) also carries what Transmission keeps
+    there that is not a finished title (downloads under way, Junk seeding out).
+    Each torrent goes to the same folder on the target, moved by Transmission
+    itself (`move: true`), one at a time, with up to an hour per torrent. The
+    move's list returns at once and shows `carrying`. While a carry runs, the
+    scanner leaves that torrent's folder on the target alone.
+  - Waits instead of failing:
+    - Transmission doesn't confirm a switch: if it isn't seen using the copies,
+      the unit waits ("Waiting for Transmission"), and the verified copies stay
+      for the next try.
+    - A drive pulled out during a copy: the unit waits for the drive and starts
+      the copy again.
+  - A file is planned once, and one already in place on the target with its
+    original gone counts as moved. A failure is recorded on its unit and logged.
+  - The server logs INFO for `torrbaby::drives`, `drive_moves` and `organizer`
+    (stderr, `rust-server.log` on Diamond), and WARN for everything else.
   - Not yet possible: removing a drive that has died while titles are recorded on
     it.
+- Scanner: an untracked record of a present torrent's very file is that
+  torrent record's duplicate and is dropped, unless it has its own match or
+  history. A carry used to create these.
 - Idle playback readers close after two minutes, so the server does not hold
   files open and block an eject.
 - Clients:

@@ -512,9 +512,12 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
         }
         if let Some(object) = asset.as_object_mut() { object.remove("offline"); }
         // An explicit user match is kept even on a duplicate record. Once a torrent's file
-        // is in place, only a record whose own file has gone can be its earlier copy.
+        // is in place, only a record whose own file has gone can be its earlier copy, or one
+        // of the very file, made before Transmission listed it there (a torrent carried to
+        // another drive arrives there before Transmission says so).
         if asset["torrent_hash"].is_null() && asset["confirmed"] != true
             && asset["path"].as_str().is_some_and(|path| {
+                if tracked.contains(&crate::drives::spelled(Path::new(path))) { return true; }
                 let gone = matches!(fs::metadata(path), Err(e) if e.kind() == std::io::ErrorKind::NotFound);
                 drives.roots(Role::Downloads).any(|downloads| torrent_copy(Path::new(path), downloads, incomplete,
                     if gone { &torrent_names } else { &unfinished_names }, &tracked))
@@ -863,7 +866,14 @@ mod tests {
         let copied = inventory(&config,vec![],vec![single.clone()]);
         assert!(copied.assets.iter().any(|a|a["path"].as_str().unwrap().ends_with("Copies/Single.mkv") && a["torrent_hash"].is_null()));
         let copy = copied.assets.iter().find(|a|a["torrent_hash"].is_null() && a["path"].as_str().unwrap().ends_with("Copies/Single.mkv")).unwrap().clone();
-        assert!(inventory(&config,vec![copy],vec![single]).superseded.is_empty());
+        assert!(inventory(&config,vec![copy],vec![single.clone()]).superseded.is_empty());
+        // A record of the torrent's very file, made while Transmission still listed it on
+        // another drive (carrying it there), is the torrent record's duplicate.
+        let tracked = copied.assets.iter().find(|a|a["torrent_hash"]=="single").unwrap().clone();
+        let carried = json!({"id":"asset-carried","path":source.join("Single.mkv"),"status":"pending","available":true,"complete":false,"role":"main","torrent_present":false});
+        let after = inventory(&config,vec![tracked.clone(),carried],vec![single]);
+        assert_eq!(after.superseded,["asset-carried"]);
+        assert!(after.assets.iter().any(|a|a["id"]==tracked["id"]));
         // An incomplete directory that would contain a library root is ignored.
         let stale = json!({"id":"asset-movie","path":Path::new(&config.movies).join("Film.mkv"),"available":false,"role":"main"});
         assert!(inventory_with(&config,vec![stale],vec![],Some(&root)).superseded.is_empty());
