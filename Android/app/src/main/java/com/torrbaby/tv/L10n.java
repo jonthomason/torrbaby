@@ -203,6 +203,7 @@ final class L10n {
     IDS.put("Couldn’t refresh file operations", R.string.ui_4a73957afb95);
     IDS.put("Create", R.string.ui_6e157c5da441);
     IDS.put("Create user", R.string.ui_bdbcfa0af077);
+    IDS.put("Credits", R.string.ui_bfac50d6424b);
     IDS.put("Credits analysis incomplete", R.string.ui_3394786da6fb);
     IDS.put("Credits not detected", R.string.ui_81a0a3c30d89);
     IDS.put("Currently unlimited", R.string.ui_f06a7a6fb077);
@@ -340,6 +341,7 @@ final class L10n {
     IDS.put("Import connection file…", R.string.ui_8ed49e014b77);
     IDS.put("In Junk · delete after seeding", R.string.ui_9ea8b1168411);
     IDS.put("In Junk · finishing seeding", R.string.ui_1590b4aa625e);
+    IDS.put("In progress", R.string.ui_b6bd42e4e730);
     IDS.put("In use", R.string.ui_20716e9262a7);
     IDS.put("In your library", R.string.ui_00cc7207a45e);
     IDS.put("Incompatible movie or TV show", R.string.ui_32c0f7a837e9);
@@ -470,6 +472,7 @@ final class L10n {
     IDS.put("Not enough free space", R.string.ui_8d845d16e535);
     IDS.put("Not enough free space on any drive", R.string.ui_7d7dbf6869ce);
     IDS.put("Not enough free space on that drive", R.string.ui_e07feb82ca22);
+    IDS.put("Not needed", R.string.ui_2518be9b9cea);
     IDS.put("Not progressing", R.string.ui_0008c8375b5d);
     IDS.put("Not set up", R.string.ui_be8f2e94e7b3);
     IDS.put("Not yet available", R.string.ui_5a28f15df569);
@@ -522,6 +525,7 @@ final class L10n {
     IDS.put("Preparing download", R.string.ui_f9b13bce28d6);
     IDS.put("Preparing next episode", R.string.ui_8be25e2451fb);
     IDS.put("Preparing playback…", R.string.ui_de58cdcf6ca3);
+    IDS.put("Preparing subtitles", R.string.ui_a389761d85ba);
     IDS.put("Preparing subtitles…", R.string.ui_0f255a84a82a);
     IDS.put("Preparing trial", R.string.ui_9173783815b0);
     IDS.put("Preparing…", R.string.ui_0b1d6c0b1a56);
@@ -795,6 +799,7 @@ final class L10n {
     IDS.put("Translating audio transcript", R.string.ui_26ca7431e51b);
     IDS.put("Translating subtitles", R.string.ui_7317cb083a2d);
     IDS.put("Translating text subtitles", R.string.ui_62a607c364c3);
+    IDS.put("Translation", R.string.ui_ac26a7a94ea2);
     IDS.put("Translations", R.string.ui_8ad8302d110b);
     IDS.put("Transmission has not confirmed the add yet. The torrent may still appear in Torrents; check there before trying again.", R.string.ui_533c8cf527e8);
     IDS.put("Transmission reports this torrent as stalled", R.string.ui_9a14b54f2d98);
@@ -855,7 +860,9 @@ final class L10n {
     IDS.put("Waiting for playback to finish", R.string.ui_83ed73bbc425);
     IDS.put("Waiting for playback to stop", R.string.ui_64189e6dc1d9);
     IDS.put("Waiting for processing to finish", R.string.ui_d9852df62ffb);
+    IDS.put("Waiting for subtitles", R.string.ui_cf4eb74000b2);
     IDS.put("Waiting for the drive to be connected", R.string.ui_d8c33d5a3be9);
+    IDS.put("Waiting to check languages", R.string.ui_a87cb3f030da);
     IDS.put("Waiting to verify", R.string.ui_640215e9fe28);
     IDS.put("Waiting · %d in line", R.string.ui_f1184cd6731c);
     IDS.put("Watch for new episodes", R.string.ui_0a444233849c);

@@ -192,6 +192,7 @@
     <string name="ui_4a73957afb95" formatted="false">Couldn’t refresh file operations</string>
     <string name="ui_6e157c5da441" formatted="false">Create</string>
     <string name="ui_bdbcfa0af077" formatted="false">Create user</string>
+    <string name="ui_bfac50d6424b" formatted="false">Credits</string>
     <string name="ui_3394786da6fb" formatted="false">Credits analysis incomplete</string>
     <string name="ui_81a0a3c30d89" formatted="false">Credits not detected</string>
     <string name="ui_f06a7a6fb077" formatted="false">Currently unlimited</string>
@@ -329,6 +330,7 @@
     <string name="ui_8ed49e014b77" formatted="false">Import connection file…</string>
     <string name="ui_9ea8b1168411" formatted="false">In Junk · delete after seeding</string>
     <string name="ui_1590b4aa625e" formatted="false">In Junk · finishing seeding</string>
+    <string name="ui_b6bd42e4e730" formatted="false">In progress</string>
     <string name="ui_20716e9262a7" formatted="false">In use</string>
     <string name="ui_00cc7207a45e" formatted="false">In your library</string>
     <string name="ui_32c0f7a837e9" formatted="false">Incompatible movie or TV show</string>
@@ -459,6 +461,7 @@
     <string name="ui_8d845d16e535" formatted="false">Not enough free space</string>
     <string name="ui_7d7dbf6869ce" formatted="false">Not enough free space on any drive</string>
     <string name="ui_e07feb82ca22" formatted="false">Not enough free space on that drive</string>
+    <string name="ui_2518be9b9cea" formatted="false">Not needed</string>
     <string name="ui_0008c8375b5d" formatted="false">Not progressing</string>
     <string name="ui_be8f2e94e7b3" formatted="false">Not set up</string>
     <string name="ui_5a28f15df569" formatted="false">Not yet available</string>
@@ -511,6 +514,7 @@
     <string name="ui_f9b13bce28d6" formatted="false">Preparing download</string>
     <string name="ui_8be25e2451fb" formatted="false">Preparing next episode</string>
     <string name="ui_de58cdcf6ca3" formatted="false">Preparing playback…</string>
+    <string name="ui_a389761d85ba" formatted="false">Preparing subtitles</string>
     <string name="ui_0f255a84a82a" formatted="false">Preparing subtitles…</string>
     <string name="ui_9173783815b0" formatted="false">Preparing trial</string>
     <string name="ui_0b1d6c0b1a56" formatted="false">Preparing…</string>
@@ -784,6 +788,7 @@
     <string name="ui_26ca7431e51b" formatted="false">Translating audio transcript</string>
     <string name="ui_7317cb083a2d" formatted="false">Translating subtitles</string>
     <string name="ui_62a607c364c3" formatted="false">Translating text subtitles</string>
+    <string name="ui_ac26a7a94ea2" formatted="false">Translation</string>
     <string name="ui_8ad8302d110b" formatted="false">Translations</string>
     <string name="ui_533c8cf527e8" formatted="false">Transmission has not confirmed the add yet. The torrent may still appear in Torrents; check there before trying again.</string>
     <string name="ui_9a14b54f2d98" formatted="false">Transmission reports this torrent as stalled</string>
@@ -844,7 +849,9 @@
     <string name="ui_83ed73bbc425" formatted="false">Waiting for playback to finish</string>
     <string name="ui_64189e6dc1d9" formatted="false">Waiting for playback to stop</string>
     <string name="ui_d9852df62ffb" formatted="false">Waiting for processing to finish</string>
+    <string name="ui_cf4eb74000b2" formatted="false">Waiting for subtitles</string>
     <string name="ui_d8c33d5a3be9" formatted="false">Waiting for the drive to be connected</string>
+    <string name="ui_a87cb3f030da" formatted="false">Waiting to check languages</string>
     <string name="ui_640215e9fe28" formatted="false">Waiting to verify</string>
     <string name="ui_f1184cd6731c" formatted="false">Waiting · %d in line</string>
     <string name="ui_0a444233849c" formatted="false">Watch for new episodes</string>

@@ -358,7 +358,7 @@ impl Database {
 /// An extra's name from its file, without the series prefix, special number and
 /// release tags: `Show (2003) - S00E22 - The Plan (1080p BluRay x265)` is `The Plan`.
 /// A `display_name` on the asset (set by hand for a mislabelled file) wins.
-fn extra_name(asset: &Value) -> String {
+pub(crate) fn extra_name(asset: &Value) -> String {
     if let Some(name) = asset["display_name"].as_str().filter(|n| !n.trim().is_empty()) {
         return name.to_owned();
     }

@@ -192,6 +192,7 @@
     <string name="ui_4a73957afb95" formatted="false">无法刷新文件操作</string>
     <string name="ui_6e157c5da441" formatted="false">创建</string>
     <string name="ui_bdbcfa0af077" formatted="false">创建用户</string>
+    <string name="ui_bfac50d6424b" formatted="false">片尾</string>
     <string name="ui_3394786da6fb" formatted="false">片尾检测未完成</string>
     <string name="ui_81a0a3c30d89" formatted="false">未检测到片尾字幕</string>
     <string name="ui_f06a7a6fb077" formatted="false">当前不限量</string>
@@ -329,6 +330,7 @@
     <string name="ui_8ed49e014b77" formatted="false">导入连接文件…</string>
     <string name="ui_9ea8b1168411" formatted="false">已移入废弃区 · 做种后删除</string>
     <string name="ui_1590b4aa625e" formatted="false">已移入废弃区 · 完成做种中</string>
+    <string name="ui_b6bd42e4e730" formatted="false">进行中</string>
     <string name="ui_20716e9262a7" formatted="false">已使用</string>
     <string name="ui_00cc7207a45e" formatted="false">已在媒体库中</string>
     <string name="ui_32c0f7a837e9" formatted="false">不兼容的电影或剧集</string>
@@ -459,6 +461,7 @@
     <string name="ui_8d845d16e535" formatted="false">可用空间不足</string>
     <string name="ui_7d7dbf6869ce" formatted="false">所有硬盘的可用空间都不足</string>
     <string name="ui_e07feb82ca22" formatted="false">那块硬盘的可用空间不足</string>
+    <string name="ui_2518be9b9cea" formatted="false">不需要</string>
     <string name="ui_0008c8375b5d" formatted="false">无进展</string>
     <string name="ui_be8f2e94e7b3" formatted="false">未设置</string>
     <string name="ui_5a28f15df569" formatted="false">暂不可用</string>
@@ -511,6 +514,7 @@
     <string name="ui_f9b13bce28d6" formatted="false">正在准备下载</string>
     <string name="ui_8be25e2451fb" formatted="false">正在准备下一集</string>
     <string name="ui_de58cdcf6ca3" formatted="false">正在准备播放…</string>
+    <string name="ui_a389761d85ba" formatted="false">正在准备字幕</string>
     <string name="ui_0f255a84a82a" formatted="false">正在准备字幕…</string>
     <string name="ui_9173783815b0" formatted="false">正在准备试下载</string>
     <string name="ui_0b1d6c0b1a56" formatted="false">正在准备…</string>
@@ -784,6 +788,7 @@
     <string name="ui_26ca7431e51b" formatted="false">正在翻译音频转写</string>
     <string name="ui_7317cb083a2d" formatted="false">翻译字幕</string>
     <string name="ui_62a607c364c3" formatted="false">正在翻译文本字幕</string>
+    <string name="ui_ac26a7a94ea2" formatted="false">翻译</string>
     <string name="ui_8ad8302d110b" formatted="false">翻译</string>
     <string name="ui_533c8cf527e8" formatted="false">Transmission 尚未确认添加结果。种子仍可能出现在“种子”列表中，请先查看列表，再决定是否重试。</string>
     <string name="ui_9a14b54f2d98" formatted="false">Transmission 报告此种子停滞</string>
@@ -844,7 +849,9 @@
     <string name="ui_83ed73bbc425" formatted="false">等待播放结束</string>
     <string name="ui_64189e6dc1d9" formatted="false">正在等待播放停止</string>
     <string name="ui_d9852df62ffb" formatted="false">正在等待处理完成</string>
+    <string name="ui_cf4eb74000b2" formatted="false">等待生成字幕</string>
     <string name="ui_d8c33d5a3be9" formatted="false">正在等待连接硬盘</string>
+    <string name="ui_a87cb3f030da" formatted="false">等待检查语言</string>
     <string name="ui_640215e9fe28" formatted="false">等待校验</string>
     <string name="ui_f1184cd6731c" formatted="false">等待中 · 排第 %d 位</string>
     <string name="ui_0a444233849c" formatted="false">追更新剧集</string>

@@ -478,9 +478,28 @@ async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()>
     sign_off(&db,id,revision)?;
     Ok(())
 }
+/// What a file is, as the library names it: the show (or movie), and for an episode its
+/// season, number and name ("Part 2" for a part of a variety show's episode; a special's or
+/// bonus video's own name). Files not yet matched keep their file name as the show.
+fn name(asset:&Value,entity:Option<&Value>)->Value {
+    let stem=asset["path"].as_str().and_then(|p|Path::new(p).file_stem()).and_then(|p|p.to_str()).unwrap_or("").to_owned();
+    let Some(entity)=entity else { return json!({"show":stem,"season":null,"episode":null,"episode_name":null}) };
+    let show=entity["title"].as_str().filter(|t|!t.is_empty()).map(str::to_owned).unwrap_or(stem);
+    if entity["kind"]!="tv" { return json!({"show":show,"season":null,"episode":null,"episode_name":null}) }
+    let season=asset["season"].as_u64();
+    if season==Some(0)||asset["role"]=="extra" { return json!({"show":show,"season":null,"episode":null,"episode_name":crate::catalog::extra_name(asset)}) }
+    let part=asset["path"].as_str().and_then(crate::scanner::part);
+    let episode_name=if part.is_some() { asset["path"].as_str().and_then(crate::scanner::part_title) } else {
+        entity["episodes"].as_array().and_then(|eps|eps.iter().find(|e|e["season"]==asset["season"]&&e["episode"]==asset["episode"]))
+            .and_then(|e|e["title"].as_str()).map(str::to_owned)
+    };
+    json!({"show":show,"season":asset["season"],"episode":asset["episode"],"episode_name":episode_name})
+}
 pub fn summary(db:&Database)->Result<Value> {
     let rows=db.rows("SELECT * FROM media_processing",[])?;
     let mut queue=Vec::new();let mut running=Vec::new();let mut scanned=0;let mut completed=0;let mut failed=0;
+    let entities:std::collections::HashMap<String,Value>=db.documents("entities")?.into_iter()
+        .filter_map(|e|e["id"].as_str().map(|id|(id.to_owned(),e.clone()))).collect();
     for asset in assets(db)? {
         let id=asset["id"].as_str().unwrap_or("");
         let row=rows.iter().find(|r|r["asset_id"]==id);
@@ -489,12 +508,13 @@ pub fn summary(db:&Database)->Result<Value> {
         let stage=row.and_then(|r|r["stage"].as_str()).unwrap_or("inventory");
         let title=asset["path"].as_str().and_then(|p|Path::new(p).file_stem()).and_then(|p|p.to_str()).unwrap_or(id);
         let cues=detail["completed_cues"].as_u64().unwrap_or(0);let total=detail["total_cues"].as_u64().unwrap_or(0);
+        let named=name(&asset,asset["entity_id"].as_str().and_then(|e|entities.get(e)));
         if row.is_some_and(|r|r["inventory_state"]=="ready"){scanned+=1;}
         if state=="ready"{completed+=1;}
         if state=="failed"{failed+=1;}
-        let item=json!({"id":id,"asset_id":id,"title":title,"state":state,"stage":stage,"target":detail["target"],"error":row.map(|r|r["error"].clone()).unwrap_or(Value::Null),"completed_cues":cues,"total_cues":total,"method":detail["extraction_method"],
+        let item=json!({"id":id,"asset_id":id,"title":title,"show":named["show"],"season":named["season"],"episode":named["episode"],"episode_name":named["episode_name"],"state":state,"stage":stage,"target":detail["target"],"error":row.map(|r|r["error"].clone()).unwrap_or(Value::Null),"completed_cues":cues,"total_cues":total,"method":detail["extraction_method"],
             "inventory_state":row.map(|r|r["inventory_state"].clone()),"subtitles_state":row.map(|r|r["subtitles_state"].clone()),"credits_state":row.map(|r|r["credits_state"].clone()),"completed_at":row.map(|r|r["completed_at"].clone())});
-        if state=="running"{running.push(json!({"asset_id":id,"title":title,"language":detail["target"].as_str().unwrap_or(""),"stage":stage,"method":detail["extraction_method"],"completed_cues":cues,"total_cues":total}));}
+        if state=="running"{running.push(json!({"asset_id":id,"title":title,"show":named["show"],"season":named["season"],"episode":named["episode"],"episode_name":named["episode_name"],"language":detail["target"].as_str().unwrap_or(""),"stage":stage,"method":detail["extraction_method"],"completed_cues":cues,"total_cues":total}));}
         queue.push(item);
     }
     Ok(json!({"scanned":scanned,"translated":completed,"completed":completed,"failed":failed,"waiting_for_idle":false,"current":running.first().cloned().unwrap_or(Value::Null),"running":running,"queue":queue}))

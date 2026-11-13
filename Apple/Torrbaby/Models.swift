@@ -145,13 +145,74 @@ struct AttentionItem: Decodable, Identifiable {
 struct AttentionList: Decodable { let items: [AttentionItem] }
 
 struct SubtitleQueueItem: Codable, Identifiable {
+    /// What the file is, as the library names it (older servers send only `title`).
+    let show: String?
+    let season: Int?
+    let episode: Int?
+    let episodeName: String?
+    /// "Season 3 Ep 12 · The Bakra", or a special's own name; nil for a movie.
+    var episodeLine: String? {
+        if let season, let episode {
+            let number = L10n.format("Season %d Ep %d", season, episode)
+            if let name = episodeName, !name.isEmpty { return number + " · " + name }
+            return number
+        }
+        return episodeName.flatMap { $0.isEmpty ? nil : $0 }
+    }
     let stage: String?
     let subtitlesState: String?
+    let inventoryState: String?
+    let creditsState: String?
+    /// One file's work, step by step: languages, subtitles (made from text tracks, the
+    /// picture or the audio), translation, credits. Each says whether it is done, running
+    /// (with progress), waiting, not needed or failed.
+    struct Step: Identifiable {
+        enum Status { case done, running, waiting, skipped, failed }
+        let id: String
+        let label: String
+        let status: Status
+        var progress: String? = nil
+        var fraction: Double? = nil
+    }
+    var steps: [Step] {
+        let running = state == "running"
+        func settled(_ value: String?) -> Step.Status? {
+            switch value {
+            case "ready": return .done
+            case "not_applicable", "skipped": return .skipped
+            case "incomplete": return .failed
+            default: return nil
+            }
+        }
+        var result: [Step] = []
+        let languages = settled(inventoryState) ?? (running && stage == "inventory" ? .running : state == "failed" && stage == "inventory" ? .failed : .waiting)
+        result.append(Step(id: "languages", label: "Languages", status: languages))
+        let counted = totalCues > 0 ? progressText : nil
+        let fraction = totalCues > 0 ? Double(completedCues) / Double(totalCues) : nil
+        let making = ["subtitles", "ocr", "transcription"].contains(stage ?? "")
+        if let status = settled(subtitlesState) {
+            result.append(Step(id: "subtitles", label: "Subtitles", status: status))
+            result.append(Step(id: "translation", label: "Translation", status: status))
+        } else if running && making {
+            result.append(Step(id: "subtitles", label: stageLabel, status: .running, progress: counted, fraction: fraction))
+            result.append(Step(id: "translation", label: "Translation", status: .waiting))
+        } else if running && stage == "translation" {
+            result.append(Step(id: "subtitles", label: "Subtitles", status: .done))
+            result.append(Step(id: "translation", label: stageLabel, status: .running, progress: counted, fraction: fraction))
+        } else {
+            let failed = state == "failed" && (making || stage == "translation")
+            result.append(Step(id: "subtitles", label: "Subtitles", status: failed ? .failed : .waiting))
+            result.append(Step(id: "translation", label: "Translation", status: .waiting))
+        }
+        let credits = settled(creditsState) ?? (running && stage == "credits" ? .running : state == "failed" && stage == "credits" ? .failed : .waiting)
+        result.append(Step(id: "credits", label: "Credits", status: credits))
+        return result
+    }
     /// How the subtitle text was obtained: "text", "ocr" or "speech".
     let method: String?
     var stageLabel: String {
         switch stage {
-        case "inventory": return "Checking languages…"
+        case "inventory": return state == "running" ? "Checking languages…" : "Waiting to check languages"
         case "credits": return "Detecting credits"
         case "complete": return "All processing complete"
         case "transcription": return "Transcribing audio"
@@ -166,7 +227,9 @@ struct SubtitleQueueItem: Codable, Identifiable {
             switch method {
             case "ocr": return "Reading image subtitles (OCR)"
             case "speech": return "Preparing audio transcript"
-            default: return "Extracting text subtitles"
+            case "text": return "Extracting text subtitles"
+            // Not started: how its subtitles will be made is decided when it starts.
+            default: return state == "running" ? "Preparing subtitles" : "Waiting for subtitles"
             }
         }
     }

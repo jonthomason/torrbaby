@@ -101,23 +101,45 @@ struct SubtitleQueueView: View {
             }
         }
     }
-    /// One compact row: the title on one line, then stage and progress, then any problem.
+    /// One file: what it is, then its steps. A file being worked on lists each step on its own
+    /// line with progress; the others show their steps on one line.
     @ViewBuilder private func row(_ item: SubtitleQueueItem) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(1).truncationMode(.middle)
-            HStack(spacing: 8) {
-                Text(LocalizedStringKey(item.state == "scanning" ? "Checking languages…" : item.stageLabel)).lineLimit(1)
-                Spacer()
-                if item.totalCues > 0 && item.state != "ready" { Text(item.progressText).monospacedDigit() }
-                else if item.state != "running" { Text(LocalizedStringKey(item.state.capitalized)) }
-            }.font(.caption).foregroundStyle(.secondary)
-            // Only stages that count their work show a bar; the others say what they are doing.
-            if item.totalCues > 0 && item.state != "ready" {
-                ProgressView(value: Double(item.completedCues), total: Double(item.totalCues)).controlSize(.mini)
+            Text(verbatim: item.show ?? item.title).font(.subheadline.weight(.semibold)).lineLimit(1).truncationMode(.middle)
+            if let line = item.episodeLine { Text(verbatim: line).font(.caption).lineLimit(1).truncationMode(.tail) }
+            if item.state == "running" || item.state == "failed" {
+                ForEach(item.steps) { step in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            stepIcon(step.status)
+                            Text(LocalizedStringKey(step.label)).lineLimit(1)
+                            Spacer()
+                            if let progress = step.progress { Text(verbatim: progress).monospacedDigit() }
+                        }
+                        if let fraction = step.fraction { ProgressView(value: fraction).controlSize(.mini) }
+                    }.font(.caption).foregroundStyle(.secondary)
+                }
+            } else {
+                HStack(spacing: 10) {
+                    ForEach(item.steps) { step in
+                        HStack(spacing: 3) { stepIcon(step.status); Text(LocalizedStringKey(step.label)) }
+                    }
+                }.font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             }
             if item.subtitlesState == "not_applicable" { Text("No supported subtitle source").font(.caption).foregroundStyle(.secondary) }
             if let error = item.error { Text(L10n.text(error)).font(.caption).foregroundStyle(.orange).lineLimit(2) }
         }.padding(.vertical, 2).frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private func stepIcon(_ status: SubtitleQueueItem.Step.Status) -> some View {
+        let (name, color): (String, Color) = switch status {
+        case .done: ("checkmark.circle.fill", .green)
+        case .running: ("circle.dotted.circle", .accentColor)
+        case .waiting: ("circle", .secondary)
+        case .skipped: ("minus.circle", .secondary)
+        case .failed: ("exclamationmark.circle.fill", .orange)
+        }
+        return Image(systemName: name).foregroundStyle(color).accessibilityLabel(Text(LocalizedStringKey(
+            status == .done ? "Done" : status == .running ? "In progress" : status == .waiting ? "Waiting" : status == .skipped ? "Not needed" : "Failed")))
     }
     private func prioritize(_ item: SubtitleQueueItem) {
         guard item.state != "ready", item.state != "running",
