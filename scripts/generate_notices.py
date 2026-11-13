@@ -19,6 +19,10 @@ for package in sorted(metadata['packages'], key=lambda p: (p['name'], p['version
     licenses = sorted(p for p in folder.iterdir() if p.is_file() and p.name.upper().startswith(('LICENSE', 'LICENCE', 'COPYING', 'NOTICE')))
     if package.get('license_file'):
         licenses.append(folder / package['license_file'])
+    # A package published without its license file: the reviewed text kept in scripts/licenses.
+    reviewed = root / 'scripts' / 'licenses' / f"{package['name']}.txt"
+    if not licenses and reviewed.is_file():
+        licenses.append(reviewed)
     if not licenses:
         raise SystemExit(f"Review missing license text: {package['name']}")
     for path in dict.fromkeys(licenses):
