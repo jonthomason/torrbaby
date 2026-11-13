@@ -6,33 +6,79 @@ for a real test. Work happens in the `drive-aggregation` worktree.
 
 ## As built
 
-- `server/drives.rs`: every drive question. Markers (`<media>/.torrbaby-drive.json`)
-  are written for configured drives whose folders are present on a mounted
-  volume; never for a folder on the startup disk. Status: online, missing,
-  foreign (another drive's marker), elsewhere (mounted under another name).
-- Missing drive: the scan skips it; its records keep their state with
-  `available: false, offline: true`; the catalog keeps such titles listed and
-  marks them `offline`; processing neither fails nor reprocesses them; the
-  Watcher counts their episodes as present; cloud reaping and the organizer
-  leave their torrents alone. When the drive and its data are back, a torrent
-  Transmission stopped with "No data found" is checked and resumed.
-- Placement: `Drives::place`. Torrent name and size come from the .torrent or
-  the magnet (`dn`, `xl`); a magnet without them is re-placed once its metadata
-  arrives, before any data is written. If every drive is down to its reserve,
-  the one with the most space still takes what fits (2 GB margin), so a full
-  library slows rather than stops.
-- `server/drive_settings.rs`: `/v1/drives` list, candidates, add, change,
-  remove. The list is saved in the server's settings; the first add turns the
+Deployed 2026-11-13 (server 811519e, Apple 226, Android 97). Diamond still has
+one drive. It was tested on disk images and on a test setup with a real
+Transmission, not yet on a second physical drive.
+
+- `server/drives.rs`: every drive question.
+  - Markers (`<media>/.torrbaby-drive.json`) are written for configured drives
+    whose folders are present on a mounted volume, never for a folder on the
+    startup disk. An unreadable marker on a configured drive is rewritten.
+  - Status: online, missing, foreign (another drive's marker), elsewhere
+    (mounted under another name, e.g. "Beta 1").
+  - Folders are created only on their own mounted volume (`create_media_folder`).
+- Names: every path is kept and compared composed (NFC, `drives::spelled`).
+  Alpha is Mac OS Extended, which lists names decomposed, while Transmission and
+  cloud shares compose them. A file's dev:ino identifies it only within its own
+  drive.
+- Missing drive:
+  - The scan skips it, and treats one that leaves mid-scan as away. Its records
+    keep their state with `available: false, offline: true`. The flag clears
+    when the file is seen again, or when the record is no longer on an away
+    drive.
+  - The catalog keeps such titles listed and marks them `offline`. Processing
+    neither fails nor reprocesses them. The Watcher counts their episodes as
+    present.
+  - Cloud downloads neither weigh nor remove a copy on an away drive, and a
+    cloud download placed on an away drive waits for it.
+  - Torrents on an away drive are stopped, including while automation is paused,
+    so they cannot finish into folders Transmission would create on the startup
+    disk. When the drive returns, only torrents that were running are started
+    again (`state.running_torrents`). A plain start clears Transmission's "No
+    data found"; there is no re-verify.
+  - Playback asks the drive directly, so a returning drive plays at once.
+- Placement:
+  - `Drives::place` / `place_for`: the show's drive when it has room, else the
+    connected drive with the most free space. Each drive keeps its reserve
+    (default 50 GB).
+  - Space promised to unfinished torrents, cloud downloads and moves counts as
+    used (`drives::commit`). If every drive is down to its reserve, the roomiest
+    still takes what fits (2 GB margin).
+  - Name and size come from the .torrent or the magnet (`dn`, `xl`). A torrent
+    whose name or size was unknown is re-placed once, by what it still has to
+    download, never when data is already on disk.
+  - Trials follow their release's show. A cloud download is placed if its
+    largest video fits, and checks its room before each video.
+- `server/drive_settings.rs`: `/v1/drives` list, candidates, add, change and
+  remove. The list is saved in the server's settings, and the first add turns the
   single set of folders into drive `primary`.
-- `server/drive_moves.rs`: `/v1/drives/moves`. Torrbaby copies and reads back
-  each file itself (rather than Transmission's move), keeps modification
-  times, points Transmission at the copy with `move: false`, carries finished
-  processing over (`processing::follow`), then deletes the originals.
+  - Add accepts only APFS or Mac OS Extended that is not case-sensitive, and
+    says why otherwise.
+  - A drive carrying a copied marker of another configured drive gets a new id.
+  - Remove needs the drive empty, with no torrents or moves in or out of it.
+- `server/drive_moves.rs`: `/v1/drives/moves`, described under "Moving titles
+  between drives".
+  - Copies are staged and read back. They are renamed into place without
+    overwriting, and switched together with Transmission (`move: false`) and the
+    asset paths under the scan lock.
+  - Originals are deleted only while both drives are connected. One that cannot
+    be removed yet stays the move's to remove.
+  - A torrent's title takes the subtitles added beside its videos. A move that is
+    waiting lets later moves go on. Manage Files refuses a title mid-move.
+  - Saves and renames are flushed to disk, and a stale moving mark is cleared at
+    start.
+  - Not yet possible: removing a drive that has died while titles are recorded on
+    it.
 - Idle playback readers close after two minutes, so the server does not hold
   files open and block an eject.
-- Clients: Apple Settings → Library → Drives; Manage Files → Move to Another
-  Drive; dimmed, unplayable titles on a missing drive (Apple and Android).
-  Android TV has no server administration, so drive settings are Apple-only. Written 2026-11-12, when Diamond had one 2 TB drive
+- Clients:
+  - Apple: Settings → Library → Drives, and Manage Files → Move to Another
+    Drive. Both are hidden on servers without drives.
+  - Titles on a missing drive are dimmed and unplayable on Apple and Android,
+    unless downloaded to the device. Auto-download and Up Next skip them.
+  - Android TV has no server administration, so drive settings are Apple-only.
+
+Written 2026-11-12, when Diamond had one 2 TB drive
 (`/Volumes/Alpha`, about 620 GB free) and a second 2 TB drive was expected.
 
 ## Decision
