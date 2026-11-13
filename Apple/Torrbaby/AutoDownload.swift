@@ -20,6 +20,8 @@ enum AutoDownload {
     static weak var store: Store?
     private static var fallback: Store?
     private static var lastRun = Date.distantPast
+    /// One pass at a time: a pass can take minutes while the server prepares files.
+    private static var running = false
 
     static var followed: Set<String> {
         get { Set(UserDefaults.standard.stringArray(forKey: followedKey) ?? []) }
@@ -59,8 +61,9 @@ enum AutoDownload {
     static func run(store: Store, force: Bool = false) async -> Int {
         guard !followed.isEmpty, store.connected, let library = store.library else { return 0 }
         // The library refreshes every few seconds while the app is open; this need not.
-        guard force || Date().timeIntervalSince(lastRun) > 120 else { return 0 }
-        lastRun = Date()
+        guard force || Date().timeIntervalSince(lastRun) > 120, !running else { return 0 }
+        lastRun = Date(); running = true
+        defer { running = false }
         let queue = DownloadQueue.shared
         // Forget downloads that have since been removed, so the list does not grow without end.
         let present = Set(queue.items.filter { $0.state != .removed }.map(\.id.uuidString))

@@ -775,7 +775,9 @@ final class Store: ObservableObject {
         #if !os(tvOS)
         await DownloadQueue.shared.syncProgress()
         #if os(iOS)
-        await AutoDownload.run(store: self)
+        // Alongside, not inside: queuing a download waits for the server to prepare the file,
+        // minutes over a slow route, and the check-in never finished meanwhile.
+        Task { @MainActor in await AutoDownload.run(store: self) }
         #endif
         #endif
         if let received: [PlaybackHistory] = try? await request("GET", "/v1/playback"), identity == profileIdentity { publish(\.history, received) }

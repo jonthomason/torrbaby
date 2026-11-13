@@ -32,6 +32,7 @@ struct DirectConnectionTest: View {
                 Text("Checks whether this device can reach your server directly instead of through Tailscale’s relay. Nothing else uses it.")
             }
             SwiftUI.Section("Direct route") {
+                Text(verbatim: AppRelease.description).font(.caption.monospaced()).foregroundStyle(.secondary)
                 Text(verbatim: store.directRoute.map { "In use: \($0) (\(store.directNote))" } ?? "Not in use\(store.directNote.isEmpty ? "" : " (\(store.directNote))")")
                     .font(.caption.monospaced())
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
