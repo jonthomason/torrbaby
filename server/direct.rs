@@ -190,7 +190,7 @@ async fn run(socket: UdpSocket, ip: IpAddr, low: u32, high: u32, id: String, ide
     if let Ok(mut s) = state.lock() { s["state"] = json!("open"); s["opened_after_ms"] = json!(started.elapsed().as_millis() as u64); }
     while let Ok((send, recv)) = connection.accept_bi().await {
         if let Ok(mut s) = state.lock() { s["streams"] = json!(s["streams"].as_u64().unwrap_or(0) + 1) }
-        tokio::spawn(pipe(send, recv, http_port, id.clone()));
+        tokio::spawn(pipe(send, recv, http_port, format!("Direct {id}")));
     }
     endpoint.close(0u32.into(), b"done");
     eprintln!("Direct {id}: closed after {} s ({})", started.elapsed().as_secs(), connection.close_reason().map(|r| r.to_string()).unwrap_or_default());
@@ -200,7 +200,7 @@ async fn run(socket: UdpSocket, ip: IpAddr, low: u32, high: u32, id: String, ide
 
 /// One stream is one connection to the server's own HTTP port, both ways. The first request
 /// line (method and path, never the query, which can carry signatures) goes to the log.
-async fn pipe(mut send: quinn::SendStream, mut recv: quinn::RecvStream, http_port: u16, id: String) {
+pub(crate) async fn pipe(mut send: quinn::SendStream, mut recv: quinn::RecvStream, http_port: u16, label: String) {
     let Ok(tcp) = TcpStream::connect(("127.0.0.1", http_port)).await else { let _ = send.reset(1u32.into()); return };
     let _ = tcp.set_nodelay(true);
     let started = Instant::now();
@@ -212,7 +212,7 @@ async fn pipe(mut send: quinn::SendStream, mut recv: quinn::RecvStream, http_por
     let up = async { let sent = tokio::io::copy(&mut recv, &mut to_server).await.unwrap_or(0); let _ = to_server.shutdown().await; sent };
     let down = async { let got = tokio::io::copy(&mut from_server, &mut send).await.unwrap_or(0); let _ = send.finish(); got };
     let (_, down_bytes) = tokio::join!(up, down);
-    eprintln!("Direct {id}: stream {line} → {down_bytes} bytes in {} ms", started.elapsed().as_millis());
+    eprintln!("{label}: stream {line} → {down_bytes} bytes in {} ms", started.elapsed().as_millis());
 }
 
 #[cfg(test)]

@@ -214,6 +214,9 @@ pub async fn serve(
             tokio::time::sleep(std::time::Duration::from_secs(600)).await;
         }
     });
+    // Off in previews and tests: only the live server holds the connection to bronze.
+    let rendezvous_task = (!preview).then(|| service.config.rendezvous.clone()).flatten()
+        .map(|config| crate::rendezvous::spawn(config, service.config.listen_port));
     let sampling_service = service.clone();
     let cached_entities = service
         .db
@@ -406,6 +409,7 @@ pub async fn serve(
         task.abort();
     }
     routes_task.abort();
+    if let Some(task) = rendezvous_task { task.abort(); }
     if let Some(child) = &mut advertisement {
         let _ = child.kill().await;
     }
@@ -1590,12 +1594,12 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         // /v1/status (with the whole processing queue) is for the screens that show it.
         ("GET","/v1/ping") => {
             let state = db.state()?;
-            Ok(json!({"version":env!("CARGO_PKG_VERSION"),"server":{"name":state["server"]["name"],"id":state["server"]["id"],"routes":ROUTES.read().map(|r|r.clone()).unwrap_or_default()}}))
+            Ok(json!({"version":env!("CARGO_PKG_VERSION"),"server":{"name":state["server"]["name"],"id":state["server"]["id"],"routes":ROUTES.read().map(|r|r.clone()).unwrap_or_default(),"relay":crate::rendezvous::advertised()}}))
         }
         ("GET","/v1/status") => {
             let state = db.state()?;
             let config = effective.as_ref().context("Missing settings")?;
-            Ok(json!({"version":env!("CARGO_PKG_VERSION"),"server":{"name":state["server"]["name"],"id":state["server"]["id"],"routes":ROUTES.read().map(|r|r.clone()).unwrap_or_default()},"uptime_seconds":s.started.elapsed().as_secs(),
+            Ok(json!({"version":env!("CARGO_PKG_VERSION"),"server":{"name":state["server"]["name"],"id":state["server"]["id"],"routes":ROUTES.read().map(|r|r.clone()).unwrap_or_default(),"relay":crate::rendezvous::advertised()},"uptime_seconds":s.started.elapsed().as_secs(),"rendezvous":crate::rendezvous::status(),
                 "settings":{"background_subtitles":config.background_subtitles,"source":config.source,"movies":config.movies,"tv":config.tv,"poll_seconds":config.poll_seconds,"paused":s.preview || config.paused},
                 "storage":crate::drives::Drives::of(&config).report(),
                 "credits_analysis":crate::credits::summary(&db)?,"subtitle_preparation":crate::media_inventory::summary(&db,&s.subtitle_jobs)?,"last_poll":state["last_poll"],"last_error":if s.preview { json!("Migration preview: organizer not enabled") } else {state["last_error"].clone()},"pending_scans":if state["library_scan"]["scanning"] == true {1} else {0},"scan_error":state["library_scan"]["error"],"jobs":state["jobs"]}))

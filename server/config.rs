@@ -53,6 +53,21 @@ pub struct Config {
     pub poll_seconds: f64,
     #[serde(default)]
     pub paused: bool,
+    /// Torrbaby's rendezvous on bronze (rendezvous/): Diamond keeps a standing connection
+    /// to it so devices away from home can reach it without Tailscale. Absent: no relay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rendezvous: Option<RendezvousConfig>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RendezvousConfig {
+    /// "ip:port" of its QUIC port; STUN is the same address on UDP 3478.
+    pub address: String,
+    /// SHA-256 of its certificate, hex; devices are given it too.
+    pub fingerprint: String,
+    /// The file holding the shared secret (bronze's /var/lib/tbrendezvous/home.secret).
+    pub secret_file: String,
 }
 
 #[derive(Clone, Deserialize, Serialize)]

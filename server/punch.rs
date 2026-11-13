@@ -14,7 +14,15 @@ use std::{collections::HashMap, net::{IpAddr, SocketAddr}, sync::{Arc, Mutex}, t
 use tokio::net::UdpSocket;
 
 /// STUN servers reachable from China (checked from Diamond); the first that answers is used.
+/// Torrbaby's own rendezvous on bronze goes first when configured (`set_own_stun`).
 const STUN: &[&str] = &["stun.chat.bilibili.com:3478", "stun.l.google.com:19302"];
+static OWN_STUN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Ask the rendezvous at `host` (its address, any port) first.
+pub fn set_own_stun(rendezvous: &str) {
+    let host = rendezvous.rsplit_once(':').map(|(host, _)| host).unwrap_or(rendezvous);
+    let _ = OWN_STUN.set(format!("{host}:3478"));
+}
 const MAGIC: u32 = 0x2112A442;
 const SPRAY_SECONDS: u64 = 25;
 const MAX_WINDOW: u32 = 4096;
@@ -26,7 +34,7 @@ pub struct Punch { sessions: Mutex<HashMap<String, Arc<Mutex<Value>>>> }
 
 /// The socket's public address as one STUN server sees it.
 pub async fn stun(socket: &UdpSocket) -> Option<SocketAddr> {
-    for server in STUN {
+    for server in OWN_STUN.get().map(String::as_str).into_iter().chain(STUN.iter().copied()) {
         let Ok(mut addrs) = tokio::net::lookup_host(server).await else { continue };
         let Some(target) = addrs.find(|a| a.is_ipv4()) else { continue };
         let mut request = vec![0u8; 20];

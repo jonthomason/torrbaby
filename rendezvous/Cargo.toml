@@ -1,0 +1,25 @@
+[package]
+name = "tbrendezvous"
+version = "0.1.0"
+edition = "2024"
+description = "Torrbaby's rendezvous on bronze: STUN, Diamond's standing connection, and a relay for devices away from home"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "tbrendezvous"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls", "ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rcgen = "0.13"
+sha2 = "0.11"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "macros", "sync", "signal", "fs"] }
+
+[profile.release]
+lto = "thin"
+strip = true
+
+[workspace]

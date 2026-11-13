@@ -1,0 +1,26 @@
+[Unit]
+Description=Torrbaby rendezvous (STUN, Diamond's connection, device relay)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/tbrendezvous --state /var/lib/tbrendezvous
+DynamicUser=yes
+StateDirectory=tbrendezvous
+StateDirectoryMode=0700
+Restart=always
+RestartSec=2
+LimitNOFILE=65536
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target
