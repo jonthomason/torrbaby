@@ -551,6 +551,7 @@ final class L10n {
     IDS.put("Ratio", R.string.ui_794f65e9d206);
     IDS.put("Reading image subtitles", R.string.ui_41f4b068f102);
     IDS.put("Reading image subtitles (OCR)", R.string.ui_3a421a191f8f);
+    IDS.put("Reading subtitles from the picture", R.string.ui_f65ccbadc5f3);
     IDS.put("Ready", R.string.ui_20c7c5522fc2);
     IDS.put("Ready to watch", R.string.ui_b10fbdb5d835);
     IDS.put("Reannounce to trackers", R.string.ui_1bded3d08e57);

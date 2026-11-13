@@ -540,6 +540,7 @@
     <string name="ui_794f65e9d206" formatted="false">Ratio</string>
     <string name="ui_41f4b068f102" formatted="false">Reading image subtitles</string>
     <string name="ui_3a421a191f8f" formatted="false">Reading image subtitles (OCR)</string>
+    <string name="ui_f65ccbadc5f3" formatted="false">Reading subtitles from the picture</string>
     <string name="ui_20c7c5522fc2" formatted="false">Ready</string>
     <string name="ui_b10fbdb5d835" formatted="false">Ready to watch</string>
     <string name="ui_1bded3d08e57" formatted="false">Reannounce to trackers</string>

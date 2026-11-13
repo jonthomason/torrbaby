@@ -120,8 +120,9 @@ fn srt(cues: &[crate::subtitles::TimedCue]) -> String {
 }
 
 /// The subtitles for this file revision, making them now if needed.
-/// `report` receives (seconds done, duration) while a helper runs.
-pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl Fn(u64, u64)) -> Result<Transcript> {
+/// `report` receives (seconds done, duration, source) while a helper runs; the source is
+/// "picture" while subtitles are read from the picture and "speech" while audio is transcribed.
+pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl Fn(u64, u64, &str)) -> Result<Transcript> {
     let id = asset["id"].as_str().context("Missing asset ID")?;
     let revision = crate::subtitle_jobs::revision(input)?;
     let root = directory(&s.data_dir);
@@ -243,7 +244,8 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
 /// Run one helper over the title. None: stopped for playback preparation. Err inside:
 /// the helper found nothing of its kind (no subtitles in the picture, no decodable
 /// audio, no speech).
-async fn run(s: &Service, root: &Path, name: &str, helper: &str, arguments: &[&str], report: &impl Fn(u64, u64)) -> Result<Option<Result<Value, String>>> {
+async fn run(s: &Service, root: &Path, name: &str, helper: &str, arguments: &[&str], report: &impl Fn(u64, u64, &str)) -> Result<Option<Result<Value, String>>> {
+    let source = if helper == "torrbaby-burned-subtitles" { "picture" } else { "speech" };
     let result_path = root.join(format!("{name}.result.tmp"));
     let progress = root.join(format!("{name}.progress"));
     let outcome = async {
@@ -262,7 +264,7 @@ async fn run(s: &Service, root: &Path, name: &str, helper: &str, arguments: &[&s
                 _ = tokio::time::sleep(Duration::from_secs(2)) => {}
             }
             if let Ok(p) = std::fs::read(&progress).map_err(anyhow::Error::from).and_then(|b| Ok(serde_json::from_slice::<Value>(&b)?)) {
-                report(p["completed_cues"].as_u64().unwrap_or(0), p["total_cues"].as_u64().unwrap_or(0));
+                report(p["completed_cues"].as_u64().unwrap_or(0), p["total_cues"].as_u64().unwrap_or(0), source);
             }
             if s.virtual_media.preparing() {
                 child.kill().await?; let _ = child.wait().await; errors.abort();

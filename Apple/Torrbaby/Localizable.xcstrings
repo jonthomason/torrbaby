@@ -16375,6 +16375,23 @@
           }
         }
       }
+    },
+    "Reading subtitles from the picture": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reading subtitles from the picture"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在从画面读取字幕"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

@@ -277,9 +277,11 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
     if outcome.no_source {
         // No usable English or Chinese subtitles: transcribe the English or Mandarin
         // audio, then translate the transcript to the other language like any text track.
-        let report=|done:u64,total:u64|{
+        let report=|done:u64,total:u64,source:&str|{
             if let Ok(db)=s.db.lock() {
-                let detail=json!({"state":"running","stage":"transcription","completed_cues":done,"total_cues":total});
+                // "source" says whether subtitles are being read from the picture or the
+                // audio is being transcribed: both are this stage, and the page names which.
+                let detail=json!({"state":"running","stage":"transcription","source":source,"completed_cues":done,"total_cues":total});
                 let _=db.connection.execute("UPDATE media_processing SET stage='transcription',detail=?,updated=? WHERE asset_id=? AND state='running'",rusqlite::params![detail.to_string(),now(),id]);
             }
         };

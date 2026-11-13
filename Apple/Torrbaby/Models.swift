@@ -160,6 +160,9 @@ struct SubtitleQueueItem: Codable, Identifiable {
         return episodeName.flatMap { $0.isEmpty ? nil : $0 }
     }
     let stage: String?
+    /// While subtitles are made from the title itself: "picture" when they are read from the
+    /// subtitles printed in the picture, "speech" when the audio is transcribed.
+    let source: String?
     let subtitlesState: String?
     let inventoryState: String?
     let creditsState: String?
@@ -217,7 +220,12 @@ struct SubtitleQueueItem: Codable, Identifiable {
         case "inventory": return state == "running" ? "Checking languages…" : "Waiting to check languages"
         case "credits": return "Detecting credits"
         case "complete": return "All processing complete"
-        case "transcription": return "Transcribing audio"
+        case "transcription":
+            switch source {
+            case "picture": return "Reading subtitles from the picture"
+            case "speech": return "Transcribing audio"
+            default: return "Preparing subtitles"
+            }
         case "ocr": return "Reading image subtitles (OCR)"
         case "translation":
             switch method {

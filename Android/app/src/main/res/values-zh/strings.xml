@@ -540,6 +540,7 @@
     <string name="ui_794f65e9d206" formatted="false">分享率</string>
     <string name="ui_41f4b068f102" formatted="false">识别图像字幕</string>
     <string name="ui_3a421a191f8f" formatted="false">正在识别图像字幕（OCR）</string>
+    <string name="ui_f65ccbadc5f3" formatted="false">正在从画面读取字幕</string>
     <string name="ui_20c7c5522fc2" formatted="false">已就绪</string>
     <string name="ui_b10fbdb5d835" formatted="false">可以观看</string>
     <string name="ui_1bded3d08e57" formatted="false">重新向 Tracker 通告</string>
