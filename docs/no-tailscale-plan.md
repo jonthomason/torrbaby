@@ -47,6 +47,21 @@ thing"), in Rust, on bronze.
   ufw **and** check the Alibaba security group, which is separate and may need the console;
   ask the user if it does.
 
+## Ports to open on bronze
+
+The user will open whatever is needed. Open these **inbound from anywhere**, in **both** the
+Alibaba Cloud security group (the user does this in the console) **and** ufw on bronze
+(`sudo ufw allow 3478/udp comment 'Torrbaby STUN'`, `sudo ufw allow 7443/udp comment
+'Torrbaby rendezvous/relay'`):
+
+| Port | Protocol | Purpose |
+|---|---|---|
+| 3478 | UDP | STUN: phones and Diamond learn their public address and port |
+| 7443 | UDP | QUIC: Diamond's standing connection, phones' rendezvous and relay |
+
+Nothing else is needed: everything after setup rides 7443, and the direct tunnel goes phone
+to Diamond without bronze. Tailscale's 41641/udp stays as it is.
+
 ## Design
 
 One Rust service on bronze (`rendezvous/` in this repo, binary `tbrendezvous`, systemd unit),
