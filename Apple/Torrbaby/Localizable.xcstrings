@@ -16222,6 +16222,40 @@
           }
         }
       }
+    },
+    "Away address": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Away address"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外出时地址"
+          }
+        }
+      }
+    },
+    "Used away from home. Your server provides it; change it only if the server can’t be reached.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Used away from home. Your server provides it; change it only if the server can’t be reached."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不在家时使用。由服务器提供，仅在无法连接服务器时才需要修改。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

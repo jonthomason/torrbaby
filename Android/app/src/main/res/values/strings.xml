@@ -94,6 +94,7 @@
     <string name="ui_7c62a1424469" formatted="false">Available</string>
     <string name="ui_7631b26ea80b" formatted="false">Avatar</string>
     <string name="ui_eab9b46602ed" formatted="false">Avatar must be an initial, emoji or printable symbol</string>
+    <string name="ui_5de4a706e634" formatted="false">Away address</string>
     <string name="ui_b52b36b7269f" formatted="false">Back</string>
     <string name="ui_f0926a5af237" formatted="false">Back to library</string>
     <string name="ui_1a0371e373ff" formatted="false">Background color</string>
@@ -820,6 +821,7 @@
     <string name="ui_952de75621d0" formatted="false">Use available space</string>
     <string name="ui_63e157999dab" formatted="false">Use for new downloads</string>
     <string name="ui_7669011536cd" formatted="false">Use this name</string>
+    <string name="ui_c586f483579d" formatted="false">Used away from home. Your server provides it; change it only if the server can’t be reached.</string>
     <string name="ui_243f5503f603" formatted="false">Used by Torrbaby before</string>
     <string name="ui_ebb884ce8b5b" formatted="false">Used when the primary address is unreachable. Torrents and downloads are available; streaming is disabled.</string>
     <string name="ui_9f8a2389a20c" formatted="false">User</string>

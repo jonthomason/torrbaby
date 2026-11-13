@@ -94,6 +94,7 @@
     <string name="ui_7c62a1424469" formatted="false">可用</string>
     <string name="ui_7631b26ea80b" formatted="false">头像</string>
     <string name="ui_eab9b46602ed" formatted="false">头像必须为首字母、表情符号或可显示的字符</string>
+    <string name="ui_5de4a706e634" formatted="false">外出时地址</string>
     <string name="ui_b52b36b7269f" formatted="false">返回</string>
     <string name="ui_f0926a5af237" formatted="false">返回媒体库</string>
     <string name="ui_1a0371e373ff" formatted="false">背景颜色</string>
@@ -820,6 +821,7 @@
     <string name="ui_952de75621d0" formatted="false">使用可用空间</string>
     <string name="ui_63e157999dab" formatted="false">用于新下载</string>
     <string name="ui_7669011536cd" formatted="false">使用此名称</string>
+    <string name="ui_c586f483579d" formatted="false">不在家时使用。由服务器提供，仅在无法连接服务器时才需要修改。</string>
     <string name="ui_243f5503f603" formatted="false">Torrbaby 曾使用过</string>
     <string name="ui_ebb884ce8b5b" formatted="false">主地址无法访问时使用。可管理种子和下载文件，但无法在线播放。</string>
     <string name="ui_9f8a2389a20c" formatted="false">用户</string>

@@ -309,10 +309,13 @@ final class Store: ObservableObject {
     var usingFallback: Bool {
         ServerRoutes.isFallback(primary: primaryAddress, active: activeServer, tunnelled: activeRouteTunnelled)
     }
-    var canStream: Bool { connected && !usingFallback }
-    var connectionLabel: String { connected ? (usingFallback ? "Fallback" : "Connected") : "Offline" }
-    /// The one deliberate use of colour in the chrome: a traffic light for the connection.
-    var connectionColor: Color { connected ? (usingFallback ? .yellow : .green) : .red }
+    /// Reaching the server is all streaming needs: at home or away, it streams at full
+    /// quality (away from home it may not keep up; there is no lower-quality mode).
+    /// `usingFallback` only orders routes: the home name is retried while away.
+    var canStream: Bool { connected }
+    var connectionLabel: String { connected ? "Connected" : "Offline" }
+    /// The one deliberate use of colour in the chrome: a light for the connection.
+    var connectionColor: Color { connected ? .green : .red }
     func saveFallback(_ address: String) throws {
         let value = ServerRoutes.normalized(address)
         if !value.isEmpty { _ = try ServerRoutes.endpoint(value, path: "/v1/status") }
@@ -430,7 +433,7 @@ final class Store: ObservableObject {
         #if os(tvOS)
         return false
         #else
-        return DownloadQueue.shared.readyDownload(assetID: asset.id, server: server) != nil
+        return DownloadQueue.shared.readyDownload(assetID: asset.id, server: libraryKey) != nil
         #endif
     }
     func isDownloaded(_ title: LibraryTitle) -> Bool { title.assets.contains(where: isDownloaded) }
@@ -746,9 +749,7 @@ final class Store: ObservableObject {
 extension Store {
     func requireStreamingConnection() throws {
         guard canStream else {
-            throw APIError(message: usingFallback && connected
-                ? "Streaming is unavailable on fallback. Download this title to watch it."
-                : Self.unreachable)
+            throw APIError(message: Self.unreachable)
         }
     }
     /// Why a title cannot play while the server is out of reach. An Apple TV keeps no

@@ -388,12 +388,12 @@ private struct ConnectionSettings: View {
             LabeledContent("Server", value: store.server.isEmpty ? L10n.text("Not configured") : store.primaryAddress)
             Button { showFallback = true } label: {
                 HStack {
-                    LabeledContent("Fallback address", value: store.fallbackServer.isEmpty ? L10n.text("Not configured") : store.fallbackServer)
+                    LabeledContent("Away address", value: store.fallbackServer.isEmpty ? L10n.text("Not configured") : store.fallbackServer)
                     Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain)
             .sheet(isPresented: $showFallback) { LocalizedInterface { FallbackAddressView() } }
-        } footer: { Text("Used when the primary address is unreachable. Torrents and downloads are available; streaming is disabled.") }
+        } footer: { Text("Used away from home. Your server provides it; change it only if the server can’t be reached.") }
         SwiftUI.Section { Button("Edit connection") { showConnect = true } }
     }
 }
@@ -888,17 +888,17 @@ private struct FallbackAddressView: View {
     var body: some View {
         NavigationStack {
             Form {
-                SwiftUI.Section("Fallback address") {
+                SwiftUI.Section("Away address") {
                     TextField("http://diamond-ts.example.ts.net:8765" as String, text: $address)
                         #if os(iOS)
                         .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
                         #endif
-                    Text("Used when the primary address is unreachable. Torrents and downloads are available; streaming is disabled.")
+                    Text("Used away from home. Your server provides it; change it only if the server can’t be reached.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 if let error { Text(error).foregroundStyle(.orange) }
             }
-            .navigationTitle(L10n.text("Fallback address"))
+            .navigationTitle(L10n.text("Away address"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
