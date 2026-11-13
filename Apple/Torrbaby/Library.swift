@@ -1,6 +1,7 @@
 import SwiftUI
 import SQLite3
 import CryptoKit
+import ImageIO
 
 struct LibraryCastMember: Decodable {
     struct Role: Decodable { let character: String?; let episodeCount: Int? }
@@ -421,62 +422,128 @@ enum InlineLogo {
     }()
 }
 
+#if os(macOS)
+typealias ArtworkImage = NSImage
+#else
+typealias ArtworkImage = UIImage
+#endif
+
+/// Artwork decoded once, off the main thread, at the size it is shown, and shared by every
+/// tile. Tiles used to decode the full JPEG on the main thread each time they were refreshed
+/// (any change in the app refreshes them), which made the library stutter while scrolling.
+enum ArtworkImages {
+    static let decoded: NSCache<NSString, ArtworkImage> = {
+        let cache = NSCache<NSString, ArtworkImage>()
+        cache.totalCostLimit = 256 * 1024 * 1024
+        return cache
+    }()
+    /// Longest edge in pixels: a poster as large as this device shows one, a backdrop wide.
+    static func pixels(_ variant: String) -> Int {
+        guard variant == "poster" else { return 1280 }
+        #if os(iOS)
+        return UIDevice.current.userInterfaceIdiom == .phone ? 600 : 800
+        #else
+        return 800
+        #endif
+    }
+    nonisolated static func decode(_ data: Data, pixels: Int) -> ArtworkImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: pixels,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        #if os(macOS)
+        return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+        #else
+        return UIImage(cgImage: image)
+        #endif
+    }
+    static func cost(_ image: ArtworkImage) -> Int {
+        #if os(macOS)
+        return Int(image.size.width * image.size.height) * 4
+        #else
+        return Int(image.size.width * image.scale * image.size.height * image.scale) * 4
+        #endif
+    }
+    /// Read from this device's artwork store and decode, in the background.
+    static func prepare(_ identifier: String, variant: String) async -> ArtworkImage? {
+        if let ready = decoded.object(forKey: identifier as NSString) { return ready }
+        let pixels = pixels(variant)
+        let image = await Task.detached(priority: .userInitiated) { () -> ArtworkImage? in
+            guard let data = LibraryDiskCache.storedArtwork(key: identifier) else { return nil }
+            return decode(data, pixels: pixels)
+        }.value
+        if let image { decoded.setObject(image, forKey: identifier as NSString, cost: cost(image)) }
+        return image
+    }
+    static func key(server: String, id: String, variant: String, revision: String?) -> String {
+        // The same art for every profile and route: keyed to the library, never an address.
+        [server, id, variant, revision ?? ""].joined(separator: "\n")
+    }
+    /// Decode every poster already on this device as soon as the library is known, so tiles
+    /// show their art in the first frame while scrolling instead of popping in.
+    static func warm(_ titles: [LibraryTitle], library: String) {
+        let wanted = titles.map { key(server: library, id: $0.id, variant: "poster", revision: $0.poster) }
+            .filter { decoded.object(forKey: $0 as NSString) == nil }
+        guard !wanted.isEmpty else { return }
+        Task.detached(priority: .utility) {
+            let pixels = await MainActor.run { pixels("poster") }
+            for identifier in wanted {
+                if decoded.object(forKey: identifier as NSString) != nil { continue }
+                guard let data = LibraryDiskCache.storedArtwork(key: identifier), let image = decode(data, pixels: pixels) else { continue }
+                decoded.setObject(image, forKey: identifier as NSString, cost: cost(image))
+            }
+        }
+    }
+}
+
 struct LibraryArtwork: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let id: String
     var variant = "poster"
     var alignment: Alignment = .center
-    @State private var data: Data?
-    private static let cache = NSCache<NSString, NSData>()
+    @State private var image: ArtworkImage?
     private var artworkKey: String {
-        let title = store.library?.titles.first { $0.id == id }
-        let episode = variant == "episode" ? store.library?.titles.lazy.flatMap(\.assets).first(where: { $0.id == id }) : nil
-        let revision = variant == "episode" ? episode?.thumbnail : variant == "backdrop" ? title?.backdrop : title?.poster
-        // The same art for every profile and route: keyed to the library, never an address.
-        return [store.libraryKey, id, variant, revision ?? ""].joined(separator: "\n")
-    }
-    /// From memory, else from this device's artwork store (a small local file read).
-    private func stored(_ identifier: String) -> Data? {
-        let key = identifier as NSString
-        Self.cache.totalCostLimit = 48 * 1024 * 1024
-        if let cached = Self.cache.object(forKey: key) { return cached as Data }
-        guard let saved = LibraryDiskCache.storedArtwork(key: identifier) else { return nil }
-        Self.cache.setObject(saved as NSData, forKey: key, cost: saved.count)
-        return saved
+        ArtworkImages.key(server: store.libraryKey, id: id, variant: variant, revision: store.artworkRevision(id: id, variant: variant))
     }
     var body: some View {
         GeometryReader { geometry in
           ZStack(alignment: alignment) {
             Theme.panel
-            if let data {
+            if let image {
                 #if os(macOS)
-                if let image = NSImage(data: data) { Image(nsImage: image).resizable().scaledToFill() }
+                Image(nsImage: image).resizable().scaledToFill()
                 #else
-                if let image = UIImage(data: data) { Image(uiImage: image).resizable().scaledToFill() }
+                Image(uiImage: image).resizable().scaledToFill()
                 #endif
             } else {
                 Image(systemName: "film").font(.largeTitle).foregroundStyle(Theme.muted)
             }
           }.frame(width: geometry.size.width, height: geometry.size.height, alignment: alignment).clipped()
         }
-        // Art already on this device is shown in the first frame: no placeholder, no request.
-        .onAppear { if data == nil { data = stored(artworkKey) } }
+        // Art already decoded is shown in the first frame: no placeholder, no work.
+        .onAppear { if image == nil { image = ArtworkImages.decoded.object(forKey: artworkKey as NSString) } }
         .task(id: artworkKey) {
             let identifier = artworkKey
-            let key = identifier as NSString
-            if let saved = stored(identifier) { data = saved; return }
-            data = nil
+            if let ready = await ArtworkImages.prepare(identifier, variant: variant) {
+                guard !Task.isCancelled else { return }
+                image = ready; return
+            }
+            image = nil
             struct Artwork: Decodable { let data: String? }
             do {
-                let image: Artwork = try await store.request("GET", "/v1/library/artwork/\(id)/\(variant)")
-                if let encoded = image.data, let decoded = Data(base64Encoded: encoded) {
-                    guard !Task.isCancelled else { return }
-                    data = decoded
-                    Self.cache.totalCostLimit = 48 * 1024 * 1024
-                    Self.cache.setObject(decoded as NSData, forKey: key, cost: decoded.count)
-                    await LibraryDiskCache.shared.saveArtwork(decoded, key: identifier)
-                }
+                let response: Artwork = try await store.request("GET", "/v1/library/artwork/\(id)/\(variant)")
+                guard let encoded = response.data, let data = Data(base64Encoded: encoded) else { return }
+                await LibraryDiskCache.shared.saveArtwork(data, key: identifier)
+                let pixels = ArtworkImages.pixels(variant)
+                let decoded = await Task.detached(priority: .userInitiated) { ArtworkImages.decode(data, pixels: pixels) }.value
+                guard let decoded, !Task.isCancelled else { return }
+                ArtworkImages.decoded.setObject(decoded, forKey: identifier as NSString, cost: ArtworkImages.cost(decoded))
+                image = decoded
             } catch { /* Missing artwork should not block browsing. */ }
         }
     }

@@ -159,7 +159,25 @@ final class Store: ObservableObject {
     }
 
     @Published var notices: [AppNotice] = []
-    @Published var library: MediaLibrary?
+    @Published var library: MediaLibrary? {
+        didSet {
+            guard let titles = library?.titles else { titleIndex = [:]; episodeThumbnails = [:]; return }
+            titleIndex = Dictionary(titles.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            episodeThumbnails = Dictionary(titles.flatMap(\.assets).map { ($0.id, $0.thumbnail) }, uniquingKeysWith: { first, _ in first })
+            ArtworkImages.warm(titles, library: libraryKey)
+        }
+    }
+    /// Titles and episode thumbnails by id, so each artwork tile finds its revision at once
+    /// instead of searching the whole library on every refresh.
+    private(set) var titleIndex: [String: LibraryTitle] = [:]
+    private var episodeThumbnails: [String: String?] = [:]
+    func artworkRevision(id: String, variant: String) -> String? {
+        switch variant {
+        case "episode": return episodeThumbnails[id] ?? nil
+        case "backdrop": return titleIndex[id]?.backdrop
+        default: return titleIndex[id]?.poster
+        }
+    }
     @Published var libraryError: String?
     @Published var metadata: [MediaMetadata] = []
     @Published var transferHistory: [TransferSample] = []
