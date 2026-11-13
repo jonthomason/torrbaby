@@ -30,6 +30,100 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
         var appeared: (() -> Void)?
         override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); appeared?() }
     }
+    /// Screen brightness, as in Netflix's player: swipe up or down on the left of the picture.
+    /// AVKit's own controls cannot take a slider, so this is a gesture with a small level
+    /// that shows while it changes. The brightness from before is put back when the player
+    /// closes. Swipes elsewhere (and the swipe down that closes the player) are untouched.
+    @MainActor final class BrightnessControl: NSObject, UIGestureRecognizerDelegate {
+        private weak var view: UIView?
+        private let level = UIView()
+        private let fill = UIView()
+        private var fillHeight: NSLayoutConstraint?
+        private var startValue: CGFloat = 0
+        private var original: CGFloat?
+        private var hide: Task<Void, Never>?
+        private let height: CGFloat = 150
+        private var screen: UIScreen? { view?.window?.windowScene?.screen }
+
+        func install(in view: UIView) {
+            self.view = view
+            let pan = UIPanGestureRecognizer(target: self, action: #selector(pan(_:)))
+            pan.delegate = self
+            pan.maximumNumberOfTouches = 1
+            view.addGestureRecognizer(pan)
+            let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
+            blur.translatesAutoresizingMaskIntoConstraints = false
+            blur.layer.cornerRadius = 18; blur.clipsToBounds = true
+            let track = UIView(); track.translatesAutoresizingMaskIntoConstraints = false
+            track.backgroundColor = UIColor.white.withAlphaComponent(0.25); track.layer.cornerRadius = 3; track.clipsToBounds = true
+            fill.translatesAutoresizingMaskIntoConstraints = false; fill.backgroundColor = .white
+            let icon = UIImageView(image: UIImage(systemName: "sun.max.fill")); icon.translatesAutoresizingMaskIntoConstraints = false
+            icon.tintColor = .white; icon.contentMode = .scaleAspectFit
+            level.translatesAutoresizingMaskIntoConstraints = false
+            level.isUserInteractionEnabled = false; level.alpha = 0
+            level.isAccessibilityElement = false
+            view.addSubview(level); level.addSubview(blur); blur.contentView.addSubview(track); track.addSubview(fill); blur.contentView.addSubview(icon)
+            let fillHeight = fill.heightAnchor.constraint(equalToConstant: 0); self.fillHeight = fillHeight
+            NSLayoutConstraint.activate([
+                level.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 28),
+                level.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+                level.widthAnchor.constraint(equalToConstant: 36),
+                level.heightAnchor.constraint(equalToConstant: height + 40),
+                blur.leadingAnchor.constraint(equalTo: level.leadingAnchor), blur.trailingAnchor.constraint(equalTo: level.trailingAnchor),
+                blur.topAnchor.constraint(equalTo: level.topAnchor), blur.bottomAnchor.constraint(equalTo: level.bottomAnchor),
+                track.centerXAnchor.constraint(equalTo: blur.contentView.centerXAnchor),
+                track.topAnchor.constraint(equalTo: blur.contentView.topAnchor, constant: 10),
+                track.widthAnchor.constraint(equalToConstant: 6), track.heightAnchor.constraint(equalToConstant: height),
+                fill.leadingAnchor.constraint(equalTo: track.leadingAnchor), fill.trailingAnchor.constraint(equalTo: track.trailingAnchor),
+                fill.bottomAnchor.constraint(equalTo: track.bottomAnchor), fillHeight,
+                icon.centerXAnchor.constraint(equalTo: blur.contentView.centerXAnchor),
+                icon.bottomAnchor.constraint(equalTo: blur.contentView.bottomAnchor, constant: -8),
+                icon.widthAnchor.constraint(equalToConstant: 16), icon.heightAnchor.constraint(equalToConstant: 16),
+            ])
+        }
+        func bringToFront() { if let view { view.bringSubviewToFront(level) } }
+        func restore() {
+            if let original, let screen { screen.brightness = original }
+            original = nil
+        }
+        @objc private func pan(_ gesture: UIPanGestureRecognizer) {
+            guard let view, let screen else { return }
+            switch gesture.state {
+            case .began:
+                if original == nil { original = screen.brightness }
+                startValue = screen.brightness
+                show(screen.brightness)
+            case .changed:
+                // Up brightens; the full range takes about 60% of the screen's height.
+                let change = -gesture.translation(in: view).y / max(200, view.bounds.height * 0.6)
+                let value = min(1, max(0, startValue + change))
+                screen.brightness = value
+                show(value)
+            default:
+                hide?.cancel()
+                hide = Task { @MainActor [weak self] in
+                    do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                    UIView.animate(withDuration: 0.3) { self?.level.alpha = 0 }
+                }
+            }
+        }
+        private func show(_ value: CGFloat) {
+            hide?.cancel()
+            fillHeight?.constant = height * value
+            if level.alpha < 1 { UIView.animate(withDuration: 0.15) { self.level.alpha = 1 } }
+        }
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard let view, let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+            let point = pan.location(in: view), velocity = pan.velocity(in: view)
+            // The left third, away from the top and bottom edges (system gestures, the timeline).
+            return point.x < view.bounds.width / 3 && point.y > 70 && point.y < view.bounds.height - 110
+                && abs(velocity.y) > abs(velocity.x) * 1.3
+        }
+        /// While it is changing brightness, AVKit's own swipes (closing the player) wait.
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
+            other is UIPanGestureRecognizer
+        }
+    }
     final class PlayerController: KeyboardPlayerController, UIGestureRecognizerDelegate {
         var disappeared: (() -> Void)?
         /// Called when the player's size changes (rotation, Split View).
@@ -41,6 +135,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
         /// During the closing credits the button shows without a tap.
         var creditsPrompt = false { didSet { updateNextButton() } }
         private let nextButton = UIButton(type: .system)
+        private let brightness = BrightnessControl()
         private var interactionDeadline = Date.distantPast
         private var hideNextButton: Task<Void, Never>?
 
@@ -69,6 +164,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
                 nextButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -24),
                 nextButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -130)
             ])
+            brightness.install(in: view)
             let interaction = UITapGestureRecognizer(target: self, action: #selector(showNextButton))
             interaction.cancelsTouchesInView = false
             interaction.delegate = self
@@ -81,6 +177,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
         override func viewDidLayoutSubviews() {
             super.viewDidLayoutSubviews()
             view.bringSubviewToFront(nextButton)
+            brightness.bringToFront()
             if view.bounds.size != lastSize { lastSize = view.bounds.size; sizeChanged?() }
         }
         @objc private func showNextButton() {
@@ -122,6 +219,8 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
             hideNextButton?.cancel()
             interactionDeadline = .distantPast
             nextButton.isHidden = true
+            // The screen goes back to the brightness it had before the player changed it.
+            if !inPictureInPicture { brightness.restore() }
             disappeared?()
         }
 
