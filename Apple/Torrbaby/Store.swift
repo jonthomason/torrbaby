@@ -728,6 +728,8 @@ final class Store: ObservableObject {
         networkSignature = signature
         guard previous != nil else { return }
         directEvent("network changed: \(previous ?? "?") → \(signature)")
+        // The route that worked says nothing about this network: the next check tries every way.
+        if activeServer.map(ServerRoutes.normalized) == ServerRoutes.normalized(primaryAddress) { activeServer = nil }
         dropDirect("network changed")
         if let tunnel = relayTunnel, tunnel.interface != PunchProbe.physicalInterface() { dropRelay("network changed") }
         refreshFullyNext()
@@ -742,6 +744,8 @@ final class Store: ObservableObject {
         var publicAddress: String?
         var answered = 0, asked = 0
         var window: String?
+        var diagnosis: String?
+        var spread: String?
         var server: String?
         var session: String?
         var punchMs: Int?
@@ -836,7 +840,10 @@ final class Store: ObservableObject {
         #if os(iOS)
         // The relay through bronze joins the race unless this device is known to be at home
         // (then it would only cost a connection to bronze on every check).
-        let atHome = reachable && activeServer.map(ServerRoutes.normalized) == ServerRoutes.normalized(primary) && !activeRouteTunnelled
+        // Only while the home route is answering: after a failure, or on another network, the
+        // relay is tried too. (Trusting the last route alone kept a phone that left home on
+        // the home address only, offline, never trying bronze.)
+        let atHome = connected && activeServer.map(ServerRoutes.normalized) == ServerRoutes.normalized(primary) && !activeRouteTunnelled
         if !atHome && !relayAddress.isEmpty { addresses.append(Self.relayCandidate) }
         // Tailscale is retired on iPhone and iPad once the relay is known: home, direct and
         // the relay are the only ways.
@@ -916,7 +923,16 @@ final class Store: ObservableObject {
         catch {
             #if os(iOS)
             // The direct path failed: back to Tailscale at once (the next try uses it).
-            if throughDirect, let network = error as? URLError, network.code != .cancelled { dropDirect("failed: \(network.code.rawValue)") }
+            if throughDirect, let network = error as? URLError, network.code != .cancelled {
+                dropDirect("failed: \(network.code.rawValue)")
+                // The direct path died under this request (a carrier switch behind a hotspot):
+                // a read is asked again at once over the route underneath (the relay), so the
+                // switch costs a moment rather than an error. Changes are never repeated.
+                if method == "GET", activeServer != nil {
+                    directEvent("retried \(path.split(separator: "?").first ?? "") over \(routeLabel(activeServer ?? ""))")
+                    return try await self.request(method, path, body: body, timeout: timeout, address: nil, observer: observer)
+                }
+            }
             if throughRelay, let network = error as? URLError, network.code != .cancelled, network.code != .timedOut { dropRelay("failed: \(network.code.rawValue)") }
             #endif
             throw error
