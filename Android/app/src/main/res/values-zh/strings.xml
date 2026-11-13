@@ -122,6 +122,7 @@
     <string name="ui_80b0becd67a4" formatted="false">正在检查语言…</string>
     <string name="ui_508db4dbd17a" formatted="false">正在检查声音和字幕…</string>
     <string name="ui_c31f3333882a" formatted="false">正在检查分享中的文件…</string>
+    <string name="ui_594c30daf6b0" formatted="false">检查这台设备能否不经 Tailscale 中继、直接连接到你的服务器。其他功能不会使用这条连接。</string>
     <string name="ui_d2eaf2aa1512" formatted="false">中国</string>
     <string name="ui_15dc18865567" formatted="false">中文</string>
     <string name="ui_78bba35bec31" formatted="false">简体中文</string>
@@ -215,9 +216,13 @@
     <string name="ui_da2934b8f12a" formatted="false">删除文件会永久移除已下载的数据，包括未完成的下载。</string>
     <string name="ui_cc7192d76413" formatted="false">正在删除文件…</string>
     <string name="ui_55f8ebc805e6" formatted="false">简介</string>
+    <string name="ui_dc3decbb9384" formatted="false">详细信息</string>
     <string name="ui_d9319c338d5b" formatted="false">检测片尾字幕</string>
     <string name="ui_d56e2646caaa" formatted="false">设备已关联</string>
     <string name="ui_df485c871329" formatted="false">设备</string>
+    <string name="ui_0f3409cf286f" formatted="false">直连失败</string>
+    <string name="ui_a92b0db10b42" formatted="false">直连测试</string>
+    <string name="ui_8a32dc8fe550" formatted="false">直连可用</string>
     <string name="ui_ed28e0686e12" formatted="false">断开连接</string>
     <string name="ui_d9835d7b9245" formatted="false">断开此电视的连接</string>
     <string name="ui_3e06b932237a" formatted="false">断开此电视的连接？</string>
@@ -595,6 +600,7 @@
     <string name="ui_5f1f46e2112f" formatted="false">确认新名称</string>
     <string name="ui_094386f681e2" formatted="false">撤销访问权限</string>
     <string name="ui_1ad552dc5275" formatted="false">滚动片尾字幕</string>
+    <string name="ui_6ecaed968627" formatted="false">开始测试</string>
     <string name="ui_73989d9c5926" formatted="false">运行中</string>
     <string name="ui_52086310ba80" formatted="false">听障字幕</string>
     <string name="ui_c24ea1cb444a" formatted="false">做种中</string>
@@ -723,6 +729,7 @@
     <string name="ui_09bb08ece119" formatted="false">剧集</string>
     <string name="ui_ac32c5b119ff" formatted="false">剧集</string>
     <string name="ui_987f5ab80eb3" formatted="false">目标上传/下载分享率</string>
+    <string name="ui_919ccc119f64" formatted="false">正在测试直连…</string>
     <string name="ui_c3328c39b0e2" formatted="false">文本</string>
     <string name="ui_1c7a30e57131" formatted="false">文字颜色</string>
     <string name="ui_83e097038017" formatted="false">文字不透明度</string>

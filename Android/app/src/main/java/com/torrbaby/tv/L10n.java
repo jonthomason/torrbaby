@@ -133,6 +133,7 @@ final class L10n {
     IDS.put("Checking languages…", R.string.ui_80b0becd67a4);
     IDS.put("Checking sound and subtitles…", R.string.ui_508db4dbd17a);
     IDS.put("Checking the share’s files…", R.string.ui_c31f3333882a);
+    IDS.put("Checks whether this device can reach your server directly instead of through Tailscale’s relay. Nothing else uses it.", R.string.ui_594c30daf6b0);
     IDS.put("China", R.string.ui_d2eaf2aa1512);
     IDS.put("Chinese", R.string.ui_15dc18865567);
     IDS.put("Chinese (Simplified)", R.string.ui_78bba35bec31);
@@ -226,9 +227,13 @@ final class L10n {
     IDS.put("Deleting files permanently removes their downloaded data, including partial downloads.", R.string.ui_da2934b8f12a);
     IDS.put("Deleting files…", R.string.ui_cc7192d76413);
     IDS.put("Description", R.string.ui_55f8ebc805e6);
+    IDS.put("Details", R.string.ui_dc3decbb9384);
     IDS.put("Detecting credits", R.string.ui_d9319c338d5b);
     IDS.put("Device linked", R.string.ui_d56e2646caaa);
     IDS.put("Devices", R.string.ui_df485c871329);
+    IDS.put("Direct connection failed", R.string.ui_0f3409cf286f);
+    IDS.put("Direct connection test", R.string.ui_a92b0db10b42);
+    IDS.put("Direct connection works", R.string.ui_8a32dc8fe550);
     IDS.put("Disconnect", R.string.ui_ed28e0686e12);
     IDS.put("Disconnect this TV", R.string.ui_d9835d7b9245);
     IDS.put("Disconnect this TV?", R.string.ui_3e06b932237a);
@@ -606,6 +611,7 @@ final class L10n {
     IDS.put("Review a new name", R.string.ui_5f1f46e2112f);
     IDS.put("Revoke access", R.string.ui_094386f681e2);
     IDS.put("Rolling credits", R.string.ui_1ad552dc5275);
+    IDS.put("Run test", R.string.ui_6ecaed968627);
     IDS.put("Running", R.string.ui_73989d9c5926);
     IDS.put("SDH", R.string.ui_52086310ba80);
     IDS.put("SEEDING", R.string.ui_c24ea1cb444a);
@@ -734,6 +740,7 @@ final class L10n {
     IDS.put("TV Shows", R.string.ui_09bb08ece119);
     IDS.put("TV shows", R.string.ui_ac32c5b119ff);
     IDS.put("Target upload/download ratio", R.string.ui_987f5ab80eb3);
+    IDS.put("Testing direct connection…", R.string.ui_919ccc119f64);
     IDS.put("Text", R.string.ui_c3328c39b0e2);
     IDS.put("Text color", R.string.ui_1c7a30e57131);
     IDS.put("Text opacity", R.string.ui_83e097038017);

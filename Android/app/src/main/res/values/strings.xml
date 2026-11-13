@@ -122,6 +122,7 @@
     <string name="ui_80b0becd67a4" formatted="false">Checking languages…</string>
     <string name="ui_508db4dbd17a" formatted="false">Checking sound and subtitles…</string>
     <string name="ui_c31f3333882a" formatted="false">Checking the share’s files…</string>
+    <string name="ui_594c30daf6b0" formatted="false">Checks whether this device can reach your server directly instead of through Tailscale’s relay. Nothing else uses it.</string>
     <string name="ui_d2eaf2aa1512" formatted="false">China</string>
     <string name="ui_15dc18865567" formatted="false">Chinese</string>
     <string name="ui_78bba35bec31" formatted="false">Chinese (Simplified)</string>
@@ -215,9 +216,13 @@
     <string name="ui_da2934b8f12a" formatted="false">Deleting files permanently removes their downloaded data, including partial downloads.</string>
     <string name="ui_cc7192d76413" formatted="false">Deleting files…</string>
     <string name="ui_55f8ebc805e6" formatted="false">Description</string>
+    <string name="ui_dc3decbb9384" formatted="false">Details</string>
     <string name="ui_d9319c338d5b" formatted="false">Detecting credits</string>
     <string name="ui_d56e2646caaa" formatted="false">Device linked</string>
     <string name="ui_df485c871329" formatted="false">Devices</string>
+    <string name="ui_0f3409cf286f" formatted="false">Direct connection failed</string>
+    <string name="ui_a92b0db10b42" formatted="false">Direct connection test</string>
+    <string name="ui_8a32dc8fe550" formatted="false">Direct connection works</string>
     <string name="ui_ed28e0686e12" formatted="false">Disconnect</string>
     <string name="ui_d9835d7b9245" formatted="false">Disconnect this TV</string>
     <string name="ui_3e06b932237a" formatted="false">Disconnect this TV?</string>
@@ -595,6 +600,7 @@
     <string name="ui_5f1f46e2112f" formatted="false">Review a new name</string>
     <string name="ui_094386f681e2" formatted="false">Revoke access</string>
     <string name="ui_1ad552dc5275" formatted="false">Rolling credits</string>
+    <string name="ui_6ecaed968627" formatted="false">Run test</string>
     <string name="ui_73989d9c5926" formatted="false">Running</string>
     <string name="ui_52086310ba80" formatted="false">SDH</string>
     <string name="ui_c24ea1cb444a" formatted="false">SEEDING</string>
@@ -723,6 +729,7 @@
     <string name="ui_09bb08ece119" formatted="false">TV Shows</string>
     <string name="ui_ac32c5b119ff" formatted="false">TV shows</string>
     <string name="ui_987f5ab80eb3" formatted="false">Target upload/download ratio</string>
+    <string name="ui_919ccc119f64" formatted="false">Testing direct connection…</string>
     <string name="ui_c3328c39b0e2" formatted="false">Text</string>
     <string name="ui_1c7a30e57131" formatted="false">Text color</string>
     <string name="ui_83e097038017" formatted="false">Text opacity</string>

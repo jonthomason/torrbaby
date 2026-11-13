@@ -470,6 +470,9 @@ private struct AboutSettings: View {
             LabeledContent { Text(verbatim: AppRelease.description.replacingOccurrences(of: "Version ", with: "")).monospacedDigit() } label: { Text("Version") }
             if let status = store.status { LabeledContent { Text(verbatim: status.version).monospacedDigit() } label: { Text("Server version") } }
             LabeledContent { Text("MIT License") } label: { Text("License") }
+            #if os(iOS)
+            NavigationLink("Direct connection test") { DirectConnectionTest() }
+            #endif
         }
     }
 }
