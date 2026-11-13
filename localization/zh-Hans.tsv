@@ -939,3 +939,4 @@ Move Everything to Another Drive…	将全部内容移到另一块硬盘…
 Move everything on this drive to:	将这块硬盘上的全部内容移到：
 To remove this drive, first move everything on it to another drive.	要移除这块硬盘，请先将其中的全部内容移到另一块硬盘。
 Every title is copied and checked before its original is removed. Downloads in progress move too. This can take hours.	每部影片都会先复制并校验，然后才移除原文件。正在进行的下载也会一并移动。这可能需要数小时。
+Torrents and downloads appear when your server can be reached again.	服务器恢复连接后，这里会显示种子和下载。

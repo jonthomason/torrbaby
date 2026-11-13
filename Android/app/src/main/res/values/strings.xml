@@ -783,6 +783,7 @@
     <string name="ui_b05aed6afa6a" formatted="false">Torrent details</string>
     <string name="ui_c0fdf7497ff3" formatted="false">Torrent removed</string>
     <string name="ui_3e8f36b12ffb" formatted="false">Torrents</string>
+    <string name="ui_5b95afc278cd" formatted="false">Torrents and downloads appear when your server can be reached again.</string>
     <string name="ui_5edf6af8c64e" formatted="false">Torrents are still using this drive</string>
     <string name="ui_44f08a6839a5" formatted="false">Transcribing audio</string>
     <string name="ui_cbb4cc49824b" formatted="false">Transfer</string>

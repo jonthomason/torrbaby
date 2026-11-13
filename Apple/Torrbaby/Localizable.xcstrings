@@ -16460,6 +16460,23 @@
           }
         }
       }
+    },
+    "Torrents and downloads appear when your server can be reached again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Torrents and downloads appear when your server can be reached again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "服务器恢复连接后，这里会显示种子和下载。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

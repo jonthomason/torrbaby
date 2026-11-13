@@ -794,6 +794,7 @@ final class L10n {
     IDS.put("Torrent details", R.string.ui_b05aed6afa6a);
     IDS.put("Torrent removed", R.string.ui_c0fdf7497ff3);
     IDS.put("Torrents", R.string.ui_3e8f36b12ffb);
+    IDS.put("Torrents and downloads appear when your server can be reached again.", R.string.ui_5b95afc278cd);
     IDS.put("Torrents are still using this drive", R.string.ui_5edf6af8c64e);
     IDS.put("Transcribing audio", R.string.ui_44f08a6839a5);
     IDS.put("Transfer", R.string.ui_cbb4cc49824b);

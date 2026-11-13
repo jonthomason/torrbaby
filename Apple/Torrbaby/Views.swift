@@ -563,6 +563,17 @@ struct TorrentListView: View {
                     Text(LocalizedStringKey(section.rawValue))
                         .font(.system(size: 30, weight: .bold, design: .rounded))
                 } }
+                // Out of reach, the server's torrents, speeds and history are unknown: say so
+                // rather than showing none, zero and an empty chart.
+                if !store.connected {
+                    if store.offline {
+                        ContentUnavailableView("Can’t reach your server", systemImage: "wifi.slash",
+                                               description: Text("Torrents and downloads appear when your server can be reached again."))
+                            .padding(.vertical, 40)
+                    } else {
+                        ProgressView("Connecting…").frame(maxWidth: .infinity).padding(.vertical, 40)
+                    }
+                } else {
                 if !compact { ViewThatFits(in: .horizontal) {
                     HStack(spacing: 12) { metrics }
                     VStack(spacing: 12) { metrics }
@@ -602,6 +613,7 @@ struct TorrentListView: View {
                     LazyVStack(spacing: compact ? 4 : 10) {
                         ForEach(filtered) { torrent in listItem(torrent) }
                     }
+                }
                 }
             }.padding(24).frame(maxWidth: 1200).frame(maxWidth: .infinity)
         }

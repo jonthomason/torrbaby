@@ -783,6 +783,7 @@
     <string name="ui_b05aed6afa6a" formatted="false">种子详情</string>
     <string name="ui_c0fdf7497ff3" formatted="false">种子已移除</string>
     <string name="ui_3e8f36b12ffb" formatted="false">种子</string>
+    <string name="ui_5b95afc278cd" formatted="false">服务器恢复连接后，这里会显示种子和下载。</string>
     <string name="ui_5edf6af8c64e" formatted="false">仍有种子在使用这块硬盘</string>
     <string name="ui_44f08a6839a5" formatted="false">正在转写音频</string>
     <string name="ui_cbb4cc49824b" formatted="false">传输</string>
