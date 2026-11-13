@@ -221,7 +221,10 @@ struct CreditsAnalysis: Codable {
     let failed: Int
     let current: Current?
 }
+/// The server's own name and id, fixed when it was first set up.
+struct ServerIdentity: Codable { let name: String?; let id: String? }
 struct DaemonStatus: Codable {
+    var server: ServerIdentity? = nil
     let creditsAnalysis: CreditsAnalysis?
     let subtitlePreparation: SubtitlePreparation?
     let version: String

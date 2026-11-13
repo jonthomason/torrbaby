@@ -50,7 +50,8 @@ final class DownloadStorage {
     }
     struct Item: Codable, Identifiable {
         let id: UUID
-        let server: String
+        /// The library's name ("shared:…" for a copy received from another library).
+        var server: String
         let assetID: String
         let titleID: String
         let title: String
@@ -181,6 +182,15 @@ final class DownloadStorage {
         }
     }
 
+    /// Downloads belong to the one library this device is paired with. Records made under an
+    /// address (earlier builds) take the library's name once it is known.
+    func adoptLibrary(_ name: String) throws {
+        var next = manifest, changed = false
+        for index in next.items.indices where !next.items[index].server.hasPrefix("shared:") && next.items[index].server != name {
+            next.items[index].server = name; changed = true
+        }
+        if changed { try save(next) }
+    }
     private func save(_ next: Manifest) throws {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         try encoder.encode(next).write(to: manifestURL, options: [.atomic])

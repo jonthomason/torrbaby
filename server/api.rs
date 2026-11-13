@@ -43,6 +43,30 @@ pub struct Service {
 }
 
 // Keep unimplemented routes explicit during the port; never silently report success.
+/// The library's own name and id, set once when the server first starts and kept from
+/// then on. Clients remember it at pairing and key every cache, setting and download to
+/// it; an address is only ever a route to the server, never its identity.
+fn establish_identity(s: &Service) -> Result<Value> {
+    let mut identity = Value::Null;
+    s.change_state(|state| {
+        let named = state["server"]["name"].as_str().is_some_and(|name| !name.trim().is_empty());
+        if !named {
+            state["server"] = json!({"name":computer_name(),"id":uuid::Uuid::new_v4().to_string(),"created":now()});
+        }
+        identity = state["server"].clone();
+    })?;
+    Ok(identity)
+}
+
+fn computer_name() -> String {
+    std::process::Command::new("/usr/sbin/scutil").args(["--get", "ComputerName"]).output().ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "Torrbaby".to_owned())
+}
+
 pub async fn serve(
     config_path: PathBuf,
     database: PathBuf,
@@ -149,6 +173,8 @@ pub async fn serve(
             database.parent().context("Missing data directory")?,
         )?,
     });
+    let identity = establish_identity(&service)?;
+    eprintln!("Torrbaby server {}", identity["name"].as_str().unwrap_or_default());
     let sampling_service = service.clone();
     let cached_entities = service
         .db
@@ -1493,7 +1519,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         ("GET","/v1/status") => {
             let state = db.state()?;
             let config = effective.as_ref().context("Missing settings")?;
-            Ok(json!({"version":env!("CARGO_PKG_VERSION"),"uptime_seconds":s.started.elapsed().as_secs(),
+            Ok(json!({"version":env!("CARGO_PKG_VERSION"),"server":{"name":state["server"]["name"],"id":state["server"]["id"]},"uptime_seconds":s.started.elapsed().as_secs(),
                 "settings":{"background_subtitles":config.background_subtitles,"source":config.source,"movies":config.movies,"tv":config.tv,"poll_seconds":config.poll_seconds,"paused":s.preview || config.paused},
                 "storage":crate::drives::Drives::of(&config).report(),
                 "credits_analysis":crate::credits::summary(&db)?,"subtitle_preparation":crate::media_inventory::summary(&db,&s.subtitle_jobs)?,"last_poll":state["last_poll"],"last_error":if s.preview { json!("Migration preview: organizer not enabled") } else {state["last_error"].clone()},"pending_scans":if state["library_scan"]["scanning"] == true {1} else {0},"scan_error":state["library_scan"]["error"],"jobs":state["jobs"]}))

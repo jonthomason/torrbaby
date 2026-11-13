@@ -19,8 +19,9 @@ final class BrowseCache {
     root = new File(context.getCacheDir(), "browse-v1");
     root.mkdirs();
     database = new File(context.getCacheDir(), "library-v2.sqlite");
-    artScope = hash(api.base + "\n" + api.token);
-    scope = hash(api.base + "\n" + api.token + "\n" + api.profile);
+    String library = ServerName.key(context, api);
+    artScope = hash(library);
+    scope = hash(library + "\n" + api.profile);
   }
   private static String hash(String value) {
     try {

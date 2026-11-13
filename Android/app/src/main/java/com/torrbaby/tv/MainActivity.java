@@ -322,7 +322,7 @@ public class MainActivity extends Activity {
             cache.write("library", liveRaw.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             StartupTrace.mark("Catalog cache write returned");
             // History synchronization must not delay the first library frame.
-            try { StartupTrace.mark("Registration started"); requested.register(); StartupTrace.mark("Registration finished"); ProgressQueue.flush(this, requested); StartupTrace.mark("History sync finished"); } catch (Exception ignored) {}
+            try { ServerName.learn(this, requested); StartupTrace.mark("Registration started"); requested.register(); StartupTrace.mark("Registration finished"); ProgressQueue.flush(this, requested); StartupTrace.mark("History sync finished"); } catch (Exception ignored) {}
           } catch (Exception e) {
             runOnUiThread(
                 () -> {

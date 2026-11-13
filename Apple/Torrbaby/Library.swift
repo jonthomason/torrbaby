@@ -433,7 +433,8 @@ struct LibraryArtwork: View {
         let title = store.library?.titles.first { $0.id == id }
         let episode = variant == "episode" ? store.library?.titles.lazy.flatMap(\.assets).first(where: { $0.id == id }) : nil
         let revision = variant == "episode" ? episode?.thumbnail : variant == "backdrop" ? title?.backdrop : title?.poster
-        return [store.server, store.clientId, id, variant, revision ?? ""].joined(separator: "\n")
+        // The same art for every profile and route: keyed to the library, never an address.
+        return [store.libraryKey, id, variant, revision ?? ""].joined(separator: "\n")
     }
     /// From memory, else from this device's artwork store (a small local file read).
     private func stored(_ identifier: String) -> Data? {
@@ -891,7 +892,7 @@ struct LibraryDetail: View {
             do {
                 #if !os(tvOS)
                 let downloads = DownloadQueue.shared
-                if let id = downloads.readyDownload(assetID: asset.id, server: store.server),
+                if let id = downloads.readyDownload(assetID: asset.id, server: store.libraryKey),
                    let local = await downloads.preparePlayback(id) {
                     #if os(macOS)
                     MacPlaybackWindows.open(local, with: openWindow)
@@ -1299,6 +1300,16 @@ actor LibraryDiskCache {
         sqlite3_bind_double(statement, 3, Date().timeIntervalSince1970)
         guard sqlite3_step(statement) == SQLITE_DONE else { return }
         sqlite3_exec(database, "DELETE FROM snapshots WHERE scope NOT IN (SELECT scope FROM snapshots ORDER BY updated DESC LIMIT 8)", nil, nil, nil)
+    }
+    /// Carry a profile's library snapshot over to its new scope (the library's name).
+    func moveSnapshot(from: String, to: String) {
+        guard from != to, open() else { return }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "UPDATE OR IGNORE snapshots SET scope=? WHERE scope=?", -1, &statement, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_text(statement, 1, digest(to), -1, transient)
+        sqlite3_bind_text(statement, 2, digest(from), -1, transient)
+        _ = sqlite3_step(statement)
     }
     func artwork(key: String) -> Data? {
         let path = root.appendingPathComponent(digest(key) + ".image")

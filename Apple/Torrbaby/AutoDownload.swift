@@ -72,10 +72,10 @@ enum AutoDownload {
                 guard !asset.watched, asset.offline != true, let season = asset.season, let episode = asset.episode, season > 0 else { return false }
                 return seen.insert(EpisodeNumber(season: season, episode: episode)).inserted
             }.prefix(keep)
-            for asset in next where !queue.items.contains(where: { $0.server == store.server && $0.assetID == asset.id && $0.state != .removed }) {
+            for asset in next where !queue.items.contains(where: { $0.server == store.libraryKey && $0.assetID == asset.id && $0.state != .removed }) {
                 guard usedBytes < limitBytes else { return added }
                 await queue.enqueue(asset, title: title)
-                guard let item = queue.items.first(where: { $0.server == store.server && $0.assetID == asset.id && $0.state != .removed }) else { continue }
+                guard let item = queue.items.first(where: { $0.server == store.libraryKey && $0.assetID == asset.id && $0.state != .removed }) else { continue }
                 queued.insert(item.id.uuidString)
                 // Its size is only known once queued: one that would break the limit is taken back.
                 if usedBytes > limitBytes { queue.remove(item.id); queued.remove(item.id.uuidString); return added }

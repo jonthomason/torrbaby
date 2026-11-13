@@ -60,7 +60,7 @@ final class Store: ObservableObject {
     @Published var loadingProfiles = false
     private var switchingProfile = false
     private var resolvedProfileScope = ""
-    private var profileScope: String { server + "|" + clientId }
+    private var profileScope: String { libraryKey + "|" + clientId }
     var profileReady: Bool { resolvedProfileScope == profileScope && activeProfile != nil }
     var profileIdentity: String { profileScope + "|" + (activeProfile?.id ?? "") }
 
@@ -192,7 +192,7 @@ final class Store: ObservableObject {
         let _: ClientDevice = try await request("POST", "/v1/clients", body: ["client_id": clientId, "name": defaultClientName, "platform": clientPlatform])
     }
     private var flushingProgress = false
-    private var pendingKey: String { "pending-playback:" + server }
+    private var pendingKey: String { "pending-playback:" + libraryKey }
     func reportProgress(sessionId: String, sequence: Int, position: Double, duration: Double, ended: Bool, watchedEligible: Bool = true, reachedEnd: Bool = false) {
         guard position.isFinite, duration.isFinite, duration > 0 else { return }
         var pending = UserDefaults.standard.dictionary(forKey: pendingKey) ?? [:]
@@ -219,6 +219,38 @@ final class Store: ObservableObject {
             } catch { break }
         }
     }
+    /// The library this device is paired with, by the name its server took when it was set
+    /// up. There is one library, so every cache, setting and download is keyed to this name;
+    /// an address is only a route to it. A device that has not yet heard the name keeps its
+    /// earlier keys until it does, and they are then moved over once (see `adopt(serverName:)`).
+    @Published private(set) var serverName = UserDefaults.standard.string(forKey: "server-name") ?? ""
+    var libraryKey: String { serverName.isEmpty ? server : serverName }
+    private func adopt(serverName reported: String?) {
+        let name = (reported ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != serverName else { return }
+        let old = libraryKey, client = clientId, defaults = UserDefaults.standard
+        func move(_ from: String, _ to: String) {
+            guard from != to, let value = defaults.object(forKey: from) else { return }
+            if let earlier = value as? [String: Any], let current = defaults.dictionary(forKey: to) {
+                defaults.set(earlier.merging(current) { _, kept in kept }, forKey: to)
+            } else if defaults.object(forKey: to) == nil { defaults.set(value, forKey: to) }
+            defaults.removeObject(forKey: from)
+        }
+        for prefix in ["pending-playback:", "activity-watermark:", "fallback-server:", "fallback-routing-mac:", "fallback-routing-v2:"] {
+            move(prefix + old, prefix + name)
+        }
+        move("viewer:" + old + "|" + client, "viewer:" + name + "|" + client)
+        move("subtitle-defaults:" + old + ":" + client, "subtitle-defaults:" + name + ":" + client)
+        let earlierIdentity = profileIdentity, resolved = resolvedProfileScope == profileScope
+        serverName = name
+        defaults.set(name, forKey: "server-name")
+        if resolved { resolvedProfileScope = profileScope }
+        let identity = profileIdentity
+        Task { await LibraryDiskCache.shared.moveSnapshot(from: earlierIdentity, to: identity) }
+        #if !os(tvOS)
+        DownloadQueue.shared.adoptLibrary(name)
+        #endif
+    }
     @Published var server: String = UserDefaults.standard.string(forKey: "server") ?? "" {
         didSet {
             if oldValue != server {
@@ -230,7 +262,7 @@ final class Store: ObservableObject {
     }
     @Published var fallbackServer = "" {
         didSet {
-            UserDefaults.standard.set(fallbackServer, forKey: "fallback-server:" + server)
+            UserDefaults.standard.set(fallbackServer, forKey: "fallback-server:" + libraryKey)
             UserDefaults.standard.set(true, forKey: routingFlag)
         }
     }
@@ -243,13 +275,13 @@ final class Store: ObservableObject {
     // The Mac adopted them later than iOS, so it has its own marker for the one-time repair.
     private var routingFlag: String {
         #if os(macOS)
-        "fallback-routing-mac:" + server
+        "fallback-routing-mac:" + libraryKey
         #else
-        "fallback-routing-v2:" + server
+        "fallback-routing-v2:" + libraryKey
         #endif
     }
     private func savedFallback() -> String {
-        let saved = UserDefaults.standard.string(forKey: "fallback-server:" + server)
+        let saved = UserDefaults.standard.string(forKey: "fallback-server:" + libraryKey)
         #if os(tvOS)
         return saved ?? ""
         #else
@@ -321,9 +353,11 @@ final class Store: ObservableObject {
                 if !available { self.connectionError = URLError(.notConnectedToInternet).localizedDescription }
                 self.networkAvailable = available
                 if restored {
-                    // A new network may make the primary route reachable again.
-                    self.connectionError = URLError(.networkConnectionLost).localizedDescription
-                    self.activeServer = nil; activeRouteTunnelled = false
+                    // A new network may make the primary route reachable again. Keep the
+                    // route that last worked (tried first) and give the home address a quick
+                    // try ahead of it; clearing the route and marking the connection lost
+                    // showed Offline on every return and waited out the home address.
+                    self.lastPrimaryRetry = .distantPast
                     await self.refresh()
                 } else if available && self.usingFallback {
                     // On cellular with Tailscale the path changes often. Keep the working
@@ -452,6 +486,7 @@ final class Store: ObservableObject {
             }
             guard self.server == identityServer, self.fallbackServer == fallback else { throw CancellationError() }
             self.activeServer = route
+            self.adopt(serverName: probed.0.server?.name)
             // iOS can carry even home Wi-Fi traffic through Tailscale when subnet routes are
             // on, so a tunnelled route only means "away" when no own interface is on that subnet.
             self.activeRouteTunnelled = probed.1 && !ServerRoutes.sharesSubnet(route, interfaces: ServerRoutes.localInterfaces())
@@ -515,6 +550,7 @@ final class Store: ObservableObject {
             connectionError = nil
             subtitleQueueError = nil
         } catch {
+            guard !Self.cancelled(error) else { return }
             connectionError = error.localizedDescription
             subtitleQueueError = "Couldn’t refresh the queue. Reconnecting…"
         }
@@ -562,7 +598,7 @@ final class Store: ObservableObject {
                 }
                 if libraryError != nil { libraryError = nil }
             } catch {
-                libraryError = error.localizedDescription
+                if !Self.cancelled(error) { libraryError = error.localizedDescription }
                 throw error
             }
             let newEvents: [AuditEvent] = try await request("GET", "/v1/events")
@@ -609,7 +645,14 @@ final class Store: ObservableObject {
             receiveActivity(newEvents)
             events = newEvents.reversed()
             if connectionError != nil { connectionError = nil }
-        } catch { connectionError = error.localizedDescription }
+        } catch {
+            // A refresh cut short (the app went to the background, the view changed) says
+            // nothing about the server; showing it read "cancelled" and flashed Offline.
+            if !Self.cancelled(error) { connectionError = error.localizedDescription }
+        }
+    }
+    static func cancelled(_ error: Error) -> Bool {
+        error is CancellationError || (error as? URLError)?.code == .cancelled
     }
     @Published var continueWatchingUndo: (id: String, profile: String)?
     /// Choices made on this device that the server is still being told about. They are
@@ -658,7 +701,7 @@ final class Store: ObservableObject {
         #endif
     }
     private func receiveActivity(_ incoming: [AuditEvent]) {
-        let key = "activity-watermark:" + server
+        let key = "activity-watermark:" + libraryKey
         let last = UserDefaults.standard.object(forKey: key) as? Double
         let newest = incoming.map(\.time).max() ?? Date().timeIntervalSince1970
         UserDefaults.standard.set(max(last ?? 0, newest), forKey: key)

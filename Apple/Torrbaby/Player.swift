@@ -560,7 +560,7 @@ struct PlayerScreen: View {
 
 @MainActor
 private enum SubtitlePreferenceCache {
-    static func key(_ store: Store) -> String { "subtitle-defaults:" + store.server + ":" + store.clientId }
+    static func key(_ store: Store) -> String { "subtitle-defaults:" + store.libraryKey + ":" + store.clientId }
     static func load(_ store: Store) -> SubtitlePreferences? {
         UserDefaults.standard.data(forKey: key(store)).flatMap { try? JSONDecoder().decode(SubtitlePreferences.self, from: $0) }
     }

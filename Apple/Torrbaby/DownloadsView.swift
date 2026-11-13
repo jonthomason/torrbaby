@@ -292,7 +292,7 @@ struct DownloadAssetControl: View {
     @State private var adding = false
     @State private var confirmDelete = false
     private var item: DownloadStorage.Item? {
-        queue.items.first { $0.assetID == asset.id && $0.server == store.server && $0.state != .removed }
+        queue.items.first { $0.assetID == asset.id && $0.server == store.libraryKey && $0.state != .removed }
     }
     var body: some View {
         // Checked when the page opens, and again if the connection arrives after it.
@@ -396,7 +396,7 @@ struct EpisodeDownloadProgress: View {
     @ObservedObject private var queue = DownloadQueue.shared
     let asset: LibraryAsset
     var body: some View {
-        if let item = queue.items.first(where: { $0.assetID == asset.id && $0.server == store.server && $0.state != .removed && $0.state != .removing }), item.state != .ready {
+        if let item = queue.items.first(where: { $0.assetID == asset.id && $0.server == store.libraryKey && $0.state != .removed && $0.state != .removing }), item.state != .ready {
             let got = queue.received[item.id] ?? item.received
             VStack(alignment: .leading, spacing: 4) {
                 TorrentProgressGauge(value: item.size > 0 ? Double(got) / Double(item.size) : 0)
@@ -448,12 +448,12 @@ struct DownloadSeasonControl: View {
     @Environment(\.libraryActionFullWidth) private var fullWidth
     private var pending: [LibraryAsset] {
         title.playable.filter { asset in
-            asset.season == season && !queue.items.contains { $0.server == store.server && $0.assetID == asset.id && $0.state != .removed && $0.state != .removing && $0.state != .failed }
+            asset.season == season && !queue.items.contains { $0.server == store.libraryKey && $0.assetID == asset.id && $0.state != .removed && $0.state != .removing && $0.state != .failed }
         }
     }
     /// This device's downloads for the season, finished ones included.
     private var items: [DownloadStorage.Item] {
-        queue.items.filter { $0.server == store.server && $0.titleID == title.id && $0.season == season && $0.state != .removed && $0.state != .removing }
+        queue.items.filter { $0.server == store.libraryKey && $0.titleID == title.id && $0.season == season && $0.state != .removed && $0.state != .removing }
     }
     var body: some View {
         // Whatever the season's state, finished episodes can be offered their update.
