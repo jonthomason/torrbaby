@@ -213,6 +213,12 @@ struct SettingsView: View {
         }.background(Theme.canvas)
         #else
         List {
+            #if DEBUG
+            // UI checks open one page directly: -initialSettingsPage Connection.
+            if let name = UserDefaults.standard.string(forKey: "initialSettingsPage"), let page = SettingsPage(rawValue: name) {
+                NavigationLink(isActive: .constant(true)) { SettingsPageView(page: page, showConnect: $showConnect) } label: { EmptyView() }
+            }
+            #endif
             SwiftUI.Section { SettingsQuickRows() }
             ForEach(Array(SettingsPage.groups.enumerated()), id: \.offset) { _, group in
                 SwiftUI.Section {
@@ -389,6 +395,7 @@ private struct ConnectionSettings: View {
             LabeledContent { Text(LocalizedStringKey(store.connectionLabel)) } label: { Text("Status") }
             LabeledContent("Server", value: store.server.isEmpty ? L10n.text("Not configured") : store.serverName.isEmpty ? store.primaryAddress : store.serverName)
         }
+        ConnectionStatusSections()
         SwiftUI.Section { Button("Edit connection") { showConnect = true } }
     }
 }
@@ -470,9 +477,6 @@ private struct AboutSettings: View {
             LabeledContent { Text(verbatim: AppRelease.description.replacingOccurrences(of: "Version ", with: "")).monospacedDigit() } label: { Text("Version") }
             if let status = store.status { LabeledContent { Text(verbatim: status.version).monospacedDigit() } label: { Text("Server version") } }
             LabeledContent { Text("MIT License") } label: { Text("License") }
-            #if os(iOS)
-            NavigationLink("Direct connection test") { DirectConnectionTest() }
-            #endif
         }
     }
 }

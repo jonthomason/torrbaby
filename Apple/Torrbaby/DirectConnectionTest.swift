@@ -32,8 +32,14 @@ struct DirectConnectionTest: View {
                 Text("Checks whether this device can reach your server directly instead of through Tailscale’s relay. Nothing else uses it.")
             }
             SwiftUI.Section("Direct route") {
+                Text(verbatim: AppRelease.description).font(.caption.monospaced()).foregroundStyle(.secondary)
                 Text(verbatim: store.directRoute.map { "In use: \($0) (\(store.directNote))" } ?? "Not in use\(store.directNote.isEmpty ? "" : " (\(store.directNote))")")
                     .font(.caption.monospaced())
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    Text(verbatim: store.directDiagnostics).font(.caption2.monospaced()).foregroundStyle(.secondary)
+                }
+                Button("Try direct now") { store.tryDirectNow() }.disabled(store.directRoute != nil)
+                ForEach(store.directEvents.reversed(), id: \.self) { Text(verbatim: $0).font(.caption2.monospaced()).foregroundStyle(.secondary) }
             }
             if !lines.isEmpty {
                 SwiftUI.Section("Details") {
@@ -55,7 +61,8 @@ struct DirectConnectionTest: View {
         let probe = PunchProbe(count: 128)
         lines.append("Network: \(probe.interface ?? "default")")
         guard probe.ready else { lines.append("Could not open sockets"); outcome = false; return }
-        let mappings = await Task.detached { probe.discover() }.value
+        guard let stun = store.stunServer else { lines.append("STUN: the rendezvous is not known yet"); outcome = false; probe.close(); return }
+        let mappings = await Task.detached { probe.discover(stun: stun, limit: 12) }.value
         guard let ip = mappings.first?.ip else { lines.append("STUN: no answer"); outcome = false; probe.close(); return }
         let ports = mappings.map(\.port).sorted()
         let steps = zip(ports, ports.dropFirst()).map { $1 - $0 }
@@ -117,6 +124,13 @@ final class PunchProbe: @unchecked Sendable {
         }
     }
     func close() { for fd in sockets { Darwin.close(fd) }; sockets = [] }
+    /// Hand one socket over (it is no longer closed here); its descriptor.
+    func take(_ index: Int) -> Int32? {
+        guard sockets.indices.contains(index) else { return nil }
+        let fd = sockets[index]
+        sockets.remove(at: index)
+        return fd
+    }
     /// The local port a socket is bound to.
     func localPort(_ index: Int) -> UInt16? {
         guard sockets.indices.contains(index) else { return nil }
@@ -146,18 +160,40 @@ final class PunchProbe: @unchecked Sendable {
         return nil
     }
 
-    /// Wi-Fi when it has an address, else cellular.
+    /// The interface iOS uses for data, from the network monitor (a dual-SIM phone's second
+    /// SIM may be pdp_ip1, not pdp_ip0). Set by the Store on every path change.
+    nonisolated(unsafe) static var preferredInterface: String?
+
+    /// The network to punch from: the one iOS uses for data when it has an IPv4 address,
+    /// else Wi-Fi, else any cellular interface.
     static func physicalInterface() -> String? {
+        let addresses = ipv4Addresses()
+        if let preferred = preferredInterface, addresses[preferred] != nil { return preferred }
+        if addresses["en0"] != nil { return "en0" }
+        return addresses.keys.filter { $0.hasPrefix("pdp_ip") }.sorted().first
+    }
+
+    /// Which network this is: the interface and its IPv4 address. Changes when Wi-Fi joins or
+    /// leaves, or the phone moves between carriers (CT ↔ CM), even on the same interface.
+    static func networkSignature() -> String {
+        guard let name = physicalInterface() else { return "none" }
+        return "\(name) \(ipv4Addresses()[name] ?? "?")"
+    }
+
+    private static func ipv4Addresses() -> [String: String] {
         var list: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&list) == 0, let first = list else { return nil }
+        guard getifaddrs(&list) == 0, let first = list else { return [:] }
         defer { freeifaddrs(list) }
-        var names = Set<String>()
+        var result: [String: String] = [:]
         for entry in sequence(first: first, next: { $0.pointee.ifa_next }) {
             guard let address = entry.pointee.ifa_addr, address.pointee.sa_family == UInt8(AF_INET),
                   entry.pointee.ifa_flags & UInt32(IFF_UP) != 0 else { continue }
-            names.insert(String(cString: entry.pointee.ifa_name))
+            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            getnameinfo(address, socklen_t(address.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST)
+            let name = String(cString: entry.pointee.ifa_name)
+            if result[name] == nil { result[name] = String(cString: host) }
         }
-        return names.contains("en0") ? "en0" : names.contains("pdp_ip0") ? "pdp_ip0" : nil
+        return result
     }
 
     private static func resolve(_ host: String, _ port: UInt16) -> sockaddr_in? {
@@ -194,12 +230,14 @@ final class PunchProbe: @unchecked Sendable {
     }
     private static func milliseconds() -> Int { Int(DispatchTime.now().uptimeNanoseconds / 1_000_000) }
 
-    /// Each socket's public address, from one STUN server (the first that answers).
-    func discover() -> [Mapping] {
-        for (host, port) in [("stun.chat.bilibili.com", UInt16(3478)), ("stun.l.google.com", UInt16(19302))] {
-            guard let server = Self.resolve(host, port) else { continue }
+    /// Each socket's public address, from Torrbaby's own STUN server on bronze (`stun`,
+    /// "ip:port"; no third-party STUN servers). `limit`: ask from only the first few sockets;
+    /// the rest of the window is covered by the server's spray.
+    func discover(stun: String, limit: Int = .max) -> [Mapping] {
+        for target in [stun] {
+            guard let server = Self.endpoint(target) else { continue }
             var transactions: [[UInt8]: Int] = [:]
-            for (index, fd) in sockets.enumerated() {
+            for (index, fd) in sockets.enumerated() where index < limit {
                 var request: [UInt8] = [0, 1, 0, 0, 0x21, 0x12, 0xA4, 0x42]
                 let id = (0..<12).map { _ in UInt8.random(in: 0...255) }
                 request += id; transactions[id] = index
@@ -207,7 +245,7 @@ final class PunchProbe: @unchecked Sendable {
             }
             var found: [Int: Mapping] = [:]
             let deadline = Self.milliseconds() + 2500
-            while Self.milliseconds() < deadline && found.count < sockets.count {
+            while Self.milliseconds() < deadline && found.count < min(limit, sockets.count) {
                 for fd in sockets {
                     while let (data, _) = receive(fd) {
                         guard data.count >= 20, let index = transactions[Array(data[8..<20])], let mapped = Self.mapped(data) else { continue }

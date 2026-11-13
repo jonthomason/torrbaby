@@ -297,7 +297,10 @@ struct CreditsAnalysis: Codable {
 /// The server's own name and id, fixed when it was first set up.
 struct ServerIdentity: Codable {
     struct Routes: Codable { let home: String?; let away: String? }
-    let name: String?; let id: String?; var routes: Routes? = nil
+    /// Torrbaby's rendezvous on bronze: its QUIC address and certificate fingerprint, and
+    /// whether the server is connected to it now.
+    struct Relay: Codable { let address: String?; let fingerprint: String?; let connected: Bool? }
+    let name: String?; let id: String?; var routes: Routes? = nil; var relay: Relay? = nil
 }
 /// The online check's answer.
 struct ServerPing: Codable { var version: String? = nil; var server: ServerIdentity? = nil }

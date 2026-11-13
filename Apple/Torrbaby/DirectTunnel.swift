@@ -1,141 +1,188 @@
 #if os(iOS)
 import Foundation
-import Network
-import CryptoKit
 
-/// Torrbaby's own direct connection to the server, for when this device is away from home
-/// and Tailscale can only relay (the server half is server/direct.rs). The device punches a
-/// path through both carriers' NAT (as the Direct connection test does), then speaks QUIC
-/// from the winning socket's port so the hole stays the same. A local proxy on 127.0.0.1
-/// turns each connection the app or the player makes into a QUIC stream that the server
-/// pipes to its own HTTP port: requests are ordinary Torrbaby requests with this device's
-/// credentials, only the route is shorter. Sockets are bound to the real network, so a
-/// Tailscale exit node does not carry it abroad. If the path fails, the app falls back to
-/// Tailscale and tries again later.
-final class DirectTunnel: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "org.torrbaby.direct")
-    private var group: NWConnectionGroup?
-    private var listener: NWListener?
-    private var closed = false
+/// The in-app half of the direct connection (Apple/Direct, Rust), linked statically.
+@_silgen_name("tbdirect_start") private func tbdirect_start(_ fd: Int32, _ server: UnsafePointer<CChar>, _ fingerprint: UnsafePointer<CChar>) -> UInt16
+@_silgen_name("tbdirect_alive") private func tbdirect_alive() -> Bool
+@_silgen_name("tbdirect_stop") private func tbdirect_stop()
+@_silgen_name("tbdirect_relay_start") private func tbdirect_relay_start(_ fd: Int32, _ server: UnsafePointer<CChar>, _ fingerprint: UnsafePointer<CChar>) -> UInt16
+@_silgen_name("tbdirect_relay_alive") private func tbdirect_relay_alive() -> Bool
+@_silgen_name("tbdirect_relay_stop") private func tbdirect_relay_stop()
+@_silgen_name("tbdirect_relay_info") private func tbdirect_relay_info(_ buffer: UnsafeMutablePointer<CChar>, _ capacity: Int) -> Int32
+
+/// The relay through Torrbaby's rendezvous on bronze, for when this device has no home
+/// network, no Tailscale and no direct path yet (bronze's half is rendezvous/, Diamond keeps
+/// a standing connection to it). QUIC to bronze, pinned to its certificate; a loopback proxy
+/// turns each connection into a stream that bronze splices to Diamond. Requests are ordinary
+/// Torrbaby requests with this device's credentials. Signalling (the online check, the
+/// direct path's request) rides it, then traffic moves to the direct tunnel when that opens.
+/// The socket is bound to the real network, so a Tailscale exit node does not carry it.
+final class RelayTunnel: @unchecked Sendable {
     private(set) var port: UInt16 = 0
-    /// Called once, on the main actor, when the path is gone.
+    private(set) var interface: String?
     var onClose: (@MainActor () -> Void)?
+    private var watcher: Task<Void, Never>?
 
-    struct Failure: LocalizedError { let message: String; var errorDescription: String? { message } }
-    private struct Started: Decodable { let id: String; let server: String; let fingerprint: String; let low: Int; let high: Int }
-
-    /// Punch, ask the server to listen, and open the tunnel. `signal` is the route the request
-    /// to the server takes (the Tailscale one).
-    @MainActor static func establish(store: Store, signal: String) async throws -> DirectTunnel {
-        let probe = PunchProbe(count: 192)
+    static func open(address: String, fingerprint: String) async -> RelayTunnel? {
+        let probe = PunchProbe(count: 1)
         defer { probe.close() }
-        guard probe.ready, let interface = probe.interface else { throw Failure(message: "No network for a direct path") }
-        let mappings = await Task.detached { probe.discover() }.value
-        guard let ip = mappings.first?.ip else { throw Failure(message: "STUN: no answer") }
-        let ports = mappings.map(\.port).sorted()
-        let span = ports.last! - ports.first!
-        let low = max(1, ports.first!), high = min(65535, ports.last! + span + 1024)
-        let started: Started = try await store.request("POST", "/v1/direct", body: ["ip": ip, "low": low, "high": high], timeout: 30, address: signal)
-        guard let winner = await Task.detached(operation: { probe.punch(at: started.server, id: started.id, word: "TBDIRECT1", seconds: 20) }).value,
-              let localPort = probe.localPort(winner) else { throw Failure(message: "No direct path") }
-        // The winning socket's port is taken over by QUIC: close the probe sockets first.
-        probe.close()
-        let tunnel = DirectTunnel()
-        try await tunnel.open(server: started.server, localPort: localPort, wifi: interface == "en0", fingerprint: started.fingerprint)
+        guard probe.ready, let fd = probe.take(0) else { return nil }
+        let port = await Task.detached { () -> UInt16 in
+            address.withCString { a in fingerprint.withCString { f in tbdirect_relay_start(fd, a, f) } }
+        }.value
+        guard port != 0 else { return nil }
+        let tunnel = RelayTunnel()
+        tunnel.port = port
+        tunnel.interface = probe.interface
+        tunnel.watch()
         return tunnel
     }
 
-    private func open(server: String, localPort: UInt16, wifi: Bool, fingerprint: String) async throws {
-        let parts = server.split(separator: ":")
-        guard parts.count == 2, let remotePort = NWEndpoint.Port(String(parts[1])), let local = NWEndpoint.Port(rawValue: localPort) else {
-            throw Failure(message: "Bad server address")
-        }
-        let quic = NWProtocolQUIC.Options(alpn: ["tbdirect"])
-        quic.idleTimeout = 45_000
-        // The server's own certificate, its fingerprint learned over the trusted connection.
-        sec_protocol_options_set_verify_block(quic.securityProtocolOptions, { _, trust, complete in
-            let secTrust = sec_trust_copy_ref(trust).takeRetainedValue()
-            guard let chain = SecTrustCopyCertificateChain(secTrust) as? [SecCertificate], let leaf = chain.first else { complete(false); return }
-            let digest = SHA256.hash(data: SecCertificateCopyData(leaf) as Data).map { String(format: "%02x", $0) }.joined()
-            complete(digest == fingerprint)
-        }, queue)
-        let parameters = NWParameters(quic: quic)
-        parameters.requiredInterfaceType = wifi ? .wifi : .cellular
-        parameters.prohibitedInterfaceTypes = [.other]
-        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.any), port: local)
-        parameters.allowLocalEndpointReuse = true
-        let group = NWConnectionGroup(with: NWMultiplexGroup(to: .hostPort(host: NWEndpoint.Host(String(parts[0])), port: remotePort)), using: parameters)
-        self.group = group
-        try await withThrowingTaskGroup(of: Void.self) { race in
-            race.addTask { [queue] in
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                    var resumed = false
-                    group.stateUpdateHandler = { [weak self] state in
-                        switch state {
-                        case .ready:
-                            if !resumed { resumed = true; continuation.resume() }
-                        case .failed(let error):
-                            if !resumed { resumed = true; continuation.resume(throwing: error) } else { self?.close() }
-                        case .cancelled:
-                            if !resumed { resumed = true; continuation.resume(throwing: CancellationError()) } else { self?.close() }
-                        default: break
-                        }
-                    }
-                    group.start(queue: queue)
-                }
+    var alive: Bool { tbdirect_relay_alive() }
+
+    /// Bronze's view, over the relay: whether Diamond is connected, and this device's public
+    /// address ("ip:port"). Behind a hotspot this is the only way to see the carrier change.
+    static func info() async -> (homeOnline: Bool, publicAddress: String)? {
+        await Task.detached { () -> (Bool, String)? in
+            var buffer = [CChar](repeating: 0, count: 256)
+            guard tbdirect_relay_info(&buffer, buffer.count) > 0 else { return nil }
+            let text = String(cString: buffer)
+            var online = false, address = ""
+            for line in text.split(separator: "\n") {
+                if line.hasPrefix("home ") { online = line == "home online" }
+                if line.hasPrefix("you ") { address = String(line.dropFirst(4)) }
             }
-            race.addTask { try await Task.sleep(for: .seconds(8)); throw Failure(message: "QUIC did not start") }
-            try await race.next()
-            race.cancelAll()
-        }
-        // The local side: the app and the player connect here.
-        let tcp = NWParameters.tcp
-        tcp.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
-        tcp.acceptLocalOnly = true
-        let listener = try NWListener(using: tcp)
-        self.listener = listener
-        listener.newConnectionHandler = { [weak self] connection in self?.carry(connection) }
-        port = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UInt16, Error>) in
-            var resumed = false
-            listener.stateUpdateHandler = { [weak self] state in
-                switch state {
-                case .ready:
-                    if !resumed, let port = listener.port?.rawValue { resumed = true; continuation.resume(returning: port) }
-                case .failed(let error):
-                    if !resumed { resumed = true; continuation.resume(throwing: error) } else { self?.close() }
-                default: break
-                }
-            }
-            listener.start(queue: queue)
-        }
+            return address.isEmpty ? nil : (online, address)
+        }.value
     }
 
-    /// One local connection is one QUIC stream, both ways.
-    private func carry(_ local: NWConnection) {
-        guard !closed, let group, let stream = NWConnection(from: group) else { local.cancel(); return }
-        local.start(queue: queue)
-        stream.start(queue: queue)
-        pump(from: local, to: stream)
-        pump(from: stream, to: local)
-    }
-    private func pump(from: NWConnection, to: NWConnection) {
-        from.receive(minimumIncompleteLength: 1, maximumLength: 256 * 1024) { [weak self] data, _, complete, error in
-            let finish = complete || error != nil
-            to.send(content: data, contentContext: finish ? .finalMessage : .defaultMessage, isComplete: finish, completion: .contentProcessed { sendError in
-                if error != nil || sendError != nil { from.cancel(); to.cancel(); return }
-                if !finish { self?.pump(from: from, to: to) }
-            })
+    private func watch() {
+        watcher = Task.detached { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                if !tbdirect_relay_alive() {
+                    let notify = self?.onClose
+                    await MainActor.run { notify?() }
+                    return
+                }
+            }
         }
     }
 
     func close() {
-        queue.async { [self] in
-            guard !closed else { return }
-            closed = true
-            listener?.cancel(); group?.cancel()
-            let notify = onClose
-            Task { @MainActor in notify?() }
+        watcher?.cancel(); watcher = nil
+        onClose = nil
+        tbdirect_relay_stop()
+    }
+}
+
+/// Torrbaby's own direct connection to the server, for when this device is away from home
+/// and Tailscale can only relay (the server half is server/direct.rs). The device punches a
+/// path through both carriers' NAT with plain UDP sockets (as the Direct connection test
+/// does), then QUIC runs on the very socket that got through, inside the app (iOS's own QUIC
+/// sent nothing when told to reuse that port, and a fresh port fell outside the hole).
+/// A loopback proxy turns each connection the app or the player makes into a QUIC stream that
+/// the server pipes to its own HTTP port: requests are ordinary Torrbaby requests with this
+/// device's credentials, only the route is shorter. The sockets are bound to the real
+/// network, so a Tailscale exit node does not carry it abroad. If the path fails, the app
+/// falls back to Tailscale and tries again later.
+final class DirectTunnel: @unchecked Sendable {
+    private(set) var port: UInt16 = 0
+    /// How the tunnel came up, for the test screen.
+    var how = ""
+    /// Called once, on the main actor, when the path is gone.
+    var onClose: (@MainActor () -> Void)?
+    private var watcher: Task<Void, Never>?
+
+    struct Failure: LocalizedError { let message: String; var errorDescription: String? { message } }
+    private struct Started: Decodable { let id: String; let server: String; let fingerprint: String; let low: Int; let high: Int }
+
+    /// Punch, ask the server to listen, and open the tunnel on the socket that got through.
+    /// `signal` is the route the request to the server takes (the relay or Tailscale). Each
+    /// step is recorded in `store.directAttempt` for Settings → Connection, and a failure says
+    /// which step failed and why.
+    @MainActor static func establish(store: Store, signal: String) async throws -> DirectTunnel {
+        var attempt = Store.DirectAttempt()
+        attempt.signal = store.routeLabel(signal)
+        func record(_ change: (inout Store.DirectAttempt) -> Void) { change(&attempt); store.directAttempt = attempt }
+        func fail(_ why: String) -> Failure {
+            record { $0.failure = why; $0.finished = Date(); $0.ok = false }
+            return Failure(message: why)
         }
+        record { $0.step = "opening sockets" }
+        let probe = PunchProbe(count: 192)
+        defer { probe.close() }
+        record { $0.interface = probe.interface }
+        guard probe.ready, probe.interface != nil else { throw fail("No Wi-Fi or cellular network to punch from") }
+        guard let stun = store.stunServer else { throw fail("bronze's address is not known yet (it comes with the online check or the pairing code)") }
+        record { $0.step = "asking bronze's STUN server (\(stun)) for this network's public ports"; $0.asked = 12 }
+        let mappings = await Task.detached { probe.discover(stun: stun, limit: 12) }.value
+        guard let ip = mappings.first?.ip else { throw fail("bronze's STUN server did not answer: UDP to \(stun) may be blocked on this network") }
+        let ports = mappings.map(\.port).sorted()
+        let span = ports.last! - ports.first!
+        let low = max(1, ports.first!), high = min(65535, ports.last! + span + 1024)
+        record { $0.publicAddress = ip; $0.answered = mappings.count; $0.window = "\(low)–\(high) (STUN saw \(ports.first!)–\(ports.last!))"; $0.step = "asking Diamond to start (over \(attempt.signal))" }
+        let started: Started
+        do { started = try await store.request("POST", "/v1/direct", body: ["ip": ip, "low": low, "high": high], timeout: 30, address: signal) }
+        catch { throw fail("Could not ask Diamond to start: \(Store.describe(error))") }
+        record { $0.server = started.server; $0.session = started.id; $0.step = "punching: firing from 192 sockets at \(started.server) while Diamond sprays \(started.low)–\(started.high)" }
+        let punchStart = Date()
+        guard let winner = await Task.detached(operation: { probe.punch(at: started.server, id: started.id, word: "TBDIRECT1", seconds: 20) }).value,
+              let fd = probe.take(winner) else {
+            let view = await serverView(store: store, signal: signal, id: started.id)
+            record { $0.serverView = view }
+            throw fail("No packet got through both NATs in 20 s. This network probably gives each new destination an unpredictable port, or blocks incoming UDP")
+        }
+        record { $0.punchMs = Int(Date().timeIntervalSince(punchStart) * 1000); $0.step = "punched; opening QUIC on the winning socket" }
+        // QUIC on the winning socket itself; the library owns the socket from here.
+        let server = started.server, fingerprint = started.fingerprint
+        let quicStart = Date()
+        let port = await Task.detached { () -> UInt16 in
+            server.withCString { s in fingerprint.withCString { f in tbdirect_start(fd, s, f) } }
+        }.value
+        guard port != 0 else {
+            let view = await serverView(store: store, signal: signal, id: started.id)
+            record { $0.serverView = view }
+            throw fail("Punched, but QUIC did not open on the punched socket within 8 s")
+        }
+        record { $0.quicMs = Int(Date().timeIntervalSince(quicStart) * 1000); $0.step = "open"; $0.ok = true; $0.finished = Date() }
+        let tunnel = DirectTunnel()
+        tunnel.port = port
+        tunnel.how = "QUIC on the punched socket"
+        tunnel.watch()
+        return tunnel
+    }
+
+    /// What Diamond saw of a failed attempt (its state, error and where QUIC came from).
+    @MainActor private static func serverView(store: Store, signal: String, id: String) async -> String? {
+        struct View: Decodable { let state: String?; let error: String?; let device: String?; let firstQuicFrom: String?; let punchedAfterMs: Int? }
+        guard let view: View = try? await store.request("GET", "/v1/direct/\(id)", timeout: 8, address: signal) else { return nil }
+        var parts = ["state \(view.state ?? "?")"]
+        if let device = view.device { parts.append("heard this device from \(device)") }
+        if let ms = view.punchedAfterMs { parts.append("after \(ms) ms") }
+        if let from = view.firstQuicFrom { parts.append("QUIC came from \(from)") }
+        if let error = view.error { parts.append(error) }
+        return parts.joined(separator: ", ")
+    }
+
+    /// Notice when the path is gone (the server went quiet, the network changed).
+    private func watch() {
+        watcher = Task.detached { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                if !tbdirect_alive() {
+                    let notify = self?.onClose
+                    await MainActor.run { notify?() }
+                    return
+                }
+            }
+        }
+    }
+
+    func close() {
+        watcher?.cancel(); watcher = nil
+        onClose = nil
+        tbdirect_stop()
     }
 }
 #endif

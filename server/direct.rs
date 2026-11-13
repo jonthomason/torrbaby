@@ -56,6 +56,7 @@ impl Direct {
         let socket = UdpSocket::from_std(std_socket)?;
         let public = crate::punch::stun(&socket).await.context("Diamond could not learn its public address")?;
         let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_owned();
+        eprintln!("Direct {id}: requested by {ip}, spraying {low}–{high} from {public}");
         let state = Arc::new(Mutex::new(json!({
             "id": id, "state": "punching", "server": public.to_string(), "device_ip": ip.to_string(),
             "low": low, "high": high, "device": null, "punched_after_ms": null, "streams": 0,
@@ -68,7 +69,9 @@ impl Direct {
         let fingerprint = identity.fingerprint.clone();
         let session = id.clone();
         tokio::spawn(async move {
+            let logged = session.clone();
             if let Err(error) = run(socket, ip, low, high, session, identity, http_port, state.clone()).await {
+                eprintln!("Direct {logged}: {error}");
                 if let Ok(mut s) = state.lock() { s["state"] = json!("failed"); s["error"] = json!(error.to_string()); }
             }
         });
@@ -106,6 +109,33 @@ async fn run(socket: UdpSocket, ip: IpAddr, low: u32, high: u32, id: String, ide
             }
         }
     };
+    // Watch for the device's QUIC (anything that is not a punch packet) and log where it comes
+    // from; QUIC resends its first packet, so handing over then loses nothing.
+    // Until the device's QUIC shows up (up to 12 s), keep spraying and echoing its punch
+    // packets: it starts QUIC only once it has seen an echo.
+    let watch_until = Instant::now() + Duration::from_secs(12);
+    while Instant::now() < watch_until {
+        tokio::select! {
+            _ = tick.tick() => {
+                for port in low..=high { let _ = socket.send_to(&spray, SocketAddr::new(ip, port as u16)).await; }
+            }
+            received = tokio::time::timeout(watch_until.saturating_duration_since(Instant::now()), socket.recv_from(&mut buffer)) => {
+                let Ok(Ok((len, from))) = received else { break };
+                // Keep echoing the device's punch packets, as the test does: three echoes at
+                // the first one were lost on a hotspot and the device never saw it get through.
+                if buffer[..len].starts_with(prefix.as_bytes()) {
+                    let echo = [b"TBACK ".as_slice(), &buffer[..len]].concat();
+                    let _ = socket.send_to(&echo, from).await;
+                    continue;
+                }
+                if buffer[..len].starts_with(b"TBDIRECT1") { continue }
+                eprintln!("Direct {id}: first non-test packet from {from} ({len} bytes{}) after {} ms",
+                    if from.ip() == ip { "" } else { ", another address" }, started.elapsed().as_millis());
+                if let Ok(mut s) = state.lock() { s["first_quic_from"] = json!(from.to_string()) }
+                break;
+            }
+        }
+    }
     if let Ok(mut s) = state.lock() {
         s["state"] = json!("punched");
         s["device"] = json!(device.to_string());
@@ -123,33 +153,66 @@ async fn run(socket: UdpSocket, ip: IpAddr, low: u32, high: u32, id: String, ide
     transport.max_idle_timeout(Some(Duration::from_secs(45).try_into()?));
     transport.max_concurrent_bidi_streams(256u32.into());
     server.transport_config(Arc::new(transport));
-    let endpoint = quinn::Endpoint::new(quinn::EndpointConfig::default(), Some(server), socket.into_std()?, Arc::new(quinn::TokioRuntime))?;
+    let std_socket = socket.into_std()?;
+    // Keep spraying until QUIC connects: iOS may start QUIC from a fresh port rather than the
+    // punched one, and the device's NAT gives each new destination port the next port along,
+    // so the window must stay open for it. A duplicate handle sends while QUIC owns the socket.
+    let sprayer = UdpSocket::from_std(std_socket.try_clone()?)?;
+    let connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let spraying = connected.clone();
+    let spray_until = Instant::now() + Duration::from_secs(20);
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_millis(250));
+        while !spraying.load(std::sync::atomic::Ordering::Relaxed) && Instant::now() < spray_until {
+            tick.tick().await;
+            for port in low..=high { let _ = sprayer.send_to(&spray, SocketAddr::new(ip, port as u16)).await; }
+        }
+    });
+    let endpoint = quinn::Endpoint::new(quinn::EndpointConfig::default(), Some(server), std_socket, Arc::new(quinn::TokioRuntime))?;
     if let Ok(mut s) = state.lock() { s["state"] = json!("waiting") }
+    eprintln!("Direct {id}: punched from {device} after {} ms; waiting for QUIC", started.elapsed().as_millis());
     // One device: the first connection from its address; then serve until it goes quiet.
     let connection = loop {
-        let incoming = tokio::time::timeout(Duration::from_secs(20), endpoint.accept()).await
-            .context("The device did not start QUIC")?.context("Endpoint closed")?;
-        if incoming.remote_address().ip() != ip { incoming.refuse(); continue }
-        match incoming.await { Ok(connection) => break connection, Err(_) => continue }
+        let Ok(accepted) = tokio::time::timeout(Duration::from_secs(20), endpoint.accept()).await else {
+            connected.store(true, std::sync::atomic::Ordering::Relaxed);
+            eprintln!("Direct {id}: no QUIC from the device in 20 s");
+            anyhow::bail!("The device did not start QUIC");
+        };
+        let incoming = accepted.context("Endpoint closed")?;
+        let from = incoming.remote_address();
+        if from.ip() != ip { incoming.refuse(); continue }
+        match incoming.await {
+            Ok(connection) => { eprintln!("Direct {id}: QUIC open from {from}"); break connection }
+            Err(error) => { eprintln!("Direct {id}: QUIC from {from} failed: {error}"); continue }
+        }
     };
+    connected.store(true, std::sync::atomic::Ordering::Relaxed);
     if let Ok(mut s) = state.lock() { s["state"] = json!("open"); s["opened_after_ms"] = json!(started.elapsed().as_millis() as u64); }
     while let Ok((send, recv)) = connection.accept_bi().await {
         if let Ok(mut s) = state.lock() { s["streams"] = json!(s["streams"].as_u64().unwrap_or(0) + 1) }
-        tokio::spawn(pipe(send, recv, http_port));
+        tokio::spawn(pipe(send, recv, http_port, format!("Direct {id}")));
     }
     endpoint.close(0u32.into(), b"done");
+    eprintln!("Direct {id}: closed after {} s ({})", started.elapsed().as_secs(), connection.close_reason().map(|r| r.to_string()).unwrap_or_default());
     if let Ok(mut s) = state.lock() { s["state"] = json!("closed"); s["closed_after_ms"] = json!(started.elapsed().as_millis() as u64); }
     Ok(())
 }
 
-/// One stream is one connection to the server's own HTTP port, both ways.
-async fn pipe(mut send: quinn::SendStream, mut recv: quinn::RecvStream, http_port: u16) {
+/// One stream is one connection to the server's own HTTP port, both ways. The first request
+/// line (method and path, never the query, which can carry signatures) goes to the log.
+pub(crate) async fn pipe(mut send: quinn::SendStream, mut recv: quinn::RecvStream, http_port: u16, label: String) {
     let Ok(tcp) = TcpStream::connect(("127.0.0.1", http_port)).await else { let _ = send.reset(1u32.into()); return };
     let _ = tcp.set_nodelay(true);
+    let started = Instant::now();
     let (mut from_server, mut to_server) = tcp.into_split();
-    let up = async { let _ = tokio::io::copy(&mut recv, &mut to_server).await; let _ = to_server.shutdown().await; };
-    let down = async { let _ = tokio::io::copy(&mut from_server, &mut send).await; let _ = send.finish(); };
-    tokio::join!(up, down);
+    let mut first = vec![0u8; 2048];
+    let n = match recv.read(&mut first).await { Ok(Some(n)) => n, _ => 0 };
+    let line = String::from_utf8_lossy(&first[..n]).lines().next().unwrap_or("").split('?').next().unwrap_or("").to_owned();
+    if n > 0 && to_server.write_all(&first[..n]).await.is_err() { return }
+    let up = async { let sent = tokio::io::copy(&mut recv, &mut to_server).await.unwrap_or(0); let _ = to_server.shutdown().await; sent };
+    let down = async { let got = tokio::io::copy(&mut from_server, &mut send).await.unwrap_or(0); let _ = send.finish(); got };
+    let (_, down_bytes) = tokio::join!(up, down);
+    eprintln!("{label}: stream {line} → {down_bytes} bytes in {} ms", started.elapsed().as_millis());
 }
 
 #[cfg(test)]

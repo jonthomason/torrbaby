@@ -1,0 +1,30 @@
+[package]
+name = "tbdirect"
+version = "0.1.0"
+edition = "2024"
+description = "Torrbaby's direct connection, in the iPhone/iPad app: QUIC on the punched socket and a loopback proxy"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+doctest = false
+
+[dependencies]
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls", "ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "macros", "sync"] }
+sha2 = "0.11"
+
+[dev-dependencies]
+rcgen = "0.13"
+tbrendezvous = { path = "../../rendezvous" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[workspace]

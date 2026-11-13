@@ -2,6 +2,7 @@
 mod trials;
 mod punch;
 mod direct;
+mod rendezvous;
 mod api;
 mod audio_transcode;
 mod catalog;
