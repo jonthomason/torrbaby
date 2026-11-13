@@ -23,6 +23,8 @@ elif [[ "$PLATFORM" == macos ]]; then
 else
     echo 'Usage: build_apple.sh ios|macos|tvos|tvos-simulator' >&2; exit 2
 fi
+# The direct connection's Rust half, linked by the iOS app.
+if [[ "$PLATFORM" == ios ]]; then "$ROOT/scripts/build_direct.sh"; fi
 xcodebuild "${ARGS[@]}" build > "$OUTPUT/$PLATFORM-build.log" 2>&1 || { tail -30 "$OUTPUT/$PLATFORM-build.log"; exit 1; }
 if [[ "$PLATFORM" == macos ]]; then
     APP="$OUTPUT/macos/Build/Products/Release/Torrbaby.app"

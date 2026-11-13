@@ -126,6 +126,8 @@
 				<string>dwarf-with-dsym</string>
 				<key>ENABLE_HARDENED_RUNTIME</key>
 				<string>YES</string>
+				<key>EXCLUDED_ARCHS[sdk=iphonesimulator*]</key>
+				<string>x86_64</string>
 				<key>GENERATE_INFOPLIST_FILE</key>
 				<string>NO</string>
 				<key>INFOPLIST_FILE</key>
@@ -136,6 +138,10 @@
 				<string>15.0</string>
 				<key>MARKETING_VERSION</key>
 				<string>1.0</string>
+				<key>OTHER_LDFLAGS[sdk=iphoneos*]</key>
+				<string>-L$(PROJECT_DIR)/Direct/lib/iphoneos -ltbdirect</string>
+				<key>OTHER_LDFLAGS[sdk=iphonesimulator*]</key>
+				<string>-L$(PROJECT_DIR)/Direct/lib/iphonesimulator -ltbdirect</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>com.jonthomason.torrbaby.ios</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER[sdk=appletv*]</key>
@@ -417,6 +423,8 @@
 				<string>dwarf</string>
 				<key>ENABLE_HARDENED_RUNTIME</key>
 				<string>YES</string>
+				<key>EXCLUDED_ARCHS[sdk=iphonesimulator*]</key>
+				<string>x86_64</string>
 				<key>GENERATE_INFOPLIST_FILE</key>
 				<string>NO</string>
 				<key>INFOPLIST_FILE</key>
@@ -427,6 +435,10 @@
 				<string>15.0</string>
 				<key>MARKETING_VERSION</key>
 				<string>1.0</string>
+				<key>OTHER_LDFLAGS[sdk=iphoneos*]</key>
+				<string>-L$(PROJECT_DIR)/Direct/lib/iphoneos -ltbdirect</string>
+				<key>OTHER_LDFLAGS[sdk=iphonesimulator*]</key>
+				<string>-L$(PROJECT_DIR)/Direct/lib/iphonesimulator -ltbdirect</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>com.jonthomason.torrbaby.ios</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER[sdk=appletv*]</key>

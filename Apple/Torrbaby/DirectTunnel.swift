@@ -1,35 +1,38 @@
 #if os(iOS)
 import Foundation
-import Network
-import CryptoKit
+
+/// The in-app half of the direct connection (Apple/Direct, Rust), linked statically.
+@_silgen_name("tbdirect_start") private func tbdirect_start(_ fd: Int32, _ server: UnsafePointer<CChar>, _ fingerprint: UnsafePointer<CChar>) -> UInt16
+@_silgen_name("tbdirect_alive") private func tbdirect_alive() -> Bool
+@_silgen_name("tbdirect_stop") private func tbdirect_stop()
 
 /// Torrbaby's own direct connection to the server, for when this device is away from home
 /// and Tailscale can only relay (the server half is server/direct.rs). The device punches a
-/// path through both carriers' NAT (as the Direct connection test does), then speaks QUIC
-/// from the winning socket's port so the hole stays the same. A local proxy on 127.0.0.1
-/// turns each connection the app or the player makes into a QUIC stream that the server
-/// pipes to its own HTTP port: requests are ordinary Torrbaby requests with this device's
-/// credentials, only the route is shorter. Sockets are bound to the real network, so a
-/// Tailscale exit node does not carry it abroad. If the path fails, the app falls back to
-/// Tailscale and tries again later.
+/// path through both carriers' NAT with plain UDP sockets (as the Direct connection test
+/// does), then QUIC runs on the very socket that got through, inside the app (iOS's own QUIC
+/// sent nothing when told to reuse that port, and a fresh port fell outside the hole).
+/// A loopback proxy turns each connection the app or the player makes into a QUIC stream that
+/// the server pipes to its own HTTP port: requests are ordinary Torrbaby requests with this
+/// device's credentials, only the route is shorter. The sockets are bound to the real
+/// network, so a Tailscale exit node does not carry it abroad. If the path fails, the app
+/// falls back to Tailscale and tries again later.
 final class DirectTunnel: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "org.torrbaby.direct")
-    private var group: NWConnectionGroup?
-    private var listener: NWListener?
-    private var closed = false
     private(set) var port: UInt16 = 0
+    /// How the tunnel came up, for the test screen.
+    var how = ""
     /// Called once, on the main actor, when the path is gone.
     var onClose: (@MainActor () -> Void)?
+    private var watcher: Task<Void, Never>?
 
     struct Failure: LocalizedError { let message: String; var errorDescription: String? { message } }
     private struct Started: Decodable { let id: String; let server: String; let fingerprint: String; let low: Int; let high: Int }
 
-    /// Punch, ask the server to listen, and open the tunnel. `signal` is the route the request
-    /// to the server takes (the Tailscale one).
+    /// Punch, ask the server to listen, and open the tunnel on the socket that got through.
+    /// `signal` is the route the request to the server takes (the Tailscale one).
     @MainActor static func establish(store: Store, signal: String) async throws -> DirectTunnel {
         let probe = PunchProbe(count: 192)
         defer { probe.close() }
-        guard probe.ready, let interface = probe.interface else { throw Failure(message: "No network for a direct path") }
+        guard probe.ready, probe.interface != nil else { throw Failure(message: "No network for a direct path") }
         let mappings = await Task.detached { probe.discover(limit: 12) }.value
         guard let ip = mappings.first?.ip else { throw Failure(message: "STUN: no answer") }
         let ports = mappings.map(\.port).sorted()
@@ -37,129 +40,38 @@ final class DirectTunnel: @unchecked Sendable {
         let low = max(1, ports.first!), high = min(65535, ports.last! + span + 1024)
         let started: Started = try await store.request("POST", "/v1/direct", body: ["ip": ip, "low": low, "high": high], timeout: 30, address: signal)
         guard let winner = await Task.detached(operation: { probe.punch(at: started.server, id: started.id, word: "TBDIRECT1", seconds: 20) }).value,
-              let localPort = probe.localPort(winner) else { throw Failure(message: "No direct path") }
-        // The winning socket's port is taken over by QUIC: close the probe sockets first.
-        probe.close()
-        // iOS may never start QUIC pinned to the punched port; then a fresh port, which the
-        // server's spray (kept open until QUIC connects) covers on sequential-port networks.
-        let pinned = DirectTunnel()
-        do {
-            try await pinned.open(server: started.server, localPort: localPort, wifi: interface == "en0", fingerprint: started.fingerprint, wait: 3)
-            pinned.how = "QUIC on the punched port \(localPort)"
-            return pinned
-        } catch {
-            pinned.discard()
-            let fresh = DirectTunnel()
-            do {
-                try await fresh.open(server: started.server, localPort: nil, wifi: interface == "en0", fingerprint: started.fingerprint, wait: 6)
-                fresh.how = "QUIC on a fresh port (pinned: \(error.localizedDescription))"
-                return fresh
-            } catch let second {
-                fresh.discard()
-                throw Failure(message: "pinned: \(error.localizedDescription); fresh: \(second.localizedDescription)")
-            }
-        }
+              let fd = probe.take(winner) else { throw Failure(message: "No direct path") }
+        // QUIC on the winning socket itself; the library owns the socket from here.
+        let server = started.server, fingerprint = started.fingerprint
+        let port = await Task.detached { () -> UInt16 in
+            server.withCString { s in fingerprint.withCString { f in tbdirect_start(fd, s, f) } }
+        }.value
+        guard port != 0 else { throw Failure(message: "QUIC did not open on the punched socket") }
+        let tunnel = DirectTunnel()
+        tunnel.port = port
+        tunnel.how = "QUIC on the punched socket"
+        tunnel.watch()
+        return tunnel
     }
 
-    /// How the tunnel came up, for the test screen.
-    var how = ""
-    /// Drop a tunnel that never came up, without reporting it as closed.
-    func discard() { onClose = nil; queue.async { [self] in closed = true; listener?.cancel(); group?.cancel() } }
-
-    private func open(server: String, localPort: UInt16?, wifi: Bool, fingerprint: String, wait: Double) async throws {
-        let parts = server.split(separator: ":")
-        guard parts.count == 2, let remotePort = NWEndpoint.Port(String(parts[1])) else {
-            throw Failure(message: "Bad server address")
-        }
-        let quic = NWProtocolQUIC.Options(alpn: ["tbdirect"])
-        quic.idleTimeout = 45_000
-        // The server's own certificate, its fingerprint learned over the trusted connection.
-        sec_protocol_options_set_verify_block(quic.securityProtocolOptions, { _, trust, complete in
-            let secTrust = sec_trust_copy_ref(trust).takeRetainedValue()
-            guard let chain = SecTrustCopyCertificateChain(secTrust) as? [SecCertificate], let leaf = chain.first else { complete(false); return }
-            let digest = SHA256.hash(data: SecCertificateCopyData(leaf) as Data).map { String(format: "%02x", $0) }.joined()
-            complete(digest == fingerprint)
-        }, queue)
-        let parameters = NWParameters(quic: quic)
-        parameters.requiredInterfaceType = wifi ? .wifi : .cellular
-        parameters.prohibitedInterfaceTypes = [.other]
-        if let localPort, let local = NWEndpoint.Port(rawValue: localPort) {
-            parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.any), port: local)
-            parameters.allowLocalEndpointReuse = true
-        }
-        let group = NWConnectionGroup(with: NWMultiplexGroup(to: .hostPort(host: NWEndpoint.Host(String(parts[0])), port: remotePort)), using: parameters)
-        self.group = group
-        // Ready, failed, or stuck waiting (iOS could not use that port or network): no hang.
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            var resumed = false
-            let finish: (Error?) -> Void = { error in
-                guard !resumed else { return }
-                resumed = true
-                if let error { group.cancel(); continuation.resume(throwing: error) } else { continuation.resume() }
-            }
-            group.stateUpdateHandler = { [weak self] state in
-                switch state {
-                case .ready: finish(nil)
-                case .waiting(let error): finish(Failure(message: "QUIC waiting: \(error)"))
-                case .failed(let error):
-                    if resumed { self?.close() } else { finish(Failure(message: "QUIC failed: \(error)")) }
-                case .cancelled:
-                    if resumed { self?.close() } else { finish(Failure(message: "QUIC cancelled")) }
-                default: break
+    /// Notice when the path is gone (the server went quiet, the network changed).
+    private func watch() {
+        watcher = Task.detached { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                if !tbdirect_alive() {
+                    let notify = self?.onClose
+                    await MainActor.run { notify?() }
+                    return
                 }
             }
-            group.start(queue: queue)
-            queue.asyncAfter(deadline: .now() + wait) { finish(Failure(message: "QUIC did not start in \(Int(wait)) s")) }
-        }
-        // The local side: the app and the player connect here.
-        let tcp = NWParameters.tcp
-        tcp.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
-        tcp.acceptLocalOnly = true
-        let listener = try NWListener(using: tcp)
-        self.listener = listener
-        listener.newConnectionHandler = { [weak self] connection in self?.carry(connection) }
-        port = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UInt16, Error>) in
-            var resumed = false
-            listener.stateUpdateHandler = { [weak self] state in
-                switch state {
-                case .ready:
-                    if !resumed, let port = listener.port?.rawValue { resumed = true; continuation.resume(returning: port) }
-                case .failed(let error), .waiting(let error):
-                    if !resumed { resumed = true; continuation.resume(throwing: Failure(message: "Local proxy: \(error)")) } else { self?.close() }
-                default: break
-                }
-            }
-            listener.start(queue: queue)
-            queue.asyncAfter(deadline: .now() + 5) { if !resumed { resumed = true; listener.cancel(); continuation.resume(throwing: Failure(message: "Local proxy did not start")) } }
-        }
-    }
-
-    /// One local connection is one QUIC stream, both ways.
-    private func carry(_ local: NWConnection) {
-        guard !closed, let group, let stream = NWConnection(from: group) else { local.cancel(); return }
-        local.start(queue: queue)
-        stream.start(queue: queue)
-        pump(from: local, to: stream)
-        pump(from: stream, to: local)
-    }
-    private func pump(from: NWConnection, to: NWConnection) {
-        from.receive(minimumIncompleteLength: 1, maximumLength: 256 * 1024) { [weak self] data, _, complete, error in
-            let finish = complete || error != nil
-            to.send(content: data, contentContext: finish ? .finalMessage : .defaultMessage, isComplete: finish, completion: .contentProcessed { sendError in
-                if error != nil || sendError != nil { from.cancel(); to.cancel(); return }
-                if !finish { self?.pump(from: from, to: to) }
-            })
         }
     }
 
     func close() {
-        queue.async { [self] in
-            guard !closed else { return }
-            closed = true
-            listener?.cancel(); group?.cancel()
-            let notify = onClose
-            Task { @MainActor in notify?() }
-        }
+        watcher?.cancel(); watcher = nil
+        onClose = nil
+        tbdirect_stop()
     }
 }
 #endif

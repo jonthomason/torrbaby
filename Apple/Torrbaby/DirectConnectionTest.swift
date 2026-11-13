@@ -122,6 +122,13 @@ final class PunchProbe: @unchecked Sendable {
         }
     }
     func close() { for fd in sockets { Darwin.close(fd) }; sockets = [] }
+    /// Hand one socket over (it is no longer closed here); its descriptor.
+    func take(_ index: Int) -> Int32? {
+        guard sockets.indices.contains(index) else { return nil }
+        let fd = sockets[index]
+        sockets.remove(at: index)
+        return fd
+    }
     /// The local port a socket is bound to.
     func localPort(_ index: Int) -> UInt16? {
         guard sockets.indices.contains(index) else { return nil }
