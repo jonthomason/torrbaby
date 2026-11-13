@@ -74,14 +74,15 @@ pub fn decided(data: &Path, asset: &str, revision: &str) -> bool {
 /// What a file has yet to be tried with. Records from when only English speech was
 /// transcribed carry no list: a rejection then had tried English alone, which is how
 /// every Mandarin title came to have no subtitles. A Mandarin transcript made before
-/// the picture was read is redone from the picture, which is far more accurate; an
-/// English transcript is kept as it is.
+/// the picture was read is redone from the picture, which is far more accurate, and so is
+/// an English one when the picture holds subtitles (the audio is only ever a last resort).
 fn untried(saved: &Value) -> Vec<&'static str> {
     let listed = saved["tried"].as_array().map(|list| list.iter().filter_map(Value::as_str).collect::<Vec<_>>());
     let tried: Vec<&str> = match (saved["state"].as_str(), listed) {
         (_, Some(list)) => list,
         (Some("ready"), None) if saved["language"] == "zh-Hans" => vec!["zh-Hans", "en"],
-        (Some("ready"), None) => return vec![],
+        // An English transcript made before the picture was looked at: look at it now.
+        (Some("ready"), None) => vec!["en"],
         (_, None) if saved["reason"] == NO_AUDIO => vec!["en", "zh-Hans"],
         (_, None) => vec!["en"],
     };
@@ -130,8 +131,10 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
     let name = key(&s.data_dir, id, &revision);
     let record = root.join(format!("{name}.json"));
     let language_of = |saved: &Value| LANGUAGES.into_iter().find(|l| saved["language"] == *l).unwrap_or("en");
-    // A Chinese name: the picture, then Mandarin. Otherwise English speech comes first.
-    let mut remaining: Vec<&'static str> = if chinese_name(Path::new(asset["path"].as_str().unwrap_or_default())) || chinese_name(input) { STEPS.to_vec() } else { vec!["en", PICTURE, "zh-Hans"] };
+    // Subtitles printed in the picture always come first; the audio is the last resort,
+    // transcribed only when the picture holds none. A Chinese name tries Mandarin speech
+    // before English, any other name English first.
+    let mut remaining: Vec<&'static str> = if chinese_name(Path::new(asset["path"].as_str().unwrap_or_default())) || chinese_name(input) { STEPS.to_vec() } else { vec![PICTURE, "en", "zh-Hans"] };
     let mut tried: Vec<&'static str> = Vec::new();
     // A transcript already made, kept if the picture turns out to hold no subtitles.
     let mut kept: Option<(Value, PathBuf, &'static str)> = None;
@@ -390,10 +393,13 @@ mod tests {
         assert!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["picture","zh-Hans","en"]})).is_empty());
         assert_eq!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["zh-Hans","en"]})), ["picture"]);
         assert_eq!(untried(&json!({"state":"ready","language":"zh-Hans","tried":["en","burned","zh-Hans"]})), ["picture"], "a verdict from before the picture could be found");
-        // A Mandarin transcript is redone from the picture once; an English one is kept.
+        // A transcript made before the picture was looked at is redone from the picture once,
+        // Mandarin or English: the audio is only ever a last resort.
         assert_eq!(untried(&json!({"state":"ready","language":"zh-Hans"})), ["picture"]);
         assert!(untried(&json!({"state":"ready","language":"zh-Hans","tried":["zh-Hans","picture"]})).is_empty());
-        assert!(untried(&json!({"state":"ready"})).is_empty() && untried(&json!({"state":"ready","language":"en"})).is_empty());
+        assert_eq!(untried(&json!({"state":"ready"})), ["picture"]);
+        assert_eq!(untried(&json!({"state":"ready","language":"en"})), ["picture"]);
+        assert!(untried(&json!({"state":"ready","language":"en","tried":["picture","en"]})).is_empty());
         assert!(chinese_name(Path::new("/tv/尚公主 - S01E05.mkv")) && !chinese_name(Path::new("/tv/Black Doves - S01E01.mkv")));
     }
     #[test]

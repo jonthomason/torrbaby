@@ -673,7 +673,7 @@ mod tests {
         // A finished title transcribed by an older version is redone once.
         std::fs::write(crate::speech_subtitles::directory(&data).join("old.json"),r#"{"state":"ready","asset_id":"subtitled"}"#)?;
         assert_eq!(reopen_untranscribed(&db,&data)?,1);
-        std::fs::write(crate::speech_subtitles::record(&data,"subtitled","r1"),r#"{"state":"ready","asset_id":"subtitled"}"#)?;
+        std::fs::write(crate::speech_subtitles::record(&data,"subtitled","r1"),r#"{"state":"ready","asset_id":"subtitled","tried":["picture","en"]}"#)?;
         db.connection.execute("UPDATE media_processing SET state='ready',subtitles_state='ready' WHERE asset_id='subtitled'",[])?;
         assert_eq!(reopen_untranscribed(&db,&data)?,0);
         std::fs::remove_dir_all(data)?;
