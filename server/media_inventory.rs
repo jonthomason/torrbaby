@@ -187,7 +187,10 @@ pub(crate) fn order_assets(assets: &mut [Value], priorities: &std::collections::
         let entry=groups.entry(group_key(a)).or_default(); *entry=(*entry).max(priority);
     }
     let title=|a:&Value|a["queue_title"].as_str().or(a["series_name"].as_str()).or(a["id"].as_str()).unwrap_or("").to_lowercase();
-    assets.sort_by(|a,b| groups[&group_key(b)].cmp(&groups[&group_key(a)])
+    // A negative priority (redoing subtitles a file already has) goes after everything else.
+    let last=|a:&Value|priorities.get(a["id"].as_str().unwrap_or("")).is_some_and(|p|*p<0);
+    assets.sort_by(|a,b| last(a).cmp(&last(b))
+        .then_with(||groups[&group_key(b)].cmp(&groups[&group_key(a)]))
         .then_with(||title(a).cmp(&title(b)))
         .then_with(||group_key(a).cmp(&group_key(b)))
         .then_with(|| priorities.get(b["id"].as_str().unwrap_or("")).unwrap_or(&0)
@@ -417,6 +420,15 @@ mod priority_tests {
 #[cfg(test)]
 mod ocr_fallback_tests {
     use super::*;
+    #[test]
+    fn redoing_subtitles_a_file_has_waits_behind_everything_else() {
+        let asset=|id:&str,show:&str,episode:u64|json!({"id":id,"entity_id":show,"queue_title":show,"season":1,"episode":episode});
+        let mut assets=vec![asset("a1","Alpha",1),asset("a2","Alpha",2),asset("z1","Zulu",1),asset("t1","Tigers",1),asset("t2","Tigers",2)];
+        let priorities:std::collections::HashMap<String,i64>=[("a1".to_owned(),-1),("t1".to_owned(),3)].into();
+        order_assets(&mut assets,&priorities);
+        let order:Vec<&str>=assets.iter().filter_map(|a|a["id"].as_str()).collect();
+        assert_eq!(order,["t1","t2","a2","z1","a1"]);
+    }
     #[test]
     fn chinese_text_gets_english_only_when_missing() {
         let chinese=json!({"track":2,"text_extractable":true,"extraction_supported":true,"language":"zh-Hans"});

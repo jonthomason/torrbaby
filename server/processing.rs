@@ -138,7 +138,13 @@ pub(crate) fn reopen_untranscribed(db:&Database,data:&Path)->Result<usize> {
     for row in rows {
         let (Some(id),Some(revision))=(row["asset_id"].as_str(),row["revision"].as_str()) else{continue};
         if crate::speech_subtitles::decided(data,id,revision) {continue;}
-        reopened+=db.connection.execute("UPDATE media_processing SET subtitles_state='pending',stage='subtitles',state=CASE WHEN state IN ('ready','failed') THEN 'queued' ELSE state END,retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![now(),id,revision])?;
+        let changed=db.connection.execute("UPDATE media_processing SET subtitles_state='pending',stage='subtitles',state=CASE WHEN state IN ('ready','failed') THEN 'queued' ELSE state END,retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![now(),id,revision])?;
+        // A file that already has subtitles (from its audio) is only being checked for
+        // subtitles in its picture: that waits behind every file that has none yet.
+        if changed>0 && row["subtitles_state"]=="ready" {
+            db.connection.execute("INSERT INTO subtitle_priorities(asset_id,priority) VALUES(?,-1) ON CONFLICT(asset_id) DO NOTHING",[id])?;
+        }
+        reopened+=changed;
     }
     Ok(reopened)
 }
