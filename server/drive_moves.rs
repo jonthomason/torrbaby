@@ -45,6 +45,14 @@ pub struct Move {
     pub bytes: u64,
     pub done_bytes: u64,
     pub error: Option<String>,
+    /// Emptying a drive (`from`): the torrents Transmission moves itself, unfinished
+    /// downloads and Junk, one at a time before the units. Kept here so a restart goes on.
+    #[serde(default)]
+    pub from: Option<String>,
+    #[serde(default)]
+    pub carry: Vec<String>,
+    #[serde(default)]
+    pub carry_wait: Option<String>,
 }
 
 static MOVES: Mutex<Option<Vec<Move>>> = Mutex::new(None);
@@ -132,7 +140,8 @@ fn list(s: &Service) -> Value {
     all.sort_by(|a, b| b.created.total_cmp(&a.created));
     json!({"moves": all.iter().take(50).map(|m| json!({"id":m.id,"drive":m.drive,"asset_ids":m.asset_ids,"state":m.state,"created":m.created,
         "bytes":m.bytes,"done_bytes":if m.state == "running" { (m.done_bytes + copying).min(m.bytes) } else { m.done_bytes },"error":m.error,
-        "waiting":m.units.iter().find_map(|u| u.error.clone().filter(|_| u.step != "done"))})).collect::<Vec<_>>()})
+        "carrying":m.carry.len(),
+        "waiting":m.carry_wait.clone().filter(|_| !m.carry.is_empty()).or_else(|| m.units.iter().find_map(|u| u.error.clone().filter(|_| u.step != "done")))})).collect::<Vec<_>>()})
 }
 
 fn assets(s: &Service, ids: &[String]) -> Result<Vec<Value>> {
@@ -148,7 +157,7 @@ fn ids(body: &Value) -> Result<Vec<String>> {
 
 /// The units that move these assets to `target` (None: just where they are now).
 /// `whole_drive`: a drive is being emptied, so a download still under way is passed over
-/// here (Transmission carries it across itself, see `carry_rest`) instead of refusing.
+/// here (Transmission carries it across itself, see `carry_one`) instead of refusing.
 async fn plan(s: &Service, drives: &Drives, assets: &[Value], target: Option<&Drive>, whole_drive: bool) -> Result<(Vec<Unit>, Vec<String>)> {
     // Without Transmission's list a torrent's files would be taken for loose ones and moved
     // from under it, so a move is not planned then.
@@ -273,13 +282,14 @@ async fn start(s: &Service, body: &Value) -> Result<Value> {
         "These files are already moving");
     let assets = assets(s, &ids)?;
     let (units, _) = plan(s, &drives, &assets, Some(target), from.is_some()).await?;
-    let carried = match from { Some(from) => carry_rest(s, &drives, from, target, &units).await?, None => 0 };
-    if units.is_empty() && from.is_some() { return Ok(json!({"state":"done","bytes":0,"carried":carried})); }
-    ensure!(!units.is_empty(), "Already on that drive");
+    let carry = match from { Some(from) => leftovers(s, &drives, from, target, &units).await?, None => Vec::new() };
+    let carried = carry.len();
+    if units.is_empty() && carry.is_empty() && from.is_some() { return Ok(json!({"state":"done","bytes":0,"carried":0})); }
+    ensure!(!units.is_empty() || !carry.is_empty(), "Already on that drive");
     let bytes: u64 = units.iter().flat_map(|u| u.files.iter().map(|(_, size)| size)).sum();
     ensure!(fits(s, target, bytes), "Not enough free space on that drive");
     let m = Move { id: uuid::Uuid::new_v4().simple().to_string(), drive: target.id.clone(), asset_ids: ids, units, state: "queued".into(),
-        created: now(), bytes, done_bytes: 0, error: None };
+        created: now(), bytes, done_bytes: 0, error: None, from: from.map(|d| d.id.clone()), carry, carry_wait: None };
     let _saving = SAVING.lock().unwrap_or_else(|e| e.into_inner());
     let mut all = load(s);
     all.retain(|m| now() - m.created < 30.0 * 86400.0 || active(m));
@@ -290,29 +300,67 @@ async fn start(s: &Service, body: &Value) -> Result<Value> {
 }
 
 /// Emptying a drive: what Transmission keeps there that is not a finished title of the
-/// library — a download still under way, a discarded package seeding out its time in Junk —
-/// goes to the same folder on the target, moved by Transmission itself, which is how a
-/// download in progress stays one. Returns how many torrents were sent across.
-async fn carry_rest(s: &Service, drives: &Drives, from: &Drive, target: &Drive, units: &[Unit]) -> Result<usize> {
-    let mut carried = 0;
+/// library — a download still under way, a discarded package seeding out its time in Junk.
+/// Each goes to the same folder on the target, moved by Transmission itself, which is how a
+/// download in progress stays one (`carry_one`).
+async fn leftovers(s: &Service, drives: &Drives, from: &Drive, target: &Drive, units: &[Unit]) -> Result<Vec<String>> {
+    let mut carry = Vec::new();
     for t in crate::organizer::torrents(s).await? {
         let (Some(hash), Some(dir)) = (t["hash_string"].as_str(), t["download_dir"].as_str()) else { continue };
         if units.iter().any(|u| u.torrent.as_deref() == Some(hash)) { continue; }
         if crate::trials::trial_path(dir) { continue; }
-        let dir = Path::new(dir);
-        if !drives.drive_of(dir).is_some_and(|d| d.id == from.id) && !dir.starts_with(&from.media) { continue; }
-        // The same place on the target: its Downloads, its library folder, or its Junk.
-        let to = match drives.root_of(dir).filter(|(d, _, _)| d.id == from.id) {
-            Some((_, role, root)) => target.root(role).join(dir.strip_prefix(root)?),
-            None => target.media.join(dir.strip_prefix(&from.media)?),
-        };
-        crate::drives::create_media_folder(&to)?;
-        s.rpc.call("torrent_set_location", json!({"ids":[hash],"location":to,"move":true})).await?;
-        tracing::info!(hash, to = %to.display(), "Emptying a drive: Transmission is moving a torrent it still needs");
-        carried += 1;
+        if destination(drives, from, target, Path::new(dir)).is_some() { carry.push(hash.to_owned()); }
     }
-    if carried > 0 { s.invalidate_torrents(); }
-    Ok(carried)
+    Ok(carry)
+}
+
+/// Where a torrent kept in `dir` goes when `from` is emptied onto `target`: the same place
+/// there, its Downloads, its library folder or its Junk. None when it is not on `from`.
+fn destination(drives: &Drives, from: &Drive, target: &Drive, dir: &Path) -> Option<PathBuf> {
+    if !drives.drive_of(dir).is_some_and(|d| d.id == from.id) && !dir.starts_with(&from.media) { return None; }
+    let under = |base: &Path, rest: &Path| if rest.as_os_str().is_empty() { base.to_path_buf() } else { base.join(rest) };
+    Some(match drives.root_of(dir).filter(|(d, _, _)| d.id == from.id) {
+        Some((_, role, root)) => under(target.root(role), dir.strip_prefix(root).ok()?),
+        None => under(&target.media, dir.strip_prefix(&from.media).ok()?),
+    })
+}
+
+/// How long Transmission may take to move one torrent's files to another drive. It answers
+/// nothing else meanwhile, so carries go one at a time.
+const CARRY_SECONDS: u64 = 3600;
+
+/// Hand Transmission the next torrent to carry. False when it could only wait.
+async fn carry_one(s: &Service, m: &Move) -> Result<bool> {
+    let hash = m.carry[0].clone();
+    let wait = |reason: &str| { let reason = reason.to_owned(); update(s, &m.id, |m| m.carry_wait = Some(reason)).map(|_| false) };
+    let drives = Drives::of(&s.effective_config()?);
+    let from = m.from.as_deref().and_then(|id| drives.all().iter().find(|d| d.id == id));
+    let Some((from, target)) = from.zip(drives.all().iter().find(|d| d.id == m.drive)) else {
+        // A drive taken off the list since: there is nothing left to carry between.
+        update(s, &m.id, |m| { m.carry.clear(); m.carry_wait = None; })?;
+        return Ok(true);
+    };
+    if !from.online() || !target.online() { return wait("Waiting for the drive to be connected"); }
+    s.invalidate_torrents();
+    let Ok(torrents) = crate::organizer::torrents(s).await else { return wait("Waiting for Transmission") };
+    // Read again each time: the organizer may have filed a finished download since, and a
+    // carry sent before a restart may have been finished by Transmission meanwhile.
+    let to = torrents.iter().find(|t| t["hash_string"] == hash.as_str()).and_then(|t| t["download_dir"].as_str())
+        .and_then(|dir| destination(&drives, from, target, Path::new(dir)));
+    let Some(to) = to else {
+        update(s, &m.id, |m| { m.carry.retain(|h| *h != hash); m.carry_wait = None; })?;
+        return Ok(true);
+    };
+    crate::drives::create_media_folder(&to)?;
+    tracing::info!(hash, to = %to.display(), "Emptying a drive: Transmission is moving a torrent it still needs");
+    let sent = s.rpc.call_within("torrent_set_location", json!({"ids":[hash],"location":to,"move":true}),
+        Some(std::time::Duration::from_secs(CARRY_SECONDS))).await;
+    s.invalidate_torrents();
+    match sent {
+        // Taken off the list once Transmission is seen keeping it on the target, next time.
+        Ok(_) => { update(s, &m.id, |m| m.carry_wait = None)?; Ok(true) }
+        Err(error) => { tracing::warn!(hash, %error, "Emptying a drive: Transmission did not finish moving a torrent"); wait("Waiting for Transmission") }
+    }
 }
 
 /// Advance the oldest unfinished move by one unit. Called every few seconds.
@@ -345,6 +393,10 @@ fn release_stale_flags(s: &Service) {
 
 /// Advance one move by one unit. False when it could only wait.
 async fn step(s: &Service, mut m: Move) -> Result<bool> {
+    if !m.carry.is_empty() {
+        if m.state == "queued" { update(s, &m.id, |m| m.state = "running".into())?; }
+        return carry_one(s, &m).await;
+    }
     let Some(index) = m.units.iter().position(|u| u.step != "done") else {
         update(s, &m.id, |m| { m.state = "done".into(); m.done_bytes = m.bytes; })?;
         s.event("drive_move_done", json!({"id":m.id}))?;
@@ -465,8 +517,16 @@ async fn advance(s: &Service, unit: &Unit) -> std::result::Result<String, Stop> 
             if let Ok(mut leaving) = LEAVING.lock() { for (name, _) in &unit.files { leaving.insert(unit.to.join(name)); } }
             let copy = unit.clone();
             COPIED.store(0, std::sync::atomic::Ordering::Relaxed);
-            tokio::task::spawn_blocking(move || copy_unit(&copy)).await.map_err(|e| Fail(e.into()))??;
+            let copied = tokio::task::spawn_blocking(move || copy_unit(&copy)).await.map_err(|e| Fail(e.into()))?;
             COPIED.store(0, std::sync::atomic::Ordering::Relaxed);
+            if let Err(Fail(error)) = copied {
+                // A drive pulled out during the copy shows as a read or write error: that
+                // waits for the drive, and the copy starts again over its partial files.
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                drives_present(s, unit)?;
+                return Err(Fail(error));
+            }
+            copied?;
             // Every copy is verified: put them in place and switch, with no scan in between.
             let _scans = s.mutation_lock.lock().await;
             drives_present(s, unit)?;
@@ -474,6 +534,15 @@ async fn advance(s: &Service, unit: &Unit) -> std::result::Result<String, Stop> 
             let result = match result { Ok(()) => unit_assets(s, unit), Err(error) => Err(error) };
             let result = match result { Ok(assets) => switch(s, unit, &assets).await, Err(error) => Err(error) };
             if let Err(error) = result {
+                if error.is::<NotSwitched>() {
+                    // Transmission may still take the change it did not confirm, so the
+                    // verified copies stay where it would look, kept from scans as copies the
+                    // library does not use yet; the next try finds them and switches again.
+                    if let Ok(mut leaving) = LEAVING.lock() {
+                        for (name, _) in &unit.files { leaving.remove(&unit.from.join(name)); leaving.insert(unit.to.join(name)); }
+                    }
+                    return Err(Wait(error.to_string()));
+                }
                 // Back to the originals, which are untouched; the copies placed just now go.
                 for copy in &placed { let _ = std::fs::remove_file(copy); }
                 if let Some(hash) = &unit.torrent {
@@ -590,8 +659,14 @@ async fn switch(s: &Service, unit: &Unit, assets: &[Value]) -> Result<()> {
     }
     if let Some(hash) = &unit.torrent {
         // Transmission reads the verified copies from now on; it moves nothing itself.
-        s.rpc.call("torrent_set_location", json!({"ids":[hash],"location":unit.to,"move":false})).await?;
+        let sent = s.rpc.call("torrent_set_location", json!({"ids":[hash],"location":unit.to,"move":false})).await;
         s.invalidate_torrents();
+        if let Err(error) = sent {
+            // A busy Transmission may take the change without answering in time: what it
+            // uses decides. Not seen using the copies, the unit waits instead of failing.
+            tracing::warn!(hash, %error, "Moving files between drives: Transmission did not confirm the switch");
+            if !uses(s, hash, &unit.to).await { return Err(NotSwitched.into()); }
+        }
     }
     for asset in assets {
         let Some(id) = asset["id"].as_str() else { continue };
@@ -616,9 +691,51 @@ async fn switch(s: &Service, unit: &Unit, assets: &[Value]) -> Result<()> {
     Ok(())
 }
 
+/// A switch Transmission did not take; the unit waits and goes again.
+#[derive(Debug)]
+struct NotSwitched;
+impl std::fmt::Display for NotSwitched {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("Waiting for Transmission") }
+}
+impl std::error::Error for NotSwitched {}
+
+/// Whether Transmission keeps this torrent in `dir`, asking a few times while it is busy.
+async fn uses(s: &Service, hash: &str, dir: &Path) -> bool {
+    for attempt in 0..3 {
+        if attempt > 0 { tokio::time::sleep(std::time::Duration::from_secs(10)).await; }
+        let Ok(found) = s.rpc.call("torrent_get", json!({"ids":[hash],"fields":["hash_string","download_dir"]})).await else { continue };
+        return found["torrents"].as_array().into_iter().flatten()
+            .any(|t| t["download_dir"].as_str().is_some_and(|d| Path::new(d) == dir));
+    }
+    false
+}
+
 fn remove_empty_parents(file: &Path, root: &Path) {
     for dir in file.ancestors().skip(1) {
         if dir == root || !dir.starts_with(root) { break; }
         if std::fs::remove_dir(dir).is_err() { break; }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emptying_a_drive_carries_each_torrent_to_the_same_place_on_the_target() {
+        let config: crate::config::Config = serde_json::from_value(json!({"listen_host":"127.0.0.1","listen_port":1,"token_file":"t","state_file":"s",
+            "transmission_url":"http://127.0.0.1:9091","transmission_auth_file":null,"poll_seconds":30,
+            "drives":[{"id":"alpha","media":"/Volumes/Alpha/Media"},{"id":"beta","media":"/Volumes/Beta/Media"}]})).unwrap();
+        let drives = Drives::of(&config);
+        let [alpha, beta] = drives.all() else { panic!() };
+        let to = |dir: &str| destination(&drives, alpha, beta, Path::new(dir));
+        // A root itself, with no trailing separator added.
+        assert_eq!(to("/Volumes/Alpha/Media/Downloads").unwrap().as_os_str(), "/Volumes/Beta/Media/Downloads");
+        assert_eq!(to("/Volumes/Alpha/Media/TV/Show S01").unwrap(), Path::new("/Volumes/Beta/Media/TV/Show S01"));
+        // Outside the three roots but on the drive: Junk.
+        assert_eq!(to("/Volumes/Alpha/Media/Junk").unwrap().as_os_str(), "/Volumes/Beta/Media/Junk");
+        // Already on the target, or on no drive: nothing to carry.
+        assert!(to("/Volumes/Beta/Media/Downloads/").is_none());
+        assert!(to("/Users/me/Downloads").is_none());
     }
 }

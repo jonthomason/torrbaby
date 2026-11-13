@@ -88,15 +88,21 @@ impl Transmission {
         Ok(result)
     }
 
-    pub async fn call(&self, method: &str, params: Value) -> Result<Value> {
-        let mut session = self.session.lock().await;
+    pub async fn call(&self, method: &str, params: Value) -> Result<Value> { self.call_within(method, params, None).await }
+
+    /// As `call`, for a request Transmission takes long to answer: moving a torrent's files
+    /// (`torrent_set_location` with `move`) is answered only once they are all copied.
+    /// The session id is not held during a request, so one slow call does not hold up others.
+    pub async fn call_within(&self, method: &str, params: Value, timeout: Option<Duration>) -> Result<Value> {
         for _ in 0..2 {
+            let session = self.session.lock().await.clone();
             let mut request = self
                 .client
                 .post(&self.url)
                 .json(&json!({"jsonrpc":"2.0", "method":method, "params":params, "id":1}));
+            if let Some(timeout) = timeout { request = request.timeout(timeout); }
             if !session.is_empty() {
-                request = request.header("X-Transmission-Session-Id", &*session);
+                request = request.header("X-Transmission-Session-Id", &session);
             }
             if let Some((user, password)) = &self.credentials {
                 request = request.basic_auth(user, Some(password));
@@ -106,7 +112,7 @@ impl Transmission {
                 .await
                 .map_err(|error| request_error(method, error))?;
             if response.status() == StatusCode::CONFLICT {
-                *session = response
+                *self.session.lock().await = response
                     .headers()
                     .get("X-Transmission-Session-Id")
                     .context("Missing Transmission session ID")?

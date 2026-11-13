@@ -372,6 +372,18 @@ async fn main() -> Result<()> {
             println!("{}", serde_json::to_string(&response)?);
         }
         Command::Serve { config } => {
+            // Warnings, and what drives, moves and the organizer did, go to the server's log
+            // (stderr, which launchd writes to rust-server.log).
+            {
+                use tracing_subscriber::{filter::{LevelFilter, Targets}, prelude::*};
+                let targets = Targets::new().with_default(LevelFilter::WARN)
+                    .with_target("torrbaby::drives", LevelFilter::INFO)
+                    .with_target("torrbaby::drive_moves", LevelFilter::INFO)
+                    .with_target("torrbaby::organizer", LevelFilter::INFO);
+                let _ = tracing_subscriber::registry()
+                    .with(tracing_subscriber::fmt::layer().with_ansi(false).with_writer(std::io::stderr))
+                    .with(targets).try_init();
+            }
             let settings = config::Config::load(&config)?;
             let database = config::expand(&settings.state_file)?.with_extension("sqlite3");
             // Loopback stays loopback (tests, previews); otherwise every network the Mac is
