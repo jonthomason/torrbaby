@@ -58,9 +58,11 @@ fn text(pointer: *const c_char) -> Option<String> {
 #[unsafe(no_mangle)]
 pub extern "C" fn tbdirect_start(fd: i32, server: *const c_char, fingerprint: *const c_char) -> u16 {
     tbdirect_stop();
-    // Keepalives every 5 s and a 15 s idle limit: a carrier switch behind a hotspot kills the
-    // punched path silently, and the app should notice in seconds, not 45 s.
-    open(&TUNNEL, fd, server, fingerprint, b"tbdirect", "torrbaby-direct", 8, (5, 15))
+    // Keepalives every 5 s and a 45 s idle limit, so a short trip out of the app (iOS stops
+    // the keepalives) usually finds the path still open. A path that died meanwhile (a
+    // carrier switch behind a hotspot) is caught by the app's public-address check over the
+    // relay and by reads retried over the relay, not by this limit.
+    open(&TUNNEL, fd, server, fingerprint, b"tbdirect", "torrbaby-direct", 8, (5, 45))
 }
 
 /// Open the relay: QUIC from socket `fd` (ownership passes here) to Torrbaby's rendezvous on
