@@ -16392,6 +16392,74 @@
           }
         }
       }
+    },
+    "Move Everything to Another Drive…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move Everything to Another Drive…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将全部内容移到另一块硬盘…"
+          }
+        }
+      }
+    },
+    "Move everything on this drive to:": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move everything on this drive to:"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将这块硬盘上的全部内容移到："
+          }
+        }
+      }
+    },
+    "To remove this drive, first move everything on it to another drive.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "To remove this drive, first move everything on it to another drive."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "要移除这块硬盘，请先将其中的全部内容移到另一块硬盘。"
+          }
+        }
+      }
+    },
+    "Every title is copied and checked before its original is removed. Downloads in progress move too. This can take hours.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Every title is copied and checked before its original is removed. Downloads in progress move too. This can take hours."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每部影片都会先复制并校验，然后才移除原文件。正在进行的下载也会一并移动。这可能需要数小时。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

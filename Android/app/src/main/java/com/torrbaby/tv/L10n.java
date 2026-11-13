@@ -288,6 +288,7 @@ final class L10n {
     IDS.put("Episodes to keep per show", R.string.ui_1300ab995b0b);
     IDS.put("Erase this drive as APFS or Mac OS Extended (Journaled), not case-sensitive, in Disk Utility, then add it", R.string.ui_679d499c7e39);
     IDS.put("Estimating…", R.string.ui_e8642ee5ad7e);
+    IDS.put("Every title is copied and checked before its original is removed. Downloads in progress move too. This can take hours.", R.string.ui_c7db4a0b384e);
     IDS.put("Exit", R.string.ui_f83b6fe3aebf);
     IDS.put("Explore", R.string.ui_b965ae66fcc4);
     IDS.put("Extracting", R.string.ui_c3c5fb3f17e9);
@@ -413,6 +414,8 @@ final class L10n {
     IDS.put("More…", R.string.ui_4ac8baf107e9);
     IDS.put("Most seeds", R.string.ui_da76cfbbf86f);
     IDS.put("Move", R.string.ui_76cdb9507216);
+    IDS.put("Move Everything to Another Drive…", R.string.ui_962e0327d39b);
+    IDS.put("Move everything on this drive to:", R.string.ui_fe4d181c60c3);
     IDS.put("Move the entire package to Junk?", R.string.ui_f1f9e40dfd55);
     IDS.put("Move this drive's titles to another drive first", R.string.ui_3d7c9b828720);
     IDS.put("Move this package to Junk?", R.string.ui_960728c07953);
@@ -781,6 +784,7 @@ final class L10n {
     IDS.put("Time range", R.string.ui_22cd3c65b98a);
     IDS.put("Title", R.string.ui_768e0c1c6957);
     IDS.put("Title A–Z", R.string.ui_44a4597b5507);
+    IDS.put("To remove this drive, first move everything on it to another drive.", R.string.ui_476e06db8f10);
     IDS.put("To remove this drive, first move its titles to another drive from each title’s Manage Files.", R.string.ui_eafdcec8c9d0);
     IDS.put("Torrbaby makes a Media folder on the drive, with Downloads, Movies and TV inside, and keeps a small file there to recognise the drive.", R.string.ui_7fc3a24d77a0);
     IDS.put("Torrbaby transfer rates", R.string.ui_625fdd6c399e);

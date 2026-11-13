@@ -277,6 +277,7 @@
     <string name="ui_1300ab995b0b" formatted="false">Episodes to keep per show</string>
     <string name="ui_679d499c7e39" formatted="false">Erase this drive as APFS or Mac OS Extended (Journaled), not case-sensitive, in Disk Utility, then add it</string>
     <string name="ui_e8642ee5ad7e" formatted="false">Estimating…</string>
+    <string name="ui_c7db4a0b384e" formatted="false">Every title is copied and checked before its original is removed. Downloads in progress move too. This can take hours.</string>
     <string name="ui_f83b6fe3aebf" formatted="false">Exit</string>
     <string name="ui_b965ae66fcc4" formatted="false">Explore</string>
     <string name="ui_c3c5fb3f17e9" formatted="false">Extracting</string>
@@ -402,6 +403,8 @@
     <string name="ui_4ac8baf107e9" formatted="false">More…</string>
     <string name="ui_da76cfbbf86f" formatted="false">Most seeds</string>
     <string name="ui_76cdb9507216" formatted="false">Move</string>
+    <string name="ui_962e0327d39b" formatted="false">Move Everything to Another Drive…</string>
+    <string name="ui_fe4d181c60c3" formatted="false">Move everything on this drive to:</string>
     <string name="ui_f1f9e40dfd55" formatted="false">Move the entire package to Junk?</string>
     <string name="ui_3d7c9b828720" formatted="false">Move this drive\'s titles to another drive first</string>
     <string name="ui_960728c07953" formatted="false">Move this package to Junk?</string>
@@ -770,6 +773,7 @@
     <string name="ui_22cd3c65b98a" formatted="false">Time range</string>
     <string name="ui_768e0c1c6957" formatted="false">Title</string>
     <string name="ui_44a4597b5507" formatted="false">Title A–Z</string>
+    <string name="ui_476e06db8f10" formatted="false">To remove this drive, first move everything on it to another drive.</string>
     <string name="ui_eafdcec8c9d0" formatted="false">To remove this drive, first move its titles to another drive from each title’s Manage Files.</string>
     <string name="ui_7fc3a24d77a0" formatted="false">Torrbaby makes a Media folder on the drive, with Downloads, Movies and TV inside, and keeps a small file there to recognise the drive.</string>
     <string name="ui_625fdd6c399e" formatted="false">Torrbaby transfer rates</string>

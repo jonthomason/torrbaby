@@ -113,7 +113,7 @@ struct DrivesSettings: View {
             }
         }
         .sheet(isPresented: $adding) { AddDriveView { await load(); await store.refreshStatus() } }
-        .sheet(item: $editing) { drive in DriveDetailView(drive: drive, count: drives.count) { await load(); await store.refreshStatus() } }
+        .sheet(item: $editing) { drive in DriveDetailView(drive: drive, count: drives.count, others: drives.filter { $0.id != drive.id && $0.connected }) { await load(); await store.refreshStatus() } }
     }
 }
 
@@ -124,9 +124,12 @@ private struct DriveDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State var drive: ServerDrive
     let count: Int
+    /// The other connected drives, where everything on this one could go.
+    var others: [ServerDrive] = []
     let changed: () async -> Void
     @State private var name = ""
     @State private var confirmRemove = false
+    @State private var choosingTarget = false
     @State private var error: String?
     private static let reserves: [Int64] = [10, 25, 50, 100, 200, 500].map { $0 * 1_000_000_000 }
     private func save(_ body: [String: Any]) {
@@ -155,11 +158,16 @@ private struct DriveDetailView: View {
                         ForEach(Self.reserves + (Self.reserves.contains(drive.reserveBytes) ? [] : [drive.reserveBytes]), id: \.self) { Text(verbatim: bytes($0)).tag($0) }
                     }.disabled(store.busy)
                 } footer: { Text("New downloads stop going to a drive once its free space falls to this amount.") }
+                if drive.connected && !others.isEmpty {
+                    SwiftUI.Section {
+                        Button("Move Everything to Another Drive…") { choosingTarget = true }.disabled(store.busy)
+                    } footer: { Text("Every title is copied and checked before its original is removed. Downloads in progress move too. This can take hours.") }
+                }
                 SwiftUI.Section {
                     Button("Remove Drive", role: .destructive) { confirmRemove = true }
                         .disabled(store.busy || drive.files > 0 || count < 2)
                 } footer: {
-                    Text(LocalizedStringKey(drive.files > 0 ? "To remove this drive, first move its titles to another drive from each title’s Manage Files." : "Its files stay on the drive. Torrbaby stops using it."))
+                    Text(LocalizedStringKey(drive.files > 0 ? "To remove this drive, first move everything on it to another drive." : "Its files stay on the drive. Torrbaby stops using it."))
                 }
                 if let error { Text(L10n.text(error)).foregroundStyle(.orange) }
             }.formStyle(.grouped)
@@ -171,6 +179,17 @@ private struct DriveDetailView: View {
                         dismiss()
                     }
                 }
+            }
+            .confirmationDialog("Move everything on this drive to:", isPresented: $choosingTarget, titleVisibility: .visible) {
+                ForEach(others) { other in
+                    Button { 
+                        Task {
+                            do { try await store.send("POST", "/v1/drives/moves", body: ["drive": other.id, "from": drive.id]); error = nil; await changed() }
+                            catch { self.error = error.localizedDescription }
+                        }
+                    } label: { Text(verbatim: other.name) }
+                }
+                Button("Cancel", role: .cancel) {}
             }
             .confirmationDialog("Remove this drive?", isPresented: $confirmRemove, titleVisibility: .visible) {
                 Button("Remove Drive", role: .destructive) {

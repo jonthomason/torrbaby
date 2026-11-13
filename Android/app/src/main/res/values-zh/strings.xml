@@ -277,6 +277,7 @@
     <string name="ui_1300ab995b0b" formatted="false">每部剧保留的集数</string>
     <string name="ui_679d499c7e39" formatted="false">请先在“磁盘工具”中将此硬盘抹掉为 APFS 或“Mac OS 扩展（日志式）”格式（不区分大小写），然后再添加</string>
     <string name="ui_e8642ee5ad7e" formatted="false">正在估算…</string>
+    <string name="ui_c7db4a0b384e" formatted="false">每部影片都会先复制并校验，然后才移除原文件。正在进行的下载也会一并移动。这可能需要数小时。</string>
     <string name="ui_f83b6fe3aebf" formatted="false">退出</string>
     <string name="ui_b965ae66fcc4" formatted="false">查看详情</string>
     <string name="ui_c3c5fb3f17e9" formatted="false">提取中</string>
@@ -402,6 +403,8 @@
     <string name="ui_4ac8baf107e9" formatted="false">更多…</string>
     <string name="ui_da76cfbbf86f" formatted="false">做种最多</string>
     <string name="ui_76cdb9507216" formatted="false">移动</string>
+    <string name="ui_962e0327d39b" formatted="false">将全部内容移到另一块硬盘…</string>
+    <string name="ui_fe4d181c60c3" formatted="false">将这块硬盘上的全部内容移到：</string>
     <string name="ui_f1f9e40dfd55" formatted="false">将整个下载包移至废弃区？</string>
     <string name="ui_3d7c9b828720" formatted="false">请先将这块硬盘上的影片移到另一块硬盘</string>
     <string name="ui_960728c07953" formatted="false">将此下载包移至废弃区？</string>
@@ -770,6 +773,7 @@
     <string name="ui_22cd3c65b98a" formatted="false">时间范围</string>
     <string name="ui_768e0c1c6957" formatted="false">片名</string>
     <string name="ui_44a4597b5507" formatted="false">片名 A–Z</string>
+    <string name="ui_476e06db8f10" formatted="false">要移除这块硬盘，请先将其中的全部内容移到另一块硬盘。</string>
     <string name="ui_eafdcec8c9d0" formatted="false">要移除此硬盘，请先在各影片的“管理文件”中将其移到另一块硬盘。</string>
     <string name="ui_7fc3a24d77a0" formatted="false">Torrbaby 会在硬盘上创建 Media 文件夹，内含 Downloads、Movies 和 TV，并保存一个小文件用于识别这块硬盘。</string>
     <string name="ui_625fdd6c399e" formatted="false">Torrbaby 传输速度</string>

@@ -541,6 +541,7 @@ pub async fn tick(s: &Service) -> Result<()> {
     })?;
     let drives = Drives::of(&config);
     let online = drives.online();
+    tend_session(s, &drives).await;
     let running = remember_running(s, &all, &drives, &online);
     // What unfinished torrents will still write, drive by drive, for placing new ones.
     let mut unfinished: std::collections::HashMap<String, u64> = Default::default();
@@ -628,6 +629,41 @@ mod identification_tests {
         // A genuine video advert is far smaller than the episodes and does not block either.
         let sized = vec![json!({"name":"Show/Show.S01E01.mkv","length":900_000_000u64}), json!({"name":"Show/promo.mp4","length":8_000_000u64})];
         assert!(identified("h", &sized, &[episode]));
+    }
+}
+
+/// Transmission has one folder for new downloads and one for downloads in progress, for
+/// every torrent. With one drive that is where they belong. With several, each torrent is
+/// given its drive when it is added, and a shared in-progress folder would defeat that:
+/// every download would be written to that folder's drive first, fill it, and be copied
+/// across when done. So with more than one drive, or when either folder is not on a
+/// connected drive (its drive was retired), downloads in progress stay in their own
+/// drive's Downloads, under a temporary name, and the default folder is a connected
+/// drive's Downloads. Looked at once a minute.
+async fn tend_session(s: &Service, drives: &Drives) {
+    static LOOKED: std::sync::Mutex<f64> = std::sync::Mutex::new(0.0);
+    {
+        let Ok(mut looked) = LOOKED.lock() else { return };
+        if now() - *looked < 60.0 { return; }
+        *looked = now();
+    }
+    let Ok(session) = s.rpc.call("session_get", json!({"fields":["download_dir","incomplete_dir","incomplete_dir_enabled","rename_partial_files"]})).await else { return };
+    let online = drives.online();
+    let on_a_drive = |dir: &str| drives.drive_of(Path::new(dir)).is_some_and(|d| online.contains(&d.id));
+    let mut change = serde_json::Map::new();
+    let shared = session["incomplete_dir_enabled"] == true;
+    if shared && (drives.all().len() > 1 || !session["incomplete_dir"].as_str().is_some_and(on_a_drive)) {
+        change.insert("incomplete_dir_enabled".into(), json!(false));
+        if session["rename_partial_files"] != true { change.insert("rename_partial_files".into(), json!(true)); }
+    }
+    if !session["download_dir"].as_str().is_some_and(on_a_drive) {
+        if let Ok(drive) = drives.place(None, 0) { change.insert("download_dir".into(), json!(drive.downloads)); }
+    }
+    if change.is_empty() { return; }
+    let change = Value::Object(change);
+    match s.rpc.call("session_set", change.clone()).await {
+        Ok(_) => tracing::info!(settings = %change, "Set Transmission's folders for the drives in use"),
+        Err(error) => tracing::warn!(%error, "Could not set Transmission's folders"),
     }
 }
 
