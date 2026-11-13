@@ -728,6 +728,8 @@ final class Store: ObservableObject {
         networkSignature = signature
         guard previous != nil else { return }
         directEvent("network changed: \(previous ?? "?") → \(signature)")
+        // The route that worked says nothing about this network: the next check tries every way.
+        if activeServer.map(ServerRoutes.normalized) == ServerRoutes.normalized(primaryAddress) { activeServer = nil }
         dropDirect("network changed")
         if let tunnel = relayTunnel, tunnel.interface != PunchProbe.physicalInterface() { dropRelay("network changed") }
         refreshFullyNext()
@@ -838,7 +840,10 @@ final class Store: ObservableObject {
         #if os(iOS)
         // The relay through bronze joins the race unless this device is known to be at home
         // (then it would only cost a connection to bronze on every check).
-        let atHome = reachable && activeServer.map(ServerRoutes.normalized) == ServerRoutes.normalized(primary) && !activeRouteTunnelled
+        // Only while the home route is answering: after a failure, or on another network, the
+        // relay is tried too. (Trusting the last route alone kept a phone that left home on
+        // the home address only, offline, never trying bronze.)
+        let atHome = connected && activeServer.map(ServerRoutes.normalized) == ServerRoutes.normalized(primary) && !activeRouteTunnelled
         if !atHome && !relayAddress.isEmpty { addresses.append(Self.relayCandidate) }
         // Tailscale is retired on iPhone and iPad once the relay is known: home, direct and
         // the relay are the only ways.
