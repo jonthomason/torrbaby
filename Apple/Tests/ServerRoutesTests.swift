@@ -60,6 +60,24 @@ import Foundation
         assert(ServerRoutes.sharesSubnet(reached, interfaces: home))
         assert(!ServerRoutes.sharesSubnet(reached, interfaces: [(0x0A00_0005, 0xFF00_0000)]))
         assert(!ServerRoutes.sharesSubnet(reached, interfaces: []))
-        print("Route fallback, reuse, authorization, exhaustion and URL validation passed")
+        // Racing: away answers at once while home times out; away wins without waiting for home.
+        let started = Date()
+        let (raced, _) = try await ServerRoutes.race(addresses: [primary, fallback], preferred: primary) { address in
+            if address == primary { try await Task.sleep(for: .seconds(3)); throw URLError(.timedOut) }
+            return 1
+        }
+        assert(raced == fallback && Date().timeIntervalSince(started) < 1.5, "away should win after the grace period, not the home timeout")
+        // Home answering a moment after away is still preferred.
+        let (homeWins, _) = try await ServerRoutes.race(addresses: [primary, fallback], preferred: primary) { address in
+            if address == primary { try await Task.sleep(for: .milliseconds(200)) }
+            return 2
+        }
+        assert(homeWins == primary)
+        // Both down: the network error comes back.
+        do {
+            _ = try await ServerRoutes.race(addresses: [primary, fallback], preferred: primary) { (_: String) -> Int in throw URLError(.timedOut) }
+            fatalError("Both routes down must fail")
+        } catch let error as URLError { assert(error.code == .timedOut) }
+        print("Route fallback, reuse, authorization, exhaustion, racing and URL validation passed")
     }
 }

@@ -70,6 +70,52 @@ enum ServerRoutes {
         }
         return result
     }
+    /// Tries every route at once and uses the first to answer, waiting `grace` longer for the
+    /// preferred one (home) if another answered first. Trying them in turn meant waiting out the
+    /// home route's timeout before the away route was even tried, about 15 s away from home.
+    /// A failure that is not a network error (the server refused the request) ends it at once.
+    static func race<T: Sendable>(addresses: [String], preferred: String, grace: Duration = .milliseconds(600),
+                                  fetch: @escaping @Sendable (String) async throws -> T) async throws -> (String, T) {
+        let routes = addresses.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+        return try await withThrowingTaskGroup(of: (String, Result<T, Error>)?.self) { group in
+            for address in routes {
+                group.addTask {
+                    do { return (address, .success(try await fetch(address))) } catch { return (address, .failure(error)) }
+                }
+            }
+            var answered: (String, T)?
+            var failure: Error = URLError(.cannotConnectToHost)
+            var pending = routes.count
+            var preferredDone = false
+            var waiting = false
+            while let next = try await group.next() {
+                guard let (address, result) = next else {
+                    // The grace period for the preferred route is over.
+                    if let answered { group.cancelAll(); return answered }
+                    continue
+                }
+                pending -= 1
+                let isPreferred = normalized(address) == normalized(preferred)
+                if isPreferred { preferredDone = true }
+                switch result {
+                case .success(let value):
+                    if isPreferred { group.cancelAll(); return (address, value) }
+                    if answered == nil { answered = (address, value) }
+                case .failure(let error):
+                    guard let network = error as? URLError, network.code != .cancelled else { group.cancelAll(); throw error }
+                    failure = error
+                }
+                if let answered, preferredDone || pending == 0 { group.cancelAll(); return answered }
+                if answered != nil, !waiting {
+                    waiting = true
+                    group.addTask { try? await Task.sleep(for: grace); return nil }
+                }
+                if pending == 0 { break }
+            }
+            group.cancelAll()
+            throw failure
+        }
+    }
     /// Only read-only probes are retried. Mutations are never replayed on another route.
     static func probe<T>(addresses: [String], fetch: (String) async throws -> T) async throws -> (String, T) {
         var failure: Error = URLError(.cannotConnectToHost)

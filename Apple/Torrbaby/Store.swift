@@ -422,13 +422,11 @@ final class Store: ObservableObject {
                     // route that last worked (tried first) and give the home address a quick
                     // try ahead of it; clearing the route and marking the connection lost
                     // showed Offline on every return and waited out the home address.
-                    self.lastPrimaryRetry = .distantPast
                     await self.refresh()
                 } else if available && self.usingFallback {
                     // On cellular with Tailscale the path changes often. Keep the working
                     // fallback and only give the home address a quick try; dropping the
                     // route here showed Offline and made the status come and go.
-                    self.lastPrimaryRetry = .distantPast
                     self.refreshFullyNext()
                     await self.refresh(polling: true)
                 }
@@ -529,30 +527,17 @@ final class Store: ObservableObject {
     func endpoint(_ path: String) throws -> URL {
         try ServerRoutes.endpoint(activeServer ?? primaryAddress, path: path)
     }
-    private var lastPrimaryRetry = Date.distantPast
     private func probeConnection() async throws -> ServerPing {
         if let connectionProbe { return try await connectionProbe.value }
         let identityServer = server, primary = primaryAddress, fallback = fallbackServer
-        // The route that last worked goes first, but only while it is still one of the
-        // server's routes (an address used before its names were known is dropped).
-        let current = activeServer.flatMap { active in [primary, fallback].contains { ServerRoutes.normalized($0) == ServerRoutes.normalized(active) } ? active : nil }
-        var addresses = ServerRoutes.candidates(primary: primary, fallback: fallback, current: current)
-        // The working route is tried first, so a brief outage of the primary (a server
-        // restart, say) used to leave the client on the fallback until the network changed.
-        // While on the fallback, give the primary a short first try every 30 seconds.
-        let retryPrimary = usingFallback && Date().timeIntervalSince(lastPrimaryRetry) >= 30
-        if retryPrimary {
-            lastPrimaryRetry = Date()
-            addresses = ServerRoutes.candidates(primary: primary, fallback: fallback, current: primary) + addresses.filter { ServerRoutes.normalized($0) != ServerRoutes.normalized(primary) }
-            addresses = addresses.reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
-        }
+        // Home and away are tried at the same time; home wins if it answers within a moment.
+        let addresses = [primary, fallback].filter { !$0.isEmpty }
         let task = Task { @MainActor in
-            let (route, probed): (String, (ServerPing, Bool)) = try await ServerRoutes.probe(addresses: addresses) { address in
-                let quick = retryPrimary && ServerRoutes.normalized(address) == ServerRoutes.normalized(primary)
+            let (route, probed): (String, (ServerPing, Bool)) = try await ServerRoutes.race(addresses: addresses, preferred: primary) { @MainActor address in
                 let observer = RouteObserver()
                 // A tunnelled route over cellular can take longer than the LAN to answer.
                 let away = ServerRoutes.normalized(address) != ServerRoutes.normalized(primary)
-                let timeout: TimeInterval = quick ? 2 : away ? 10 : 4
+                let timeout: TimeInterval = away ? 10 : 4
                 let value: ServerPing
                 do { value = try await self.request("GET", "/v1/ping", timeout: timeout, address: address, observer: observer) }
                 catch is APIError {
