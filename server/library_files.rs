@@ -149,9 +149,12 @@ pub async fn preview(s: &Service, id: &str) -> Result<Value> {
 pub async fn submit(s: &Service, asset_id: &str, action: &str, token: &str) -> Result<Value> {
     ensure!(action == "delete" || action == "junk", "Unknown file action");
     let _mutation = s.mutation_lock.lock().await;
+    // Files on their way to another drive are that move's until it has finished.
+    ensure!(!crate::drive_moves::moving_assets(s, &[asset_id.to_owned()]), "These files are already moving");
     // A repeated confirmation can arrive after the torrent or files have gone.
     {
         let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+        ensure!(db.asset(asset_id).map_or(true, |asset| asset["moving"] != true), "These files are already moving");
         // A delayed retry must never authorize removal of a new download incarnation.
         if let Some(operation) = db.archived_confirmation(asset_id, action, token)? { return Ok(operation); }
         for operation in db.library_operations()? {

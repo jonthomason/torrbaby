@@ -16188,6 +16188,40 @@
           }
         }
       }
+    },
+    "Erase this drive as APFS (not case-sensitive) in Disk Utility, then add it": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erase this drive as APFS (not case-sensitive) in Disk Utility, then add it"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请先在“磁盘工具”中将此硬盘抹掉为 APFS（不区分大小写）格式，然后再添加"
+          }
+        }
+      }
+    },
+    "Erase this drive as APFS or Mac OS Extended (Journaled), not case-sensitive, in Disk Utility, then add it": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erase this drive as APFS or Mac OS Extended (Journaled), not case-sensitive, in Disk Utility, then add it"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请先在“磁盘工具”中将此硬盘抹掉为 APFS 或“Mac OS 扩展（日志式）”格式（不区分大小写），然后再添加"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

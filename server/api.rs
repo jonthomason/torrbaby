@@ -1587,7 +1587,12 @@ pub(crate) async fn media_file(s: &Service, hash: &str, index: u64) -> Result<Pa
             s.db.lock()
                 .map_err(|_| anyhow::anyhow!("Database lock failed"))?
                 .asset(hash)?;
-        if asset["offline"] == true {
+        // Asked of the drive now: the mark is only as fresh as the last scan, and a drive
+        // that has just come back plays at once.
+        if asset["offline"] == true && asset["path"].as_str().is_none_or(|path| {
+            let drives = crate::drives::Drives::of(&s.effective_config().unwrap_or_else(|_| s.config.clone()));
+            drives.offline(std::path::Path::new(path), &drives.online())
+        }) {
             bail!("This title is on a drive that is not connected");
         }
         if asset["complete"] != true {

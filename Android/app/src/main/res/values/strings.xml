@@ -274,6 +274,7 @@
     <string name="ui_4d9e959a49a6" formatted="false">Episode order</string>
     <string name="ui_49d641ba8893" formatted="false">Episodes</string>
     <string name="ui_1300ab995b0b" formatted="false">Episodes to keep per show</string>
+    <string name="ui_679d499c7e39" formatted="false">Erase this drive as APFS or Mac OS Extended (Journaled), not case-sensitive, in Disk Utility, then add it</string>
     <string name="ui_e8642ee5ad7e" formatted="false">Estimating…</string>
     <string name="ui_f83b6fe3aebf" formatted="false">Exit</string>
     <string name="ui_b965ae66fcc4" formatted="false">Explore</string>

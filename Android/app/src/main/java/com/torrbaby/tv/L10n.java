@@ -285,6 +285,7 @@ final class L10n {
     IDS.put("Episode order", R.string.ui_4d9e959a49a6);
     IDS.put("Episodes", R.string.ui_49d641ba8893);
     IDS.put("Episodes to keep per show", R.string.ui_1300ab995b0b);
+    IDS.put("Erase this drive as APFS or Mac OS Extended (Journaled), not case-sensitive, in Disk Utility, then add it", R.string.ui_679d499c7e39);
     IDS.put("Estimating…", R.string.ui_e8642ee5ad7e);
     IDS.put("Exit", R.string.ui_f83b6fe3aebf);
     IDS.put("Explore", R.string.ui_b965ae66fcc4);

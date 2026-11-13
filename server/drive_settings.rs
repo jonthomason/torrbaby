@@ -71,7 +71,9 @@ fn candidates(s: &Service) -> Result<Value> {
         let writable = std::fs::metadata(&mount).is_ok_and(|m| !m.permissions().readonly());
         let name = mount.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let known = drives::read_marker(&mount.join("Media"));
+        let (format, case_sensitive) = drives::format_of(&mount).unwrap_or_default();
         found.push(json!({"mount":mount,"name":name,"total_bytes":total,"free_bytes":free,"writable":writable,
+            "format":format,"case_sensitive":case_sensitive,"usable":drives::usable_format(&mount),
             "has_media":mount.join("Media").is_dir(),"used_before":known.is_some()}));
     }
     Ok(json!({"candidates":found}))
@@ -107,6 +109,7 @@ fn add(s: &Service, body: &Value) -> Result<Value> {
     // A part of the startup disk (Recovery, Preboot…) shares its space; it is not a drive.
     ensure!(!drives::capacity_of(&mount).zip(drives::capacity_of(Path::new("/"))).is_some_and(|(this, startup)| this.0 == startup.0),
         "Choose a connected drive");
+    ensure!(drives::usable_format(&mount), "Erase this drive as APFS or Mac OS Extended (Journaled), not case-sensitive, in Disk Utility, then add it");
     let drives = Drives::of(&s.effective_config()?);
     ensure!(!drives.all().iter().any(|d| d.media.starts_with(&mount) || mount.starts_with(&d.media)), "This drive is already in use");
     let media = mount.join("Media");

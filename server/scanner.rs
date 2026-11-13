@@ -270,6 +270,7 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
                 let Some(name) = file["name"].as_str() else {
                     continue;
                 };
+                let name = &crate::drives::spelling(name);
                 if Path::new(name).is_absolute()
                     || Path::new(name)
                         .components()
@@ -335,18 +336,33 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
                     if entry.file_name()==".torrbaby-trials" {continue;}
                     if entry.path() == root.join("Junk") { continue; }
                     pending.push(entry.path());
-                } else if kind.is_file() && video(&entry.path()) && !crate::drive_moves::leaving(&entry.path())
-                    && !(role == Role::Downloads && torrent_copy(&entry.path(), root, incomplete, &unfinished_names, &tracked)) {
-                    candidates.entry(entry.path()).or_insert_with(
+                } else if kind.is_file() && video(&entry.path()) && !crate::drive_moves::leaving(&crate::drives::spelled(&entry.path()))
+                    && !(role == Role::Downloads && torrent_copy(&crate::drives::spelled(&entry.path()), root, incomplete, &unfinished_names, &tracked)) {
+                    // Kept in the one spelling, however this drive lists the name.
+                    candidates.entry(crate::drives::spelled(&entry.path())).or_insert_with(
                         || json!({"complete":complete,"added_at":now(),"torrent_present":false}),
                     );
                 }
             }
         }
     }
-    let by_path: HashMap<_, _> = old
+    // One file reached under two spellings of its name is one file: Transmission writes an
+    // accented name composed, and a Mac OS Extended drive lists it decomposed. The torrent's
+    // spelling is kept.
+    {
+        let mut spelled: HashMap<(u64, u64), Vec<PathBuf>> = HashMap::new();
+        for path in candidates.keys() {
+            if let Ok(meta) = fs::metadata(path) { spelled.entry((meta.dev(), meta.ino())).or_default().push(path.clone()); }
+        }
+        for mut paths in spelled.into_values().filter(|paths| paths.len() > 1) {
+            paths.sort_by_key(|path| candidates[path]["torrent_present"] != true);
+            for extra in &paths[1..] { candidates.remove(extra); }
+        }
+    }
+    // Records from before paths were kept in one spelling are found under it too.
+    let by_path: HashMap<String, &Value> = old
         .iter()
-        .filter_map(|a| a["path"].as_str().map(|p| (p, a)))
+        .filter_map(|a| a["path"].as_str().map(|p| (crate::drives::spelling(p), a)))
         .collect();
     let by_inode: HashMap<_, _> = old
         .iter()
@@ -395,7 +411,10 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
             .zip(info["file_index"].as_u64())
             .and_then(|key| by_torrent.get(&key).copied())
             .or_else(|| by_path.get(name.as_ref()).copied())
-            .or_else(|| inode.as_ref().and_then(|inode| by_inode.get(inode.as_str()).copied()));
+            // A file's number says which file it is only on its own drive: two drives hand
+            // out the same numbers, and macOS renumbers a drive each time it is connected.
+            .or_else(|| inode.as_ref().and_then(|inode| by_inode.get(inode.as_str()).copied())
+                .filter(|old| old["path"].as_str().is_some_and(|was| drives.drive_of(Path::new(was)).map(|d| &d.id) == drives.drive_of(&path).map(|d| &d.id))));
         let mut asset = previous.cloned().unwrap_or(
             json!({"id":format!("asset-{}",uuid::Uuid::new_v4().simple()),"status":"pending"}),
         );

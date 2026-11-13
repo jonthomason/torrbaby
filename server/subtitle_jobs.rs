@@ -317,8 +317,10 @@ impl Manager {
     /// the same file, so the job follows it instead of being redone.
     pub fn relocate(&self, asset: &str, current: &Path) -> usize {
         let Ok(now) = revision(current) else { return 0 };
-        // dev:inode:size:mtime:mtime_ns:ctime:ctime_ns — a move keeps size and mtime.
-        let content = |r: &str| r.split(':').skip(2).take(3).map(str::to_owned).collect::<Vec<_>>();
+        // dev:inode:size:mtime:mtime_ns:ctime:ctime_ns — a move keeps size and mtime, to the
+        // second: a Mac OS Extended drive keeps no finer time than that.
+        let content = |r: &str| { let parts: Vec<String> = r.split(':').skip(2).take(3).map(str::to_owned).collect();
+            if parts.len() == 3 { vec![parts[0].clone(), parts[1].clone(), String::new()] } else { parts } };
         let ids: Vec<String> = self.index.lock().ok().and_then(|index| index.get(asset).cloned()).unwrap_or_default();
         let mut moved = 0;
         for id in ids {

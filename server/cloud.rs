@@ -939,7 +939,12 @@ impl Cloud {
         let (entities, assets) = { let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?; (db.documents("entities")?, db.documents("assets")?) };
         let drives = crate::drives::Drives::of(&config);
         let prefer = if film { None } else { crate::drives::show_titled(&entities, &assets, &title).and_then(|show| drives.show_drive(&assets, &show)) };
-        let folder = drives.place(prefer.as_deref(), bytes)?.library(!film).join(&title);
+        // Videos the library already has as good are never fetched, and each is checked
+        // for room as its turn comes, so the largest one fitting is enough to begin.
+        let largest = chosen.iter().map(|(_, size)| *size).max().unwrap_or(0);
+        let drive = drives.place_for(prefer.as_deref(), bytes, largest)?;
+        crate::drives::commit_more("cloud", &drive.id, bytes);
+        let folder = drive.library(!film).join(&title);
         // Several videos for one episode are its parts and extras (a variety show's
         // "第1期(一)", "第1期纯享"…), not copies of it: each keeps its own label in its name,
         // or they would all be filed as the one episode and replace each other.
@@ -1075,6 +1080,9 @@ impl Cloud {
         let piece = link["data"][0]["range_size"].as_u64().filter(|n| (1 << 20..=1 << 30).contains(n)).unwrap_or(20_485_760);
         let parent = destination.parent().context("Invalid destination")?;
         crate::drives::create_media_folder(parent)?;
+        // Room for what is still to come of this video, before any of it is written.
+        let have = tokio::fs::metadata(format!("{}.partial", destination.display())).await.map(|m| m.len()).unwrap_or(0);
+        ensure!(crate::drives::free_for(parent).is_none_or(|free| free > size.saturating_sub(have).saturating_add(crate::drives::MARGIN)), "Not enough free space on that drive");
         // Pieces left by the earlier ways of downloading are of no use to this one.
         for i in 0..8u64 { let _ = tokio::fs::remove_file(format!("{}.part{i:02}", destination.display())).await; }
         let _ = tokio::fs::remove_file(format!("{}.joining", destination.display())).await;
@@ -1283,7 +1291,19 @@ impl Cloud {
         let fixed = self.retag_delivered().await;
         if fixed > 0 { tracing::info!(fixed, "Retagged earlier downloads from hev1 to hvc1"); self.rescan.notify_one(); }
         loop {
-            let next = self.jobs.lock().ok().and_then(|jobs| jobs.iter().find(|j| j.state == "queued").cloned());
+            // What waiting and running downloads will still write, for placing new ones; a
+            // download whose drive is away waits in line for it rather than failing.
+            let drives = s.effective_config().ok().map(|config| crate::drives::Drives::of(&config));
+            let online = drives.as_ref().map(|d| d.online()).unwrap_or_default();
+            let away = |job: &Job| drives.as_ref().is_some_and(|d| job.files.iter().any(|f| !f.done && d.offline(&f.destination, &online)));
+            if let (Some(drives), Ok(jobs)) = (&drives, self.jobs.lock()) {
+                let mut pending: HashMap<String, u64> = HashMap::new();
+                for file in jobs.iter().filter(|j| matches!(j.state.as_str(), "queued" | "saving" | "downloading" | "retrying")).flat_map(|j| &j.files).filter(|f| !f.done) {
+                    if let Some(drive) = drives.drive_of(&file.destination) { *pending.entry(drive.id.clone()).or_default() += file.size; }
+                }
+                crate::drives::commit("cloud", pending);
+            }
+            let next = self.jobs.lock().ok().and_then(|jobs| jobs.iter().find(|j| j.state == "queued" && !away(j)).cloned());
             let Some(job) = next else {
                 // Torrents that were still seeding when their episodes were bettered are let go once they finish.
                 self.reap(s).await;

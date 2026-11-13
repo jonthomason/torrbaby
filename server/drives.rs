@@ -54,11 +54,16 @@ impl Drive {
     /// whose volume is not mounted are never adopted: they are on the startup disk.
     pub fn status(&self) -> Status {
         let marker = self.media.join(MARKER);
-        let status = match std::fs::read(&marker) {
-            Ok(raw) => match serde_json::from_slice::<Value>(&raw).ok().and_then(|v| v["id"].as_str().map(str::to_owned)) {
-                Some(id) if id == self.id => Status::Online,
-                Some(id) => Status::Foreign(id),
-                None => Status::Foreign(String::new()),
+        let read = std::fs::read(&marker).map(|raw| serde_json::from_slice::<Value>(&raw).ok().and_then(|v| v["id"].as_str().map(str::to_owned)));
+        let status = match read {
+            Ok(Some(id)) if id == self.id => Status::Online,
+            Ok(Some(id)) => Status::Foreign(id),
+            // A marker cut short (power lost while it was written) names no drive: it is
+            // written again, as for a drive that has none, rather than taking the drive away.
+            Ok(None) if !self.adoptable() => Status::Foreign(String::new()),
+            Ok(None) => match write_marker(&self.media, &self.id) {
+                Ok(()) => { tracing::warn!(drive = self.id, media = %self.media.display(), "Rewrote a drive's unreadable marker"); Status::Online }
+                Err(error) => { tracing::warn!(drive = self.id, %error, "Could not rewrite a drive's marker"); Status::Foreign(String::new()) }
             },
             Err(error) if error.kind() == std::io::ErrorKind::NotFound && self.adoptable() => match write_marker(&self.media, &self.id) {
                 Ok(()) => { tracing::info!(drive = self.id, media = %self.media.display(), "Marked a configured drive"); Status::Online }
@@ -121,6 +126,24 @@ pub fn read_marker(media: &Path) -> Option<String> {
 /// Size and free space of a connected drive.
 pub fn space(drive: &Drive) -> (u64, u64) { capacity(&drive.media).unwrap_or((0, 0)) }
 pub fn capacity_of(path: &Path) -> Option<(u64, u64)> { capacity(path) }
+/// Free space where `path` is or will be: asked of its nearest folder that exists.
+pub fn free_for(path: &Path) -> Option<u64> { path.ancestors().find(|p| p.exists()).and_then(capacity).map(|(_, free)| free) }
+pub const MARGIN: u64 = MARGIN_BYTES;
+
+/// Space on each drive that downloads already under way will still take: free space
+/// alone would send several new downloads to the same drive and fill it. Each kind of
+/// download ("torrents", "cloud") reports its own figures, replacing its last report.
+static COMMITTED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<&'static str, std::collections::HashMap<String, u64>>>> = std::sync::LazyLock::new(Default::default);
+pub fn commit(kind: &'static str, by_drive: std::collections::HashMap<String, u64>) {
+    if let Ok(mut all) = COMMITTED.lock() { all.insert(kind, by_drive); }
+}
+/// One more download just placed, until its kind's next report includes it.
+pub fn commit_more(kind: &'static str, drive: &str, bytes: u64) {
+    if let Ok(mut all) = COMMITTED.lock() { *all.entry(kind).or_default().entry(drive.to_owned()).or_default() += bytes; }
+}
+fn committed(drive: &str) -> u64 {
+    COMMITTED.lock().map(|all| all.values().filter_map(|kind| kind.get(drive)).sum()).unwrap_or(0)
+}
 /// Whether `path` is where a volume is mounted.
 pub fn is_mount(path: &Path) -> bool {
     match (std::fs::metadata(path), path.parent().map(std::fs::metadata)) {
@@ -131,10 +154,46 @@ pub fn is_mount(path: &Path) -> bool {
 
 pub fn write_marker(media: &Path, id: &str) -> std::io::Result<()> {
     let staged = media.join(format!("{MARKER}.new"));
-    std::fs::write(&staged, serde_json::to_vec_pretty(&json!({"id": id,
-        "about": "Torrbaby recognises this drive by this file. Keep it; it is not needed by anything else."}))?)?;
-    std::fs::rename(staged, media.join(MARKER))
+    {
+        use std::io::Write;
+        let mut out = std::fs::File::create(&staged)?;
+        out.write_all(&serde_json::to_vec_pretty(&json!({"id": id,
+            "about": "Torrbaby recognises this drive by this file. Keep it; it is not needed by anything else."}))?)?;
+        out.sync_all()?;
+    }
+    std::fs::rename(staged, media.join(MARKER))?;
+    if let Ok(dir) = std::fs::File::open(media) { let _ = dir.sync_all(); }
+    Ok(())
 }
+
+/// A path in the one spelling Torrbaby keeps and compares paths in (composed, NFC). The
+/// same accented, kana or hangul name arrives spelled two ways: Transmission and cloud
+/// shares usually compose it, and a Mac OS Extended drive lists every name decomposed,
+/// however it was written. Both spellings open the same file on these drives, so only
+/// what Torrbaby remembers and compares needs to agree.
+pub fn spelled(path: &Path) -> PathBuf {
+    match path.to_str() { Some(text) => PathBuf::from(spelling(text)), None => path.to_path_buf() }
+}
+pub fn spelling(text: &str) -> String {
+    use unicode_normalization::{UnicodeNormalization, is_nfc};
+    if is_nfc(text) { text.to_owned() } else { text.nfc().collect() }
+}
+
+/// The format of the volume holding `path` ("apfs", "exfat"…) and whether its names are
+/// case-sensitive. Only APFS and Mac OS Extended that are not case-sensitive are taken as
+/// drives: they are what the library was built and tested on, and names differing only in
+/// case would collide when a title moves between a drive that tells them apart and one
+/// that does not.
+pub fn format_of(path: &Path) -> Option<(String, bool)> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut stat: libc::statfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statfs(c.as_ptr(), &mut stat) } != 0 { return None; }
+    let name = unsafe { std::ffi::CStr::from_ptr(stat.f_fstypename.as_ptr()) }.to_string_lossy().into_owned();
+    let sensitive = unsafe { libc::pathconf(c.as_ptr(), libc::_PC_CASE_SENSITIVE) } == 1;
+    Some((name, sensitive))
+}
+pub fn usable_format(path: &Path) -> bool { format_of(path).is_some_and(|(name, sensitive)| (name == "apfs" || name == "hfs") && !sensitive) }
 
 /// A path under `/Volumes/<name>` is only on its drive while that volume is mounted;
 /// otherwise the folders are on the startup disk.
@@ -230,20 +289,26 @@ impl Drives {
     /// reserve free. When every drive is down to its reserve, the one with the most space
     /// still takes a download that fits, so a full library slows down rather than stops.
     /// `bytes` is 0 when the size is not known yet.
-    pub fn place(&self, prefer: Option<&str>, bytes: u64) -> anyhow::Result<&Drive> {
+    pub fn place(&self, prefer: Option<&str>, bytes: u64) -> anyhow::Result<&Drive> { self.place_for(prefer, bytes, bytes) }
+    /// As `place`, for a download that arrives a file at a time and checks its room before
+    /// each: when no drive has room for all of `bytes`, the roomiest still takes it if the
+    /// largest file (`least`) fits. Space already promised to unfinished downloads and
+    /// moves (`commit`) counts as used.
+    pub fn place_for(&self, prefer: Option<&str>, bytes: u64, least: u64) -> anyhow::Result<&Drive> {
+        let bytes_needed = least;
         let candidates: Vec<(&Drive, u64)> = self.0.iter().filter(|d| d.accept_new && d.online())
-            .filter_map(|d| capacity(&d.media).map(|(_, free)| (d, free))).collect();
+            .filter_map(|d| capacity(&d.media).map(|(_, free)| (d, free.saturating_sub(committed(&d.id))))).collect();
         anyhow::ensure!(!candidates.is_empty(), "No connected drive takes new downloads");
         let roomy = |(d, free): &&(&Drive, u64)| *free >= bytes.saturating_add(d.reserve_bytes);
         if let Some((d, _)) = candidates.iter().filter(roomy).find(|(d, _)| Some(d.id.as_str()) == prefer) { return Ok(d); }
         if let Some((d, _)) = candidates.iter().filter(roomy).max_by_key(|(_, free)| *free) { return Ok(d); }
         let (d, free) = candidates.iter().max_by_key(|(_, free)| *free).expect("candidates is not empty");
-        anyhow::ensure!(*free > bytes.saturating_add(MARGIN_BYTES), "Not enough free space on any drive");
+        anyhow::ensure!(*free > bytes_needed.saturating_add(MARGIN_BYTES), "Not enough free space on any drive");
         Ok(d)
     }
     /// Whether `drive` can take `bytes` more and keep its reserve.
     pub fn has_room(drive: &Drive, bytes: u64) -> bool {
-        capacity(&drive.media).is_some_and(|(_, free)| free >= bytes.saturating_add(drive.reserve_bytes))
+        capacity(&drive.media).is_some_and(|(_, free)| free.saturating_sub(committed(&drive.id)) >= bytes.saturating_add(drive.reserve_bytes))
     }
     /// The drive holding the newest season of a show already in the library.
     pub fn show_drive(&self, assets: &[Value], entity: &str) -> Option<String> {

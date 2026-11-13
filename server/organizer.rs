@@ -101,6 +101,12 @@ pub async fn action(s: &Service, hash: &str, action: &str, body: &Value) -> Resu
     };
     if let Some(method) = method {
         let result = s.rpc.call(method, json!({"ids":[hash]})).await?;
+        if action == "stop" {
+            // Stopped by hand: no longer one Torrbaby stopped for its drive and will start again.
+            let _ = s.change_state(|state| for key in ["held_for_drive", "running_torrents"] {
+                if let Some(list) = state[key].as_array_mut() { list.retain(|h| !h.as_str().is_some_and(|h| h.eq_ignore_ascii_case(hash))); }
+            });
+        }
         s.event(&format!("torrent_{action}"), json!({"hash":hash}))?;
         s.invalidate_torrents();
         return Ok(result);
@@ -269,7 +275,10 @@ pub(crate) async fn add_at(s: &Service, body: &Value, directory:Option<&Path>) -
                 let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
                 (db.documents("entities")?, db.documents("assets")?)
             };
-            Drives::of(&config).place_named(&entities, &assets, release.0.as_deref(), release.1)?.downloads.clone()
+            let drives = Drives::of(&config);
+            let drive = drives.place_named(&entities, &assets, release.0.as_deref(), release.1)?;
+            crate::drives::commit_more("torrents", &drive.id, release.1);
+            drive.downloads.clone()
         }
     };
     params["download_dir"] = json!(download_dir.to_string_lossy());
@@ -525,9 +534,6 @@ pub async fn tick(s: &Service) -> Result<()> {
     apply_private_seeding(s).await;
     let _guard = s.mutation_lock.lock().await;
     let config = s.effective_config()?;
-    if config.paused {
-        return Ok(());
-    }
     let all = torrents(s).await?;
     s.change_state(|state| {
         state["last_poll"] = json!(now());
@@ -536,6 +542,13 @@ pub async fn tick(s: &Service) -> Result<()> {
     let drives = Drives::of(&config);
     let online = drives.online();
     let running = remember_running(s, &all, &drives, &online);
+    // What unfinished torrents will still write, drive by drive, for placing new ones.
+    let mut unfinished: std::collections::HashMap<String, u64> = Default::default();
+    for t in &all {
+        let Some(drive) = t["download_dir"].as_str().and_then(|dir| drives.drive_of(Path::new(dir))) else { continue };
+        *unfinished.entry(drive.id.clone()).or_default() += t["left_until_done"].as_u64().unwrap_or(0);
+    }
+    crate::drives::commit("torrents", unfinished);
     for t in &all {
         if crate::trials::trial_path(t["download_dir"].as_str().unwrap_or("")) {continue;}
         let hash = text(t, "hash_string")?;
@@ -546,6 +559,8 @@ pub async fn tick(s: &Service) -> Result<()> {
         if crate::drive_moves::moving_torrent(s, hash) { continue; }
         release_for_drive(s, t).await;
         reconnect(s, t, running.contains(hash)).await;
+        // Pausing automation pauses filing and naming, not the care of a drive that is away.
+        if config.paused { continue; }
         settle_placement(s, &drives, t).await;
         if s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.hidden_package(hash)? { continue; }
         let previous = job(s, hash)?;
@@ -733,7 +748,10 @@ async fn settle_placement(s: &Service, drives: &Drives, t: &Value) {
     let name = t["name"].as_str();
     let prefer = name.and_then(|n| crate::drives::show_for_name(&entities, &assets, n)).and_then(|show| drives.show_drive(&assets, &show));
     let Ok(best) = drives.place(prefer.as_deref(), size) else { return };
-    let moves = best.id != current.id && (!Drives::has_room(current, size) || prefer.as_deref() == Some(best.id.as_str()));
+    // Data taken over by a check is on disk without having been downloaded this time.
+    let left = t["left_until_done"].as_u64().unwrap_or(size);
+    if size.saturating_sub(left) > SETTLE_BYTES { return; }
+    let moves = best.id != current.id && (!Drives::has_room(current, left) || prefer.as_deref() == Some(best.id.as_str()));
     if !moves { return; }
     match s.rpc.call("torrent_set_location", json!({"ids":[hash],"location":best.downloads,"move":true})).await {
         Ok(_) => tracing::info!(hash, from = current.id, to = best.id, "Placed a new torrent once its size was known"),

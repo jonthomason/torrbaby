@@ -72,8 +72,14 @@ fn load(s: &Service) -> Vec<Move> {
 }
 fn store(s: &Service, all: &[Move]) -> Result<()> {
     let staged = file(s).with_extension("json.new");
-    std::fs::write(&staged, serde_json::to_vec(all)?)?;
+    {
+        use std::io::Write;
+        let mut out = std::fs::File::create(&staged)?;
+        out.write_all(&serde_json::to_vec(all)?)?;
+        out.sync_all()?;
+    }
     std::fs::rename(staged, file(s))?;
+    sync_dir(&s.data_dir);
     *MOVES.lock().unwrap_or_else(|e| e.into_inner()) = Some(all.to_vec());
     Ok(())
 }
@@ -90,6 +96,10 @@ fn active(m: &Move) -> bool { matches!(m.state.as_str(), "queued" | "running") }
 pub fn moving_torrent(s: &Service, hash: &str) -> bool {
     load(s).iter().filter(|m| active(m)).flat_map(|m| &m.units)
         .any(|u| u.step != "done" && u.torrent.as_deref().is_some_and(|h| h.eq_ignore_ascii_case(hash)))
+}
+/// Whether any of these library files is in an unfinished move.
+pub fn moving_assets(s: &Service, ids: &[String]) -> bool {
+    load(s).iter().any(|m| active(m) && m.asset_ids.iter().any(|id| ids.contains(id)))
 }
 /// Whether a move onto `drive` has not finished.
 pub fn moving_to(s: &Service, drive: &str) -> bool { load(s).iter().any(|m| active(m) && m.drive == drive) }
@@ -122,7 +132,7 @@ fn list(s: &Service) -> Value {
     all.sort_by(|a, b| b.created.total_cmp(&a.created));
     json!({"moves": all.iter().take(50).map(|m| json!({"id":m.id,"drive":m.drive,"asset_ids":m.asset_ids,"state":m.state,"created":m.created,
         "bytes":m.bytes,"done_bytes":if m.state == "running" { (m.done_bytes + copying).min(m.bytes) } else { m.done_bytes },"error":m.error,
-        "waiting":m.units.iter().find_map(|u| u.error.clone().filter(|_| u.step == "copying"))})).collect::<Vec<_>>()})
+        "waiting":m.units.iter().find_map(|u| u.error.clone().filter(|_| u.step != "done"))})).collect::<Vec<_>>()})
 }
 
 fn assets(s: &Service, ids: &[String]) -> Result<Vec<Value>> {
@@ -165,33 +175,58 @@ async fn plan(s: &Service, drives: &Drives, assets: &[Value], target: Option<&Dr
             // Transmission already uses the target (an earlier move stopped part-way): the
             // next scan puts the records there; copying onto itself would delete the files.
             if from.id == target.id { continue; }
-            let files = t["files"].as_array().into_iter().flatten()
-                .map(|f| Ok((f["name"].as_str().context("Invalid torrent file")?.to_owned(), f["length"].as_u64().unwrap_or(0)))).collect::<Result<Vec<_>>>()?;
+            // A listed file that is no longer on disk (a sample or note removed since) has
+            // nothing to copy; the files beside each video that belong to it (subtitles
+            // added later) are not the torrent's, and go with it all the same.
+            let mut files: Vec<(String, u64)> = Vec::new();
+            for f in t["files"].as_array().into_iter().flatten() {
+                let name = f["name"].as_str().context("Invalid torrent file")?;
+                let Ok(meta) = std::fs::metadata(crate::api::checked_path(root, name)?) else { continue };
+                if meta.is_file() { files.push((crate::drives::spelling(name), meta.len())); }
+            }
+            ensure!(!files.is_empty(), "This download's files are not on the drive");
+            for (name, _) in files.clone() {
+                let video = root.join(&name);
+                if !crate::scanner::video(&video) { continue; }
+                for extra in beside(&video, root)? { if !files.iter().any(|(have, _)| *have == extra.0) { files.push(extra); } }
+            }
             units.push(Unit { torrent: Some(hash), from: root.to_path_buf(), to: target.root(role).to_path_buf(), files, step: "copying".into(), error: None });
         } else {
             let relative = path.strip_prefix(root)?.to_path_buf();
             if units.iter().any(|u| u.torrent.is_none() && u.files.iter().any(|(f, _)| Path::new(f) == relative)) { continue; }
             // The video and the files beside it that belong to it (its subtitles).
-            let stem = path.file_stem().and_then(|s| s.to_str()).context("Invalid file name")?.to_owned();
             let mut files = vec![(relative.to_string_lossy().into_owned(), std::fs::metadata(&path)?.len())];
-            if let Some(parent) = path.parent() {
-                let entries: Vec<_> = std::fs::read_dir(parent)?.flatten().collect();
-                // "Film.2160p.en.srt" belongs to "Film.2160p.mkv", not to "Film.mkv".
-                let longer: Vec<String> = entries.iter().map(|e| e.path()).filter(|p| *p != path && crate::scanner::video(p))
-                    .filter_map(|p| p.file_stem().and_then(|s| s.to_str()).map(str::to_owned))
-                    .filter(|other| other.len() > stem.len() && other.starts_with(&format!("{stem}."))).collect();
-                for entry in entries {
-                    let other = entry.path();
-                    let name = entry.file_name().to_string_lossy().into_owned();
-                    if other == path || !entry.file_type().is_ok_and(|t| t.is_file()) || !(name.starts_with(&format!("{stem}.")) ) { continue; }
-                    if crate::scanner::video(&other) || longer.iter().any(|l| name.starts_with(&format!("{l}."))) { continue; }
-                    files.push((other.strip_prefix(root)?.to_string_lossy().into_owned(), entry.metadata()?.len()));
-                }
-            }
+            files.extend(beside(&path, root)?);
             units.push(Unit { torrent: None, from: root.to_path_buf(), to, files, step: "copying".into(), error: None });
         }
     }
     Ok((units, on))
+}
+
+/// The files beside a video that belong to it (its subtitles), relative to `root`.
+fn beside(path: &Path, root: &Path) -> Result<Vec<(String, u64)>> {
+    let mut files = Vec::new();
+    let Some(parent) = path.parent() else { return Ok(files) };
+    let entries: Vec<_> = std::fs::read_dir(parent)?.flatten().collect();
+    // Names are compared in one spelling: a Mac OS Extended drive lists an accented name
+    // decomposed, whatever spelling the video is known by.
+    let spell = |name: &std::ffi::OsStr| crate::drives::spelling(&name.to_string_lossy());
+    let me = spell(path.file_name().context("Invalid file name")?);
+    let stem = spell(path.file_stem().context("Invalid file name")?);
+    // "Film.2160p.en.srt" belongs to "Film.2160p.mkv", not to "Film.mkv".
+    let longer: Vec<String> = entries.iter().map(|e| e.path()).filter(|p| crate::scanner::video(p))
+        .filter_map(|p| p.file_stem().map(spell))
+        .filter(|other| other.len() > stem.len() && other.starts_with(&format!("{stem}."))).collect();
+    for entry in entries {
+        let other = entry.path();
+        let name = spell(&entry.file_name());
+        if name == me || !entry.file_type().is_ok_and(|t| t.is_file()) || !name.starts_with(&format!("{stem}.")) { continue; }
+        // Not another video, another video's files, a download in progress or a copy in transit.
+        if crate::scanner::video(&other) || longer.iter().any(|l| name.starts_with(&format!("{l}."))) { continue; }
+        if name.ends_with(".part") || name.ends_with(".partial") || name.ends_with(".progress") || name.ends_with(".torrbaby-moving") { continue; }
+        files.push((crate::drives::spelling(&other.strip_prefix(root)?.to_string_lossy()), entry.metadata()?.len()));
+    }
+    Ok(files)
 }
 
 async fn preview(s: &Service, body: &Value) -> Result<Value> {
@@ -235,11 +270,39 @@ async fn start(s: &Service, body: &Value) -> Result<Value> {
 
 /// Advance the oldest unfinished move by one unit. Called every few seconds.
 pub async fn tick(s: &Service) -> Result<()> {
-    let Some(mut m) = load(s).into_iter().filter(|m| matches!(m.state.as_str(), "queued" | "running")).min_by(|a, b| a.created.total_cmp(&b.created)) else { return Ok(()) };
+    release_stale_flags(s);
+    let mut waiting: Vec<Move> = load(s).into_iter().filter(active).collect();
+    waiting.sort_by(|a, b| a.created.total_cmp(&b.created));
+    // Oldest first; one that is waiting (for playback, for a drive) lets the next go on.
+    for m in waiting { if step(s, m).await? { break; } }
+    Ok(())
+}
+
+/// Once after a start: a record still marked as moving that no unfinished move owns (the
+/// list of moves was lost) would be skipped by processing for ever.
+fn release_stale_flags(s: &Service) {
+    static DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if DONE.swap(true, std::sync::atomic::Ordering::Relaxed) { return; }
+    let mut owned: std::collections::HashSet<String> = Default::default();
+    for unit in load(s).iter().filter(|m| active(m)).flat_map(|m| &m.units).filter(|u| u.step != "done") {
+        let Ok(assets) = unit_assets(s, unit) else { return };
+        owned.extend(assets.iter().filter_map(|a| a["id"].as_str().map(str::to_owned)));
+    }
+    let Ok(db) = s.db.lock() else { return };
+    let Ok(assets) = db.documents("assets") else { return };
+    for id in assets.iter().filter(|a| a["moving"] == true).filter_map(|a| a["id"].as_str()).filter(|id| !owned.contains(*id)) {
+        tracing::warn!(id, "Cleared a moving mark that no move owns");
+        let _ = db.connection.execute("UPDATE library_assets SET document=json_remove(document,'$.moving') WHERE id=?", [id]);
+    }
+}
+
+/// Advance one move by one unit. False when it could only wait.
+async fn step(s: &Service, mut m: Move) -> Result<bool> {
     let Some(index) = m.units.iter().position(|u| u.step != "done") else {
         update(s, &m.id, |m| { m.state = "done".into(); m.done_bytes = m.bytes; })?;
         s.event("drive_move_done", json!({"id":m.id}))?;
-        return crate::api::scan_library(s).await;
+        crate::api::scan_library(s).await?;
+        return Ok(true);
     };
     if m.state == "queued" { update(s, &m.id, |m| m.state = "running".into())?; m.state = "running".into(); }
     let mut unit = m.units[index].clone();
@@ -251,10 +314,10 @@ pub async fn tick(s: &Service) -> Result<()> {
                     m.units[index].step = step.clone(); m.units[index].error = None;
                 })?;
                 // Straight on from the switch to removing the originals.
-                if step != "switched" { return Ok(()); }
+                if step != "switched" { return Ok(true); }
                 unit.step = step;
             }
-            Err(stop) => return stopped(s, &m, index, &unit, stop),
+            Err(stop) => { let waits = matches!(stop, Wait(_)); stopped(s, &m, index, &unit, stop)?; return Ok(!waits); }
         }
     }
 }
@@ -285,6 +348,8 @@ enum Stop { Wait(String), Fail(anyhow::Error) }
 use Stop::{Fail, Wait};
 impl<E: Into<anyhow::Error>> From<E> for Stop { fn from(error: E) -> Self { Fail(error.into()) } }
 
+/// Make a rename or removal in this folder last through a power cut.
+fn sync_dir(dir: &Path) { if let Ok(dir) = std::fs::File::open(dir) { let _ = dir.sync_all(); } }
 fn staged(path: &Path) -> PathBuf { PathBuf::from(format!("{}.torrbaby-moving", path.display())) }
 /// Remove a unit's partial files. Only the temporary names are this move's own: a file
 /// under the final name may have been on that drive before, and is never removed here.
@@ -300,6 +365,7 @@ fn place_copies(unit: &Unit) -> (Vec<PathBuf>, Result<()>) {
         if !staged(&copy).exists() { continue; }
         if copy.exists() { return (placed, Err(anyhow::anyhow!("A file with the same name is already on that drive"))); }
         if let Err(error) = std::fs::rename(staged(&copy), &copy) { return (placed, Err(error.into())); }
+        if let Some(parent) = copy.parent() { sync_dir(parent); }
         placed.push(copy);
     }
     (placed, Ok(()))
@@ -322,7 +388,7 @@ fn unit_assets(s: &Service, unit: &Unit) -> Result<Vec<Value>> {
     // Where they were, or, once switched, where they are now.
     let files: Vec<PathBuf> = unit.files.iter().flat_map(|(name, _)| [unit.from.join(name), unit.to.join(name)]).collect();
     let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
-    Ok(db.documents("assets")?.into_iter().filter(|a| a["path"].as_str().is_some_and(|p| files.iter().any(|f| f == Path::new(p)))
+    Ok(db.documents("assets")?.into_iter().filter(|a| a["path"].as_str().is_some_and(|p| files.iter().any(|f| *f == crate::drives::spelled(Path::new(p))))
         || unit.torrent.as_ref().is_some_and(|h| a["torrent_hash"] == h.as_str())).collect())
 }
 
@@ -383,10 +449,12 @@ async fn advance(s: &Service, unit: &Unit) -> std::result::Result<String, Stop> 
                 let original = unit.from.join(name);
                 let copy = unit.to.join(name);
                 if !original.exists() { continue; }
+                // The library already uses the copies. An original that cannot go yet stays
+                // this move's to remove: given up on, it would turn up as a second title.
                 if same_file(&original, &copy) != Some(false) || std::fs::metadata(&copy).map(|c| c.len()).ok() != Some(*size) {
-                    return Err(Fail(anyhow::anyhow!("A copy on the new drive changed; the original is kept")));
+                    return Err(Wait("A copy on the new drive changed; the original is kept".into()));
                 }
-                std::fs::remove_file(&original)?;
+                if let Err(error) = std::fs::remove_file(&original) { return Err(Wait(format!("Could not remove an original: {error}"))); }
                 remove_empty_parents(&original, &unit.from);
             }
             set_moving(s, unit, false)?;
