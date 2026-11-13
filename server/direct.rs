@@ -109,9 +109,11 @@ async fn run(socket: UdpSocket, ip: IpAddr, low: u32, high: u32, id: String, ide
             }
         }
     };
-    // Watch briefly for the device's QUIC (anything that is not a test packet), so the log
-    // shows where it comes from; QUIC resends its first packet, so handing over loses nothing.
-    let watch_until = Instant::now() + Duration::from_secs(3);
+    // Watch for the device's QUIC (anything that is not a punch packet) and log where it comes
+    // from; QUIC resends its first packet, so handing over then loses nothing.
+    // Until the device's QUIC shows up (up to 12 s), keep spraying and echoing its punch
+    // packets: it starts QUIC only once it has seen an echo.
+    let watch_until = Instant::now() + Duration::from_secs(12);
     while Instant::now() < watch_until {
         tokio::select! {
             _ = tick.tick() => {
@@ -119,6 +121,13 @@ async fn run(socket: UdpSocket, ip: IpAddr, low: u32, high: u32, id: String, ide
             }
             received = tokio::time::timeout(watch_until.saturating_duration_since(Instant::now()), socket.recv_from(&mut buffer)) => {
                 let Ok(Ok((len, from))) = received else { break };
+                // Keep echoing the device's punch packets, as the test does: three echoes at
+                // the first one were lost on a hotspot and the device never saw it get through.
+                if buffer[..len].starts_with(prefix.as_bytes()) {
+                    let echo = [b"TBACK ".as_slice(), &buffer[..len]].concat();
+                    let _ = socket.send_to(&echo, from).await;
+                    continue;
+                }
                 if buffer[..len].starts_with(b"TBDIRECT1") { continue }
                 eprintln!("Direct {id}: first non-test packet from {from} ({len} bytes{}) after {} ms",
                     if from.ip() == ip { "" } else { ", another address" }, started.elapsed().as_millis());
