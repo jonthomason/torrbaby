@@ -106,6 +106,24 @@ async fn run(socket: UdpSocket, ip: IpAddr, low: u32, high: u32, id: String, ide
             }
         }
     };
+    // Watch briefly for the device's QUIC (anything that is not a test packet), so the log
+    // shows where it comes from; QUIC resends its first packet, so handing over loses nothing.
+    let watch_until = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < watch_until {
+        tokio::select! {
+            _ = tick.tick() => {
+                for port in low..=high { let _ = socket.send_to(&spray, SocketAddr::new(ip, port as u16)).await; }
+            }
+            received = tokio::time::timeout(watch_until.saturating_duration_since(Instant::now()), socket.recv_from(&mut buffer)) => {
+                let Ok(Ok((len, from))) = received else { break };
+                if buffer[..len].starts_with(b"TBDIRECT1") { continue }
+                eprintln!("Direct {id}: first non-test packet from {from} ({len} bytes{}) after {} ms",
+                    if from.ip() == ip { "" } else { ", another address" }, started.elapsed().as_millis());
+                if let Ok(mut s) = state.lock() { s["first_quic_from"] = json!(from.to_string()) }
+                break;
+            }
+        }
+    }
     if let Ok(mut s) = state.lock() {
         s["state"] = json!("punched");
         s["device"] = json!(device.to_string());
