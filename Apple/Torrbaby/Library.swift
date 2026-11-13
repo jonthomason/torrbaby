@@ -802,14 +802,14 @@ struct LibraryDetail: View {
     @State private var loading = false
     @State private var preparation = ""
     @State private var playbackTask: Task<Void, Never>?
-    private var selectedSeason: Int? {
-        guard let title else { return nil }
-        let seasons=Array(Set(title.assets.filter { $0.role != "extra" }.compactMap(\.season))).sorted()
+    /// Worked out once per refresh from the title's seasons (it was recomputed for every
+    /// season button and every row).
+    private func selectedSeason(_ title: LibraryTitle, seasons: [Int]) -> Int? {
         if season == LibraryTitle.extrasTab, title.assets.contains(where: { $0.role == "extra" }) { return season }
         if seasons.contains(season) { return season }
         return title.resume?.season ?? title.playable.first(where: { !$0.watched && ($0.season ?? 0) > 0 })?.season ?? seasons.first(where: { $0 > 0 }) ?? seasons.first
     }
-    @ViewBuilder private func playbackActions(_ asset: LibraryAsset, title: LibraryTitle) -> some View {
+    @ViewBuilder private func playbackActions(_ asset: LibraryAsset, title: LibraryTitle, selectedSeason: Int?) -> some View {
         Button { play(asset, title: title.title) } label: {
             Label {
                 if store.canPlay(asset) {
@@ -831,11 +831,16 @@ struct LibraryDetail: View {
         }
         #endif
     }
-    var title: LibraryTitle? { store.library?.titles.first { $0.id == titleID } }
+    var title: LibraryTitle? { store.titleIndex[titleID] }
     var body: some View {
         ScrollView {
             if let title {
-                VStack(alignment: .leading, spacing: 24) {
+                let preferred = store.preferredLibraryAsset(title)
+                let extras = title.assets.filter { $0.role == "extra" }.sorted { ($0.name ?? "").localizedStandardCompare($1.name ?? "") == .orderedAscending }
+                let seasons = Array(Set(title.assets.filter { $0.role != "extra" }.compactMap(\.season))).sorted()
+                let chosen = selectedSeason(title, seasons: seasons)
+                // Lazy: on a long series only the rows on screen are built.
+                LazyVStack(alignment: .leading, spacing: 24) {
                     ZStack(alignment: .bottomLeading) {
                         LibraryArtwork(id: title.id, variant: title.backdrop != nil ? "backdrop" : "poster", alignment: .top)
                         LinearGradient(colors: [.clear, .black.opacity(0.94)], startPoint: .top, endPoint: .bottom)
@@ -844,12 +849,12 @@ struct LibraryDetail: View {
                             Text(title.title).font(.largeTitle.bold()).fixedSize(horizontal: false, vertical: true)
                             Text(([title.yearLabel, title.contentRating ?? ""] + title.genres.prefix(3)).filter { !$0.isEmpty }.joined(separator: " · "))
                                 .font(.subheadline).foregroundStyle(.white.opacity(0.8))
-                            if let asset = store.preferredLibraryAsset(title) {
+                            if let asset = preferred {
                                 if stacksActions {
-                                    VStack(alignment: .leading, spacing: 10) { playbackActions(asset, title: title) }
+                                    VStack(alignment: .leading, spacing: 10) { playbackActions(asset, title: title, selectedSeason: chosen) }
                                         .environment(\.libraryActionFullWidth, true)
                                 } else {
-                                    HStack(spacing: 12) { playbackActions(asset, title: title) }
+                                    HStack(spacing: 12) { playbackActions(asset, title: title, selectedSeason: chosen) }
                                 }
                             }
                         }.foregroundStyle(.white).padding(16).frame(minHeight: 380, alignment: .bottomLeading)
@@ -862,37 +867,33 @@ struct LibraryDetail: View {
                     if !title.summary.isEmpty {
                         Text(title.summary).font(.body).lineSpacing(5).frame(maxWidth: 900, alignment: .leading)
                     }
-                    if let asset = store.preferredLibraryAsset(title) {
+                    if let asset = preferred {
                         LibraryAssetActions(asset: asset, showsDownload: false, castTitle: title)
-                    }
-                    if let asset = store.preferredLibraryAsset(title) {
                         MediaLanguagesView(info: asset.mediaInfo)
                     }
                     // Extras are their own tab after the last season, not a tail on every season.
-                    let extras = title.assets.filter { $0.role == "extra" }.sorted { ($0.name ?? "").localizedStandardCompare($1.name ?? "") == .orderedAscending }
                     if title.kind == "tv" {
-                        let seasons = Array(Set(title.assets.filter { $0.role != "extra" }.compactMap(\.season))).sorted()
                         let tabs = extras.isEmpty ? seasons : seasons + [LibraryTitle.extrasTab]
                         ScrollView(.horizontal) {
                             HStack(spacing: 10) {
                                 ForEach(tabs, id: \.self) { number in
                                     Button(LocalizedStringKey(number == LibraryTitle.extrasTab ? "Extras" : number == 0 ? "Specials" : "Season \(number)")) { season = number }
-                                        .libraryActionStyle(prominent: selectedSeason == number, compact: true)
-                                        .accessibilityAddTraits(selectedSeason == number ? .isSelected : [])
+                                        .libraryActionStyle(prominent: chosen == number, compact: true)
+                                        .accessibilityAddTraits(chosen == number ? .isSelected : [])
                                 }
                             }.padding(.vertical, 4)
                         }.scrollIndicators(.hidden)
                         #if !os(tvOS)
-                        MissingEpisodesBar(title: title, season: selectedSeason)
+                        MissingEpisodesBar(title: title, season: chosen)
                         WatchToggle(title: title)
                         #endif
                         #if os(iOS)
                         AutoDownloadToggle(title: title)
                         #endif
-                        if selectedSeason == LibraryTitle.extrasTab {
+                        if chosen == LibraryTitle.extrasTab {
                             ForEach(extras) { asset in episodeRow(asset, title: title) }
                         } else {
-                            ForEach(title.assets.filter { $0.role != "extra" && ($0.season == selectedSeason || $0.season == nil) }.sorted { ($0.season ?? 0, $0.episode ?? 0) < ($1.season ?? 0, $1.episode ?? 0) }) { asset in
+                            ForEach(title.assets.filter { $0.role != "extra" && ($0.season == chosen || $0.season == nil) }.sorted { ($0.season ?? 0, $0.episode ?? 0) < ($1.season ?? 0, $1.episode ?? 0) }) { asset in
                                 episodeRow(asset, title: title)
                             }
                         }

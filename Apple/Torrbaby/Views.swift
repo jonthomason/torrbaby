@@ -44,6 +44,7 @@ enum Section: String, CaseIterable, Identifiable {
 }
 
 struct SubtitleQueueView: View {
+    @ObservedObject private var activity = ServerActivity.shared
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @Environment(\.scenePhase) private var phase

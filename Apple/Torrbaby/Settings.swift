@@ -9,6 +9,7 @@ import AppKit
 #endif
 
 struct AutomationView: View {
+    @ObservedObject private var activity = ServerActivity.shared
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     var body: some View {
@@ -409,6 +410,7 @@ private struct DeviceSettings: View {
 }
 
 private struct LibrarySettings: View {
+    @ObservedObject private var activity = ServerActivity.shared
     @EnvironmentObject var store: Store
     @State private var source = ""
     @State private var movies = ""
@@ -458,6 +460,7 @@ private struct LibrarySettings: View {
 }
 
 private struct AboutSettings: View {
+    @ObservedObject private var activity = ServerActivity.shared
     @EnvironmentObject var store: Store
     var body: some View {
         SwiftUI.Section {
@@ -775,6 +778,7 @@ struct DeviceNameRow: View {
 
 
 struct BackgroundSubtitlesView: View {
+    @ObservedObject private var activity = ServerActivity.shared
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     var body: some View {
@@ -807,6 +811,7 @@ struct BackgroundSubtitlesView: View {
 
 /// Processing errors and skipped-stage warnings in Needs attention, each dismissable as seen.
 struct ProcessingAttention: View {
+    @ObservedObject private var activity = ServerActivity.shared
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @Environment(\.scenePhase) private var phase

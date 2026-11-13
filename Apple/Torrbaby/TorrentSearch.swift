@@ -2022,6 +2022,7 @@ private struct CloudOfferSection: View {
 
 /// Free space on the server's media drive (each drive, when the library spans several).
 struct MediaDriveSpace: View {
+    @ObservedObject private var activity = ServerActivity.shared
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     var compact = false

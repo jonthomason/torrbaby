@@ -226,6 +226,7 @@ private struct TVSettingsRow: View {
 }
 
 private struct TVSettingsView: View {
+    @ObservedObject private var activity = ServerActivity.shared
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let connection: () -> Void

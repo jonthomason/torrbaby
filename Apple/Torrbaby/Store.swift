@@ -52,6 +52,12 @@ final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
 #endif
 
 @MainActor
+final class ServerActivity: ObservableObject {
+    static let shared = ServerActivity()
+    @Published var status: DaemonStatus?
+}
+
+@MainActor
 final class Store: ObservableObject {
     @Published var profiles: [UserProfile] = []
     @Published var activeProfile: UserProfile?
@@ -343,7 +349,18 @@ final class Store: ObservableObject {
     }
     @Published var token: String = Credentials.read()
     @Published var torrents: [Torrent] = []
-    @Published var status: DaemonStatus? { didSet { updateDownloadConnection() } }
+    /// The server's status changes on nearly every poll (uptime, free space, processing
+    /// progress). It lives in `ServerActivity`, which only the screens that show it observe;
+    /// the store itself announces a change only when the connection comes or goes, so the
+    /// library and detail pages are not redrawn every few seconds.
+    var status: DaemonStatus? {
+        get { ServerActivity.shared.status }
+        set {
+            if (newValue == nil) != (ServerActivity.shared.status == nil) { objectWillChange.send() }
+            ServerActivity.shared.status = newValue
+            updateDownloadConnection()
+        }
+    }
     @Published var events: [AuditEvent] = []
     @Published var connectionError: String? { didSet { updateDownloadConnection() } }
     @Published var torrentError: String?
@@ -630,7 +647,7 @@ final class Store: ObservableObject {
             }
             let newEvents: [AuditEvent] = try await request("GET", "/v1/events")
             try await registerClient()
-            clients = try await request("GET", "/v1/clients")
+            publish(\.clients, try await request("GET", "/v1/clients"))
             await flushProgress()
             #if !os(tvOS)
             await DownloadQueue.shared.syncProgress()
@@ -640,10 +657,10 @@ final class Store: ObservableObject {
             #endif
             let receivedHistory: [PlaybackHistory] = try await request("GET", "/v1/playback")
             guard identity == profileIdentity else { return }
-            history = receivedHistory
+            publish(\.history, receivedHistory)
             if Date().timeIntervalSince(lastHistoryFetch) >= 30 {
                 transferHistory = try await request("GET", "/v1/rates")
-                metadata = try await request("GET", "/v1/metadata")
+                publish(\.metadata, try await request("GET", "/v1/metadata"))
                 lastHistoryFetch = Date()
             }
             #if !os(tvOS)
@@ -652,8 +669,8 @@ final class Store: ObservableObject {
             do {
                 let received: PendingLibraryOperations = try await request("GET", "/v1/library/operations")
                 guard identity == profileIdentity else { return }
-                libraryOperations = received.operations
-                libraryOperationsError = nil
+                if !(received.operations.isEmpty && libraryOperations.isEmpty) { libraryOperations = received.operations }
+                if libraryOperationsError != nil { libraryOperationsError = nil }
             } catch {
                 guard identity == profileIdentity else { return }
                 libraryOperationsError = error.localizedDescription
@@ -670,13 +687,23 @@ final class Store: ObservableObject {
                 torrentError = error.localizedDescription
             }
             receiveActivity(newEvents)
-            events = newEvents.reversed()
+            publish(\.events, Array(newEvents.reversed()))
             if connectionError != nil { connectionError = nil }
         } catch {
             // A refresh cut short (the app went to the background, the view changed) says
             // nothing about the server; showing it read "cancelled" and flashed Offline.
             if !Self.cancelled(error) { connectionError = error.localizedDescription }
         }
+    }
+    /// Every view that reads the store redraws when any published value is assigned, so the
+    /// poll every few seconds assigns only what actually changed. Assigning unchanged status,
+    /// devices, history and events each time redrew every visible poster and episode row,
+    /// which showed as stutter while scrolling.
+    private func publish<T: Encodable>(_ key: ReferenceWritableKeyPath<Store, T>, _ value: T) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        if let current = try? encoder.encode(self[keyPath: key]), let next = try? encoder.encode(value), current == next { return }
+        self[keyPath: key] = value
     }
     static func cancelled(_ error: Error) -> Bool {
         error is CancellationError || (error as? URLError)?.code == .cancelled
