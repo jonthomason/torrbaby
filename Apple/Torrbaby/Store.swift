@@ -535,10 +535,21 @@ final class Store: ObservableObject {
     private var directAttempting = false
     private var lastDirectAttempt = Date.distantPast
     @Published private(set) var directNote = ""
+    /// What the direct path is doing, for Settings → About → Direct connection test.
+    var directDiagnostics: String {
+        let clock: (Date) -> String = { $0 == .distantPast ? "never" : $0.formatted(date: .omitted, time: .standard) }
+        return "route \(activeServer ?? "none") · away \(usingFallback) · connected \(connected) · trying \(directAttempting) · last try \(clock(lastDirectAttempt)) · last check-in \(clock(lastFullRefresh))"
+    }
+    /// Try now, whatever the last attempt was (the test screen's button).
+    func tryDirectNow() { lastDirectAttempt = .distantPast; startDirectIfUseful() }
     /// Away from home, try for a direct path every few minutes until one holds.
     private func startDirectIfUseful() {
         guard connected, usingFallback, directRoute == nil, !directAttempting,
-              Date().timeIntervalSince(lastDirectAttempt) > 180, let signal = activeServer else { return }
+              Date().timeIntervalSince(lastDirectAttempt) > 180, let signal = activeServer else {
+            directNote = !connected ? "not tried: offline" : !usingFallback ? "not tried: at home" : directAttempting ? "trying…" : directNote
+            return
+        }
+        directNote = "trying…"
         directAttempting = true; lastDirectAttempt = Date()
         Task { @MainActor in
             defer { directAttempting = false }

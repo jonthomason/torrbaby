@@ -34,6 +34,10 @@ struct DirectConnectionTest: View {
             SwiftUI.Section("Direct route") {
                 Text(verbatim: store.directRoute.map { "In use: \($0) (\(store.directNote))" } ?? "Not in use\(store.directNote.isEmpty ? "" : " (\(store.directNote))")")
                     .font(.caption.monospaced())
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    Text(verbatim: store.directDiagnostics).font(.caption2.monospaced()).foregroundStyle(.secondary)
+                }
+                Button("Try direct now") { store.tryDirectNow() }.disabled(store.directRoute != nil)
             }
             if !lines.isEmpty {
                 SwiftUI.Section("Details") {

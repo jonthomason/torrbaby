@@ -56,6 +56,7 @@ impl Direct {
         let socket = UdpSocket::from_std(std_socket)?;
         let public = crate::punch::stun(&socket).await.context("Diamond could not learn its public address")?;
         let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_owned();
+        eprintln!("Direct {id}: requested by {ip}, spraying {low}–{high} from {public}");
         let state = Arc::new(Mutex::new(json!({
             "id": id, "state": "punching", "server": public.to_string(), "device_ip": ip.to_string(),
             "low": low, "high": high, "device": null, "punched_after_ms": null, "streams": 0,
@@ -68,7 +69,9 @@ impl Direct {
         let fingerprint = identity.fingerprint.clone();
         let session = id.clone();
         tokio::spawn(async move {
+            let logged = session.clone();
             if let Err(error) = run(socket, ip, low, high, session, identity, http_port, state.clone()).await {
+                eprintln!("Direct {logged}: {error}");
                 if let Ok(mut s) = state.lock() { s["state"] = json!("failed"); s["error"] = json!(error.to_string()); }
             }
         });
