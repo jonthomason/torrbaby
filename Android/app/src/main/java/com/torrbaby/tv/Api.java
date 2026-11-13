@@ -38,7 +38,7 @@ final class Api {
         || u.getQuery() != null
         || u.getFragment() != null
         || (!u.getPath().isEmpty() && !u.getPath().equals("/")))
-      throw new Exception("Enter a server address such as http://192.168.1.10:8765");
+      throw new Exception("Enter a server address such as http://diamond.local:8765");
     return value;
   }
 

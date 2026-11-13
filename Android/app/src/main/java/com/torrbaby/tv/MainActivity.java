@@ -2298,6 +2298,7 @@ public class MainActivity extends Activity {
         search[0].close();
         discoveryHandler.removeCallbacks(give_up);
         String found = servers.values().iterator().next();
+        ServerRoute.found = found;
         if (api != requested || isDestroyed()) return;
         try {
           if (!found.equals(requested.base)) {
@@ -2439,6 +2440,7 @@ public class MainActivity extends Activity {
             StartupTrace.mark("LAN registration finished");
             Api connected =
                 new Api(address, credential.getString("token"), credential.getString("client_id"));
+            ServerRoute.found = address;
 
             runOnUiThread(
                 () -> {
@@ -2481,7 +2483,7 @@ public class MainActivity extends Activity {
     Ui.add(root, Ui.title(this, L10n.t("Welcome home"), 28), -1, 50);
     Ui.add(root, Ui.text(this, L10n.t("Connect to your Torrbaby server"), 16, Ui.MUTED), -1, 35);
     EditText server = input("http://diamond.local:8765", false);
-    if (api != null) server.setText(api.base);
+    if (api != null && !api.base.equals(ServerRoute.UNKNOWN)) server.setText(api.base);
     Ui.add(root, server, 600, 50);
     TextView message = Ui.text(this, note, 15, Ui.MUTED);
     Ui.add(root, message, -1, 50);

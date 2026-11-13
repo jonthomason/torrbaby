@@ -11,27 +11,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub fn network(value: &str) -> Result<(u32, u32)> {
-    let (address, bits) = value
-        .split_once('/')
-        .ok_or_else(|| anyhow::anyhow!("Trusted LAN must be IPv4 CIDR"))?;
-    let address: Ipv4Addr = address.parse()?;
-    let bits: u32 = bits.parse()?;
-    ensure!(
-        address.is_private() || address.is_loopback(),
-        "Only private LAN or loopback ranges may be trusted"
-    );
-    ensure!((8..=32).contains(&bits), "Invalid trusted LAN prefix");
-    let mask = u32::MAX << (32 - bits);
-    let first = u32::from(address) & mask;
-    let last = first | !mask;
-    ensure!(
-        (Ipv4Addr::from(first).is_private() && Ipv4Addr::from(last).is_private())
-            || (Ipv4Addr::from(first).is_loopback() && Ipv4Addr::from(last).is_loopback()),
-        "Trusted range must stay within private addresses"
-    );
-    Ok((first, mask))
-}
 /// Whether the peer is on the same local network as one of this Mac's own Wi-Fi or
 /// Ethernet interfaces, as they are now. Nothing is configured: a new DHCP address or a
 /// renumbered home network needs no change, and a tunnel (Tailscale) never counts.

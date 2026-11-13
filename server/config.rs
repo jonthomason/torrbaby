@@ -7,10 +7,11 @@ use std::{
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Config {
+    /// Only a loopback value (tests, previews) is honoured; otherwise the server listens on
+    /// every network the Mac is on. No address is ever configured.
+    #[serde(default)]
     pub listen_host: String,
     pub listen_port: u16,
-    #[serde(default)]
-    pub lan_listen_host: Option<String>,
     /// The names clients reach the server by: at home (its Bonjour name, "diamond.local")
     /// and away (its Tailscale name). Given to devices at pairing and in its status. When
     /// unset they are looked up from the Mac.
@@ -18,8 +19,6 @@ pub struct Config {
     pub home_host: Option<String>,
     #[serde(default)]
     pub away_host: Option<String>,
-    #[serde(default)]
-    pub trusted_lan_cidrs: Vec<String>,
     #[serde(default)]
     pub advertise_lan: bool,
     #[serde(default = "background_subtitles_default")]
@@ -99,8 +98,8 @@ impl Config {
     }
     pub fn validate(&self) -> Result<()> {
         let config = self;
-        // listen_host, lan_listen_host and trusted_lan_cidrs from earlier settings are no
-        // longer used: the server listens on every network and trusts the Mac's own LAN.
+        // lan_listen_host and trusted_lan_cidrs in earlier settings are ignored: the server
+        // listens on every network and trusts the Mac's own LAN as it is now.
         if !(1..=8).contains(&config.processing_concurrency) {
             bail!("processing_concurrency must be between 1 and 8");
         }
