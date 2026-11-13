@@ -530,6 +530,9 @@ final class Store: ObservableObject {
     /// Torrbaby's own direct path to the server (a local proxy into a QUIC tunnel), used
     /// instead of the Tailscale route while it is up. Only away from home, on iPhone and iPad.
     @Published private(set) var directRoute: String?
+    /// The check-in's current step and since when (shown on the iPhone's test screen).
+    private(set) var checkInStage = ("idle", Date.distantPast)
+    func stage(_ name: String) { checkInStage = (name, Date()) }
     #if os(iOS)
     private var directTunnel: DirectTunnel?
     private var directAttempting = false
@@ -537,8 +540,6 @@ final class Store: ObservableObject {
     @Published private(set) var directNote = ""
     /// The check-in's current step and since when, and the direct path's recent events,
     /// for the test screen: which step never finishes, and why tunnels dropped.
-    private(set) var checkInStage = ("idle", Date.distantPast)
-    func stage(_ name: String) { checkInStage = (name, Date()) }
     @Published private(set) var directEvents: [String] = []
     func directEvent(_ text: String) {
         directEvents.append("\(Date().formatted(date: .omitted, time: .standard)) \(text)")
@@ -582,8 +583,9 @@ final class Store: ObservableObject {
         directTunnel = nil; directRoute = nil
         directNote = reason
         directEvent("dropped: \(reason)")
-        // Back to it soon (the app returning to the foreground, a brief loss).
-        lastDirectAttempt = Date().addingTimeInterval(-150)
+        // A path that was open and dropped (the app was in the background, a brief loss) is
+        // tried again at the next check; failed attempts keep their few minutes' wait.
+        if reason != "home" { lastDirectAttempt = .distantPast }
         tunnel?.onClose = nil
         tunnel?.close()
     }
@@ -798,9 +800,13 @@ final class Store: ObservableObject {
         #endif
         if let received: [PlaybackHistory] = try? await request("GET", "/v1/playback"), identity == profileIdentity { publish(\.history, received) }
         if Date().timeIntervalSince(lastHistoryFetch) >= 30 {
-            if let rates: [TransferSample] = try? await request("GET", "/v1/rates") { transferHistory = rates }
-            if let received: [MediaMetadata] = try? await request("GET", "/v1/metadata") { publish(\.metadata, received) }
             lastHistoryFetch = Date()
+            // Rates and metadata (over a megabyte) load in the background: the check-in does
+            // not wait for them, so a slow route cannot hold it up.
+            Task { @MainActor in
+                if let rates: [TransferSample] = try? await request("GET", "/v1/rates") { transferHistory = rates }
+                if let received: [MediaMetadata] = try? await request("GET", "/v1/metadata") { publish(\.metadata, received) }
+            }
         }
         #if !os(tvOS)
         DownloadQueue.shared.importSharedProgress()
@@ -812,8 +818,14 @@ final class Store: ObservableObject {
     /// the processing and settings screens).
     private var lastFullRefresh = Date.distantPast
     static let fullRefreshInterval: TimeInterval = 60
-    /// The next periodic refresh does everything (the app came to the foreground).
-    func refreshFullyNext() { lastFullRefresh = .distantPast }
+    /// The next periodic refresh does everything (the app came to the foreground), and away
+    /// from home without a direct path one is tried at once.
+    func refreshFullyNext() {
+        lastFullRefresh = .distantPast
+        #if os(iOS)
+        if directRoute == nil { lastDirectAttempt = .distantPast }
+        #endif
+    }
     /// `polling` marks the periodic refresh; a refresh after a user action does everything
     /// and waits for one already under way so it shows that action.
     func refresh(polling: Bool = false) async {
@@ -842,6 +854,10 @@ final class Store: ObservableObject {
                 stage("online check")
                 _ = try await probeConnection()
                 stage("loading")
+                #if os(iOS)
+                // Away from home the direct path is the default: open it at once, alongside.
+                if usingFallback { startDirectIfUseful() } else { dropDirect("home") }
+                #endif
                 guard identity == profileIdentity else { return }
                 if connectionError != nil { connectionError = nil }
                 if subtitleQueueError != nil { subtitleQueueError = nil }
@@ -853,9 +869,6 @@ final class Store: ObservableObject {
                 _ = await (libraryPart, torrentsPart, operationsPart, activityPart, statusPart)
                 lastFullRefresh = Date()
                 stage("done")
-                #if os(iOS)
-                if usingFallback { startDirectIfUseful() } else { dropDirect("home") }
-                #endif
             } else {
                 async let torrentsPart: Void = ServerActivity.shared.torrentWatchers > 0 ? syncTorrentsAndOperations(identity) : ()
                 async let statusPart: Void = refreshStatusIfShown()
