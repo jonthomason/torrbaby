@@ -55,7 +55,8 @@ fn dolby(input: &Path) -> bool {
 }
 /// Disk budget for virtual-media indexes. Layout changes make every MKV rebuild
 /// once while older indexes still serve existing jobs, so leave ample headroom.
-const INDEX_BUDGET: u64 = 24 * 1024 * 1024 * 1024;
+/// 48 GB: a title's index is a few MB to a few hundred, and Diamond has room to spare.
+const INDEX_BUDGET: u64 = 48 * 1024 * 1024 * 1024;
 fn playback_refusal(j: &Job) -> Option<String> {
     // Same wording as the remux failure these titles reported before.
     j.missing_audio.as_ref().map(|codec| format!("Remux codec not implemented yet: {codec}"))
@@ -97,7 +98,7 @@ impl Manager {
             }
         }
         crate::audio_transcode::sweep(data);
-        Ok(Arc::new(Self {
+        let manager = Self {
             root,
             pending: Mutex::new(HashSet::new()),
             background: Mutex::new(HashSet::new()),
@@ -105,22 +106,49 @@ impl Manager {
             background_gate: tokio::sync::Semaphore::new(4),
             readers: Mutex::new(HashMap::new()),
             reader_use: Mutex::new(HashMap::new()),
-        }))
+        };
+        match manager.migrate_index_keys() {
+            Ok(0) => {}
+            Ok(moved) => tracing::info!(moved, "Playback indexes now keyed on file content"),
+            Err(error) => tracing::warn!(%error, "Playback indexes could not be rekeyed"),
+        }
+        Ok(Arc::new(manager))
     }
     fn index_path(&self, job: &Job) -> Result<PathBuf> {
-        use sha2::{Digest, Sha256};
-        // Jobs from before random-access tables keep their original index.
-        let layout = if job.preparation_version >= RANDOM_ACCESS_VERSION { 2 } else { 1 } + if dolby(&job.input) { 100 * DOLBY_LAYOUT } else { 0 };
-        let key: String = Sha256::digest(serde_json::to_vec(&(
-            layout,
-            &job.asset,
-            &job.input,
-            &job.revision,
-        ))?)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-        Ok(self.root.join(format!("base-{key}")))
+        self.content_index_path(job, if dolby(&job.input) { 100 * DOLBY_LAYOUT } else { 0 })
+    }
+    /// Jobs from before random-access tables keep their original index.
+    fn layout(job: &Job) -> u32 { if job.preparation_version >= RANDOM_ACCESS_VERSION { 2 } else { 1 } }
+    /// The shared index is keyed on the file's content (size and modification time), not its
+    /// path: renaming a file or moving it to another drive keeps its index.
+    fn content_index_path(&self, job: &Job, dolby_layout: u32) -> Result<PathBuf> {
+        let content = crate::subtitle_jobs::content(&job.revision).context("Unreadable media revision")?;
+        Ok(self.root.join(format!("base-{}", hex(&(Self::layout(job) + dolby_layout, "content", &job.asset, content))?)))
+    }
+    /// Where indexes lived before they were keyed on content: by path and full revision.
+    fn path_index_path(&self, job: &Job, dolby_layout: u32) -> Result<PathBuf> {
+        Ok(self.root.join(format!("base-{}", hex(&(Self::layout(job) + dolby_layout, &job.asset, &job.input, &job.revision))?)))
+    }
+    /// Once, at startup: rename indexes keyed by path to their content key, so files the
+    /// library renamed or moved since they were indexed find their index again.
+    fn migrate_index_keys(&self) -> Result<usize> {
+        let marker = self.root.join("content-keys");
+        if marker.exists() { return Ok(0); }
+        let mut moved = 0;
+        for entry in fs::read_dir(&self.root)? {
+            let name = entry?.file_name();
+            let Some(id) = name.to_str().and_then(|n| n.strip_suffix(".json")).filter(|id| valid(id)) else { continue };
+            let Ok(job) = self.job(id) else { continue };
+            for dolby_layout in [0, 100 * DOLBY_LAYOUT] {
+                let (Ok(old), Ok(new)) = (self.path_index_path(&job, dolby_layout), self.content_index_path(&job, dolby_layout)) else { continue };
+                if old.is_dir() && !old.is_symlink() && !new.exists() {
+                    fs::rename(&old, &new)?;
+                    moved += 1;
+                }
+            }
+        }
+        fs::write(&marker, b"")?;
+        Ok(moved)
     }
     /// Playback preparation only. Background indexing (credits analysis) must not
     /// pause the processing queue, or every MKV would stall all other work.
@@ -540,6 +568,11 @@ impl Manager {
     }
 }
 
+fn hex(value: &impl Serialize) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    Ok(Sha256::digest(serde_json::to_vec(value)?).iter().map(|b| format!("{b:02x}")).collect())
+}
+
 /// By content, not extension: a Matroska file named .mp4 still needs the index.
 fn is_mkv(path: &Path) -> bool {
     crate::container::is_matroska(path)
@@ -578,6 +611,32 @@ mod cache_tests {
         fs::create_dir(manager.index_path(&job)?)?;
         assert!(manager.indexed("asset-one",&input));
         assert!(!manager.indexed("asset-two",&input));
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_renamed_file_keeps_its_index_and_path_keyed_indexes_are_rekeyed() -> Result<()> {
+        let root=std::env::temp_dir().join(format!("torrbaby-rename-{}",uuid::Uuid::new_v4()));
+        let manager=Manager::new(&root)?;
+        let input=root.join("Some.Show.S01E01.mkv");
+        fs::write(&input,b"media")?;
+        let job=Job{id:"d".repeat(64),asset:"asset-one".into(),input:input.clone(),revision:crate::subtitle_jobs::revision(&input)?,
+            state:"ready".into(),error:None,preparation_version:PREPARATION_VERSION,captions:Vec::new(),missing_audio:None};
+        // An index made before content keys, under its path key.
+        manager.save(&job)?;
+        fs::create_dir(manager.path_index_path(&job,0)?)?;
+        drop(manager);
+        fs::remove_file(root.join("virtual-media-v1/content-keys"))?;
+        let manager=Manager::new(&root)?;
+        assert!(manager.indexed("asset-one",&input));
+        assert!(!manager.path_index_path(&job,0)?.exists());
+        // The organizer renames the file: same content, new path and change time.
+        let renamed=root.join("Some Show - S01E01.mkv");
+        fs::rename(&input,&renamed)?;
+        assert!(manager.indexed("asset-one",&renamed));
+        fs::write(&renamed,b"other content")?;
+        assert!(!manager.indexed("asset-one",&renamed));
         fs::remove_dir_all(root)?;
         Ok(())
     }

@@ -171,7 +171,8 @@ impl Reader {
         ensure!(index.version == 1, "Unsupported index version");
         let original = fs::File::open(source)?;
         ensure!(
-            crate::subtitle_jobs::revision(source)? == index.source_revision,
+            // By content: the index stays valid when the file is renamed or moved.
+            crate::subtitle_jobs::same_content(&crate::subtitle_jobs::revision(source)?, &index.source_revision),
             "Source changed; rebuild index"
         );
         let metadata = fs::File::open(directory.join("metadata.bin"))?;
@@ -226,7 +227,7 @@ impl Reader {
             end = at + len;
         }
         ensure!(
-            metadata_revision(&original.metadata()?) == index.source_revision,
+            crate::subtitle_jobs::same_content(&metadata_revision(&original.metadata()?), &index.source_revision),
             "Source replaced during open"
         );
         Ok(Self {
@@ -238,7 +239,7 @@ impl Reader {
         })
     }
     pub fn validate_source(&self) -> std::io::Result<()> {
-        if metadata_revision(&self.source.metadata()?) != self.index.source_revision {
+        if !crate::subtitle_jobs::same_content(&metadata_revision(&self.source.metadata()?), &self.index.source_revision) {
             return Err(std::io::Error::other("Media changed during playback"));
         }
         Ok(())
