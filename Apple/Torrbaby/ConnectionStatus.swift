@@ -18,6 +18,9 @@ struct ConnectionStatusSections: View {
     @State private var tick = 0
 
     var body: some View {
+        // Reading the tick redraws the page each second in place. Giving the sections a new
+        // identity instead (.id) rebuilt them and snapped the scroll position back to the top.
+        let _ = tick
         Group {
             nowSection
             pathSections
@@ -27,7 +30,6 @@ struct ConnectionStatusSections: View {
             #endif
             actionsSection
         }
-        .id(tick)
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
