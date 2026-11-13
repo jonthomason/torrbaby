@@ -432,13 +432,18 @@ final class Store: ObservableObject {
     init() {
         networkMonitor.pathUpdateHandler = { [weak self] path in
             let available = path.status == .satisfied
+            // The interface iOS sends data on (first in its order), for the direct path and relay.
+            let dataInterface = path.availableInterfaces.first { [.wifi, .cellular, .wiredEthernet].contains($0.type) }?.name
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                #if os(iOS)
+                PunchProbe.preferredInterface = dataInterface
+                #endif
                 let restored = !self.networkAvailable && available
                 // A restored Wi-Fi/cellular path still needs a successful server probe.
                 if !available { self.connectionError = URLError(.notConnectedToInternet).localizedDescription }
                 #if os(iOS)
-                self.relayNetworkChanged()
+                self.networkChanged()
                 #endif
                 self.networkAvailable = available
                 if restored {
@@ -668,10 +673,21 @@ final class Store: ObservableObject {
             Task { await refresh(polling: true) }
         }
     }
-    /// The relay's socket is bound to one network; a different one needs a new relay.
-    private func relayNetworkChanged() {
-        guard let tunnel = relayTunnel else { return }
-        if tunnel.interface != PunchProbe.physicalInterface() { dropRelay("network changed") }
+    private var networkSignature: String?
+    /// A different network (Wi-Fi joined or left, another carrier, a new address): the direct
+    /// path's hole was opened for the old public address, so it is dropped at once and tried
+    /// again; the relay is reopened if its interface went away (on the same interface QUIC
+    /// carries it across to the new address).
+    private func networkChanged() {
+        let signature = PunchProbe.networkSignature()
+        guard signature != networkSignature else { return }
+        let previous = networkSignature
+        networkSignature = signature
+        guard previous != nil else { return }
+        directEvent("network changed: \(previous ?? "?") → \(signature)")
+        dropDirect("network changed")
+        if let tunnel = relayTunnel, tunnel.interface != PunchProbe.physicalInterface() { dropRelay("network changed") }
+        refreshFullyNext()
     }
     private var directTunnel: DirectTunnel?
     /// The last direct attempt, step by step, for Settings → Connection.
