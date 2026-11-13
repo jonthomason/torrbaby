@@ -212,6 +212,13 @@ async fn plan(s: &Service, drives: &Drives, assets: &[Value], target: Option<&Dr
             units.push(Unit { torrent: None, from: root.to_path_buf(), to, files, step: "copying".into(), error: None });
         }
     }
+    // A file is in one unit only. A torrent's file can also have a record of its own (a copy
+    // found before Transmission pointed there); the torrent moves it, and a second unit would
+    // find it gone.
+    let carried: std::collections::HashSet<PathBuf> = units.iter().filter(|u| u.torrent.is_some())
+        .flat_map(|u| u.files.iter().map(|(name, _)| u.from.join(name))).collect();
+    for unit in units.iter_mut().filter(|u| u.torrent.is_none()) { unit.files.retain(|(name, _)| !carried.contains(&unit.from.join(name))); }
+    units.retain(|u| !u.files.is_empty());
     Ok((units, on))
 }
 
@@ -345,17 +352,23 @@ async fn carry_one(s: &Service, m: &Move) -> Result<bool> {
     let Ok(torrents) = crate::organizer::torrents(s).await else { return wait("Waiting for Transmission") };
     // Read again each time: the organizer may have filed a finished download since, and a
     // carry sent before a restart may have been finished by Transmission meanwhile.
-    let to = torrents.iter().find(|t| t["hash_string"] == hash.as_str()).and_then(|t| t["download_dir"].as_str())
-        .and_then(|dir| destination(&drives, from, target, Path::new(dir)));
+    let torrent = torrents.iter().find(|t| t["hash_string"] == hash.as_str());
+    let to = torrent.and_then(|t| t["download_dir"].as_str()).and_then(|dir| destination(&drives, from, target, Path::new(dir)));
     let Some(to) = to else {
         update(s, &m.id, |m| { m.carry.retain(|h| *h != hash); m.carry_wait = None; })?;
         return Ok(true);
     };
     crate::drives::create_media_folder(&to)?;
     tracing::info!(hash, to = %to.display(), "Emptying a drive: Transmission is moving a torrent it still needs");
+    // Its files turn up on the target while Transmission still lists them where they were:
+    // until it is done they are in transit, not new files for the scanner to record.
+    let arriving = torrent.and_then(|t| t["name"].as_str()).filter(|name| !name.is_empty())
+        .map(|name| crate::drives::spelled(&to.join(name)));
+    if let (Some(path), Ok(mut carrying)) = (&arriving, CARRYING.lock()) { carrying.insert(path.clone()); }
     let sent = s.rpc.call_within("torrent_set_location", json!({"ids":[hash],"location":to,"move":true}),
         Some(std::time::Duration::from_secs(CARRY_SECONDS))).await;
     s.invalidate_torrents();
+    if let (Some(path), Ok(mut carrying)) = (&arriving, CARRYING.lock()) { carrying.remove(path); }
     match sent {
         // Taken off the list once Transmission is seen keeping it on the target, next time.
         Ok(_) => { update(s, &m.id, |m| m.carry_wait = None)?; Ok(true) }
@@ -432,8 +445,9 @@ fn stopped(s: &Service, m: &Move, index: usize, unit: &Unit, stop: Stop) -> Resu
                 for (name, _) in &unit.files { leaving.remove(&unit.to.join(name)); if unit.step == "copying" { leaving.remove(&unit.from.join(name)); } }
             }
             set_moving(s, unit, false).ok();
+            tracing::warn!(id = %m.id, from = %unit.from.display(), file = unit.files.first().map(|(name, _)| name.as_str()).unwrap_or_default(), %error, "Moving files between drives failed");
             s.event("drive_move_failed", json!({"id":m.id,"error":error.to_string()}))?;
-            update(s, &m.id, |m| { m.state = "failed".into(); m.error = Some(error.to_string()); })
+            update(s, &m.id, |m| { m.state = "failed".into(); m.error = Some(error.to_string()); m.units[index].error = Some(error.to_string()); })
         }
     }
 }
@@ -441,7 +455,12 @@ fn stopped(s: &Service, m: &Move, index: usize, unit: &Unit, stop: Stop) -> Resu
 /// Files in transit: originals whose copies the library already uses, until they are
 /// removed, and copies it does not use yet. The scanner must not take one for a new file.
 static LEAVING: std::sync::LazyLock<Mutex<std::collections::HashSet<PathBuf>>> = std::sync::LazyLock::new(Default::default);
-pub fn leaving(path: &Path) -> bool { LEAVING.lock().is_ok_and(|l| l.contains(path)) }
+pub fn leaving(path: &Path) -> bool {
+    LEAVING.lock().is_ok_and(|l| l.contains(path)) || CARRYING.lock().is_ok_and(|c| c.iter().any(|at| path.starts_with(at)))
+}
+/// Where Transmission is putting a torrent it is carrying to another drive: its file, or
+/// its folder.
+static CARRYING: std::sync::LazyLock<Mutex<std::collections::HashSet<PathBuf>>> = std::sync::LazyLock::new(Default::default);
 
 enum Stop { Wait(String), Fail(anyhow::Error) }
 use Stop::{Fail, Wait};
@@ -607,7 +626,13 @@ fn copy_unit(unit: &Unit) -> std::result::Result<(), Stop> {
     use std::io::{Read, Write};
     for (name, size) in &unit.files {
         let (original, copy) = (crate::api::checked_path(&unit.from, name)?, crate::api::checked_path(&unit.to, name)?);
-        let meta = std::fs::metadata(&original)?;
+        let meta = match std::fs::metadata(&original) {
+            // Already moved: put in place by a move that stopped after its switch, or by
+            // Transmission with a torrent it carried.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                && std::fs::metadata(&copy).is_ok_and(|c| c.is_file() && c.len() == *size) => continue,
+            other => other?,
+        };
         if meta.len() != *size { return Err(Fail(anyhow::anyhow!("A file changed since the move was planned"))); }
         if let Ok(existing) = std::fs::metadata(&copy) {
             // Put in place just before a restart, or a different file in the way.
@@ -737,5 +762,24 @@ mod tests {
         // Already on the target, or on no drive: nothing to carry.
         assert!(to("/Volumes/Beta/Media/Downloads/").is_none());
         assert!(to("/Users/me/Downloads").is_none());
+    }
+
+    #[test]
+    fn a_file_already_moved_to_the_target_is_not_copied_again() {
+        let root = std::env::temp_dir().join(format!("torrbaby-moved-{}", uuid::Uuid::new_v4()));
+        let (from, to) = (root.join("A/TV"), root.join("B/TV"));
+        std::fs::create_dir_all(from.join("Show")).unwrap();
+        std::fs::create_dir_all(to.join("Show")).unwrap();
+        std::fs::write(from.join("Show/E02.mkv"), vec![2; 30]).unwrap();
+        // Taken there by Transmission with its torrent: gone here, in place there.
+        std::fs::write(to.join("Show/E01.mkv"), vec![1; 20]).unwrap();
+        let unit = Unit { torrent: None, from: from.clone(), to: to.clone(), files: vec![("Show/E01.mkv".into(), 20), ("Show/E02.mkv".into(), 30)], step: "copying".into(), error: None };
+        assert!(copy_unit(&unit).is_ok());
+        assert!(staged(&to.join("Show/E02.mkv")).exists());
+        assert!(!staged(&to.join("Show/E01.mkv")).exists());
+        // Gone with nothing of its size in place: the move cannot go on.
+        std::fs::write(to.join("Show/E01.mkv"), vec![1; 5]).unwrap();
+        assert!(matches!(copy_unit(&unit), Err(Fail(_))));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
