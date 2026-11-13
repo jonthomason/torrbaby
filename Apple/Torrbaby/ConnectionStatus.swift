@@ -47,7 +47,10 @@ struct ConnectionStatusSections: View {
                     Text(verbatim: summary).font(.subheadline).foregroundStyle(.secondary)
                 }
             }.padding(.vertical, 4)
-        } header: { Text(verbatim: "Connected by") }
+        } header: { Text(verbatim: "Connected by") } footer: {
+            // Which build is being tested: the first thing to know when reading this page.
+            Text(verbatim: AppRelease.description).font(.caption.monospaced())
+        }
     }
 
     private var summary: String {
