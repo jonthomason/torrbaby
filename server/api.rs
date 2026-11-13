@@ -1526,6 +1526,9 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         if let Some(title) = path.strip_prefix("/v1/library/titles/").and_then(|p| p.strip_suffix("/missing-episodes")) {
             return db.missing_episodes(title);
         }
+        if let Some(title) = path.strip_prefix("/v1/library/titles/").and_then(|p| p.strip_suffix("/details")) {
+            return db.catalog_details(profile, title);
+        }
     }
     if let Some(title) = path
         .strip_prefix("/v1/library/titles/")
@@ -1545,7 +1548,9 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             let config = effective.as_ref().context("Missing settings")?;
             Ok(crate::drives::Drives::of(config).report())
         },
-        ("GET","/v1/library/revision") => Ok(json!({"revision":db.catalog_revision()?})),
+        ("GET","/v1/library/revision") => Ok(json!({"revision":db.catalog_revision()?,"content":db.part_revision("content")?,"progress":db.part_revision("progress")?})),
+        ("GET","/v1/library/list") => db.catalog_list(profile),
+        ("GET","/v1/library/progress") => db.catalog_progress(profile),
         ("GET","/v1/processing") => crate::processing::summary(&db),
         ("GET","/v1/processing/failures") => Ok(json!({
             "failures":db.rows("SELECT * FROM processing_failures ORDER BY resolved_at IS NULL DESC,last_seen DESC",[])?,

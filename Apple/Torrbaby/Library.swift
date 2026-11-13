@@ -118,6 +118,41 @@ extension LibraryAsset {
 
 struct LibraryDestination: Hashable { let id: String }
 
+/// What changes as people watch, sent apart from the list: each played file's position and
+/// watched mark (a file not listed has none) and the titles hidden from Continue Watching.
+struct LibraryProgress: Decodable {
+    struct Entry: Decodable { let position: Double?; let duration: Double?; let watched: Bool?; let lastPlayed: Double? }
+    let revision: String
+    let assets: [String: Entry]
+    let hidden: [String]
+}
+/// What a title's page adds to the list: its cast and each file's tracks.
+struct LibraryTitleDetails: Decodable {
+    let cast: [LibraryCastMember]?
+    let mediaInfo: [String: MediaTrackInfo?]
+}
+extension MediaLibrary {
+    mutating func apply(_ progress: LibraryProgress) {
+        let hidden = Set(progress.hidden)
+        for t in titles.indices {
+            titles[t].continueWatchingHidden = hidden.contains(titles[t].id)
+            for a in titles[t].assets.indices {
+                let entry = progress.assets[titles[t].assets[a].id]
+                titles[t].assets[a].position = entry?.position ?? 0
+                if let duration = entry?.duration, duration > 0 { titles[t].assets[a].duration = duration }
+                titles[t].assets[a].watched = entry?.watched ?? false
+                titles[t].assets[a].lastPlayed = entry?.lastPlayed ?? 0
+            }
+        }
+    }
+    mutating func apply(_ details: LibraryTitleDetails, to titleID: String) {
+        guard let t = titles.firstIndex(where: { $0.id == titleID }) else { return }
+        titles[t].cast = details.cast
+        for a in titles[t].assets.indices {
+            if let info = details.mediaInfo[titles[t].assets[a].id] { titles[t].assets[a].mediaInfo = info }
+        }
+    }
+}
 struct MediaLibrary: Decodable {
     var titles: [LibraryTitle]
     let lastScan: Double?
@@ -183,10 +218,11 @@ struct LibraryTitle: Decodable, Identifiable {
     let poster: String?
     let backdrop: String?
     let addedAt: Double
-    let assets: [LibraryAsset]
+    var assets: [LibraryAsset]
     var continueWatchingHidden: Bool?
     var isContinuing: Bool { continueWatchingHidden != true && resume != nil }
-    let cast: [LibraryCastMember]?
+    /// Loaded with the title's page (the list leaves it out).
+    var cast: [LibraryCastMember]?
     /// Every file is on a server drive that is not connected now.
     var offline: Bool? = nil
     var playable: [LibraryAsset] { assets.filter { $0.complete && $0.role != "extra" }.sorted { ($0.season ?? 0, $0.episode ?? 0, $0.name ?? "") < ($1.season ?? 0, $1.episode ?? 0, $1.name ?? "") } }
@@ -247,10 +283,12 @@ struct LibraryAsset: Decodable, Identifiable {
     let summary: String
     let thumbnail: String?
     let complete: Bool
-    let position: Double
-    let duration: Double
-    let watched: Bool
-    let lastPlayed: Double
+    /// Progress arrives on its own (it changes far more often than the list).
+    var position: Double
+    var duration: Double
+    var watched: Bool
+    var lastPlayed: Double
+    /// Loaded with the title's page (the list leaves it out).
     var mediaInfo: MediaTrackInfo? = nil
     /// On a server drive that is not connected now; it returns when the drive does.
     var offline: Bool? = nil
@@ -917,6 +955,8 @@ struct LibraryDetail: View {
             }
         }
         .onDisappear { playbackTask?.cancel() }
+        // Cast and each file's tracks come with the page, not the list.
+        .task(id: titleID) { await store.loadDetails(titleID) }
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .background(MobilePlayerPresentation(playback: $playback, store: store).frame(width: 0, height: 0))

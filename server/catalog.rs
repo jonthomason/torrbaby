@@ -108,6 +108,25 @@ impl Database {
                 self.connection.execute_batch(&format!("CREATE TRIGGER IF NOT EXISTS catalog_revision_{table}_{event} AFTER {event} ON {table}{when} BEGIN UPDATE catalog_revision SET revision=revision+1 WHERE id=1; END;"))?;
             }
         }
+        // Two narrower counters for clients that sync in parts: "content" (titles and files:
+        // the list itself, which nearly never changes) and "progress" (positions, watched,
+        // Continue Watching). Playback and subtitle work change the combined revision every
+        // few seconds, which made clients download the whole library again and again.
+        self.connection.execute_batch("CREATE TABLE IF NOT EXISTS catalog_revisions (name TEXT PRIMARY KEY, revision INTEGER NOT NULL); INSERT OR IGNORE INTO catalog_revisions VALUES('content',0),('progress',0);")?;
+        for (name, table, condition) in [
+            ("content", "library_assets", "OLD.document IS NOT NEW.document"),
+            ("content", "library_entities", "OLD.document IS NOT NEW.document"),
+            ("content", "library_operations", "OLD.package_id IS NOT NEW.package_id"),
+            ("content", "library_operation_assets", "1"),
+            ("content", "media", "1"),
+            ("progress", "profile_hidden_titles", "1"), ("progress", "profile_playback", "1"), ("progress", "playback", "1"),
+        ] {
+            for event in ["INSERT", "UPDATE", "DELETE"] {
+                let when = if event == "UPDATE" { format!(" WHEN {condition}") } else { String::new() };
+                self.connection.execute_batch(&format!("CREATE TRIGGER IF NOT EXISTS catalog_{name}_{table}_{event} AFTER {event} ON {table}{when} BEGIN UPDATE catalog_revisions SET revision=revision+1 WHERE name='{name}'; END;"))?;
+            }
+        }
+        self.connection.execute_batch("CREATE TRIGGER IF NOT EXISTS catalog_content_scan AFTER UPDATE ON organizer_state WHEN json_extract(OLD.document,'$.library_scan') IS NOT json_extract(NEW.document,'$.library_scan') BEGIN UPDATE catalog_revisions SET revision=revision+1 WHERE name='content'; END;")?;
         self.connection.execute_batch("CREATE TRIGGER IF NOT EXISTS catalog_revision_scan AFTER UPDATE ON organizer_state WHEN json_extract(OLD.document,'$.library_scan') IS NOT json_extract(NEW.document,'$.library_scan') BEGIN UPDATE catalog_revision SET revision=revision+1 WHERE id=1; END;")?;
         Ok(())
     }
@@ -116,6 +135,47 @@ impl Database {
         Ok(self.connection.query_row("SELECT epoch || ':' || revision FROM catalog_revision WHERE id=1", [], |r|r.get(0))?)
     }
 
+    /// "content" or "progress" revision, as "epoch:n" like the combined one.
+    pub fn part_revision(&self, name: &str) -> Result<String> {
+        Ok(self.connection.query_row("SELECT (SELECT epoch FROM catalog_revision WHERE id=1) || ':' || revision FROM catalog_revisions WHERE name=?", [name], |r| r.get(0))?)
+    }
+    /// The library list without what only a title's page shows (cast, each file's tracks).
+    pub fn catalog_list(&self, profile: &str) -> Result<Value> {
+        let mut catalog = self.catalog(profile)?;
+        for title in catalog["titles"].as_array_mut().into_iter().flatten() {
+            if let Some(t) = title.as_object_mut() { t.remove("cast"); }
+            for asset in title["assets"].as_array_mut().into_iter().flatten() {
+                if let Some(a) = asset.as_object_mut() { a.remove("media_info"); }
+            }
+        }
+        catalog["revision"] = json!(self.part_revision("content")?);
+        Ok(catalog)
+    }
+    /// What changes as people watch: each file's position and watched mark (files never
+    /// played are left out) and the titles hidden from Continue Watching, for this profile.
+    pub fn catalog_progress(&self, profile: &str) -> Result<Value> {
+        let catalog = self.catalog(profile)?;
+        let mut assets = serde_json::Map::new();
+        let mut hidden = Vec::new();
+        for title in catalog["titles"].as_array().into_iter().flatten() {
+            if title["continue_watching_hidden"] == true { hidden.push(title["id"].clone()); }
+            for asset in title["assets"].as_array().into_iter().flatten() {
+                let played = asset["position"].as_f64().unwrap_or(0.0) > 0.0 || asset["watched"] == true || asset["last_played"].as_f64().unwrap_or(0.0) > 0.0;
+                if let (true, Some(id)) = (played, asset["id"].as_str()) {
+                    assets.insert(id.to_owned(), json!({"position":asset["position"],"duration":asset["duration"],"watched":asset["watched"],"last_played":asset["last_played"]}));
+                }
+            }
+        }
+        Ok(json!({"revision":self.part_revision("progress")?,"assets":assets,"hidden":hidden}))
+    }
+    /// What a title's page adds to the list: its cast and each file's tracks.
+    pub fn catalog_details(&self, profile: &str, title_id: &str) -> Result<Value> {
+        let catalog = self.catalog(profile)?;
+        let title = catalog["titles"].as_array().into_iter().flatten().find(|t| t["id"] == title_id).context("Title not found")?;
+        let media: serde_json::Map<String, Value> = title["assets"].as_array().into_iter().flatten()
+            .filter_map(|a| a["id"].as_str().map(|id| (id.to_owned(), a["media_info"].clone()))).collect();
+        Ok(json!({"cast":title["cast"],"media_info":media}))
+    }
     pub fn catalog(&self, profile: &str) -> Result<Value> {
         let entities: BTreeMap<String, Value> = self
             .documents("entities")?
@@ -382,6 +442,22 @@ pub(crate) fn extra_name(asset: &Value) -> String {
 #[cfg(test)]
 mod completion_tests {
     use super::*;
+    #[test]
+    fn the_list_revision_ignores_playback_and_subtitle_work_which_the_progress_revision_tracks() -> Result<()> {
+        let mut db=Database {connection:rusqlite::Connection::open_in_memory()?};
+        db.connection.execute_batch(include_str!("schema.sql"))?;
+        db.migrate_profiles(9)?;
+        db.initialize_catalog_revision()?;
+        let (content,progress)=(db.part_revision("content")?,db.part_revision("progress")?);
+        db.connection.execute("INSERT INTO media VALUES('m','h',0,'f',1)",[])?;
+        let content=(content,db.part_revision("content")?);
+        assert_ne!(content.0,content.1, "a new file changes the list");
+        db.connection.execute("INSERT INTO media_inventory VALUES('a','r','{}',0)",[])?;
+        db.connection.execute("INSERT INTO playback(media_id,position,duration) VALUES('m',10,100)",[])?;
+        assert_eq!(content.1,db.part_revision("content")?, "subtitle work and playback leave the list alone");
+        assert_ne!(progress,db.part_revision("progress")?, "playback changes progress");
+        Ok(())
+    }
     #[test]
     fn catalog_revision_ignores_heartbeats_but_tracks_library_changes() -> Result<()> {
         let mut db=Database {connection:rusqlite::Connection::open_in_memory()?};

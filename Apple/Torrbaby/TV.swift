@@ -549,6 +549,8 @@ private struct TVMediaDetail: View {
                 didAutoPlay = true; play(asset, title: title)
             }
             .onDisappear { playbackTask?.cancel() }
+            // Cast and each file's tracks come with the page, not the list.
+            .task(id: titleID) { await store.loadDetails(titleID) }
     }
     private func assetButton(_ asset: LibraryAsset, title: LibraryTitle) -> some View {
         HStack(spacing: 20) {

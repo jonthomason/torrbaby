@@ -556,11 +556,11 @@ final class Store: ObservableObject {
             let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             throw APIError(message: payload?["error"] as? String ?? "The server could not complete the request.")
         }
-        if path == "/v1/library" || path == "/v1/playback" || path.hasSuffix("/progress") {
+        if path == "/v1/library" || path == "/v1/library/list" || path == "/v1/playback" || path.hasSuffix("/progress") {
             guard identity == profileIdentity else { throw CancellationError() }
         }
         let decoded = try decoder.decode(T.self, from: data)
-        if method == "GET", path == "/v1/library" {
+        if method == "GET", path == "/v1/library" || path == "/v1/library/list" {
             await LibraryDiskCache.shared.saveLibrary(data, scope: identity)
         }
         return decoded
@@ -599,14 +599,116 @@ final class Store: ObservableObject {
             subtitleQueueError = "Couldn’t refresh the queue. Reconnecting…"
         }
     }
-    // The catalogue revision last fetched for a profile, and when. A background poll skips
-    // re-downloading and re-decoding the whole library while the server's revision is unchanged.
-    private var fetchedLibrary: (identity: String, revision: String, at: Date)?
-    private struct LibraryRevision: Decodable { let revision: String }
-    /// `polling` marks the periodic refresh; a refresh after a user action always reloads.
+    private struct LibraryRevisions: Decodable { let revision: String; let content: String?; let progress: String? }
+    /// The list and progress revisions this device holds, per profile. The list's is kept with
+    /// the snapshot on disk, so waking the app downloads nothing when nothing changed.
+    private var heldProgress: (identity: String, revision: String)?
+    private func heldContent(_ identity: String) -> String? { UserDefaults.standard.string(forKey: "library-content-revision:" + identity) }
+    private func holdContent(_ identity: String, _ revision: String?) { UserDefaults.standard.set(revision, forKey: "library-content-revision:" + identity) }
+    /// Cast and tracks loaded for titles' pages, kept across list updates.
+    private var titleDetails: [String: LibraryTitleDetails] = [:]
+    private func withDetails(_ received: MediaLibrary) -> MediaLibrary {
+        var result = received
+        for (id, details) in titleDetails { result.apply(details, to: id) }
+        return result
+    }
+    /// A title's page loads its cast and each file's tracks (the list leaves them out).
+    func loadDetails(_ titleID: String) async {
+        let identity = profileIdentity
+        let encoded = titleID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? titleID
+        guard let details: LibraryTitleDetails = try? await request("GET", "/v1/library/titles/\(encoded)/details", timeout: 30),
+              identity == profileIdentity else { return }
+        titleDetails[titleID] = details
+        if var current = library { current.apply(details, to: titleID); library = current }
+    }
+    /// The library, in parts: the list only when its revision changed (it nearly never does),
+    /// then progress when that changed. A failure here is the library's own error; the server
+    /// is still connected and every other page still loads.
+    private func syncLibrary(_ identity: String) async {
+        do {
+            let revisions = try? await request("GET", "/v1/library/revision", timeout: 10) as LibraryRevisions
+            guard let content = revisions?.content, let progress = revisions?.progress else {
+                // An older server: the whole library each time.
+                let received: MediaLibrary = try await request("GET", "/v1/library", timeout: 45)
+                guard identity == profileIdentity else { return }
+                library = withContinueWatchingChoices(received)
+                if libraryError != nil { libraryError = nil }
+                return
+            }
+            var progressHeld = heldProgress?.identity == identity ? heldProgress?.revision : nil
+            if library == nil || heldContent(identity) != content {
+                // Several hundred kilobytes; a slow route gets time to finish.
+                let received: MediaLibrary = try await request("GET", "/v1/library/list", timeout: 45)
+                guard identity == profileIdentity else { return }
+                library = withContinueWatchingChoices(withDetails(received))
+                holdContent(identity, content)
+                progressHeld = nil
+            }
+            if progressHeld != progress {
+                let received: LibraryProgress = try await request("GET", "/v1/library/progress", timeout: 20)
+                guard identity == profileIdentity, var current = library else { return }
+                current.apply(received)
+                library = withContinueWatchingChoices(current)
+                heldProgress = (identity, received.revision)
+            }
+            if libraryError != nil { libraryError = nil }
+        } catch {
+            guard !Self.cancelled(error), identity == profileIdentity else { return }
+            libraryError = error.localizedDescription
+        }
+    }
+    private func syncTorrents(_ identity: String) async {
+        do {
+            let received: [Torrent] = try await request("GET", "/v1/torrents")
+            guard identity == profileIdentity else { return }
+            let next = etaSmoother.update(received, server: server, now: Date().timeIntervalSince1970)
+                .sorted { $0.addedDate > $1.addedDate }
+            if next != torrents { torrents = next }
+            if torrentError != nil { torrentError = nil }
+        } catch {
+            guard !Self.cancelled(error), identity == profileIdentity else { return }
+            torrentError = error.localizedDescription
+        }
+    }
+    private func syncOperations(_ identity: String) async {
+        do {
+            let received: PendingLibraryOperations = try await request("GET", "/v1/library/operations")
+            guard identity == profileIdentity else { return }
+            if !(received.operations.isEmpty && libraryOperations.isEmpty) { libraryOperations = received.operations }
+            if libraryOperationsError != nil { libraryOperationsError = nil }
+        } catch {
+            guard !Self.cancelled(error), identity == profileIdentity else { return }
+            libraryOperationsError = error.localizedDescription
+        }
+    }
+    /// Activity, devices, history and rates; each keeps what it had if it cannot load now.
+    private func syncActivity(_ identity: String) async {
+        if let newEvents: [AuditEvent] = try? await request("GET", "/v1/events"), identity == profileIdentity {
+            receiveActivity(newEvents)
+            publish(\.events, Array(newEvents.reversed()))
+        }
+        try? await registerClient()
+        if let received: [ClientDevice] = try? await request("GET", "/v1/clients") { publish(\.clients, received) }
+        await flushProgress()
+        #if !os(tvOS)
+        await DownloadQueue.shared.syncProgress()
+        #if os(iOS)
+        await AutoDownload.run(store: self)
+        #endif
+        #endif
+        if let received: [PlaybackHistory] = try? await request("GET", "/v1/playback"), identity == profileIdentity { publish(\.history, received) }
+        if Date().timeIntervalSince(lastHistoryFetch) >= 30 {
+            if let rates: [TransferSample] = try? await request("GET", "/v1/rates") { transferHistory = rates }
+            if let received: [MediaMetadata] = try? await request("GET", "/v1/metadata") { publish(\.metadata, received) }
+            lastHistoryFetch = Date()
+        }
+        #if !os(tvOS)
+        DownloadQueue.shared.importSharedProgress()
+        #endif
+    }
+    /// `polling` marks the periodic refresh; a refresh after a user action waits for one
+    /// already under way so it shows that action.
     func refresh(polling: Bool = false) async {
-        // Even if this request coalesces with one in flight, the next poll must reload.
-        if !polling { fetchedLibrary = nil }
         // A refresh after a user action must show that action: wait out a poll that
         // started earlier rather than being dropped in its favour.
         while !polling && refreshing && !Task.isCancelled { try? await Task.sleep(for: .milliseconds(50)) }
@@ -624,76 +726,18 @@ final class Store: ObservableObject {
             // Restore browsing before contacting the server. A satisfied network path
             // does not mean the home server is reachable (for example while travelling).
             guard networkAvailable else { throw URLError(.notConnectedToInternet) }
+            // Connected means the server answers. Everything else loads on its own, at the
+            // same time, and a page that cannot load shows its own error.
             let serverStatus = try await probeConnection()
             guard identity == profileIdentity else { return }
             status = serverStatus
             if connectionError != nil { connectionError = nil }
             if subtitleQueueError != nil { subtitleQueueError = nil }
-            do {
-                // Older servers have no revision route; they simply reload every time.
-                let revision = (try? await request("GET", "/v1/library/revision", timeout: 5) as LibraryRevision)?.revision
-                let current = polling && library != nil && revision != nil && fetchedLibrary?.identity == identity
-                    && fetchedLibrary?.revision == revision && Date().timeIntervalSince(fetchedLibrary?.at ?? .distantPast) < 60
-                if !current {
-                    // Several megabytes even compressed less; a slow route gets time to finish.
-                    let receivedLibrary: MediaLibrary = try await request("GET", "/v1/library", timeout: 45)
-                    guard identity == profileIdentity else { return }
-                    library = withContinueWatchingChoices(receivedLibrary)
-                    fetchedLibrary = revision.map { (identity, $0, Date()) }
-                }
-                if libraryError != nil { libraryError = nil }
-            } catch {
-                // The server answered; only the library download was too slow or failed. Keep
-                // the library already on this device and stay connected (it was shown as
-                // Offline). With no library yet, the error stands.
-                if Self.cancelled(error) { throw error }
-                libraryError = error.localizedDescription
-                if library == nil { throw error }
-            }
-            let newEvents: [AuditEvent] = try await request("GET", "/v1/events")
-            try await registerClient()
-            publish(\.clients, try await request("GET", "/v1/clients"))
-            await flushProgress()
-            #if !os(tvOS)
-            await DownloadQueue.shared.syncProgress()
-            #if os(iOS)
-            await AutoDownload.run(store: self)
-            #endif
-            #endif
-            let receivedHistory: [PlaybackHistory] = try await request("GET", "/v1/playback")
-            guard identity == profileIdentity else { return }
-            publish(\.history, receivedHistory)
-            if Date().timeIntervalSince(lastHistoryFetch) >= 30 {
-                transferHistory = try await request("GET", "/v1/rates")
-                publish(\.metadata, try await request("GET", "/v1/metadata"))
-                lastHistoryFetch = Date()
-            }
-            #if !os(tvOS)
-            DownloadQueue.shared.importSharedProgress()
-            #endif
-            do {
-                let received: PendingLibraryOperations = try await request("GET", "/v1/library/operations")
-                guard identity == profileIdentity else { return }
-                if !(received.operations.isEmpty && libraryOperations.isEmpty) { libraryOperations = received.operations }
-                if libraryOperationsError != nil { libraryOperationsError = nil }
-            } catch {
-                guard identity == profileIdentity else { return }
-                libraryOperationsError = error.localizedDescription
-            }
-            do {
-                let received: [Torrent] = try await request("GET", "/v1/torrents")
-                guard identity == profileIdentity else { return }
-                let next = etaSmoother.update(received, server: server, now: Date().timeIntervalSince1970)
-                    .sorted { $0.addedDate > $1.addedDate }
-                if next != torrents { torrents = next }
-                if torrentError != nil { torrentError = nil }
-            } catch {
-                guard identity == profileIdentity else { return }
-                torrentError = error.localizedDescription
-            }
-            receiveActivity(newEvents)
-            publish(\.events, Array(newEvents.reversed()))
-            if connectionError != nil { connectionError = nil }
+            async let libraryPart: Void = syncLibrary(identity)
+            async let torrentsPart: Void = syncTorrents(identity)
+            async let operationsPart: Void = syncOperations(identity)
+            async let activityPart: Void = syncActivity(identity)
+            _ = await (libraryPart, torrentsPart, operationsPart, activityPart)
         } catch {
             // A refresh cut short (the app went to the background, the view changed) says
             // nothing about the server; showing it read "cancelled" and flashed Offline.
@@ -816,6 +860,9 @@ extension Store {
     func mediaPlaybackLink(asset: LibraryAsset, titleID: String, startSession: Bool = true, progress: @escaping (String) -> Void = { _ in }) async throws -> PlaybackLink {
         if startSession { try requireStreamingConnection() }
         else if !connected { throw URLError(.notConnectedToInternet) }
+        // The player reads the file's tracks (subtitles in the picture, picture shape); the
+        // list leaves them out, so a title started without opening its page loads them now.
+        if startSession, titleIndex[titleID]?.assets.first(where: { $0.id == asset.id })?.mediaInfo == nil { await loadDetails(titleID) }
         let serverAtStart = server
         let profileAtStart = profileIdentity
         let base = "/v1/library/assets/\(asset.id)"
