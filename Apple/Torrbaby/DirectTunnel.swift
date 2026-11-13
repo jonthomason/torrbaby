@@ -30,7 +30,7 @@ final class DirectTunnel: @unchecked Sendable {
         let probe = PunchProbe(count: 192)
         defer { probe.close() }
         guard probe.ready, let interface = probe.interface else { throw Failure(message: "No network for a direct path") }
-        let mappings = await Task.detached { probe.discover() }.value
+        let mappings = await Task.detached { probe.discover(limit: 12) }.value
         guard let ip = mappings.first?.ip else { throw Failure(message: "STUN: no answer") }
         let ports = mappings.map(\.port).sorted()
         let span = ports.last! - ports.first!
@@ -66,27 +66,27 @@ final class DirectTunnel: @unchecked Sendable {
         parameters.allowLocalEndpointReuse = true
         let group = NWConnectionGroup(with: NWMultiplexGroup(to: .hostPort(host: NWEndpoint.Host(String(parts[0])), port: remotePort)), using: parameters)
         self.group = group
-        try await withThrowingTaskGroup(of: Void.self) { race in
-            race.addTask { [queue] in
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                    var resumed = false
-                    group.stateUpdateHandler = { [weak self] state in
-                        switch state {
-                        case .ready:
-                            if !resumed { resumed = true; continuation.resume() }
-                        case .failed(let error):
-                            if !resumed { resumed = true; continuation.resume(throwing: error) } else { self?.close() }
-                        case .cancelled:
-                            if !resumed { resumed = true; continuation.resume(throwing: CancellationError()) } else { self?.close() }
-                        default: break
-                        }
-                    }
-                    group.start(queue: queue)
+        // Ready, failed, or stuck waiting (iOS could not use that port or network): no hang.
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            var resumed = false
+            let finish: (Error?) -> Void = { error in
+                guard !resumed else { return }
+                resumed = true
+                if let error { group.cancel(); continuation.resume(throwing: error) } else { continuation.resume() }
+            }
+            group.stateUpdateHandler = { [weak self] state in
+                switch state {
+                case .ready: finish(nil)
+                case .waiting(let error): finish(Failure(message: "QUIC waiting: \(error)"))
+                case .failed(let error):
+                    if resumed { self?.close() } else { finish(Failure(message: "QUIC failed: \(error)")) }
+                case .cancelled:
+                    if resumed { self?.close() } else { finish(Failure(message: "QUIC cancelled")) }
+                default: break
                 }
             }
-            race.addTask { try await Task.sleep(for: .seconds(8)); throw Failure(message: "QUIC did not start") }
-            try await race.next()
-            race.cancelAll()
+            group.start(queue: queue)
+            queue.asyncAfter(deadline: .now() + 8) { finish(Failure(message: "QUIC did not start in 8 s")) }
         }
         // The local side: the app and the player connect here.
         let tcp = NWParameters.tcp
@@ -101,12 +101,13 @@ final class DirectTunnel: @unchecked Sendable {
                 switch state {
                 case .ready:
                     if !resumed, let port = listener.port?.rawValue { resumed = true; continuation.resume(returning: port) }
-                case .failed(let error):
-                    if !resumed { resumed = true; continuation.resume(throwing: error) } else { self?.close() }
+                case .failed(let error), .waiting(let error):
+                    if !resumed { resumed = true; continuation.resume(throwing: Failure(message: "Local proxy: \(error)")) } else { self?.close() }
                 default: break
                 }
             }
             listener.start(queue: queue)
+            queue.asyncAfter(deadline: .now() + 5) { if !resumed { resumed = true; listener.cancel(); continuation.resume(throwing: Failure(message: "Local proxy did not start")) } }
         }
     }
 

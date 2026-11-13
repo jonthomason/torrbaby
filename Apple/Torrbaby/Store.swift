@@ -534,7 +534,7 @@ final class Store: ObservableObject {
     private var directTunnel: DirectTunnel?
     private var directAttempting = false
     private var lastDirectAttempt = Date.distantPast
-    private(set) var directNote = ""
+    @Published private(set) var directNote = ""
     /// Away from home, try for a direct path every few minutes until one holds.
     private func startDirectIfUseful() {
         guard connected, usingFallback, directRoute == nil, !directAttempting,

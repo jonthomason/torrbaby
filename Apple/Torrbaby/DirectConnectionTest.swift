@@ -55,7 +55,7 @@ struct DirectConnectionTest: View {
         let probe = PunchProbe(count: 128)
         lines.append("Network: \(probe.interface ?? "default")")
         guard probe.ready else { lines.append("Could not open sockets"); outcome = false; return }
-        let mappings = await Task.detached { probe.discover() }.value
+        let mappings = await Task.detached { probe.discover(limit: 12) }.value
         guard let ip = mappings.first?.ip else { lines.append("STUN: no answer"); outcome = false; probe.close(); return }
         let ports = mappings.map(\.port).sorted()
         let steps = zip(ports, ports.dropFirst()).map { $1 - $0 }
@@ -195,11 +195,13 @@ final class PunchProbe: @unchecked Sendable {
     private static func milliseconds() -> Int { Int(DispatchTime.now().uptimeNanoseconds / 1_000_000) }
 
     /// Each socket's public address, from one STUN server (the first that answers).
-    func discover() -> [Mapping] {
+    /// `limit`: ask from only the first few sockets (STUN servers throttle large bursts); the
+    /// rest of the window is covered by the server's spray.
+    func discover(limit: Int = .max) -> [Mapping] {
         for (host, port) in [("stun.chat.bilibili.com", UInt16(3478)), ("stun.l.google.com", UInt16(19302))] {
             guard let server = Self.resolve(host, port) else { continue }
             var transactions: [[UInt8]: Int] = [:]
-            for (index, fd) in sockets.enumerated() {
+            for (index, fd) in sockets.enumerated() where index < limit {
                 var request: [UInt8] = [0, 1, 0, 0, 0x21, 0x12, 0xA4, 0x42]
                 let id = (0..<12).map { _ in UInt8.random(in: 0...255) }
                 request += id; transactions[id] = index
@@ -207,7 +209,7 @@ final class PunchProbe: @unchecked Sendable {
             }
             var found: [Int: Mapping] = [:]
             let deadline = Self.milliseconds() + 2500
-            while Self.milliseconds() < deadline && found.count < sockets.count {
+            while Self.milliseconds() < deadline && found.count < min(limit, sockets.count) {
                 for fd in sockets {
                     while let (data, _) = receive(fd) {
                         guard data.count >= 20, let index = transactions[Array(data[8..<20])], let mapped = Self.mapped(data) else { continue }
