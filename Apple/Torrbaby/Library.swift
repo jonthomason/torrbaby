@@ -670,7 +670,8 @@ struct LibraryBrowser: View {
                 LibraryArtwork(id: title.id).aspectRatio(2/3, contentMode: .fit)
                     .overlay { if title.poster?.isEmpty != false { Text(title.title).font(.headline).multilineTextAlignment(.center).padding(10) } }
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .modifier(OfflineDriveMark(offline: title.offline == true))
+                    // A copy on this device plays whether or not the server's drive is connected.
+                    .modifier(OfflineDriveMark(offline: title.offline == true && !store.isDownloaded(title)))
                     .overlay(alignment: .topTrailing) { if title.watched { WatchedBadge() } }
                 if continuing, let asset = title.resume {
                     GeometryReader { geometry in

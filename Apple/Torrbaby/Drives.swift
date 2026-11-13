@@ -32,6 +32,8 @@ private struct DriveCandidate: Decodable, Identifiable {
     let freeBytes: Int64
     let writable: Bool
     let usedBefore: Bool
+    /// False when its format is not one Torrbaby takes; absent from servers that take any.
+    var usable: Bool? = nil
     var id: String { mount }
 }
 private struct DriveCandidates: Decodable { let candidates: [DriveCandidate] }
@@ -209,10 +211,11 @@ private struct AddDriveView: View {
                                     Text(L10n.format("%@ free of %@", bytes(candidate.freeBytes), bytes(candidate.totalBytes))).font(.caption).foregroundStyle(Theme.muted).monospacedDigit()
                                     if candidate.usedBefore { Text("Used by Torrbaby before").font(.caption).foregroundStyle(Theme.muted) }
                                     if !candidate.writable { Text("This drive is read-only").font(.caption).foregroundStyle(.orange) }
+                                    if candidate.usable == false { Text("Erase this drive as APFS or Mac OS Extended (Journaled), not case-sensitive, in Disk Utility, then add it").font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
                                 }
                                 Spacer()
                                 if adding == candidate.mount { ProgressView() } else {
-                                    Button("Add") { add(candidate) }.disabled(adding != nil || !candidate.writable)
+                                    Button("Add") { add(candidate) }.disabled(adding != nil || !candidate.writable || candidate.usable == false)
                                 }
                             }
                         }
