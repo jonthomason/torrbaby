@@ -916,7 +916,16 @@ final class Store: ObservableObject {
         catch {
             #if os(iOS)
             // The direct path failed: back to Tailscale at once (the next try uses it).
-            if throughDirect, let network = error as? URLError, network.code != .cancelled { dropDirect("failed: \(network.code.rawValue)") }
+            if throughDirect, let network = error as? URLError, network.code != .cancelled {
+                dropDirect("failed: \(network.code.rawValue)")
+                // The direct path died under this request (a carrier switch behind a hotspot):
+                // a read is asked again at once over the route underneath (the relay), so the
+                // switch costs a moment rather than an error. Changes are never repeated.
+                if method == "GET", activeServer != nil {
+                    directEvent("retried \(path.split(separator: "?").first ?? "") over \(routeLabel(activeServer ?? ""))")
+                    return try await self.request(method, path, body: body, timeout: timeout, address: nil, observer: observer)
+                }
+            }
             if throughRelay, let network = error as? URLError, network.code != .cancelled, network.code != .timedOut { dropRelay("failed: \(network.code.rawValue)") }
             #endif
             throw error
