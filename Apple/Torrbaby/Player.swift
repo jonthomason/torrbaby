@@ -357,10 +357,47 @@ struct NativePlayer: NSViewRepresentable {
                 window.standardWindowButton(button)?.isHidden = !visible
             }
         }
+        var sizeObservation: NSKeyValueObservation?
+        var fullScreenObserver: Any?
+        var picture = CGSize.zero
+        /// The window keeps the picture's shape, so it can be sized to the movie with no black bars.
+        func watch(_ player: AVPlayer) {
+            sizeObservation = player.observe(\.currentItem?.presentationSize, options: [.initial, .new]) { [weak self] player, _ in
+                let size = player.currentItem?.presentationSize ?? .zero
+                DispatchQueue.main.async { self?.fit(size) }
+            }
+        }
+        func fit(_ size: CGSize) {
+            guard size.width > 0, size.height > 0 else { return }
+            picture = size
+            guard let window else { return }
+            // A full-screen window is left alone; it takes the picture's shape when it leaves full screen.
+            guard !window.styleMask.contains(.fullScreen) else { return }
+            let shape = NSSize(width: size.width, height: size.height)
+            let chrome = window.frame.height - (window.contentView?.frame.height ?? window.frame.height)
+            guard window.contentAspectRatio != shape else { return }
+            window.contentAspectRatio = shape
+            var frame = window.frame
+            let top = frame.maxY
+            var width = frame.width
+            var height = (width * size.height / size.width).rounded() + chrome
+            if let visible = window.screen?.visibleFrame, height > visible.height {
+                height = visible.height
+                width = ((height - chrome) * size.width / size.height).rounded()
+            }
+            frame.size = NSSize(width: width, height: height)
+            frame.origin.y = top - height
+            window.setFrame(frame, display: true, animate: false)
+        }
         func configure(_ window: NSWindow, title: String) {
             window.title = title
             guard self.window !== window else { return }
             self.window = window
+            fullScreenObserver = NotificationCenter.default.addObserver(forName: NSWindow.didExitFullScreenNotification, object: window, queue: .main) { [weak self] _ in
+                guard let self else { return }
+                self.fit(self.picture)
+            }
+            fit(picture)
             window.titlebarAppearsTransparent = true
             window.styleMask.insert(.fullSizeContentView)
             window.acceptsMouseMovedEvents = true
@@ -379,6 +416,8 @@ struct NativePlayer: NSViewRepresentable {
         }
         func stop() {
             hideWork?.cancel()
+            sizeObservation = nil
+            if let fullScreenObserver { NotificationCenter.default.removeObserver(fullScreenObserver) }; fullScreenObserver = nil
             if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil
             if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }; mouseMonitor = nil
         }
@@ -392,6 +431,7 @@ struct NativePlayer: NSViewRepresentable {
         view.speeds = PlaybackSpeeds.options
         view.showsFullScreenToggleButton = true
         view.allowsPictureInPicturePlayback = true
+        context.coordinator.watch(player)
         DispatchQueue.main.async { [weak view, weak coordinator = context.coordinator] in
             if let window = view?.window { coordinator?.configure(window, title: title) }
         }
@@ -545,7 +585,8 @@ struct PlayerScreen: View {
         .presentationBackground(.black)
         #endif
         #if os(macOS)
-        .frame(minWidth: 480, minHeight: 270)
+        // Low enough for a 2.39:1 film at the narrowest width.
+        .frame(minWidth: 480, minHeight: 180)
         .ignoresSafeArea()
         .onExitCommand { dismiss() }
         #else
