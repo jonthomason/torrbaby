@@ -635,15 +635,20 @@ final class Store: ObservableObject {
                 let current = polling && library != nil && revision != nil && fetchedLibrary?.identity == identity
                     && fetchedLibrary?.revision == revision && Date().timeIntervalSince(fetchedLibrary?.at ?? .distantPast) < 60
                 if !current {
-                    let receivedLibrary: MediaLibrary = try await request("GET", "/v1/library", timeout: 8)
+                    // Several megabytes even compressed less; a slow route gets time to finish.
+                    let receivedLibrary: MediaLibrary = try await request("GET", "/v1/library", timeout: 45)
                     guard identity == profileIdentity else { return }
                     library = withContinueWatchingChoices(receivedLibrary)
                     fetchedLibrary = revision.map { (identity, $0, Date()) }
                 }
                 if libraryError != nil { libraryError = nil }
             } catch {
-                if !Self.cancelled(error) { libraryError = error.localizedDescription }
-                throw error
+                // The server answered; only the library download was too slow or failed. Keep
+                // the library already on this device and stay connected (it was shown as
+                // Offline). With no library yet, the error stands.
+                if Self.cancelled(error) { throw error }
+                libraryError = error.localizedDescription
+                if library == nil { throw error }
             }
             let newEvents: [AuditEvent] = try await request("GET", "/v1/events")
             try await registerClient()

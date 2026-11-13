@@ -627,13 +627,32 @@ async fn dispatch(
         },
         None => crate::profiles::LEGACY_PROFILE,
     };
+    let gzip = headers.get(axum::http::header::ACCEPT_ENCODING).and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(',').any(|e| e.trim().split(';').next() == Some("gzip")));
     match handle(&s, &method, uri.path(), body, profile).await {
+        Ok(value) if gzip => compressed_json(&value),
         Ok(value) => ([("Cache-Control", "no-store")], Json(value)).into_response(),
         Err(error) => (
             StatusCode::BAD_REQUEST,
             Json(json!({"error":error.to_string()})),
         )
             .into_response(),
+    }
+}
+/// JSON compressed for clients that accept it. The library alone is several megabytes and
+/// shrinks to a fraction; over a slow route (a phone on a Tailscale relay) the plain
+/// response did not arrive in time and the client showed Offline. Media is never compressed.
+fn compressed_json(value: &Value) -> Response {
+    let Ok(plain) = serde_json::to_vec(value) else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error":"Invalid response"}))).into_response();
+    };
+    let json_headers = [("Cache-Control", "no-store"), ("Content-Type", "application/json")];
+    if plain.len() < 1024 { return (json_headers, plain).into_response(); }
+    use std::io::Write;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::with_capacity(plain.len() / 6), flate2::Compression::fast());
+    match encoder.write_all(&plain).and_then(|_| encoder.finish()) {
+        Ok(body) => ([("Cache-Control", "no-store"), ("Content-Type", "application/json"), ("Content-Encoding", "gzip"), ("Vary", "Accept-Encoding")], body).into_response(),
+        Err(_) => (json_headers, plain).into_response(),
     }
 }
 /// Cloud shares for a title, each copy set against the series' episodes when the
