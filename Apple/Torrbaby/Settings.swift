@@ -889,7 +889,7 @@ private struct FallbackAddressView: View {
         NavigationStack {
             Form {
                 SwiftUI.Section("Fallback address") {
-                    TextField("http://100.80.147.115:8765", text: $address)
+                    TextField("http://diamond-ts.example.ts.net:8765" as String, text: $address)
                         #if os(iOS)
                         .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
                         #endif

@@ -65,6 +65,7 @@ final class Store: ObservableObject {
     var profileIdentity: String { profileScope + "|" + (activeProfile?.id ?? "") }
 
     func resolveProfile() async throws {
+        moveDataOffAddress()
         guard configured, !loadingProfiles else { return }
         if resolvedProfileScope == profileScope { return }
         loadingProfiles = true
@@ -219,16 +220,19 @@ final class Store: ObservableObject {
             } catch { break }
         }
     }
-    /// The library this device is paired with, by the name its server took when it was set
-    /// up. There is one library, so every cache, setting and download is keyed to this name;
-    /// an address is only a route to it. A device that has not yet heard the name keeps its
-    /// earlier keys until it does, and they are then moved over once (see `adopt(serverName:)`).
+    /// There is one library, so nothing this device keeps (profile choice, library snapshot,
+    /// artwork, subtitle defaults, pending playback, downloads) is keyed to the server at
+    /// all. The server's name (chosen by its owner, "Diamond") is what people see, and its
+    /// permanent id says it is the same server; neither is ever an address.
+    static let libraryKey = "library"
+    var libraryKey: String { Self.libraryKey }
     @Published private(set) var serverName = UserDefaults.standard.string(forKey: "server-name") ?? ""
-    var libraryKey: String { serverName.isEmpty ? server : serverName }
-    private func adopt(serverName reported: String?) {
-        let name = (reported ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name != serverName else { return }
-        let old = libraryKey, client = clientId, defaults = UserDefaults.standard
+    private(set) var serverID = UserDefaults.standard.string(forKey: "server-id") ?? ""
+    /// Earlier builds keyed this device's data to the server's address. Moved once, at launch.
+    private func moveDataOffAddress() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: "data-keyed-to-library"), !server.isEmpty else { return }
+        let old = server, new = Self.libraryKey, client = clientId
         func move(_ from: String, _ to: String) {
             guard from != to, let value = defaults.object(forKey: from) else { return }
             if let earlier = value as? [String: Any], let current = defaults.dictionary(forKey: to) {
@@ -236,20 +240,44 @@ final class Store: ObservableObject {
             } else if defaults.object(forKey: to) == nil { defaults.set(value, forKey: to) }
             defaults.removeObject(forKey: from)
         }
-        for prefix in ["pending-playback:", "activity-watermark:", "fallback-server:", "fallback-routing-mac:", "fallback-routing-v2:"] {
-            move(prefix + old, prefix + name)
-        }
-        move("viewer:" + old + "|" + client, "viewer:" + name + "|" + client)
-        move("subtitle-defaults:" + old + ":" + client, "subtitle-defaults:" + name + ":" + client)
-        let earlierIdentity = profileIdentity, resolved = resolvedProfileScope == profileScope
-        serverName = name
-        defaults.set(name, forKey: "server-name")
-        if resolved { resolvedProfileScope = profileScope }
-        let identity = profileIdentity
-        Task { await LibraryDiskCache.shared.moveSnapshot(from: earlierIdentity, to: identity) }
+        for prefix in ["pending-playback:", "activity-watermark:", "fallback-server:"] { move(prefix + old, prefix + new) }
+        move("viewer:" + old + "|" + client, "viewer:" + new + "|" + client)
+        move("subtitle-defaults:" + old + ":" + client, "subtitle-defaults:" + new + ":" + client)
+        for flag in ["fallback-routing-mac:", "fallback-routing-v2:"] { defaults.removeObject(forKey: flag + old) }
         #if !os(tvOS)
-        DownloadQueue.shared.adoptLibrary(name)
+        DownloadQueue.shared.adoptLibrary(new)
         #endif
+        defaults.set(true, forKey: "data-keyed-to-library")
+    }
+    @Published private(set) var homeRoute = UserDefaults.standard.string(forKey: "route-home") ?? ""
+    @Published private(set) var awayRoute = UserDefaults.standard.string(forKey: "route-away") ?? ""
+    private var routePort: Int { URLComponents(string: server)?.port ?? 8765 }
+    private func address(_ host: String) -> String { host.isEmpty ? "" : "http://\(host):\(routePort)" }
+    private func adopt(_ identity: ServerIdentity?) {
+        guard let identity else { return }
+        let defaults = UserDefaults.standard
+        if let name = identity.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty, name != serverName {
+            serverName = name; defaults.set(name, forKey: "server-name")
+        }
+        let home = identity.routes?.home ?? "", away = identity.routes?.away ?? ""
+        if !home.isEmpty && home != homeRoute { homeRoute = home; defaults.set(home, forKey: "route-home") }
+        if !away.isEmpty && away != awayRoute {
+            awayRoute = away; defaults.set(away, forKey: "route-away")
+            fallbackServer = address(away)
+        }
+        if let id = identity.id?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty, id != serverID {
+            serverID = id; defaults.set(id, forKey: "server-id")
+        }
+        // The paired address may be a number (an address from DHCP or Tailscale); once the
+        // server's names are known, it is kept by name instead.
+        let named = address(home)
+        if !named.isEmpty && ServerRoutes.normalized(server) != named {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.server = named
+                UserDefaults.standard.set(named, forKey: "server")
+            }
+        }
     }
     @Published var server: String = UserDefaults.standard.string(forKey: "server") ?? "" {
         didSet {
@@ -263,7 +291,6 @@ final class Store: ObservableObject {
     @Published var fallbackServer = "" {
         didSet {
             UserDefaults.standard.set(fallbackServer, forKey: "fallback-server:" + libraryKey)
-            UserDefaults.standard.set(true, forKey: routingFlag)
         }
     }
     @Published private(set) var activeServer: String?
@@ -271,39 +298,13 @@ final class Store: ObservableObject {
     /// subnet routing), so the device is not actually on the home network.
     @Published private(set) var activeRouteTunnelled = false
     private var connectionProbe: Task<DaemonStatus, Error>?
-    // Marks that this device's fallback was saved under the LAN-first routing rules.
-    // The Mac adopted them later than iOS, so it has its own marker for the one-time repair.
-    private var routingFlag: String {
-        #if os(macOS)
-        "fallback-routing-mac:" + libraryKey
-        #else
-        "fallback-routing-v2:" + libraryKey
-        #endif
-    }
     private func savedFallback() -> String {
-        let saved = UserDefaults.standard.string(forKey: "fallback-server:" + libraryKey)
-        #if os(tvOS)
-        return saved ?? ""
-        #else
-        // A device paired through the Tailscale address saved an empty fallback before
-        // LAN-first routing existed; give it the Tailscale route once.
-        if saved == "", !UserDefaults.standard.bool(forKey: routingFlag),
-           ServerRoutes.primaryAddress(for: server) != server {
-            return ServerRoutes.defaultFallback(for: server)
-        }
-        if let saved { return saved }
-        return ServerRoutes.defaultFallback(for: server)
-        #endif
+        if !awayRoute.isEmpty { return address(awayRoute) }
+        return UserDefaults.standard.string(forKey: "fallback-server:" + libraryKey) ?? ""
     }
-    /// At home the LAN address is the primary route even when the device was paired through
-    /// Tailscale. The Mac used to skip this, so a Tailscale-paired Mac was always "Fallback"
-    /// and could not stream.
+    /// At home: the server's Bonjour name once it is known, else the address it was paired with.
     var primaryAddress: String {
-        #if os(tvOS)
-        return server
-        #else
-        return ServerRoutes.primaryAddress(for: server)
-        #endif
+        homeRoute.isEmpty ? server : address(homeRoute)
     }
     var usingFallback: Bool {
         ServerRoutes.isFallback(primary: primaryAddress, active: activeServer, tunnelled: activeRouteTunnelled)
@@ -465,7 +466,10 @@ final class Store: ObservableObject {
     private func probeConnection() async throws -> DaemonStatus {
         if let connectionProbe { return try await connectionProbe.value }
         let identityServer = server, primary = primaryAddress, fallback = fallbackServer
-        var addresses = ServerRoutes.candidates(primary: primary, fallback: fallback, current: activeServer)
+        // The route that last worked goes first, but only while it is still one of the
+        // server's routes (an address used before its names were known is dropped).
+        let current = activeServer.flatMap { active in [primary, fallback].contains { ServerRoutes.normalized($0) == ServerRoutes.normalized(active) } ? active : nil }
+        var addresses = ServerRoutes.candidates(primary: primary, fallback: fallback, current: current)
         // The working route is tried first, so a brief outage of the primary (a server
         // restart, say) used to leave the client on the fallback until the network changed.
         // While on the fallback, give the primary a short first try every 30 seconds.
@@ -482,14 +486,16 @@ final class Store: ObservableObject {
                 // A tunnelled route over cellular can take longer than the LAN to answer.
                 let away = ServerRoutes.normalized(address) != ServerRoutes.normalized(primary)
                 let value: DaemonStatus = try await self.request("GET", "/v1/status", timeout: quick ? 2 : away ? 10 : 4, address: address, observer: observer)
-                return (value, observer.tunnelled)
+                // iOS can carry even home Wi-Fi traffic through Tailscale when subnet routes are
+                // on, so a tunnelled route only means "away" when no own interface is on the
+                // subnet of the address the name led to.
+                let tunnelled = observer.tunnelled && !ServerRoutes.sharesSubnet(observer.reached ?? address, interfaces: ServerRoutes.localInterfaces())
+                return (value, tunnelled)
             }
             guard self.server == identityServer, self.fallbackServer == fallback else { throw CancellationError() }
             self.activeServer = route
-            self.adopt(serverName: probed.0.server?.name)
-            // iOS can carry even home Wi-Fi traffic through Tailscale when subnet routes are
-            // on, so a tunnelled route only means "away" when no own interface is on that subnet.
-            self.activeRouteTunnelled = probed.1 && !ServerRoutes.sharesSubnet(route, interfaces: ServerRoutes.localInterfaces())
+            self.adopt(probed.0.server)
+            self.activeRouteTunnelled = probed.1
             return probed.0
         }
         connectionProbe = task
@@ -1087,9 +1093,15 @@ private extension View {
 final class RouteObserver: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var local: String?
+    private var remote: String?
     func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
-        let address = metrics.transactionMetrics.last { $0.localAddress != nil }?.localAddress
-        lock.lock(); local = address; lock.unlock()
+        let transaction = metrics.transactionMetrics.last { $0.localAddress != nil }
+        lock.lock(); local = transaction?.localAddress; remote = transaction?.remoteAddress; lock.unlock()
+    }
+    /// The address the route's name led to this time, as a URL for subnet checks.
+    var reached: String? {
+        lock.lock(); defer { lock.unlock() }
+        return remote.map { "http://" + ($0.contains(":") ? "[\($0)]" : $0) }
     }
     /// Left from a Tailscale address: the route goes through the tunnel.
     var tunnelled: Bool {

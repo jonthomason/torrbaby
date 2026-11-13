@@ -58,6 +58,32 @@ fn establish_identity(s: &Service) -> Result<Value> {
     Ok(identity)
 }
 
+/// The names clients reach the server by: its Bonjour host name at home and its Tailscale
+/// (MagicDNS) name away. Both are looked up from the Mac, so a new address never matters.
+static ROUTES: std::sync::RwLock<Value> = std::sync::RwLock::new(Value::Null);
+
+async fn refresh_routes() {
+    async fn output(program: &str, args: &[&str]) -> Option<String> {
+        let output = tokio::process::Command::new(program).args(args).output().await.ok()?;
+        output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    }
+    let home = output("/usr/sbin/scutil", &["--get", "LocalHostName"]).await.filter(|n| !n.is_empty()).map(|n| format!("{n}.local"));
+    let mut away = None;
+    for program in ["/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"] {
+        if let Some(text) = output(program, &["status", "--json"]).await {
+            away = serde_json::from_str::<Value>(&text).ok()
+                .and_then(|status| status["Self"]["DNSName"].as_str().map(|name| name.trim_end_matches('.').to_owned()))
+                .filter(|name| !name.is_empty());
+            if away.is_some() { break; }
+        }
+    }
+    let routes = json!({"home":home,"away":away});
+    if let Ok(mut current) = ROUTES.write() {
+        // Keep the last names known if a lookup fails for a moment.
+        if current.is_null() || (routes["home"].is_string() && routes["away"].is_string()) { *current = routes; }
+    }
+}
+
 fn computer_name() -> String {
     std::process::Command::new("/usr/sbin/scutil").args(["--get", "ComputerName"]).output().ok()
         .filter(|output| output.status.success())
@@ -84,39 +110,13 @@ pub async fn serve(
         bail!("The migration preview must use a copy of the live database");
     }
     // Bind before starting workers: a second server must never organize files.
+    // The server listens on every network the Mac is on (`[::]` also takes IPv4), never on
+    // a particular address: its addresses come from DHCP and Tailscale and may change.
     let listener = tokio::net::TcpListener::bind(&listen).await?;
-    let lan_listener = if !preview {
-        if let Some(host) = &config.lan_listen_host {
-            let address = format!("{host}:{}", config.listen_port);
-            if address != listen {
-                Some(tokio::net::TcpListener::bind(address).await?)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-    let mut advertisement = if !preview && config.advertise_lan {
-        Some(
-            tokio::process::Command::new("/usr/bin/dns-sd")
-                .args([
-                    "-R",
-                    "Torrbaby",
-                    "_torrbaby._tcp",
-                    "local.",
-                    &config.listen_port.to_string(),
-                    "api=1",
-                ])
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .kill_on_drop(true)
-                .spawn()
-                .context("Advertise Torrbaby on LAN")?,
-        )
+    // Where `[::]` is IPv6-only, IPv4 needs its own socket; where it is dual-stack this
+    // bind fails because the port is taken, which is expected.
+    let lan_listener = if listen.starts_with("[::]:") {
+        tokio::net::TcpListener::bind(format!("0.0.0.0:{}", config.listen_port)).await.ok()
     } else {
         None
     };
@@ -174,7 +174,38 @@ pub async fn serve(
         )?,
     });
     let identity = establish_identity(&service)?;
-    eprintln!("Torrbaby server {}", identity["name"].as_str().unwrap_or_default());
+    let name = identity["name"].as_str().unwrap_or("Torrbaby").to_owned();
+    eprintln!("Torrbaby server {name}");
+    // Clients at home find the server by this Bonjour service and its name, never an address.
+    let mut advertisement = if !preview && service.config.advertise_lan {
+        Some(
+            tokio::process::Command::new("/usr/bin/dns-sd")
+                .args([
+                    "-R",
+                    &name,
+                    "_torrbaby._tcp",
+                    "local.",
+                    &service.config.listen_port.to_string(),
+                    "api=1",
+                    &format!("name={name}"),
+                    &format!("id={}", identity["id"].as_str().unwrap_or_default()),
+                ])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .spawn()
+                .context("Advertise Torrbaby on LAN")?,
+        )
+    } else {
+        None
+    };
+    let routes_task = tokio::spawn(async {
+        loop {
+            refresh_routes().await;
+            tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+        }
+    });
     let sampling_service = service.clone();
     let cached_entities = service
         .db
@@ -366,6 +397,7 @@ pub async fn serve(
     if let Some(task) = lan_task {
         task.abort();
     }
+    routes_task.abort();
     if let Some(child) = &mut advertisement {
         let _ = child.kill().await;
     }
@@ -387,7 +419,7 @@ async fn dispatch(
     bytes: Bytes,
 ) -> Response {
     if uri.path() == "/v1/lan/register" {
-        if method != Method::POST || !crate::lan::trusted(peer.ip(), &s.config.trusted_lan_cidrs) {
+        if method != Method::POST || !crate::lan::trusted(peer.ip()) {
             return (
                 StatusCode::FORBIDDEN,
                 Json(json!({"error":"Automatic connection is available on the trusted LAN only"})),
@@ -1519,10 +1551,20 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         ("GET","/v1/status") => {
             let state = db.state()?;
             let config = effective.as_ref().context("Missing settings")?;
-            Ok(json!({"version":env!("CARGO_PKG_VERSION"),"server":{"name":state["server"]["name"],"id":state["server"]["id"]},"uptime_seconds":s.started.elapsed().as_secs(),
+            Ok(json!({"version":env!("CARGO_PKG_VERSION"),"server":{"name":state["server"]["name"],"id":state["server"]["id"],"routes":ROUTES.read().map(|r|r.clone()).unwrap_or_default()},"uptime_seconds":s.started.elapsed().as_secs(),
                 "settings":{"background_subtitles":config.background_subtitles,"source":config.source,"movies":config.movies,"tv":config.tv,"poll_seconds":config.poll_seconds,"paused":s.preview || config.paused},
                 "storage":crate::drives::Drives::of(&config).report(),
                 "credits_analysis":crate::credits::summary(&db)?,"subtitle_preparation":crate::media_inventory::summary(&db,&s.subtitle_jobs)?,"last_poll":state["last_poll"],"last_error":if s.preview { json!("Migration preview: organizer not enabled") } else {state["last_error"].clone()},"pending_scans":if state["library_scan"]["scanning"] == true {1} else {0},"scan_error":state["library_scan"]["error"],"jobs":state["jobs"]}))
+        }
+        ("PUT","/v1/server") => {
+            // The name is the owner's to choose; the id never changes, so devices keep
+            // everything they have across a rename.
+            let name = body["name"].as_str().unwrap_or_default().trim().to_owned();
+            anyhow::ensure!(!name.is_empty() && name.chars().count() <= 64 && !name.chars().any(char::is_control), "Choose a name of up to 64 characters");
+            let mut state = db.state()?;
+            state["server"]["name"] = json!(name);
+            db.save_state(&state)?;
+            Ok(json!({"name":state["server"]["name"],"id":state["server"]["id"]}))
         }
         ("GET","/v1/events") => Ok(db.state()?["events"].take()),
         ("GET","/v1/clients") => Ok(json!(db.rows("SELECT clients.*, EXISTS(SELECT 1 FROM device_credentials WHERE client_id=clients.id) AS paired_credential FROM clients ORDER BY last_seen DESC",[])?)),

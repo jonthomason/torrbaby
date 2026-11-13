@@ -6,17 +6,6 @@ enum ServerRoutes {
     static func normalized(_ address: String) -> String {
         address.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
-    static func primaryAddress(for identity: String) -> String {
-        guard let url = URL(string: identity), url.port == 8765,
-              ["100.80.147.115", "diamond-ts", "diamond-ts.bengal-locrian.ts.net"].contains(url.host?.lowercased() ?? "") else { return identity }
-        return "http://192.168.1.44:8765"
-    }
-    static func defaultFallback(for identity: String) -> String {
-        let primary = primaryAddress(for: identity)
-        guard let url = URL(string: primary), url.port == 8765,
-              ["192.168.1.44", "diamond", "diamond.local"].contains(url.host?.lowercased() ?? "") else { return "" }
-        return "http://100.80.147.115:8765"
-    }
     static func isTailscale(_ address: String) -> Bool {
         guard let host = URL(string: address)?.host?.lowercased() else { return false }
         if host.hasSuffix(".ts.net") || host == "diamond-ts" { return true }

@@ -92,20 +92,8 @@ impl Config {
     }
     pub fn validate(&self) -> Result<()> {
         let config = self;
-        for range in &config.trusted_lan_cidrs {
-            crate::lan::network(range)?;
-        }
-        if let Some(host) = &config.lan_listen_host {
-            let ip: std::net::Ipv4Addr = host
-                .parse()
-                .context("LAN listener must be an IPv4 address")?;
-            if !ip.is_private() && !ip.is_loopback() {
-                bail!("LAN listener must use a private local address");
-            }
-        }
-        if config.advertise_lan && config.lan_listen_host.is_none() {
-            bail!("LAN advertisement needs a LAN listener");
-        }
+        // listen_host, lan_listen_host and trusted_lan_cidrs from earlier settings are no
+        // longer used: the server listens on every network and trusts the Mac's own LAN.
         if !(1..=8).contains(&config.processing_concurrency) {
             bail!("processing_concurrency must be between 1 and 8");
         }

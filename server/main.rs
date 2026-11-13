@@ -372,7 +372,10 @@ async fn main() -> Result<()> {
         Command::Serve { config } => {
             let settings = config::Config::load(&config)?;
             let database = config::expand(&settings.state_file)?.with_extension("sqlite3");
-            let listen = format!("{}:{}", settings.listen_host, settings.listen_port);
+            // Loopback stays loopback (tests, previews); otherwise every network the Mac is
+            // on. An address in the settings is never bound: DHCP or Tailscale may change it.
+            let loopback = settings.listen_host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback()) || settings.listen_host == "localhost";
+            let listen = if loopback { format!("{}:{}", settings.listen_host, settings.listen_port) } else { format!("[::]:{}", settings.listen_port) };
             api::serve(config, database, listen, false).await?;
         }
         Command::Preview {

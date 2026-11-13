@@ -322,13 +322,16 @@ public class MainActivity extends Activity {
             cache.write("library", liveRaw.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             StartupTrace.mark("Catalog cache write returned");
             // History synchronization must not delay the first library frame.
-            try { ServerName.learn(this, requested); StartupTrace.mark("Registration started"); requested.register(); StartupTrace.mark("Registration finished"); ProgressQueue.flush(this, requested); StartupTrace.mark("History sync finished"); } catch (Exception ignored) {}
+            try { StartupTrace.mark("Registration started"); requested.register(); StartupTrace.mark("Registration finished"); ProgressQueue.flush(this, requested); StartupTrace.mark("History sync finished"); } catch (Exception ignored) {}
           } catch (Exception e) {
             runOnUiThread(
                 () -> {
                   if (isDestroyed()) return;
                   loading = false;
                   if (api != requested || selectingProfile) return;
+                  // The saved address is only where the server was last found: it gets a
+                  // new one from DHCP now and then. Find it again by its Bonjour service.
+                  if (e instanceof java.io.IOException && !(e instanceof Api.HttpException) && refind(requested)) return;
                   if (library != null) {
                     render();
                     Toast.makeText(this, "Could not refresh. " + message(e), Toast.LENGTH_LONG)
@@ -2272,6 +2275,48 @@ public class MainActivity extends Activity {
               discover("");
             })
         .show();
+  }
+
+  private boolean refinding;
+  private long lastRefind;
+  /** Looks for the server on the home network again; true while a search is under way. */
+  private boolean refind(Api requested) {
+    if (refinding || System.currentTimeMillis() - lastRefind < 60_000) return false;
+    refinding = true;
+    lastRefind = System.currentTimeMillis();
+    ServerDiscovery[] search = new ServerDiscovery[1];
+    Runnable give_up = () -> {
+      if (!refinding) return;
+      refinding = false;
+      if (search[0] != null) search[0].close();
+      if (api == requested) load();
+    };
+    search[0] = new ServerDiscovery(this, new ServerDiscovery.Listener() {
+      public void changed(java.util.Map<String, String> servers) {
+        if (!refinding || servers.isEmpty()) return;
+        refinding = false;
+        search[0].close();
+        discoveryHandler.removeCallbacks(give_up);
+        String found = servers.values().iterator().next();
+        if (api != requested || isDestroyed()) return;
+        try {
+          if (!found.equals(requested.base)) {
+            Api moved = new Api(found, requested.token, requested.client, requested.profile, requested.profileName);
+            moved.profileAppearance = requested.profileAppearance;
+            store.save(moved);
+            if (art != null) art.close();
+            api = moved;
+            art = new Art(MainActivity.this, api);
+          }
+        } catch (Exception ignored) {
+        }
+        load();
+      }
+      public void failed() { give_up.run(); }
+    });
+    search[0].start();
+    discoveryHandler.postDelayed(give_up, 8000);
+    return true;
   }
 
   private void stopDiscovery() {

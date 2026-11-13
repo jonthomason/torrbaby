@@ -2,13 +2,9 @@ import Foundation
 
 @main struct ServerRoutesTests {
     static func main() async throws {
-        let primary = "http://192.168.1.44:8765"
-        let fallback = ServerRoutes.defaultFallback(for: primary)
-        assert(fallback == "http://100.80.147.115:8765")
-        assert(ServerRoutes.primaryAddress(for: fallback) == primary)
-        assert(ServerRoutes.defaultFallback(for: fallback) == fallback)
-        assert(ServerRoutes.primaryAddress(for: "http://other-server:8765") == "http://other-server:8765")
-        assert(ServerRoutes.defaultFallback(for: "http://someone-else:8765").isEmpty)
+        // Routes are the names the server reports, never addresses built into the app.
+        let primary = "http://diamond.local:8765"
+        let fallback = "http://diamond-ts.bengal-locrian.ts.net:8765"
         assert(ServerRoutes.isFallback(primary: fallback, active: fallback))
         assert(ServerRoutes.isFallback(primary: "http://diamond-ts.bengal-locrian.ts.net:8765",
                                        active: "http://diamond-ts.bengal-locrian.ts.net:8765"))
@@ -59,9 +55,11 @@ import Foundation
         assert(ServerRoutes.isFallback(primary: primary, active: primary, tunnelled: true))
         assert(!ServerRoutes.isFallback(primary: primary, active: primary, tunnelled: false))
         let home: [(address: UInt32, mask: UInt32)] = [(0xC0A8_0117, 0xFFFF_FF00)] // 192.168.1.23/24
-        assert(ServerRoutes.sharesSubnet(primary, interfaces: home))
-        assert(!ServerRoutes.sharesSubnet(primary, interfaces: [(0x0A00_0005, 0xFF00_0000)]))
-        assert(!ServerRoutes.sharesSubnet(primary, interfaces: []))
+        // Checked against the address a route's name led to this time.
+        let reached = "http://192.168.1.44"
+        assert(ServerRoutes.sharesSubnet(reached, interfaces: home))
+        assert(!ServerRoutes.sharesSubnet(reached, interfaces: [(0x0A00_0005, 0xFF00_0000)]))
+        assert(!ServerRoutes.sharesSubnet(reached, interfaces: []))
         print("Route fallback, reuse, authorization, exhaustion and URL validation passed")
     }
 }

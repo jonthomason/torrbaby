@@ -249,7 +249,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             try fm.copyItem(at: url, to: package.appendingPathComponent("poster.jpg")); poster = "poster.jpg"
         }
         let original = item.server.hasPrefix("shared:") ? String(item.server.dropFirst(7)) : item.server
-        let manifest = SharedDownload(server: original, serverPrimary: ServerRoutes.primaryAddress(for: original), assetID: item.assetID,
+        let manifest = SharedDownload(server: original, serverPrimary: original, assetID: item.assetID,
                                       titleID: item.titleID, title: item.title, name: item.name, season: item.season, episode: item.episode,
                                       episodeOrder: item.episodeOrder, revision: item.revision, fileExtension: item.fileExtension,
                                       media: media, poster: poster)

@@ -19,9 +19,10 @@ final class BrowseCache {
     root = new File(context.getCacheDir(), "browse-v1");
     root.mkdirs();
     database = new File(context.getCacheDir(), "library-v2.sqlite");
-    String library = ServerName.key(context, api);
-    artScope = hash(library);
-    scope = hash(library + "\n" + api.profile);
+    // One library: browsing data belongs to this device and profile, never to the
+    // server's address (which DHCP may change).
+    artScope = hash("library");
+    scope = hash("library\n" + api.profile);
   }
   private static String hash(String value) {
     try {

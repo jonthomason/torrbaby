@@ -146,14 +146,22 @@ struct PairingScannerView: View {
         busy = true; error = nil
         defer { busy = false }
         do {
-            let base = payload.server.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            guard let url = URL(string: base + "/v1/pairings/redeem") else { throw APIError(message: "Invalid server address") }
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.timeoutInterval = 20
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONSerialization.data(withJSONObject: ["code":payload.code,"name":store.defaultClientName,"platform":store.clientPlatform])
-            let (data, response) = try await URLSession.shared.data(for: request)
+            // The code names the server's home route and its Tailscale route; a device pairing
+            // away from home reaches it by the second.
+            let routes = [payload.server, payload.fallbackServer ?? ""].map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }.filter { !$0.isEmpty }
+            var base = routes.first ?? ""
+            var reply: (Data, URLResponse)?
+            for route in routes {
+                guard let url = URL(string: route + "/v1/pairings/redeem") else { continue }
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.timeoutInterval = route == routes.last ? 20 : 6
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = try JSONSerialization.data(withJSONObject: ["code":payload.code,"name":store.defaultClientName,"platform":store.clientPlatform])
+                do { reply = try await URLSession.shared.data(for: request); base = route; break }
+                catch let failure as URLError where failure.code != .cancelled && route != routes.last { continue }
+            }
+            guard let (data, response) = reply else { throw APIError(message: "Invalid server address") }
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 throw APIError(message: "The code expired or was already used. Show a new code on the linked device.")
             }
