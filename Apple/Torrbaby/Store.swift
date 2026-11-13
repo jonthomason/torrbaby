@@ -742,6 +742,8 @@ final class Store: ObservableObject {
         var publicAddress: String?
         var answered = 0, asked = 0
         var window: String?
+        var diagnosis: String?
+        var spread: String?
         var server: String?
         var session: String?
         var punchMs: Int?

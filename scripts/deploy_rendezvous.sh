@@ -15,7 +15,7 @@ check() {
     ssh "$HOST" 'set -e
         for i in $(seq 1 20); do systemctl is-active --quiet tbrendezvous && break; sleep 0.5; done
         systemctl is-active tbrendezvous
-        ss -ulpn | grep -q ":3478 " && ss -ulpn | grep -q ":7443 " || { echo "Ports are not open"; exit 1; }
+        ss -ulpn | grep -q ":3478 " && ss -ulpn | grep -q ":3479 " && ss -ulpn | grep -q ":7443 " || { echo "Ports are not open"; exit 1; }
         sudo journalctl -u tbrendezvous -n 3 --no-pager -o cat'
 }
 
@@ -45,6 +45,7 @@ ssh "$HOST" 'set -e
     sudo mv /usr/local/bin/tbrendezvous.new /usr/local/bin/tbrendezvous
     sudo ufw status | grep -q "^3478/udp" || sudo ufw allow 3478/udp comment "Torrbaby STUN"
     sudo ufw status | grep -q "^7443/udp" || sudo ufw allow 7443/udp comment "Torrbaby rendezvous/relay"
+    sudo ufw status | grep -q "^3479/udp" || sudo ufw allow 3479/udp comment "Torrbaby STUN (second port)"
     sudo systemctl daemon-reload
     sudo systemctl enable --quiet tbrendezvous
     sudo systemctl restart tbrendezvous'

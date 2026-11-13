@@ -124,6 +124,7 @@ struct ConnectionStatusSections: View {
                 if let view = attempt.serverView { labeled("Diamond saw", view) }
                 labeled("Network", attempt.interface.map { $0 == "en0" ? "Wi-Fi (en0)" : $0 == "pdp_ip0" ? "cellular (pdp_ip0)" : $0 } ?? "none")
                 if let address = attempt.publicAddress { labeled("This network's public address", "\(address) (\(attempt.answered) of \(attempt.asked) sockets answered STUN)") }
+                if let diagnosis = attempt.diagnosis { labeled("This network's NAT", diagnosis) }
                 if let window = attempt.window { labeled("Ports Diamond sprays", window) }
                 if let server = attempt.server { labeled("Diamond's public address", server) }
                 if let ms = attempt.punchMs { labeled("Punch", "\(ms) ms") }
@@ -191,6 +192,7 @@ struct ConnectionStatusSections: View {
         lines.append("Direct: \(store.directRoute == nil ? (store.directWhyNot ?? "") : "open")")
         if let attempt = store.directAttempt {
             lines.append("Last direct attempt \(clock(attempt.started)) over \(attempt.signal): step \(attempt.step), \(attempt.failure ?? (attempt.ok ? "open" : "running"))")
+            lines.append("  NAT: \(attempt.diagnosis ?? "?"), spray \(attempt.spread ?? "?")")
             lines.append("  network \(attempt.interface ?? "none"), public \(attempt.publicAddress ?? "?") (\(attempt.answered)/\(attempt.asked)), window \(attempt.window ?? "?"), Diamond \(attempt.server ?? "?"), punch \(attempt.punchMs.map(String.init) ?? "-") ms, QUIC \(attempt.quicMs.map(String.init) ?? "-") ms")
             if let view = attempt.serverView { lines.append("  Diamond saw: \(view)") }
         }

@@ -19,6 +19,23 @@ use tokio::{io::AsyncWriteExt, net::{TcpStream, UdpSocket}};
 
 const SPRAY_SECONDS: u64 = 25;
 const MAX_WINDOW: u32 = 8192;
+/// Ports sprayed when the device's NAT gives each destination its own unpredictable port
+/// (China Mobile): random ports across the whole range. With the device firing from ~200
+/// sockets, a match is nearly certain (1 − e^(−200·2048/64512) ≈ 99.8%), and the number of
+/// destinations stays near the predicted window's, so China Telecom's NAT is not flooded.
+const RANDOM_PORTS: usize = 2048;
+
+/// `count` distinct random ports in 1024–65535.
+fn random_ports(count: usize) -> Vec<u16> {
+    let mut chosen = std::collections::BTreeSet::new();
+    while chosen.len() < count {
+        for pair in uuid::Uuid::new_v4().as_bytes().chunks(2) {
+            let port = u16::from_be_bytes([pair[0], pair[1]]);
+            if port >= 1024 && chosen.len() < count { chosen.insert(port); }
+        }
+    }
+    chosen.into_iter().collect()
+}
 const ALPN: &[u8] = b"tbdirect";
 
 pub static DIRECT: std::sync::LazyLock<Direct> = std::sync::LazyLock::new(Direct::default);
@@ -50,16 +67,19 @@ impl Direct {
         let high = body["high"].as_u64().context("high is required")? as u32;
         ensure!((1..=65535).contains(&low) && (low..=65535).contains(&high), "ports must be 1–65535, low ≤ high");
         let high = high.min(low + MAX_WINDOW - 1);
+        let random = body["spread"] == "random";
+        let ports: Arc<Vec<u16>> = Arc::new(if random { random_ports(RANDOM_PORTS) } else { (low..=high).map(|p| p as u16).collect() });
         let identity = self.identity()?;
         let std_socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
         std_socket.set_nonblocking(true)?;
         let socket = UdpSocket::from_std(std_socket)?;
         let public = crate::punch::stun(&socket).await.context("Diamond could not learn its public address")?;
         let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_owned();
-        eprintln!("Direct {id}: requested by {ip}, spraying {low}–{high} from {public}");
+        if random { eprintln!("Direct {id}: requested by {ip}, spraying {RANDOM_PORTS} random ports from {public} ({})", body["diagnosis"].as_str().unwrap_or("")) }
+        else { eprintln!("Direct {id}: requested by {ip}, spraying {low}–{high} from {public} ({})", body["diagnosis"].as_str().unwrap_or("")) }
         let state = Arc::new(Mutex::new(json!({
             "id": id, "state": "punching", "server": public.to_string(), "device_ip": ip.to_string(),
-            "low": low, "high": high, "device": null, "punched_after_ms": null, "streams": 0,
+            "low": low, "high": high, "spread": if random { "random" } else { "window" }, "device": null, "punched_after_ms": null, "streams": 0, "other_sources": [],
         })));
         {
             let mut sessions = self.sessions.lock().map_err(|_| anyhow::anyhow!("Direct connection unavailable"))?;
@@ -70,12 +90,12 @@ impl Direct {
         let session = id.clone();
         tokio::spawn(async move {
             let logged = session.clone();
-            if let Err(error) = run(socket, ip, low, high, session, identity, http_port, state.clone()).await {
+            if let Err(error) = run(socket, ip, ports, session, identity, http_port, state.clone()).await {
                 eprintln!("Direct {logged}: {error}");
                 if let Ok(mut s) = state.lock() { s["state"] = json!("failed"); s["error"] = json!(error.to_string()); }
             }
         });
-        Ok(json!({"id": id, "server": public.to_string(), "fingerprint": fingerprint, "low": low, "high": high}))
+        Ok(json!({"id": id, "server": public.to_string(), "fingerprint": fingerprint, "low": low, "high": high, "spread": if random { "random" } else { "window" }}))
     }
 
     pub fn status(&self, id: &str) -> Result<Value> {
@@ -85,7 +105,7 @@ impl Direct {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn run(socket: UdpSocket, ip: IpAddr, low: u32, high: u32, id: String, identity: Arc<Identity>, http_port: u16, state: Arc<Mutex<Value>>) -> Result<()> {
+async fn run(socket: UdpSocket, ip: IpAddr, ports: Arc<Vec<u16>>, id: String, identity: Arc<Identity>, http_port: u16, state: Arc<Mutex<Value>>) -> Result<()> {
     // Punch: open China Telecom's filter for the device's likely ports until one gets through.
     let started = Instant::now();
     let spray = format!("TBDIRECT1 {id} spray").into_bytes();
@@ -96,13 +116,18 @@ async fn run(socket: UdpSocket, ip: IpAddr, low: u32, high: u32, id: String, ide
         ensure!(started.elapsed() < Duration::from_secs(SPRAY_SECONDS), "No packet from the device got through");
         tokio::select! {
             _ = tick.tick() => {
-                for port in low..=high { let _ = socket.send_to(&spray, SocketAddr::new(ip, port as u16)).await; }
+                for &port in ports.iter() { let _ = socket.send_to(&spray, SocketAddr::new(ip, port)).await; }
             }
             received = socket.recv_from(&mut buffer) => {
                 let Ok((len, from)) = received else { continue };
-                if from.ip() != ip { continue }
                 let Ok(text) = std::str::from_utf8(&buffer[..len]) else { continue };
                 if !text.starts_with(&prefix) { continue }
+                // The device's packet from an address other than the one STUN saw: its NAT uses
+                // a different public address for each destination. Logged, and accepted.
+                if from.ip() != ip {
+                    eprintln!("Direct {id}: punch packet from another address {from} (STUN saw {ip})");
+                    if let Ok(mut s) = state.lock() { if let Some(list) = s["other_sources"].as_array_mut() { list.push(json!(from.to_string())) } }
+                }
                 // Echo a few times: the device switches this socket's port to QUIC on the first.
                 for _ in 0..3 { let _ = socket.send_to(format!("TBACK {text}").as_bytes(), from).await; }
                 break from;
@@ -117,7 +142,7 @@ async fn run(socket: UdpSocket, ip: IpAddr, low: u32, high: u32, id: String, ide
     while Instant::now() < watch_until {
         tokio::select! {
             _ = tick.tick() => {
-                for port in low..=high { let _ = socket.send_to(&spray, SocketAddr::new(ip, port as u16)).await; }
+                for &port in ports.iter() { let _ = socket.send_to(&spray, SocketAddr::new(ip, port)).await; }
             }
             received = tokio::time::timeout(watch_until.saturating_duration_since(Instant::now()), socket.recv_from(&mut buffer)) => {
                 let Ok(Ok((len, from))) = received else { break };
@@ -165,7 +190,7 @@ async fn run(socket: UdpSocket, ip: IpAddr, low: u32, high: u32, id: String, ide
         let mut tick = tokio::time::interval(Duration::from_millis(250));
         while !spraying.load(std::sync::atomic::Ordering::Relaxed) && Instant::now() < spray_until {
             tick.tick().await;
-            for port in low..=high { let _ = sprayer.send_to(&spray, SocketAddr::new(ip, port as u16)).await; }
+            for &port in ports.iter() { let _ = sprayer.send_to(&spray, SocketAddr::new(ip, port)).await; }
         }
     });
     let endpoint = quinn::Endpoint::new(quinn::EndpointConfig::default(), Some(server), std_socket, Arc::new(quinn::TokioRuntime))?;
@@ -180,7 +205,7 @@ async fn run(socket: UdpSocket, ip: IpAddr, low: u32, high: u32, id: String, ide
         };
         let incoming = accepted.context("Endpoint closed")?;
         let from = incoming.remote_address();
-        if from.ip() != ip { incoming.refuse(); continue }
+        if from.ip() != device.ip() { incoming.refuse(); continue }
         match incoming.await {
             Ok(connection) => { eprintln!("Direct {id}: QUIC open from {from}"); break connection }
             Err(error) => { eprintln!("Direct {id}: QUIC from {from} failed: {error}"); continue }
@@ -247,7 +272,7 @@ mod tests {
         let run_state = state.clone();
         let run_identity = identity.clone();
         tokio::spawn(async move {
-            run(server, "127.0.0.1".parse().unwrap(), device_port.saturating_sub(5).max(1), device_port + 5, "t".into(), run_identity, http_port, run_state).await
+            run(server, "127.0.0.1".parse().unwrap(), Arc::new((device_port.saturating_sub(5).max(1)..=device_port + 5).map(|p| p as u16).collect()), "t".into(), run_identity, http_port, run_state).await
         });
         device.send_to(b"TBDIRECT1 t 0 hello", server_address).await?;
         let mut buffer = [0u8; 256];
