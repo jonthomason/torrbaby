@@ -123,21 +123,47 @@ async fn run(socket: UdpSocket, ip: IpAddr, low: u32, high: u32, id: String, ide
     transport.max_idle_timeout(Some(Duration::from_secs(45).try_into()?));
     transport.max_concurrent_bidi_streams(256u32.into());
     server.transport_config(Arc::new(transport));
-    let endpoint = quinn::Endpoint::new(quinn::EndpointConfig::default(), Some(server), socket.into_std()?, Arc::new(quinn::TokioRuntime))?;
+    let std_socket = socket.into_std()?;
+    // Keep spraying until QUIC connects: iOS may start QUIC from a fresh port rather than the
+    // punched one, and the device's NAT gives each new destination port the next port along,
+    // so the window must stay open for it. A duplicate handle sends while QUIC owns the socket.
+    let sprayer = UdpSocket::from_std(std_socket.try_clone()?)?;
+    let connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let spraying = connected.clone();
+    let spray_until = Instant::now() + Duration::from_secs(20);
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_millis(250));
+        while !spraying.load(std::sync::atomic::Ordering::Relaxed) && Instant::now() < spray_until {
+            tick.tick().await;
+            for port in low..=high { let _ = sprayer.send_to(&spray, SocketAddr::new(ip, port as u16)).await; }
+        }
+    });
+    let endpoint = quinn::Endpoint::new(quinn::EndpointConfig::default(), Some(server), std_socket, Arc::new(quinn::TokioRuntime))?;
     if let Ok(mut s) = state.lock() { s["state"] = json!("waiting") }
+    eprintln!("Direct {id}: punched from {device} after {} ms; waiting for QUIC", started.elapsed().as_millis());
     // One device: the first connection from its address; then serve until it goes quiet.
     let connection = loop {
-        let incoming = tokio::time::timeout(Duration::from_secs(20), endpoint.accept()).await
-            .context("The device did not start QUIC")?.context("Endpoint closed")?;
-        if incoming.remote_address().ip() != ip { incoming.refuse(); continue }
-        match incoming.await { Ok(connection) => break connection, Err(_) => continue }
+        let Ok(accepted) = tokio::time::timeout(Duration::from_secs(20), endpoint.accept()).await else {
+            connected.store(true, std::sync::atomic::Ordering::Relaxed);
+            eprintln!("Direct {id}: no QUIC from the device in 20 s");
+            anyhow::bail!("The device did not start QUIC");
+        };
+        let incoming = accepted.context("Endpoint closed")?;
+        let from = incoming.remote_address();
+        if from.ip() != ip { incoming.refuse(); continue }
+        match incoming.await {
+            Ok(connection) => { eprintln!("Direct {id}: QUIC open from {from}"); break connection }
+            Err(error) => { eprintln!("Direct {id}: QUIC from {from} failed: {error}"); continue }
+        }
     };
+    connected.store(true, std::sync::atomic::Ordering::Relaxed);
     if let Ok(mut s) = state.lock() { s["state"] = json!("open"); s["opened_after_ms"] = json!(started.elapsed().as_millis() as u64); }
     while let Ok((send, recv)) = connection.accept_bi().await {
         if let Ok(mut s) = state.lock() { s["streams"] = json!(s["streams"].as_u64().unwrap_or(0) + 1) }
         tokio::spawn(pipe(send, recv, http_port));
     }
     endpoint.close(0u32.into(), b"done");
+    eprintln!("Direct {id}: closed after {} s", started.elapsed().as_secs());
     if let Ok(mut s) = state.lock() { s["state"] = json!("closed"); s["closed_after_ms"] = json!(started.elapsed().as_millis() as u64); }
     Ok(())
 }
