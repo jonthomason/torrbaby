@@ -494,6 +494,9 @@ struct RootView: View {
         .task(id: phase) {
             if !store.configured { showConnect = true }
             #if !os(macOS)
+            // Back in the foreground: everything at once; then the periodic refresh, which
+            // checks in fully once a minute and keeps on-screen live data current.
+            if phase == .active { store.refreshFullyNext() }
             while !Task.isCancelled {
                 if phase == .active { await store.refresh(polling: true) }
                 try? await Task.sleep(for: .seconds(store.connectionError == nil ? 5 : 15))
@@ -557,7 +560,8 @@ struct TorrentListView: View {
             return included && (search.isEmpty || t.name.localizedCaseInsensitiveContains(search))
         })
     }
-    var body: some View {
+    var body: some View { torrentContent.modifier(NeedsLiveTorrents()) }
+    @ViewBuilder private var torrentContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 if !compact { VStack(alignment: .leading, spacing: 6) {

@@ -57,6 +57,19 @@ final class ServerActivity: ObservableObject {
     @Published var status: DaemonStatus?
     /// Screens on show that display the status; it is fetched only while there are any.
     var watchers = 0
+    /// Screens on show listing torrents, which then update every few seconds.
+    var torrentWatchers = 0
+}
+
+/// For a screen listing torrents: their progress is fetched every few seconds while it is
+/// on show; otherwise once a minute.
+struct NeedsLiveTorrents: ViewModifier {
+    @EnvironmentObject var store: Store
+    func body(content: Content) -> some View {
+        content
+            .onAppear { ServerActivity.shared.torrentWatchers += 1; Task { await store.refresh(polling: true) } }
+            .onDisappear { ServerActivity.shared.torrentWatchers = max(0, ServerActivity.shared.torrentWatchers - 1) }
+    }
 }
 
 /// For a screen that shows the server's status (processing, settings, drive space):
@@ -416,6 +429,7 @@ final class Store: ObservableObject {
                     // fallback and only give the home address a quick try; dropping the
                     // route here showed Offline and made the status come and go.
                     self.lastPrimaryRetry = .distantPast
+                    self.refreshFullyNext()
                     await self.refresh(polling: true)
                 }
             }
@@ -679,6 +693,11 @@ final class Store: ObservableObject {
             libraryError = error.localizedDescription
         }
     }
+    private func syncTorrentsAndOperations(_ identity: String) async {
+        async let torrents: Void = syncTorrents(identity)
+        async let operations: Void = syncOperations(identity)
+        _ = await (torrents, operations)
+    }
     private func syncTorrents(_ identity: String) async {
         do {
             let received: [Torrent] = try await request("GET", "/v1/torrents")
@@ -728,8 +747,16 @@ final class Store: ObservableObject {
         DownloadQueue.shared.importSharedProgress()
         #endif
     }
-    /// `polling` marks the periodic refresh; a refresh after a user action waits for one
-    /// already under way so it shows that action.
+    /// When the last full refresh (online check, library, activity) finished. The periodic
+    /// refresh runs every few seconds but does that only once a minute; in between it only
+    /// updates what is on screen and live (torrents on the Downloads page, the status on
+    /// the processing and settings screens).
+    private var lastFullRefresh = Date.distantPast
+    static let fullRefreshInterval: TimeInterval = 60
+    /// The next periodic refresh does everything (the app came to the foreground).
+    func refreshFullyNext() { lastFullRefresh = .distantPast }
+    /// `polling` marks the periodic refresh; a refresh after a user action does everything
+    /// and waits for one already under way so it shows that action.
     func refresh(polling: Bool = false) async {
         // A refresh after a user action must show that action: wait out a poll that
         // started earlier rather than being dropped in its favour.
@@ -748,18 +775,26 @@ final class Store: ObservableObject {
             // Restore browsing before contacting the server. A satisfied network path
             // does not mean the home server is reachable (for example while travelling).
             guard networkAvailable else { throw URLError(.notConnectedToInternet) }
-            // Connected means the server answers. Everything else loads on its own, at the
-            // same time, and a page that cannot load shows its own error.
-            _ = try await probeConnection()
-            guard identity == profileIdentity else { return }
-            if connectionError != nil { connectionError = nil }
-            if subtitleQueueError != nil { subtitleQueueError = nil }
-            async let libraryPart: Void = syncLibrary(identity)
-            async let torrentsPart: Void = syncTorrents(identity)
-            async let operationsPart: Void = syncOperations(identity)
-            async let activityPart: Void = syncActivity(identity)
-            async let statusPart: Void = refreshStatusIfShown()
-            _ = await (libraryPart, torrentsPart, operationsPart, activityPart, statusPart)
+            let full = !polling || !connected || Date().timeIntervalSince(lastFullRefresh) >= Self.fullRefreshInterval
+            if full {
+                // Connected means the server answers. Everything else loads on its own, at
+                // the same time, and a page that cannot load shows its own error.
+                _ = try await probeConnection()
+                guard identity == profileIdentity else { return }
+                if connectionError != nil { connectionError = nil }
+                if subtitleQueueError != nil { subtitleQueueError = nil }
+                async let libraryPart: Void = syncLibrary(identity)
+                async let torrentsPart: Void = syncTorrents(identity)
+                async let operationsPart: Void = syncOperations(identity)
+                async let activityPart: Void = syncActivity(identity)
+                async let statusPart: Void = refreshStatusIfShown()
+                _ = await (libraryPart, torrentsPart, operationsPart, activityPart, statusPart)
+                lastFullRefresh = Date()
+            } else {
+                async let torrentsPart: Void = ServerActivity.shared.torrentWatchers > 0 ? syncTorrentsAndOperations(identity) : ()
+                async let statusPart: Void = refreshStatusIfShown()
+                _ = await (torrentsPart, statusPart)
+            }
         } catch {
             // A refresh cut short (the app went to the background, the view changed) says
             // nothing about the server; showing it read "cancelled" and flashed Offline.

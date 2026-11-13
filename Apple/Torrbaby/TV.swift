@@ -176,6 +176,7 @@ struct TVRootView: View {
         .onExitCommand(perform: returnHome)
         .overlay(alignment: .bottom) { ContinueWatchingUndoBanner() }
         .task(id: phase) {
+            if phase == .active { store.refreshFullyNext() }
             while !Task.isCancelled && phase == .active {
                 await store.refresh(polling: true)
                 openShelfSelection()
@@ -787,7 +788,8 @@ private struct TVTorrentView: View {
             return category == "Downloading" ? !$0.completed : category == "Seeding" ? $0.completed && $0.status == 6 : $0.completed && $0.status != 6
         })
     }
-    var body: some View {
+    var body: some View { torrentContent.modifier(NeedsLiveTorrents()) }
+    @ViewBuilder private var torrentContent: some View {
         VStack(spacing: 30) {
             Picker("Torrents", selection: $category) {
                 ForEach(["Downloading", "Seeding", "Complete", "Needs attention", "Watching"], id: \.self) { Text(LocalizedStringKey($0)).tag($0) }
