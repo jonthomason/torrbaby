@@ -40,14 +40,35 @@ final class DirectTunnel: @unchecked Sendable {
               let localPort = probe.localPort(winner) else { throw Failure(message: "No direct path") }
         // The winning socket's port is taken over by QUIC: close the probe sockets first.
         probe.close()
-        let tunnel = DirectTunnel()
-        try await tunnel.open(server: started.server, localPort: localPort, wifi: interface == "en0", fingerprint: started.fingerprint)
-        return tunnel
+        // iOS may never start QUIC pinned to the punched port; then a fresh port, which the
+        // server's spray (kept open until QUIC connects) covers on sequential-port networks.
+        let pinned = DirectTunnel()
+        do {
+            try await pinned.open(server: started.server, localPort: localPort, wifi: interface == "en0", fingerprint: started.fingerprint, wait: 3)
+            pinned.how = "QUIC on the punched port \(localPort)"
+            return pinned
+        } catch {
+            pinned.discard()
+            let fresh = DirectTunnel()
+            do {
+                try await fresh.open(server: started.server, localPort: nil, wifi: interface == "en0", fingerprint: started.fingerprint, wait: 6)
+                fresh.how = "QUIC on a fresh port (pinned: \(error.localizedDescription))"
+                return fresh
+            } catch let second {
+                fresh.discard()
+                throw Failure(message: "pinned: \(error.localizedDescription); fresh: \(second.localizedDescription)")
+            }
+        }
     }
 
-    private func open(server: String, localPort: UInt16, wifi: Bool, fingerprint: String) async throws {
+    /// How the tunnel came up, for the test screen.
+    var how = ""
+    /// Drop a tunnel that never came up, without reporting it as closed.
+    func discard() { onClose = nil; queue.async { [self] in closed = true; listener?.cancel(); group?.cancel() } }
+
+    private func open(server: String, localPort: UInt16?, wifi: Bool, fingerprint: String, wait: Double) async throws {
         let parts = server.split(separator: ":")
-        guard parts.count == 2, let remotePort = NWEndpoint.Port(String(parts[1])), let local = NWEndpoint.Port(rawValue: localPort) else {
+        guard parts.count == 2, let remotePort = NWEndpoint.Port(String(parts[1])) else {
             throw Failure(message: "Bad server address")
         }
         let quic = NWProtocolQUIC.Options(alpn: ["tbdirect"])
@@ -62,8 +83,10 @@ final class DirectTunnel: @unchecked Sendable {
         let parameters = NWParameters(quic: quic)
         parameters.requiredInterfaceType = wifi ? .wifi : .cellular
         parameters.prohibitedInterfaceTypes = [.other]
-        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.any), port: local)
-        parameters.allowLocalEndpointReuse = true
+        if let localPort, let local = NWEndpoint.Port(rawValue: localPort) {
+            parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.any), port: local)
+            parameters.allowLocalEndpointReuse = true
+        }
         let group = NWConnectionGroup(with: NWMultiplexGroup(to: .hostPort(host: NWEndpoint.Host(String(parts[0])), port: remotePort)), using: parameters)
         self.group = group
         // Ready, failed, or stuck waiting (iOS could not use that port or network): no hang.
@@ -86,7 +109,7 @@ final class DirectTunnel: @unchecked Sendable {
                 }
             }
             group.start(queue: queue)
-            queue.asyncAfter(deadline: .now() + 8) { finish(Failure(message: "QUIC did not start in 8 s")) }
+            queue.asyncAfter(deadline: .now() + wait) { finish(Failure(message: "QUIC did not start in \(Int(wait)) s")) }
         }
         // The local side: the app and the player connect here.
         let tcp = NWParameters.tcp

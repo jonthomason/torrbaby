@@ -559,7 +559,7 @@ final class Store: ObservableObject {
                 tunnel.onClose = { [weak self] in self?.dropDirect("closed") }
                 directTunnel = tunnel
                 directRoute = "http://127.0.0.1:\(tunnel.port)"
-                directNote = "open since \(Date().formatted(date: .omitted, time: .shortened))"
+                directNote = "open since \(Date().formatted(date: .omitted, time: .shortened)), \(tunnel.how)"
             } catch {
                 directNote = "not available: \(error.localizedDescription)"
             }
