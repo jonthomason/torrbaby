@@ -163,8 +163,8 @@ struct SubtitleQueueItem: Codable, Identifiable {
     let subtitlesState: String?
     let inventoryState: String?
     let creditsState: String?
-    /// One file's work, step by step: languages, subtitles (made from text tracks, the
-    /// picture or the audio), translation, credits. Each says whether it is done, running
+    /// One file's work, step by step: languages, credits, subtitles (made from text tracks,
+    /// the picture or the audio), translation. Each says whether it is done, running
     /// (with progress), waiting, not needed or failed.
     struct Step: Identifiable {
         enum Status { case done, running, waiting, skipped, failed }
@@ -187,6 +187,10 @@ struct SubtitleQueueItem: Codable, Identifiable {
         var result: [Step] = []
         let languages = settled(inventoryState) ?? (running && stage == "inventory" ? .running : state == "failed" && stage == "inventory" ? .failed : .waiting)
         result.append(Step(id: "languages", label: "Languages", status: languages))
+        // In the server's order: credits are found right after the languages, ahead of the
+        // subtitles, which take far longer and run a few files at a time.
+        let credits = settled(creditsState) ?? (running && stage == "credits" ? .running : state == "failed" && stage == "credits" ? .failed : .waiting)
+        result.append(Step(id: "credits", label: "Credits", status: credits))
         let counted = totalCues > 0 ? progressText : nil
         let fraction = totalCues > 0 ? Double(completedCues) / Double(totalCues) : nil
         let making = ["subtitles", "ocr", "transcription"].contains(stage ?? "")
@@ -204,8 +208,6 @@ struct SubtitleQueueItem: Codable, Identifiable {
             result.append(Step(id: "subtitles", label: "Subtitles", status: failed ? .failed : .waiting))
             result.append(Step(id: "translation", label: "Translation", status: .waiting))
         }
-        let credits = settled(creditsState) ?? (running && stage == "credits" ? .running : state == "failed" && stage == "credits" ? .failed : .waiting)
-        result.append(Step(id: "credits", label: "Credits", status: credits))
         return result
     }
     /// How the subtitle text was obtained: "text", "ocr" or "speech".
