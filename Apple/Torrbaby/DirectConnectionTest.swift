@@ -39,6 +39,7 @@ struct DirectConnectionTest: View {
                     Text(verbatim: store.directDiagnostics).font(.caption2.monospaced()).foregroundStyle(.secondary)
                 }
                 Button("Try direct now") { store.tryDirectNow() }.disabled(store.directRoute != nil)
+                ForEach(store.directEvents.reversed(), id: \.self) { Text(verbatim: $0).font(.caption2.monospaced()).foregroundStyle(.secondary) }
             }
             if !lines.isEmpty {
                 SwiftUI.Section("Details") {

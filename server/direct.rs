@@ -190,22 +190,29 @@ async fn run(socket: UdpSocket, ip: IpAddr, low: u32, high: u32, id: String, ide
     if let Ok(mut s) = state.lock() { s["state"] = json!("open"); s["opened_after_ms"] = json!(started.elapsed().as_millis() as u64); }
     while let Ok((send, recv)) = connection.accept_bi().await {
         if let Ok(mut s) = state.lock() { s["streams"] = json!(s["streams"].as_u64().unwrap_or(0) + 1) }
-        tokio::spawn(pipe(send, recv, http_port));
+        tokio::spawn(pipe(send, recv, http_port, id.clone()));
     }
     endpoint.close(0u32.into(), b"done");
-    eprintln!("Direct {id}: closed after {} s", started.elapsed().as_secs());
+    eprintln!("Direct {id}: closed after {} s ({})", started.elapsed().as_secs(), connection.close_reason().map(|r| r.to_string()).unwrap_or_default());
     if let Ok(mut s) = state.lock() { s["state"] = json!("closed"); s["closed_after_ms"] = json!(started.elapsed().as_millis() as u64); }
     Ok(())
 }
 
-/// One stream is one connection to the server's own HTTP port, both ways.
-async fn pipe(mut send: quinn::SendStream, mut recv: quinn::RecvStream, http_port: u16) {
+/// One stream is one connection to the server's own HTTP port, both ways. The first request
+/// line (method and path, never the query, which can carry signatures) goes to the log.
+async fn pipe(mut send: quinn::SendStream, mut recv: quinn::RecvStream, http_port: u16, id: String) {
     let Ok(tcp) = TcpStream::connect(("127.0.0.1", http_port)).await else { let _ = send.reset(1u32.into()); return };
     let _ = tcp.set_nodelay(true);
+    let started = Instant::now();
     let (mut from_server, mut to_server) = tcp.into_split();
-    let up = async { let _ = tokio::io::copy(&mut recv, &mut to_server).await; let _ = to_server.shutdown().await; };
-    let down = async { let _ = tokio::io::copy(&mut from_server, &mut send).await; let _ = send.finish(); };
-    tokio::join!(up, down);
+    let mut first = vec![0u8; 2048];
+    let n = match recv.read(&mut first).await { Ok(Some(n)) => n, _ => 0 };
+    let line = String::from_utf8_lossy(&first[..n]).lines().next().unwrap_or("").split('?').next().unwrap_or("").to_owned();
+    if n > 0 && to_server.write_all(&first[..n]).await.is_err() { return }
+    let up = async { let sent = tokio::io::copy(&mut recv, &mut to_server).await.unwrap_or(0); let _ = to_server.shutdown().await; sent };
+    let down = async { let got = tokio::io::copy(&mut from_server, &mut send).await.unwrap_or(0); let _ = send.finish(); got };
+    let (_, down_bytes) = tokio::join!(up, down);
+    eprintln!("Direct {id}: stream {line} → {down_bytes} bytes in {} ms", started.elapsed().as_millis());
 }
 
 #[cfg(test)]

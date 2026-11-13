@@ -535,10 +535,19 @@ final class Store: ObservableObject {
     private var directAttempting = false
     private var lastDirectAttempt = Date.distantPast
     @Published private(set) var directNote = ""
+    /// The check-in's current step and since when, and the direct path's recent events,
+    /// for the test screen: which step never finishes, and why tunnels dropped.
+    private(set) var checkInStage = ("idle", Date.distantPast)
+    func stage(_ name: String) { checkInStage = (name, Date()) }
+    @Published private(set) var directEvents: [String] = []
+    func directEvent(_ text: String) {
+        directEvents.append("\(Date().formatted(date: .omitted, time: .standard)) \(text)")
+        if directEvents.count > 12 { directEvents.removeFirst(directEvents.count - 12) }
+    }
     /// What the direct path is doing, for Settings → About → Direct connection test.
     var directDiagnostics: String {
         let clock: (Date) -> String = { $0 == .distantPast ? "never" : $0.formatted(date: .omitted, time: .standard) }
-        return "route \(activeServer ?? "none") · away \(usingFallback) · connected \(connected) · trying \(directAttempting) · last try \(clock(lastDirectAttempt)) · last check-in \(clock(lastFullRefresh))"
+        return "route \(activeServer ?? "none") · away \(usingFallback) · connected \(connected) · trying \(directAttempting) · last try \(clock(lastDirectAttempt)) · last check-in \(clock(lastFullRefresh)) · check-in at \(checkInStage.0) since \(clock(checkInStage.1))"
     }
     /// Try now, whatever the last attempt was (the test screen's button).
     func tryDirectNow() { lastDirectAttempt = .distantPast; startDirectIfUseful() }
@@ -559,9 +568,11 @@ final class Store: ObservableObject {
                 tunnel.onClose = { [weak self] in self?.dropDirect("closed") }
                 directTunnel = tunnel
                 directRoute = "http://127.0.0.1:\(tunnel.port)"
+                directEvent("open on port \(tunnel.port)")
                 directNote = "open since \(Date().formatted(date: .omitted, time: .shortened)), \(tunnel.how)"
             } catch {
                 directNote = "not available: \(error.localizedDescription)"
+                directEvent("failed: \(error.localizedDescription)")
             }
         }
     }
@@ -570,6 +581,9 @@ final class Store: ObservableObject {
         let tunnel = directTunnel
         directTunnel = nil; directRoute = nil
         directNote = reason
+        directEvent("dropped: \(reason)")
+        // Back to it soon (the app returning to the foreground, a brief loss).
+        lastDirectAttempt = Date().addingTimeInterval(-150)
         tunnel?.onClose = nil
         tunnel?.close()
     }
@@ -702,6 +716,7 @@ final class Store: ObservableObject {
     /// then progress when that changed. A failure here is the library's own error; the server
     /// is still connected and every other page still loads.
     private func syncLibrary(_ identity: String) async {
+        defer { stage("library done") }
         do {
             let revisions = try? await request("GET", "/v1/library/revision", timeout: 10) as LibraryRevisions
             guard let content = revisions?.content, let progress = revisions?.progress else {
@@ -765,6 +780,7 @@ final class Store: ObservableObject {
     }
     /// Activity, devices, history and rates; each keeps what it had if it cannot load now.
     private func syncActivity(_ identity: String) async {
+        defer { stage("activity done") }
         if let newEvents: [AuditEvent] = try? await request("GET", "/v1/events"), identity == profileIdentity {
             receiveActivity(newEvents)
             publish(\.events, Array(newEvents.reversed()))
@@ -808,8 +824,9 @@ final class Store: ObservableObject {
         refreshing = true
         defer { refreshing = false }
         do {
+            stage("profile")
             try await resolveProfile()
-            guard profileReady else { return }
+            guard profileReady else { stage("no profile"); return }
             let identity = profileIdentity
             if library == nil, let saved = await LibraryDiskCache.shared.library(scope: identity) {
                 guard identity == profileIdentity else { return }
@@ -822,7 +839,9 @@ final class Store: ObservableObject {
             if full {
                 // Connected means the server answers. Everything else loads on its own, at
                 // the same time, and a page that cannot load shows its own error.
+                stage("online check")
                 _ = try await probeConnection()
+                stage("loading")
                 guard identity == profileIdentity else { return }
                 if connectionError != nil { connectionError = nil }
                 if subtitleQueueError != nil { subtitleQueueError = nil }
@@ -833,6 +852,7 @@ final class Store: ObservableObject {
                 async let statusPart: Void = refreshStatusIfShown()
                 _ = await (libraryPart, torrentsPart, operationsPart, activityPart, statusPart)
                 lastFullRefresh = Date()
+                stage("done")
                 #if os(iOS)
                 if usingFallback { startDirectIfUseful() } else { dropDirect("home") }
                 #endif
