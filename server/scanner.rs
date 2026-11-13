@@ -385,6 +385,9 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
                 continue;
             }
         };
+        // Missing because its drive went away during this scan: left to the records below,
+        // which keep it as last seen and mark it away, rather than recorded as incomplete.
+        if metadata.is_none() && drives.offline(&path, &drives.online()) { continue; }
         let inode = metadata.as_ref().map(|m| format!("{}:{}", m.dev(), m.ino()));
         let name = path.to_string_lossy();
         let previous = info["torrent_hash"]

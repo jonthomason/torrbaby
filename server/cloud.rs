@@ -1208,7 +1208,10 @@ impl Cloud {
             let mapped = if present || in_parts_of(job, file) { Vec::new() } else { Self::mapped(s, entity.as_deref(), &file.destination) };
             // A copy on a drive that is not connected cannot be compared, so it is neither a
             // rival nor bettered: both are kept, and the user chooses later.
-            let mapped: Vec<Value> = mapped.into_iter().filter(|asset| asset["offline"] != true).collect();
+            // Asked of the drives now: the stored flag is only as fresh as the last scan.
+            let away = { let drives = crate::drives::Drives::of(&s.effective_config()?); let online = drives.online();
+                move |asset: &Value| asset["offline"] == true || asset["path"].as_str().is_some_and(|path| drives.offline(Path::new(path), &online)) };
+            let mapped: Vec<Value> = mapped.into_iter().filter(|asset| !away(asset)).collect();
             // The job's own videos are parts or siblings, never rivals of one another; and an
             // episode that comes in parts is not weighed against a whole copy, whose size says nothing about it.
             let key = |f: &JobFile| f.destination.file_name().and_then(|n| n.to_str()).map(|n| (episode(n), crate::scanner::part(n)));

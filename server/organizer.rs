@@ -535,16 +535,17 @@ pub async fn tick(s: &Service) -> Result<()> {
     })?;
     let drives = Drives::of(&config);
     let online = drives.online();
+    let running = remember_running(s, &all, &drives, &online);
     for t in &all {
         if crate::trials::trial_path(t["download_dir"].as_str().unwrap_or("")) {continue;}
         let hash = text(t, "hash_string")?;
         // A torrent on a drive that is not connected waits for it, stopped: left running, it
         // would finish into a folder Transmission creates on the startup disk.
-        if drives.offline(Path::new(t["download_dir"].as_str().unwrap_or("")), &online) { hold_for_drive(s, t).await; continue; }
+        if drives.offline(Path::new(t["download_dir"].as_str().unwrap_or("")), &online) { hold_for_drive(s, t, running.contains(hash)).await; continue; }
         // Its files are being copied to another drive: filing it now would leave a copy behind.
         if crate::drive_moves::moving_torrent(s, hash) { continue; }
         release_for_drive(s, t).await;
-        reconnect(s, t).await;
+        reconnect(s, t, running.contains(hash)).await;
         settle_placement(s, &drives, t).await;
         if s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.hidden_package(hash)? { continue; }
         let previous = job(s, hash)?;
@@ -615,13 +616,46 @@ mod identification_tests {
     }
 }
 
-/// Transmission stops a torrent whose data vanished with its drive ("No data found") and
-/// does not try again when the drive returns. Once the drive is back, check the data,
-/// which resumes it. At most every ten minutes per torrent.
-/// Stop a torrent whose drive is away, remembering that Torrbaby stopped it.
-async fn hold_for_drive(s: &Service, t: &Value) {
+fn no_data(t: &Value) -> bool { t["error"].as_u64() == Some(3) && t["error_string"].as_str().is_some_and(|e| e.contains("No data found")) }
+
+/// Which torrents were running when last seen in good order, kept across restarts.
+/// Transmission stops every torrent whose data is away with "No data found", the paused
+/// and the finished as well as the running, and cannot say afterwards which was which;
+/// only those that were running are started again when their drive returns. A torrent
+/// stopped that way, or on a drive that is away, keeps what was last known of it.
+fn remember_running(s: &Service, all: &[Value], drives: &Drives, online: &HashSet<String>) -> HashSet<String> {
+    let before: HashSet<String> = s.db.lock().ok().and_then(|db| db.state().ok())
+        .and_then(|state| state["running_torrents"].as_array().map(|list| list.iter().filter_map(|h| h.as_str().map(str::to_owned)).collect()))
+        .unwrap_or_default();
+    let mut running = HashSet::new();
+    for t in all {
+        let Some(hash) = t["hash_string"].as_str() else { continue };
+        let away = drives.offline(Path::new(t["download_dir"].as_str().unwrap_or("")), online);
+        let on = if t["status"].as_u64() != Some(0) { true } else if no_data(t) || away { before.contains(hash) } else { false };
+        if on { running.insert(hash.to_owned()); }
+    }
+    if running != before {
+        let mut list: Vec<&String> = running.iter().collect();
+        list.sort();
+        let _ = s.change_state(|state| state["running_torrents"] = json!(list));
+    }
+    running
+}
+
+/// Stop a torrent whose drive is away, remembering that Torrbaby stopped it. One that
+/// Transmission stopped first for the same reason is remembered too, if it was running.
+async fn hold_for_drive(s: &Service, t: &Value, was_running: bool) {
     let Some(hash) = t["hash_string"].as_str() else { return };
-    if t["status"].as_u64() == Some(0) { return; }
+    if t["status"].as_u64() == Some(0) {
+        if was_running && no_data(t) {
+            let _ = s.change_state(|state| {
+                let held = &mut state["held_for_drive"];
+                if !held.is_array() { *held = json!([]); }
+                if let Some(list) = held.as_array_mut() { if !list.iter().any(|h| h == hash) { list.push(json!(hash)); } }
+            });
+        }
+        return;
+    }
     match s.rpc.call("torrent_stop", json!({"ids":[hash]})).await {
         Ok(_) => {
             tracing::info!(hash, "Stopped a torrent until its drive is connected");
@@ -654,9 +688,13 @@ async fn release_for_drive(s: &Service, t: &Value) {
     }
 }
 
-async fn reconnect(s: &Service, t: &Value) {
+/// Transmission stops a torrent whose data vanished with its drive ("No data found") and
+/// does not try again when the drive returns. Once the data is back, a torrent that was
+/// running is started, which clears the error; one the user had stopped, or that had
+/// finished seeding, is left stopped. At most every ten minutes per torrent.
+async fn reconnect(s: &Service, t: &Value, was_running: bool) {
     static TRIED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, f64>>> = std::sync::LazyLock::new(Default::default);
-    if t["error"].as_u64() != Some(3) || !t["error_string"].as_str().is_some_and(|e| e.contains("No data found")) { return; }
+    if !was_running || !no_data(t) { return; }
     let Some(hash) = t["hash_string"].as_str() else { return };
     // Only when its data is back: checking a torrent whose files were deleted would download it all again.
     let present = t["download_dir"].as_str().is_some_and(|dir| files(t).is_ok_and(|files| files.iter().any(|f|
@@ -668,8 +706,10 @@ async fn reconnect(s: &Service, t: &Value) {
         tried.insert(hash.to_owned(), now());
     }
     let ids = json!({"ids":[hash]});
-    match s.rpc.call("torrent_verify", ids.clone()).await.and(Ok(())) {
-        Ok(()) => { let _ = s.rpc.call("torrent_start", ids).await; tracing::info!(hash, "Drive is back: checking and resuming a torrent"); }
+    // Starting is enough: Transmission looks for the files again and clears its error. A
+    // full check would read every byte of every torrent on the drive.
+    match s.rpc.call("torrent_start", ids).await.and(Ok(())) {
+        Ok(()) => tracing::info!(hash, "Drive is back: resumed a torrent"),
         Err(error) => tracing::warn!(hash, %error, "Could not resume a torrent after its drive returned"),
     }
 }

@@ -93,6 +93,10 @@ pub fn moving_torrent(s: &Service, hash: &str) -> bool {
 }
 /// Whether a move onto `drive` has not finished.
 pub fn moving_to(s: &Service, drive: &str) -> bool { load(s).iter().any(|m| active(m) && m.drive == drive) }
+/// Whether an unfinished move still has files to take from, or put under, this folder.
+pub fn moving_under(s: &Service, media: &Path) -> bool {
+    load(s).iter().any(|m| active(m) && m.units.iter().any(|u| u.step != "done" && (u.from.starts_with(media) || u.to.starts_with(media))))
+}
 /// Bytes still to be copied onto a drive by moves already queued.
 fn incoming(s: &Service, drive: &str) -> u64 {
     load(s).iter().filter(|m| active(m) && m.drive == drive).flat_map(|m| &m.units).filter(|u| u.step == "copying")
@@ -134,7 +138,13 @@ fn ids(body: &Value) -> Result<Vec<String>> {
 
 /// The units that move these assets to `target` (None: just where they are now).
 async fn plan(s: &Service, drives: &Drives, assets: &[Value], target: Option<&Drive>) -> Result<(Vec<Unit>, Vec<String>)> {
-    let torrents = crate::organizer::torrents(s).await.unwrap_or_default();
+    // Without Transmission's list a torrent's files would be taken for loose ones and moved
+    // from under it, so a move is not planned then.
+    let torrents = match crate::organizer::torrents(s).await {
+        Ok(torrents) => torrents,
+        Err(error) if target.is_some() => return Err(error),
+        Err(_) => Vec::new(),
+    };
     let mut units: Vec<Unit> = Vec::new();
     let mut on = Vec::new();
     for asset in assets {
@@ -276,14 +286,23 @@ use Stop::{Fail, Wait};
 impl<E: Into<anyhow::Error>> From<E> for Stop { fn from(error: E) -> Self { Fail(error.into()) } }
 
 fn staged(path: &Path) -> PathBuf { PathBuf::from(format!("{}.torrbaby-moving", path.display())) }
-/// Remove a unit's partial files and copies the library never used. A copy is removed
-/// only while its original is still there and is a different file.
+/// Remove a unit's partial files. Only the temporary names are this move's own: a file
+/// under the final name may have been on that drive before, and is never removed here.
 fn discard_copies(unit: &Unit) {
+    for (name, _) in &unit.files { let _ = std::fs::remove_file(staged(&unit.to.join(name))); }
+}
+/// Put a unit's verified copies under their final names, refusing to replace a file that
+/// appeared there during the copy. Returns the ones placed, so a failure can take them back.
+fn place_copies(unit: &Unit) -> (Vec<PathBuf>, Result<()>) {
+    let mut placed = Vec::new();
     for (name, _) in &unit.files {
         let copy = unit.to.join(name);
-        let _ = std::fs::remove_file(staged(&copy));
-        if !same_file(&copy, &unit.from.join(name)).unwrap_or(true) { let _ = std::fs::remove_file(&copy); }
+        if !staged(&copy).exists() { continue; }
+        if copy.exists() { return (placed, Err(anyhow::anyhow!("A file with the same name is already on that drive"))); }
+        if let Err(error) = std::fs::rename(staged(&copy), &copy) { return (placed, Err(error.into())); }
+        placed.push(copy);
     }
+    (placed, Ok(()))
 }
 /// Whether two paths are one file; None when either is not there.
 fn same_file(a: &Path, b: &Path) -> Option<bool> {
@@ -338,13 +357,12 @@ async fn advance(s: &Service, unit: &Unit) -> std::result::Result<String, Stop> 
             // Every copy is verified: put them in place and switch, with no scan in between.
             let _scans = s.mutation_lock.lock().await;
             drives_present(s, unit)?;
-            for (name, _) in &unit.files {
-                let copy = unit.to.join(name);
-                if staged(&copy).exists() { std::fs::rename(staged(&copy), &copy)?; }
-            }
-            let assets = unit_assets(s, unit)?;
-            if let Err(error) = switch(s, unit, &assets).await {
-                // Back to the originals, which are untouched.
+            let (placed, result) = place_copies(unit);
+            let result = match result { Ok(()) => unit_assets(s, unit), Err(error) => Err(error) };
+            let result = match result { Ok(assets) => switch(s, unit, &assets).await, Err(error) => Err(error) };
+            if let Err(error) = result {
+                // Back to the originals, which are untouched; the copies placed just now go.
+                for copy in &placed { let _ = std::fs::remove_file(copy); }
                 if let Some(hash) = &unit.torrent {
                     let _ = s.rpc.call("torrent_set_location", json!({"ids":[hash],"location":unit.from,"move":false})).await;
                     s.invalidate_torrents();

@@ -112,7 +112,13 @@ fn add(s: &Service, body: &Value) -> Result<Value> {
     let media = mount.join("Media");
     // A drive used before keeps its identity, so its files are recognised again.
     let id = match drives::read_marker(&media) {
-        Some(id) => { ensure!(!drives.all().iter().any(|d| d.id == id), "This drive is already in use"); id }
+        // A marker naming a drive already in the list came with files copied from that
+        // drive: this is a new drive, and gets its own identity.
+        Some(id) if !drives.all().iter().any(|d| d.id == id) => id,
+        Some(id) => {
+            ensure!(drives.all().iter().any(|d| d.id == id && d.online()), "This drive is already in use");
+            new_id(mount.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default().as_str(), &drives)
+        }
         None => new_id(mount.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default().as_str(), &drives),
     };
     let mut list = configs(&drives);
@@ -170,7 +176,7 @@ async fn remove(s: &Service, id: &str) -> Result<Value> {
     if holdings(&drives, &assets).get(id).is_some_and(|(files, _)| *files > 0) {
         bail!("Move this drive's titles to another drive first");
     }
-    ensure!(!crate::drive_moves::moving_to(s, id), "Wait until moves to this drive have finished");
+    ensure!(!crate::drive_moves::moving_to(s, id) && !crate::drive_moves::moving_under(s, &drive.media), "Wait until moves to this drive have finished");
     let torrents = crate::organizer::torrents(s).await?;
     let on_drive = |dir: &str| drives.drive_of(Path::new(dir)).is_some_and(|d| d.id == id) || Path::new(dir).starts_with(&drive.media);
     ensure!(!torrents.iter().any(|t| t["download_dir"].as_str().is_some_and(on_drive)), "Torrents are still using this drive");
