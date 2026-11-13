@@ -595,6 +595,15 @@ final class Store: ObservableObject {
     func routeLabel(_ address: String) -> String {
         switch routeKind(address) { case "relay": "relay via bronze"; case "direct": "direct"; case "home": "home network"; default: "Tailscale" }
     }
+    /// Whether this device still uses Tailscale: only where the relay through bronze is not
+    /// known (Mac and Apple TV are at home; iPhone and iPad use the relay instead).
+    var tailscaleInUse: Bool {
+        #if os(iOS)
+        return relayAddress.isEmpty
+        #else
+        return true
+        #endif
+    }
     /// How this device reaches the server now.
     enum Path: String { case home = "Home network", direct = "Direct (hole punch)", relay = "Relay via bronze", tailscale = "Tailscale", offline = "Offline" }
     var path: Path {
@@ -609,7 +618,7 @@ final class Store: ObservableObject {
     func measurePaths() async {
         var targets: [(String, String)] = []
         if !primaryAddress.isEmpty { targets.append(("home", primaryAddress)) }
-        if !fallbackServer.isEmpty { targets.append(("tailscale", fallbackServer)) }
+        if !fallbackServer.isEmpty && tailscaleInUse { targets.append(("tailscale", fallbackServer)) }
         #if os(iOS)
         if let relay = await ensureRelay() { targets.append(("relay", relay)) }
         else if !relayAddress.isEmpty { noteRoute("relay", RouteCheck(ok: false, ms: nil, detail: "could not open the relay to \(relayAddress)")) }
@@ -829,6 +838,9 @@ final class Store: ObservableObject {
         // (then it would only cost a connection to bronze on every check).
         let atHome = reachable && activeServer.map(ServerRoutes.normalized) == ServerRoutes.normalized(primary) && !activeRouteTunnelled
         if !atHome && !relayAddress.isEmpty { addresses.append(Self.relayCandidate) }
+        // Tailscale is retired on iPhone and iPad once the relay is known: home, direct and
+        // the relay are the only ways.
+        if !tailscaleInUse { addresses.removeAll { $0 != Self.relayCandidate && ServerRoutes.normalized($0) != ServerRoutes.normalized(primary) } }
         #if DEBUG
         // Simulator checks of the relay from home: -relayOnly YES leaves home and Tailscale out.
         if UserDefaults.standard.bool(forKey: "relayOnly") { addresses = [Self.relayCandidate] }

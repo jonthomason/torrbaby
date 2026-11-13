@@ -72,9 +72,9 @@ struct ConnectionStatusSections: View {
             row("Direct (hole punch)", kind: "direct", inUse: store.path == .direct, detail: store.directRoute == nil ? (store.directWhyNot ?? "") : "open, QUIC on the punched socket")
             row("Relay via bronze", kind: "relay", inUse: store.path == .relay, detail: relayDetail)
             #endif
-            row("Tailscale", kind: "tailscale", inUse: store.path == .tailscale, detail: store.awayRoute.isEmpty ? (store.fallbackServer.isEmpty ? "not set up" : store.fallbackServer) : "\(store.awayRoute) (to be retired)")
+            row("Tailscale", kind: "tailscale", inUse: store.path == .tailscale, detail: !store.tailscaleInUse ? "not used: the relay through bronze replaces it" : store.awayRoute.isEmpty ? (store.fallbackServer.isEmpty ? "not set up" : store.fallbackServer) : "\(store.awayRoute) (to be retired)")
         } header: { Text(verbatim: "Ways to \(server)") } footer: {
-            Text(verbatim: "Preference: home network, then direct, then the relay, then Tailscale. Each line shows its last check.")
+            Text(verbatim: store.tailscaleInUse ? "Preference: home network, then direct, then the relay, then Tailscale. Each line shows its last check." : "Preference: home network, then direct, then the relay. Each line shows its last check.")
         }
     }
 

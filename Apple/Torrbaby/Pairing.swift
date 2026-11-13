@@ -154,7 +154,10 @@ struct PairingScannerView: View {
             // away from home reaches it by the second, or else through the relay on bronze.
             var routes = [payload.server, payload.fallbackServer ?? ""].map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }.filter { !$0.isEmpty }
             store.learnRelay(address: payload.relay, fingerprint: payload.relayFingerprint)
-            if payload.relay != nil, let relay = await store.ensureRelay() { routes.append(relay) }
+            if payload.relay != nil, let relay = await store.ensureRelay() {
+                // With the relay, Tailscale is not used: home first, then the relay.
+                routes = Array(routes.prefix(1)) + [relay]
+            }
             var base = routes.first ?? ""
             var reply: (Data, URLResponse)?
             for route in routes {
