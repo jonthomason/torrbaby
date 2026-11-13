@@ -1580,6 +1580,12 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             Ok(catalog)
         },
         ("GET","/v1/library/matches") => Ok(json!(db.visible_assets()?.into_iter().filter(|a|a["available"]==true && a["status"]!="matched" && a["role"]!="extra").collect::<Vec<_>>())),
+        // The online check: who the server is and where it is reached, a few hundred bytes.
+        // /v1/status (with the whole processing queue) is for the screens that show it.
+        ("GET","/v1/ping") => {
+            let state = db.state()?;
+            Ok(json!({"version":env!("CARGO_PKG_VERSION"),"server":{"name":state["server"]["name"],"id":state["server"]["id"],"routes":ROUTES.read().map(|r|r.clone()).unwrap_or_default()}}))
+        }
         ("GET","/v1/status") => {
             let state = db.state()?;
             let config = effective.as_ref().context("Missing settings")?;

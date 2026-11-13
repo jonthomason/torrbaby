@@ -2026,7 +2026,8 @@ struct MediaDriveSpace: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     var compact = false
-    var body: some View {
+    var body: some View { statusContent.modifier(NeedsServerStatus()) }
+    @ViewBuilder private var statusContent: some View {
         if let storage = store.status?.storage, !storage.volumes.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(storage.volumes, id: \.name) { volume in

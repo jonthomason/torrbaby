@@ -233,7 +233,8 @@ private struct TVSettingsView: View {
     @State private var showSubtitles = false
     @State private var showPairing = false
     @State private var editingProfile: UserProfile?
-    var body: some View {
+    var body: some View { statusContent.modifier(NeedsServerStatus()) }
+    @ViewBuilder private var statusContent: some View {
         HStack(alignment: .center, spacing: 0) {
             VStack(spacing: 22) {
                 Image("TorrbabyLogo").resizable().scaledToFit().frame(width: 300, height: 300)

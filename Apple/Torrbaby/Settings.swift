@@ -12,7 +12,8 @@ struct AutomationView: View {
     @ObservedObject private var activity = ServerActivity.shared
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
-    var body: some View {
+    var body: some View { statusContent.modifier(NeedsServerStatus()) }
+    @ViewBuilder private var statusContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 if let status = store.status {
@@ -417,7 +418,8 @@ private struct LibrarySettings: View {
     @State private var tv = ""
     @State private var interval = 30.0
     @State private var saved = false
-    var body: some View {
+    var body: some View { statusContent.modifier(NeedsServerStatus()) }
+    @ViewBuilder private var statusContent: some View {
         Group {
             SwiftUI.Section {
                 if let status = store.status {
@@ -462,7 +464,8 @@ private struct LibrarySettings: View {
 private struct AboutSettings: View {
     @ObservedObject private var activity = ServerActivity.shared
     @EnvironmentObject var store: Store
-    var body: some View {
+    var body: some View { statusContent.modifier(NeedsServerStatus()) }
+    @ViewBuilder private var statusContent: some View {
         SwiftUI.Section {
             LabeledContent { Text(verbatim: AppRelease.description.replacingOccurrences(of: "Version ", with: "")).monospacedDigit() } label: { Text("Version") }
             if let status = store.status { LabeledContent { Text(verbatim: status.version).monospacedDigit() } label: { Text("Server version") } }
@@ -781,7 +784,8 @@ struct BackgroundSubtitlesView: View {
     @ObservedObject private var activity = ServerActivity.shared
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
-    var body: some View {
+    var body: some View { statusContent.modifier(NeedsServerStatus()) }
+    @ViewBuilder private var statusContent: some View {
         if let status = store.status {
             Toggle("Process library automatically", isOn: Binding(
                 get: { status.settings.backgroundSubtitles ?? true },
@@ -827,7 +831,8 @@ struct ProcessingAttention: View {
             await load()
         }
     }
-    var body: some View {
+    var body: some View { statusContent.modifier(NeedsServerStatus()) }
+    @ViewBuilder private var statusContent: some View {
         Group {
             if !items.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {

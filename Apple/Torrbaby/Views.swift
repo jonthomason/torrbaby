@@ -49,7 +49,8 @@ struct SubtitleQueueView: View {
     @EnvironmentObject var store: Store
     @Environment(\.scenePhase) private var phase
     private let groups = [("Needs attention", ["failed", "stale", "expired"]), ("Waiting", ["queued", "scanning", "interrupted"]), ("Finished", ["ready"])]
-    var body: some View {
+    var body: some View { statusContent.modifier(NeedsServerStatus()) }
+    @ViewBuilder private var statusContent: some View {
         List {
             if let error = store.subtitleQueueError {
                 Label(error, systemImage: "wifi.exclamationmark").foregroundStyle(.secondary)

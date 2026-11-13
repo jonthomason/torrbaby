@@ -55,6 +55,19 @@ final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
 final class ServerActivity: ObservableObject {
     static let shared = ServerActivity()
     @Published var status: DaemonStatus?
+    /// Screens on show that display the status; it is fetched only while there are any.
+    var watchers = 0
+}
+
+/// For a screen that shows the server's status (processing, settings, drive space):
+/// the status is fetched while it is on show, and not otherwise.
+struct NeedsServerStatus: ViewModifier {
+    @EnvironmentObject var store: Store
+    func body(content: Content) -> some View {
+        content
+            .onAppear { ServerActivity.shared.watchers += 1; Task { await store.refreshStatus() } }
+            .onDisappear { ServerActivity.shared.watchers = max(0, ServerActivity.shared.watchers - 1) }
+    }
 }
 
 @MainActor
@@ -307,7 +320,7 @@ final class Store: ObservableObject {
         didSet {
             if oldValue != server {
                 activeServer = nil; activeRouteTunnelled = false
-                status = nil
+                status = nil; reachable = false
                 fallbackServer = savedFallback()
             }
         }
@@ -321,7 +334,7 @@ final class Store: ObservableObject {
     /// The active route reached the home address through a tunnel (Tailscale
     /// subnet routing), so the device is not actually on the home network.
     @Published private(set) var activeRouteTunnelled = false
-    private var connectionProbe: Task<DaemonStatus, Error>?
+    private var connectionProbe: Task<ServerPing, Error>?
     private func savedFallback() -> String {
         if !awayRoute.isEmpty { return address(awayRoute) }
         return UserDefaults.standard.string(forKey: "fallback-server:" + libraryKey) ?? ""
@@ -345,7 +358,7 @@ final class Store: ObservableObject {
         if !value.isEmpty { _ = try ServerRoutes.endpoint(value, path: "/v1/status") }
         fallbackServer = value
         activeServer = nil; activeRouteTunnelled = false
-        status = nil
+        status = nil; reachable = false
     }
     @Published var token: String = Credentials.read()
     @Published var torrents: [Torrent] = []
@@ -455,7 +468,9 @@ final class Store: ObservableObject {
         #endif
     }
     var configured: Bool { !server.isEmpty && !token.isEmpty }
-    var connected: Bool { networkAvailable && status != nil && connectionError == nil }
+    /// The server answered the online check. Nothing else decides whether we are online.
+    @Published private(set) var reachable = false
+    var connected: Bool { networkAvailable && reachable && connectionError == nil }
     var offline: Bool { configured && (!networkAvailable || connectionError != nil) }
     var offlineLibrary: Bool {
         #if os(tvOS)
@@ -501,7 +516,7 @@ final class Store: ObservableObject {
         try ServerRoutes.endpoint(activeServer ?? primaryAddress, path: path)
     }
     private var lastPrimaryRetry = Date.distantPast
-    private func probeConnection() async throws -> DaemonStatus {
+    private func probeConnection() async throws -> ServerPing {
         if let connectionProbe { return try await connectionProbe.value }
         let identityServer = server, primary = primaryAddress, fallback = fallbackServer
         // The route that last worked goes first, but only while it is still one of the
@@ -518,12 +533,19 @@ final class Store: ObservableObject {
             addresses = addresses.reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
         }
         let task = Task { @MainActor in
-            let (route, probed): (String, (DaemonStatus, Bool)) = try await ServerRoutes.probe(addresses: addresses) { address in
+            let (route, probed): (String, (ServerPing, Bool)) = try await ServerRoutes.probe(addresses: addresses) { address in
                 let quick = retryPrimary && ServerRoutes.normalized(address) == ServerRoutes.normalized(primary)
                 let observer = RouteObserver()
                 // A tunnelled route over cellular can take longer than the LAN to answer.
                 let away = ServerRoutes.normalized(address) != ServerRoutes.normalized(primary)
-                let value: DaemonStatus = try await self.request("GET", "/v1/status", timeout: quick ? 2 : away ? 10 : 4, address: address, observer: observer)
+                let timeout: TimeInterval = quick ? 2 : away ? 10 : 4
+                let value: ServerPing
+                do { value = try await self.request("GET", "/v1/ping", timeout: timeout, address: address, observer: observer) }
+                catch is APIError {
+                    // A server from before the online check answers it with an error: use its status.
+                    let full: DaemonStatus = try await self.request("GET", "/v1/status", timeout: timeout * 3, address: address, observer: observer)
+                    value = ServerPing(version: full.version, server: full.server)
+                }
                 // iOS can carry even home Wi-Fi traffic through Tailscale when subnet routes are
                 // on, so a tunnelled route only means "away" when no own interface is on the
                 // subnet of the address the name led to.
@@ -533,6 +555,7 @@ final class Store: ObservableObject {
             guard self.server == identityServer, self.fallbackServer == fallback else { throw CancellationError() }
             self.activeServer = route
             self.adopt(probed.0.server)
+            if !self.reachable { self.reachable = true }
             self.activeRouteTunnelled = probed.1
             return probed.0
         }
@@ -575,7 +598,7 @@ final class Store: ObservableObject {
         do {
             server = server.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             token = token.trimmingCharacters(in: .whitespacesAndNewlines)
-            status = try await probeConnection()
+            _ = try await probeConnection()
             connectionError = nil
             try Credentials.save(token)
             UserDefaults.standard.set(server, forKey: "server")
@@ -584,18 +607,17 @@ final class Store: ObservableObject {
     }
     @Published var subtitleQueueError: String?
     private var refreshingStatus = false
+    private func refreshStatusIfShown() async { if ServerActivity.shared.watchers > 0 { await refreshStatus() } }
     func refreshStatus() async {
         guard configured, !refreshingStatus else { return }
         refreshingStatus = true
         defer { refreshingStatus = false }
         do {
-            let value = try await probeConnection()
-            status = value
-            connectionError = nil
+            if !connected { _ = try await probeConnection(); connectionError = nil }
+            status = try await request("GET", "/v1/status", timeout: 30)
             subtitleQueueError = nil
         } catch {
             guard !Self.cancelled(error) else { return }
-            connectionError = error.localizedDescription
             subtitleQueueError = "Couldn’t refresh the queue. Reconnecting…"
         }
     }
@@ -728,16 +750,16 @@ final class Store: ObservableObject {
             guard networkAvailable else { throw URLError(.notConnectedToInternet) }
             // Connected means the server answers. Everything else loads on its own, at the
             // same time, and a page that cannot load shows its own error.
-            let serverStatus = try await probeConnection()
+            _ = try await probeConnection()
             guard identity == profileIdentity else { return }
-            status = serverStatus
             if connectionError != nil { connectionError = nil }
             if subtitleQueueError != nil { subtitleQueueError = nil }
             async let libraryPart: Void = syncLibrary(identity)
             async let torrentsPart: Void = syncTorrents(identity)
             async let operationsPart: Void = syncOperations(identity)
             async let activityPart: Void = syncActivity(identity)
-            _ = await (libraryPart, torrentsPart, operationsPart, activityPart)
+            async let statusPart: Void = refreshStatusIfShown()
+            _ = await (libraryPart, torrentsPart, operationsPart, activityPart, statusPart)
         } catch {
             // A refresh cut short (the app went to the background, the view changed) says
             // nothing about the server; showing it read "cancelled" and flashed Offline.

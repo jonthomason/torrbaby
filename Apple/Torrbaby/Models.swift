@@ -299,6 +299,8 @@ struct ServerIdentity: Codable {
     struct Routes: Codable { let home: String?; let away: String? }
     let name: String?; let id: String?; var routes: Routes? = nil
 }
+/// The online check's answer.
+struct ServerPing: Codable { var version: String? = nil; var server: ServerIdentity? = nil }
 struct DaemonStatus: Codable {
     var server: ServerIdentity? = nil
     let creditsAnalysis: CreditsAnalysis?

@@ -12,7 +12,8 @@ struct TorrentDetail: View {
     @State private var playback: Playback?
     @State private var loadingPlayback = false
     var torrent: Torrent? { store.torrents.first { $0.id == hash } }
-    var body: some View {
+    var body: some View { statusContent.modifier(NeedsServerStatus()) }
+    @ViewBuilder private var statusContent: some View {
         Group {
             if let t = torrent {
                 ScrollView {
