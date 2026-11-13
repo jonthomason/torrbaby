@@ -105,7 +105,6 @@ final class L10n {
     IDS.put("Available", R.string.ui_7c62a1424469);
     IDS.put("Avatar", R.string.ui_7631b26ea80b);
     IDS.put("Avatar must be an initial, emoji or printable symbol", R.string.ui_eab9b46602ed);
-    IDS.put("Away address", R.string.ui_5de4a706e634);
     IDS.put("Back", R.string.ui_b52b36b7269f);
     IDS.put("Back to library", R.string.ui_f0926a5af237);
     IDS.put("Background color", R.string.ui_1a0371e373ff);
@@ -832,7 +831,6 @@ final class L10n {
     IDS.put("Use available space", R.string.ui_952de75621d0);
     IDS.put("Use for new downloads", R.string.ui_63e157999dab);
     IDS.put("Use this name", R.string.ui_7669011536cd);
-    IDS.put("Used away from home. Your server provides it; change it only if the server can’t be reached.", R.string.ui_c586f483579d);
     IDS.put("Used by Torrbaby before", R.string.ui_243f5503f603);
     IDS.put("Used when the primary address is unreachable. Torrents and downloads are available; streaming is disabled.", R.string.ui_ebb884ce8b5b);
     IDS.put("User", R.string.ui_9f8a2389a20c);

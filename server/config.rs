@@ -11,6 +11,13 @@ pub struct Config {
     pub listen_port: u16,
     #[serde(default)]
     pub lan_listen_host: Option<String>,
+    /// The names clients reach the server by: at home (its Bonjour name, "diamond.local")
+    /// and away (its Tailscale name). Given to devices at pairing and in its status. When
+    /// unset they are looked up from the Mac.
+    #[serde(default)]
+    pub home_host: Option<String>,
+    #[serde(default)]
+    pub away_host: Option<String>,
     #[serde(default)]
     pub trusted_lan_cidrs: Vec<String>,
     #[serde(default)]

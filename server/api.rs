@@ -62,14 +62,21 @@ fn establish_identity(s: &Service) -> Result<Value> {
 /// (MagicDNS) name away. Both are looked up from the Mac, so a new address never matters.
 static ROUTES: std::sync::RwLock<Value> = std::sync::RwLock::new(Value::Null);
 
-async fn refresh_routes() {
+async fn refresh_routes(home_host: Option<String>, away_host: Option<String>) {
+    let configured = |value: Option<String>| value.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
+    if let (Some(home), Some(away)) = (configured(home_host.clone()), configured(away_host.clone())) {
+        if let Ok(mut current) = ROUTES.write() { *current = json!({"home":home,"away":away}); }
+        return;
+    }
     async fn output(program: &str, args: &[&str]) -> Option<String> {
         let output = tokio::process::Command::new(program).args(args).output().await.ok()?;
         output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
     }
-    let home = output("/usr/sbin/scutil", &["--get", "LocalHostName"]).await.filter(|n| !n.is_empty()).map(|n| format!("{n}.local"));
-    let mut away = None;
+    let mut home = configured(home_host);
+    if home.is_none() { home = output("/usr/sbin/scutil", &["--get", "LocalHostName"]).await.filter(|n| !n.is_empty()).map(|n| format!("{n}.local")); }
+    let mut away = configured(away_host);
     for program in ["/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"] {
+        if away.is_some() { break; }
         if let Some(text) = output(program, &["status", "--json"]).await {
             away = serde_json::from_str::<Value>(&text).ok()
                 .and_then(|status| status["Self"]["DNSName"].as_str().map(|name| name.trim_end_matches('.').to_owned()))
@@ -200,9 +207,10 @@ pub async fn serve(
     } else {
         None
     };
-    let routes_task = tokio::spawn(async {
+    let configured = (service.config.home_host.clone(), service.config.away_host.clone());
+    let routes_task = tokio::spawn(async move {
         loop {
-            refresh_routes().await;
+            refresh_routes(configured.0.clone(), configured.1.clone()).await;
             tokio::time::sleep(std::time::Duration::from_secs(600)).await;
         }
     });

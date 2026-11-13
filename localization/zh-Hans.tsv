@@ -927,5 +927,3 @@ These files are already moving	这些文件正在移动
 Waiting for the drive to be connected	正在等待连接硬盘
 Wait until moves to this drive have finished	请等待移到此硬盘的操作完成
 Erase this drive as APFS or Mac OS Extended (Journaled), not case-sensitive, in Disk Utility, then add it	请先在“磁盘工具”中将此硬盘抹掉为 APFS 或“Mac OS 扩展（日志式）”格式（不区分大小写），然后再添加
-Away address	外出时地址
-Used away from home. Your server provides it; change it only if the server can’t be reached.	不在家时使用。由服务器提供，仅在无法连接服务器时才需要修改。

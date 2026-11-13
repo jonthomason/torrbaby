@@ -381,19 +381,12 @@ private struct PlaybackSettings: View {
 private struct ConnectionSettings: View {
     @EnvironmentObject var store: Store
     @Binding var showConnect: Bool
-    @State private var showFallback = false
     var body: some View {
+        // Routes are set at pairing and kept up to date by the server; there is nothing to edit.
         SwiftUI.Section {
             LabeledContent { Text(LocalizedStringKey(store.connectionLabel)) } label: { Text("Status") }
-            LabeledContent("Server", value: store.server.isEmpty ? L10n.text("Not configured") : store.primaryAddress)
-            Button { showFallback = true } label: {
-                HStack {
-                    LabeledContent("Away address", value: store.fallbackServer.isEmpty ? L10n.text("Not configured") : store.fallbackServer)
-                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-                }.contentShape(Rectangle())
-            }.buttonStyle(.plain)
-            .sheet(isPresented: $showFallback) { LocalizedInterface { FallbackAddressView() } }
-        } footer: { Text("Used away from home. Your server provides it; change it only if the server can’t be reached.") }
+            LabeledContent("Server", value: store.server.isEmpty ? L10n.text("Not configured") : store.serverName.isEmpty ? store.primaryAddress : store.serverName)
+        }
         SwiftUI.Section { Button("Edit connection") { showConnect = true } }
     }
 }
@@ -880,43 +873,6 @@ struct ProcessingAttention: View {
 }
 
 #if !os(tvOS)
-private struct FallbackAddressView: View {
-    @EnvironmentObject var store: Store
-    @Environment(\.dismiss) private var dismiss
-    @State private var address = ""
-    @State private var error: String?
-    var body: some View {
-        NavigationStack {
-            Form {
-                SwiftUI.Section("Away address") {
-                    TextField("http://diamond-ts.example.ts.net:8765" as String, text: $address)
-                        #if os(iOS)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
-                        #endif
-                    Text("Used away from home. Your server provides it; change it only if the server can’t be reached.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                if let error { Text(error).foregroundStyle(.orange) }
-            }
-            .navigationTitle(L10n.text("Away address"))
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        do {
-                            try store.saveFallback(address)
-                            Task { await store.refresh() }
-                            dismiss()
-                        } catch { self.error = error.localizedDescription }
-                    }
-                }
-            }
-        }.onAppear { address = store.fallbackServer }
-        #if os(macOS)
-        .frame(width: 520, height: 300)
-        #endif
-    }
-}
 #endif
 
 #if os(macOS)
