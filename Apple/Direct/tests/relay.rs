@@ -61,6 +61,12 @@ fn a_loopback_request_reaches_diamond_through_the_relay() {
         reply
     });
     assert_eq!(reply, "HTTP/1.1 200 OK\r\n\r\nDiamond heard GET /v1/ping HTTP/1.1");
+    // Bronze says Diamond is connected and where it sees this device.
+    let mut info = [0 as std::ffi::c_char; 256];
+    let length = tbdirect::tbdirect_relay_info(info.as_mut_ptr(), info.len());
+    assert!(length > 0);
+    let text = unsafe { std::ffi::CStr::from_ptr(info.as_ptr()) }.to_str().unwrap().to_owned();
+    assert!(text.starts_with("home online\nyou 127.0.0.1:"), "{text}");
     tbdirect::tbdirect_relay_stop();
     assert!(!tbdirect::tbdirect_relay_alive());
 }

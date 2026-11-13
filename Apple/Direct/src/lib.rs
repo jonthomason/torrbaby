@@ -58,7 +58,9 @@ fn text(pointer: *const c_char) -> Option<String> {
 #[unsafe(no_mangle)]
 pub extern "C" fn tbdirect_start(fd: i32, server: *const c_char, fingerprint: *const c_char) -> u16 {
     tbdirect_stop();
-    open(&TUNNEL, fd, server, fingerprint, b"tbdirect", "torrbaby-direct", 8)
+    // Keepalives every 5 s and a 15 s idle limit: a carrier switch behind a hotspot kills the
+    // punched path silently, and the app should notice in seconds, not 45 s.
+    open(&TUNNEL, fd, server, fingerprint, b"tbdirect", "torrbaby-direct", 8, (5, 15))
 }
 
 /// Open the relay: QUIC from socket `fd` (ownership passes here) to Torrbaby's rendezvous on
@@ -68,10 +70,10 @@ pub extern "C" fn tbdirect_start(fd: i32, server: *const c_char, fingerprint: *c
 #[unsafe(no_mangle)]
 pub extern "C" fn tbdirect_relay_start(fd: i32, server: *const c_char, fingerprint: *const c_char) -> u16 {
     tbdirect_relay_stop();
-    open(&RELAY, fd, server, fingerprint, b"tbrelay", "torrbaby-rendezvous", 5)
+    open(&RELAY, fd, server, fingerprint, b"tbrelay", "torrbaby-rendezvous", 5, (10, 45))
 }
 
-fn open(slot: &Mutex<Option<Tunnel>>, fd: i32, server: *const c_char, fingerprint: *const c_char, alpn: &[u8], name: &str, seconds: u64) -> u16 {
+fn open(slot: &Mutex<Option<Tunnel>>, fd: i32, server: *const c_char, fingerprint: *const c_char, alpn: &[u8], name: &str, seconds: u64, (keepalive, idle): (u64, u64)) -> u16 {
     let socket = if fd >= 0 { Some(unsafe { std::net::UdpSocket::from_raw_fd(fd) }) } else { None };
     let (Some(socket), Some(server), Some(fingerprint)) = (socket, text(server), text(fingerprint)) else { return 0 };
     let Ok(server): Result<SocketAddr, _> = server.parse() else { return 0 };
@@ -86,8 +88,8 @@ fn open(slot: &Mutex<Option<Tunnel>>, fd: i32, server: *const c_char, fingerprin
         tls.alpn_protocols = vec![alpn.to_vec()];
         let mut client = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls).ok()?));
         let mut transport = quinn::TransportConfig::default();
-        transport.keep_alive_interval(Some(Duration::from_secs(10)));
-        transport.max_idle_timeout(Some(Duration::from_secs(45).try_into().ok()?));
+        transport.keep_alive_interval(Some(Duration::from_secs(keepalive)));
+        transport.max_idle_timeout(Some(Duration::from_secs(idle).try_into().ok()?));
         transport.stream_receive_window((8u32 << 20).into());
         transport.receive_window((32u32 << 20).into());
         client.transport_config(Arc::new(transport));
@@ -151,3 +153,28 @@ pub extern "C" fn tbdirect_relay_alive() -> bool { alive(&RELAY) }
 /// Close the relay, if any.
 #[unsafe(no_mangle)]
 pub extern "C" fn tbdirect_relay_stop() { stop(&RELAY) }
+
+/// Ask bronze, over the open relay, whether Diamond is connected and what public address it
+/// sees this device at ("home online\nyou 1.2.3.4:5678\n"). Writes the reply, NUL-terminated,
+/// into `buffer`; returns its length, or -1. Blocks for up to 3 s.
+#[unsafe(no_mangle)]
+pub extern "C" fn tbdirect_relay_info(buffer: *mut c_char, capacity: usize) -> i32 {
+    if buffer.is_null() || capacity == 0 { return -1 }
+    let held = RELAY.lock().ok().and_then(|held| held.as_ref().map(|t| (t.runtime.handle().clone(), t.connection.clone())));
+    let Some((handle, connection)) = held else { return -1 };
+    let reply = handle.block_on(async move {
+        tokio::time::timeout(Duration::from_secs(3), async move {
+            let (mut send, mut recv) = connection.open_bi().await.ok()?;
+            send.write_all(b"TBINFO1\n").await.ok()?;
+            send.finish().ok()?;
+            recv.read_to_end(256).await.ok()
+        }).await.ok().flatten()
+    });
+    let Some(reply) = reply else { return -1 };
+    let length = reply.len().min(capacity - 1);
+    unsafe {
+        std::ptr::copy_nonoverlapping(reply.as_ptr() as *const c_char, buffer, length);
+        *buffer.add(length) = 0;
+    }
+    length as i32
+}

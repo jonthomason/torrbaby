@@ -631,6 +631,38 @@ final class Store: ObservableObject {
     }
     #if os(iOS)
     private var relayTunnel: RelayTunnel?
+    /// This device's public address as bronze sees it, asked every 5 s over the open relay.
+    @Published private(set) var relayPublicAddress: String?
+    private var relayWatcher: Task<Void, Never>?
+    /// Behind a hotspot the phone cannot see its carrier change (CT ↔ CM): the Wi-Fi and its
+    /// local address stay the same. Bronze sees the public address move; when it does, the
+    /// direct path (whose hole was opened for the old address) is dropped and tried again.
+    private func watchRelay() {
+        relayWatcher?.cancel()
+        relayWatcher = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self, self.relayTunnel != nil else { return }
+                if let info = await RelayTunnel.info() {
+                    let ip = info.publicAddress.split(separator: ":").dropLast().joined(separator: ":")
+                    let before = self.relayPublicAddress.map { $0.split(separator: ":").dropLast().joined(separator: ":") }
+                    if self.relayPublicAddress != info.publicAddress { self.relayPublicAddress = info.publicAddress }
+                    if self.relayServerConnected != info.homeOnline { self.relayServerConnected = info.homeOnline }
+                    if let before, before != ip {
+                        self.directEvent("public address changed: \(before) → \(ip)")
+                        self.dropDirect("public address changed")
+                        self.refreshFullyNext()
+                        Task { await self.refresh(polling: true) }
+                    } else if self.directRoute != nil, let punched = self.directAttempt?.publicAddress, punched != ip {
+                        self.directEvent("direct path was punched from \(punched), now \(ip)")
+                        self.dropDirect("public address changed")
+                        self.refreshFullyNext()
+                        Task { await self.refresh(polling: true) }
+                    }
+                }
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
+    }
     private var relayOpening: Task<String?, Never>?
     private var lastRelayFailure = Date.distantPast
     /// The relay's loopback address, opening it when needed. Nil when the rendezvous is not
@@ -653,6 +685,7 @@ final class Store: ObservableObject {
             let route = "http://127.0.0.1:\(tunnel.port)"
             relayRoute = route
             directEvent("relay: open on port \(tunnel.port) via \(tunnel.interface ?? "default")")
+            watchRelay()
             return route
         }
         relayOpening = task
@@ -663,6 +696,7 @@ final class Store: ObservableObject {
         guard relayTunnel != nil || relayRoute != nil else { return }
         let tunnel = relayTunnel, route = relayRoute
         relayTunnel = nil; relayRoute = nil
+        relayWatcher?.cancel(); relayWatcher = nil; relayPublicAddress = nil
         directEvent("relay: dropped (\(reason))")
         tunnel?.onClose = nil
         tunnel?.close()

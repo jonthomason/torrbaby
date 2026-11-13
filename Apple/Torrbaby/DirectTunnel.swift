@@ -8,6 +8,7 @@ import Foundation
 @_silgen_name("tbdirect_relay_start") private func tbdirect_relay_start(_ fd: Int32, _ server: UnsafePointer<CChar>, _ fingerprint: UnsafePointer<CChar>) -> UInt16
 @_silgen_name("tbdirect_relay_alive") private func tbdirect_relay_alive() -> Bool
 @_silgen_name("tbdirect_relay_stop") private func tbdirect_relay_stop()
+@_silgen_name("tbdirect_relay_info") private func tbdirect_relay_info(_ buffer: UnsafeMutablePointer<CChar>, _ capacity: Int) -> Int32
 
 /// The relay through Torrbaby's rendezvous on bronze, for when this device has no home
 /// network, no Tailscale and no direct path yet (bronze's half is rendezvous/, Diamond keeps
@@ -38,6 +39,22 @@ final class RelayTunnel: @unchecked Sendable {
     }
 
     var alive: Bool { tbdirect_relay_alive() }
+
+    /// Bronze's view, over the relay: whether Diamond is connected, and this device's public
+    /// address ("ip:port"). Behind a hotspot this is the only way to see the carrier change.
+    static func info() async -> (homeOnline: Bool, publicAddress: String)? {
+        await Task.detached { () -> (Bool, String)? in
+            var buffer = [CChar](repeating: 0, count: 256)
+            guard tbdirect_relay_info(&buffer, buffer.count) > 0 else { return nil }
+            let text = String(cString: buffer)
+            var online = false, address = ""
+            for line in text.split(separator: "\n") {
+                if line.hasPrefix("home ") { online = line == "home online" }
+                if line.hasPrefix("you ") { address = String(line.dropFirst(4)) }
+            }
+            return address.isEmpty ? nil : (online, address)
+        }.value
+    }
 
     private func watch() {
         watcher = Task.detached { [weak self] in
