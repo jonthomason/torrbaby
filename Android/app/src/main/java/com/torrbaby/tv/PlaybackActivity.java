@@ -81,6 +81,16 @@ public class PlaybackActivity extends Activity {
           try {
             api = new SecureStore(this).load();
             if (api == null) throw new Exception("Link this TV to your server again.");
+            // Opened straight into playback (Android restarted the app): find the server on
+            // the home network first, as the library does; no address is saved.
+            if (ServerRoute.found.isEmpty()) {
+              String found = ServerRoute.find(this, 8000);
+              if (!found.isEmpty()) {
+                Api located = new Api(found, api.token, api.client, api.profile, api.profileName);
+                located.profileAppearance = api.profileAppearance;
+                api = located;
+              }
+            }
             if (api.profile.isEmpty()) throw new Exception("Choose a user before starting playback.");
             ProgressQueue.flush(this, api);
             String id = getIntent().getStringExtra("asset");
