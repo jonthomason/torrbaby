@@ -90,7 +90,10 @@ struct SubtitleQueueView: View {
                     }
                 }
                 if preparation.queue?.isEmpty != false { Text("No processing jobs").foregroundStyle(.secondary) }
-            } else { ProgressView("Loading processing queue…") }
+            } else {
+                ProgressView { Text("Loading processing queue…").multilineTextAlignment(.center) }
+                    .frame(maxWidth: .infinity, alignment: .center).padding(.vertical, 8)
+            }
         }
         .canvasBackground()
         .navigationTitle(L10n.text("Processing"))
