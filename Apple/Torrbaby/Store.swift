@@ -1,3 +1,4 @@
+import os
 import Foundation
 import Network
 import SwiftUI
@@ -300,6 +301,20 @@ final class Store: ObservableObject {
         defaults.set(true, forKey: "data-keyed-to-library")
     }
     @Published private(set) var homeRoute = UserDefaults.standard.string(forKey: "route-home") ?? ""
+    /// Torrbaby's rendezvous on bronze ("ip:port" of its QUIC port, and its certificate's
+    /// SHA-256), learned from the server's online check or the pairing code.
+    private(set) var relayAddress = UserDefaults.standard.string(forKey: "relay-address") ?? ""
+    private(set) var relayFingerprint = UserDefaults.standard.string(forKey: "relay-fingerprint") ?? ""
+    func learnRelay(address: String?, fingerprint: String?) {
+        guard let address, let fingerprint, !address.isEmpty, fingerprint.count == 64 else { return }
+        relayAddress = address; relayFingerprint = fingerprint
+        UserDefaults.standard.set(address, forKey: "relay-address"); UserDefaults.standard.set(fingerprint, forKey: "relay-fingerprint")
+    }
+    /// Torrbaby's own STUN server: the rendezvous's address on UDP 3478.
+    var stunServer: String? {
+        guard let host = relayAddress.split(separator: ":").first, !host.isEmpty else { return nil }
+        return "\(host):3478"
+    }
     @Published private(set) var awayRoute = UserDefaults.standard.string(forKey: "route-away") ?? ""
     private var routePort: Int { URLComponents(string: server)?.port ?? 8765 }
     private func address(_ host: String) -> String { host.isEmpty ? "" : "http://\(host):\(routePort)" }
@@ -317,6 +332,11 @@ final class Store: ObservableObject {
         }
         if let id = identity.id?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty, id != serverID {
             serverID = id; defaults.set(id, forKey: "server-id")
+        }
+        if let relay = identity.relay, let address = relay.address, let fingerprint = relay.fingerprint,
+           !address.isEmpty, fingerprint.count == 64, address != relayAddress || fingerprint != relayFingerprint {
+            relayAddress = address; relayFingerprint = fingerprint
+            defaults.set(address, forKey: "relay-address"); defaults.set(fingerprint, forKey: "relay-fingerprint")
         }
         // The paired address may be a number (an address from DHCP or Tailscale); once the
         // server's names are known, it is kept by name instead.
@@ -416,6 +436,9 @@ final class Store: ObservableObject {
                 let restored = !self.networkAvailable && available
                 // A restored Wi-Fi/cellular path still needs a successful server probe.
                 if !available { self.connectionError = URLError(.notConnectedToInternet).localizedDescription }
+                #if os(iOS)
+                self.relayNetworkChanged()
+                #endif
                 self.networkAvailable = available
                 if restored {
                     // A new network may make the primary route reachable again. Keep the
@@ -461,6 +484,7 @@ final class Store: ObservableObject {
             token = secret
             // Simulators without a lasting Keychain keep one device identity across launches.
             if let id = profile["client_id"], UUID(uuidString: id) != nil { clientId = id }
+            learnRelay(address: profile["relay"], fingerprint: profile["relay_fingerprint"])
             UserDefaults.standard.set(address, forKey: "server")
             try? Credentials.save(secret)
             try? FileManager.default.removeItem(atPath: path)
@@ -533,7 +557,57 @@ final class Store: ObservableObject {
     /// The check-in's current step and since when (shown on the iPhone's test screen).
     private(set) var checkInStage = ("idle", Date.distantPast)
     func stage(_ name: String) { checkInStage = (name, Date()) }
+    /// The loopback proxy into the relay through bronze, while it is open (iPhone and iPad).
+    @Published private(set) var relayRoute: String?
     #if os(iOS)
+    private var relayTunnel: RelayTunnel?
+    private var relayOpening: Task<String?, Never>?
+    private var lastRelayFailure = Date.distantPast
+    /// The relay's loopback address, opening it when needed. Nil when the rendezvous is not
+    /// known or could not be reached (not tried again for a few seconds).
+    func ensureRelay() async -> String? {
+        if let relayRoute, relayTunnel?.alive == true { return relayRoute }
+        if let relayOpening { return await relayOpening.value }
+        guard !relayAddress.isEmpty, relayFingerprint.count == 64, networkAvailable,
+              Date().timeIntervalSince(lastRelayFailure) > 15 else { return nil }
+        let address = relayAddress, fingerprint = relayFingerprint
+        let task = Task { @MainActor () -> String? in
+            guard let tunnel = await RelayTunnel.open(address: address, fingerprint: fingerprint) else {
+                lastRelayFailure = Date()
+                directEvent("relay: could not reach \(address)")
+                return nil
+            }
+            relayTunnel?.close()
+            tunnel.onClose = { [weak self] in self?.dropRelay("closed") }
+            relayTunnel = tunnel
+            let route = "http://127.0.0.1:\(tunnel.port)"
+            relayRoute = route
+            directEvent("relay: open on port \(tunnel.port) via \(tunnel.interface ?? "default")")
+            return route
+        }
+        relayOpening = task
+        defer { relayOpening = nil }
+        return await task.value
+    }
+    func dropRelay(_ reason: String) {
+        guard relayTunnel != nil || relayRoute != nil else { return }
+        let tunnel = relayTunnel, route = relayRoute
+        relayTunnel = nil; relayRoute = nil
+        directEvent("relay: dropped (\(reason))")
+        tunnel?.onClose = nil
+        tunnel?.close()
+        // Requests were going through it: find a route again now rather than at the next check.
+        if let route, activeServer == route, reason != "home" {
+            activeServer = nil
+            refreshFullyNext()
+            Task { await refresh(polling: true) }
+        }
+    }
+    /// The relay's socket is bound to one network; a different one needs a new relay.
+    private func relayNetworkChanged() {
+        guard let tunnel = relayTunnel else { return }
+        if tunnel.interface != PunchProbe.physicalInterface() { dropRelay("network changed") }
+    }
     private var directTunnel: DirectTunnel?
     private var directAttempting = false
     private var lastDirectAttempt = Date.distantPast
@@ -542,21 +616,25 @@ final class Store: ObservableObject {
     /// for the test screen: which step never finishes, and why tunnels dropped.
     @Published private(set) var directEvents: [String] = []
     func directEvent(_ text: String) {
+        Self.connectionLog.notice("\(text, privacy: .public)")
         directEvents.append("\(Date().formatted(date: .omitted, time: .standard)) \(text)")
         if directEvents.count > 12 { directEvents.removeFirst(directEvents.count - 12) }
     }
     /// What the direct path is doing, for Settings → About → Direct connection test.
     var directDiagnostics: String {
         let clock: (Date) -> String = { $0 == .distantPast ? "never" : $0.formatted(date: .omitted, time: .standard) }
-        return "route \(activeServer ?? "none") · away \(usingFallback) · connected \(connected) · trying \(directAttempting) · last try \(clock(lastDirectAttempt)) · last check-in \(clock(lastFullRefresh)) · check-in at \(checkInStage.0) since \(clock(checkInStage.1))"
+        return "route \(activeServer ?? "none") · relay \(relayRoute ?? (relayAddress.isEmpty ? "unknown" : "closed")) · away \(usingFallback) · connected \(connected) · trying \(directAttempting) · last try \(clock(lastDirectAttempt)) · last check-in \(clock(lastFullRefresh)) · check-in at \(checkInStage.0) since \(clock(checkInStage.1))"
     }
     /// Try now, whatever the last attempt was (the test screen's button).
+    private static let connectionLog = Logger(subsystem: "org.torrbaby", category: "connection")
     func tryDirectNow() { lastDirectAttempt = .distantPast; startDirectIfUseful() }
     /// Away from home, try for a direct path every few minutes until one holds.
     private func startDirectIfUseful() {
         guard connected, usingFallback, directRoute == nil, !directAttempting,
               Date().timeIntervalSince(lastDirectAttempt) > 180, let signal = activeServer else {
-            directNote = !connected ? "not tried: offline" : !usingFallback ? "not tried: at home" : directAttempting ? "trying…" : directNote
+            let note = !connected ? "not tried: offline" : !usingFallback ? "not tried: at home" : directAttempting ? "trying…" : directNote
+            if note != directNote && note.hasPrefix("not tried") { directEvent("direct \(note)") }
+            directNote = note
             return
         }
         directNote = "trying…"
@@ -594,9 +672,26 @@ final class Store: ObservableObject {
         if let connectionProbe { return try await connectionProbe.value }
         let identityServer = server, primary = primaryAddress, fallback = fallbackServer
         // Home and away are tried at the same time; home wins if it answers within a moment.
-        let addresses = [primary, fallback].filter { !$0.isEmpty }
+        var addresses = [primary, fallback].filter { !$0.isEmpty }
+        #if os(iOS)
+        // The relay through bronze joins the race unless this device is known to be at home
+        // (then it would only cost a connection to bronze on every check).
+        let atHome = reachable && activeServer.map(ServerRoutes.normalized) == ServerRoutes.normalized(primary) && !activeRouteTunnelled
+        if !atHome && !relayAddress.isEmpty { addresses.append(Self.relayCandidate) }
+        #if DEBUG
+        // Simulator checks of the relay from home: -relayOnly YES leaves home and Tailscale out.
+        if UserDefaults.standard.bool(forKey: "relayOnly") { addresses = [Self.relayCandidate] }
+        #endif
+        #endif
         let task = Task { @MainActor in
-            let (route, probed): (String, (ServerPing, Bool)) = try await ServerRoutes.race(addresses: addresses, preferred: primary) { @MainActor address in
+            let (_, probed): (String, (ServerPing, Bool, String)) = try await ServerRoutes.race(addresses: addresses, preferred: primary) { @MainActor candidate in
+                var address = candidate
+                #if os(iOS)
+                if candidate == Self.relayCandidate {
+                    guard let opened = await self.ensureRelay() else { throw URLError(.cannotConnectToHost) }
+                    address = opened
+                }
+                #endif
                 let observer = RouteObserver()
                 // A tunnelled route over cellular can take longer than the LAN to answer.
                 let away = ServerRoutes.normalized(address) != ServerRoutes.normalized(primary)
@@ -612,10 +707,14 @@ final class Store: ObservableObject {
                 // on, so a tunnelled route only means "away" when no own interface is on the
                 // subnet of the address the name led to.
                 let tunnelled = observer.tunnelled && !ServerRoutes.sharesSubnet(observer.reached ?? address, interfaces: ServerRoutes.localInterfaces())
-                return (value, tunnelled)
+                return (value, tunnelled, address)
             }
             guard self.server == identityServer, self.fallbackServer == fallback else { throw CancellationError() }
+            let route = probed.2
             self.activeServer = route
+            #if os(iOS)
+            if ServerRoutes.normalized(route) == ServerRoutes.normalized(primary) && !probed.1 { self.dropRelay("home") }
+            #endif
             self.adopt(probed.0.server)
             if !self.reachable { self.reachable = true }
             self.activeRouteTunnelled = probed.1
@@ -637,12 +736,14 @@ final class Store: ObservableObject {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
         let throughDirect = address == nil && directRoute != nil
+        let throughRelay = !throughDirect && relayRoute != nil && (address ?? activeServer) == relayRoute
         let (data, response): (Data, URLResponse)
         do { (data, response) = try await session.data(for: request, delegate: observer) }
         catch {
             #if os(iOS)
             // The direct path failed: back to Tailscale at once (the next try uses it).
             if throughDirect, let network = error as? URLError, network.code != .cancelled { dropDirect("failed: \(network.code.rawValue)") }
+            if throughRelay, let network = error as? URLError, network.code != .cancelled, network.code != .timedOut { dropRelay("failed: \(network.code.rawValue)") }
             #endif
             throw error
         }
@@ -818,6 +919,8 @@ final class Store: ObservableObject {
     /// the processing and settings screens).
     private var lastFullRefresh = Date.distantPast
     static let fullRefreshInterval: TimeInterval = 60
+    /// Stands for the relay in the online check's race until it is opened.
+    static let relayCandidate = "relay://bronze"
     /// The next periodic refresh does everything (the app came to the foreground), and away
     /// from home without a direct path one is tried at once.
     func refreshFullyNext() {

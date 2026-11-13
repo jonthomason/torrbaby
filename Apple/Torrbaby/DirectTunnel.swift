@@ -5,6 +5,59 @@ import Foundation
 @_silgen_name("tbdirect_start") private func tbdirect_start(_ fd: Int32, _ server: UnsafePointer<CChar>, _ fingerprint: UnsafePointer<CChar>) -> UInt16
 @_silgen_name("tbdirect_alive") private func tbdirect_alive() -> Bool
 @_silgen_name("tbdirect_stop") private func tbdirect_stop()
+@_silgen_name("tbdirect_relay_start") private func tbdirect_relay_start(_ fd: Int32, _ server: UnsafePointer<CChar>, _ fingerprint: UnsafePointer<CChar>) -> UInt16
+@_silgen_name("tbdirect_relay_alive") private func tbdirect_relay_alive() -> Bool
+@_silgen_name("tbdirect_relay_stop") private func tbdirect_relay_stop()
+
+/// The relay through Torrbaby's rendezvous on bronze, for when this device has no home
+/// network, no Tailscale and no direct path yet (bronze's half is rendezvous/, Diamond keeps
+/// a standing connection to it). QUIC to bronze, pinned to its certificate; a loopback proxy
+/// turns each connection into a stream that bronze splices to Diamond. Requests are ordinary
+/// Torrbaby requests with this device's credentials. Signalling (the online check, the
+/// direct path's request) rides it, then traffic moves to the direct tunnel when that opens.
+/// The socket is bound to the real network, so a Tailscale exit node does not carry it.
+final class RelayTunnel: @unchecked Sendable {
+    private(set) var port: UInt16 = 0
+    private(set) var interface: String?
+    var onClose: (@MainActor () -> Void)?
+    private var watcher: Task<Void, Never>?
+
+    static func open(address: String, fingerprint: String) async -> RelayTunnel? {
+        let probe = PunchProbe(count: 1)
+        defer { probe.close() }
+        guard probe.ready, let fd = probe.take(0) else { return nil }
+        let port = await Task.detached { () -> UInt16 in
+            address.withCString { a in fingerprint.withCString { f in tbdirect_relay_start(fd, a, f) } }
+        }.value
+        guard port != 0 else { return nil }
+        let tunnel = RelayTunnel()
+        tunnel.port = port
+        tunnel.interface = probe.interface
+        tunnel.watch()
+        return tunnel
+    }
+
+    var alive: Bool { tbdirect_relay_alive() }
+
+    private func watch() {
+        watcher = Task.detached { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                if !tbdirect_relay_alive() {
+                    let notify = self?.onClose
+                    await MainActor.run { notify?() }
+                    return
+                }
+            }
+        }
+    }
+
+    func close() {
+        watcher?.cancel(); watcher = nil
+        onClose = nil
+        tbdirect_relay_stop()
+    }
+}
 
 /// Torrbaby's own direct connection to the server, for when this device is away from home
 /// and Tailscale can only relay (the server half is server/direct.rs). The device punches a
@@ -33,7 +86,8 @@ final class DirectTunnel: @unchecked Sendable {
         let probe = PunchProbe(count: 192)
         defer { probe.close() }
         guard probe.ready, probe.interface != nil else { throw Failure(message: "No network for a direct path") }
-        let mappings = await Task.detached { probe.discover(limit: 12) }.value
+        guard let stun = store.stunServer else { throw Failure(message: "STUN: the rendezvous is not known yet") }
+        let mappings = await Task.detached { probe.discover(stun: stun, limit: 12) }.value
         guard let ip = mappings.first?.ip else { throw Failure(message: "STUN: no answer") }
         let ports = mappings.map(\.port).sorted()
         let span = ports.last! - ports.first!

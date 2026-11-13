@@ -11,6 +11,10 @@ private struct PairingPayload: Codable {
     let server: String
     let code: String
     var fallbackServer: String? = nil
+    /// Torrbaby's rendezvous on bronze ("ip:port") and its certificate's SHA-256: a device
+    /// with neither the home network nor Tailscale pairs through the relay.
+    var relay: String? = nil
+    var relayFingerprint: String? = nil
 }
 
 struct PairingCodeView: View {
@@ -24,7 +28,7 @@ struct PairingCodeView: View {
     private struct Grant: Decodable { let id: String; let code: String; let expires: Double }
     private struct Status: Decodable { let paired: Bool }
     private var qr: CGImage? {
-        guard let grant, let data = try? JSONEncoder().encode(PairingPayload(app: "torrbaby", version: 1, server: store.server, code: grant.code, fallbackServer: store.fallbackServer.isEmpty ? nil : store.fallbackServer)) else { return nil }
+        guard let grant, let data = try? JSONEncoder().encode(PairingPayload(app: "torrbaby", version: 1, server: store.server, code: grant.code, fallbackServer: store.fallbackServer.isEmpty ? nil : store.fallbackServer, relay: store.relayAddress.isEmpty ? nil : store.relayAddress, relayFingerprint: store.relayFingerprint.isEmpty ? nil : store.relayFingerprint)) else { return nil }
         let filter = CIFilter.qrCodeGenerator()
         filter.message = data
         filter.correctionLevel = "M"
@@ -147,8 +151,10 @@ struct PairingScannerView: View {
         defer { busy = false }
         do {
             // The code names the server's home route and its Tailscale route; a device pairing
-            // away from home reaches it by the second.
-            let routes = [payload.server, payload.fallbackServer ?? ""].map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }.filter { !$0.isEmpty }
+            // away from home reaches it by the second, or else through the relay on bronze.
+            var routes = [payload.server, payload.fallbackServer ?? ""].map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }.filter { !$0.isEmpty }
+            store.learnRelay(address: payload.relay, fingerprint: payload.relayFingerprint)
+            if payload.relay != nil, let relay = await store.ensureRelay() { routes.append(relay) }
             var base = routes.first ?? ""
             var reply: (Data, URLResponse)?
             for route in routes {
@@ -158,7 +164,8 @@ struct PairingScannerView: View {
                 request.timeoutInterval = route == routes.last ? 20 : 6
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 request.httpBody = try JSONSerialization.data(withJSONObject: ["code":payload.code,"name":store.defaultClientName,"platform":store.clientPlatform])
-                do { reply = try await URLSession.shared.data(for: request); base = route; break }
+                // Through the relay, the server is still kept by its home address.
+                do { reply = try await URLSession.shared.data(for: request); base = route == store.relayRoute ? (routes.first ?? route) : route; break }
                 catch let failure as URLError where failure.code != .cancelled && route != routes.last { continue }
             }
             guard let (data, response) = reply else { throw APIError(message: "Invalid server address") }

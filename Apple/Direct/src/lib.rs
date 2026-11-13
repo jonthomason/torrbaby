@@ -6,6 +6,9 @@
 //! against the fingerprint the app learned over its normal, trusted connection. A loopback
 //! listener turns each connection the app or the player makes into a QUIC stream, which the
 //! server pipes to its own HTTP port.
+//!
+//! The relay is the same machinery pointed at Torrbaby's rendezvous on bronze (ALPN
+//! `tbrelay`), for when there is no home network, no Tailscale and no punched path yet.
 use quinn::crypto::rustls::QuicClientConfig;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -23,7 +26,10 @@ struct Tunnel {
     connection: quinn::Connection,
 }
 
+/// The direct tunnel (punched, to Diamond) and the relay (to bronze), held independently:
+/// the relay stays up underneath while the direct path comes and goes.
 static TUNNEL: Mutex<Option<Tunnel>> = Mutex::new(None);
+static RELAY: Mutex<Option<Tunnel>> = Mutex::new(None);
 
 #[derive(Debug)]
 struct Pinned(String, Arc<rustls::crypto::CryptoProvider>);
@@ -52,27 +58,43 @@ fn text(pointer: *const c_char) -> Option<String> {
 #[unsafe(no_mangle)]
 pub extern "C" fn tbdirect_start(fd: i32, server: *const c_char, fingerprint: *const c_char) -> u16 {
     tbdirect_stop();
-    let (Some(server), Some(fingerprint)) = (text(server), text(fingerprint)) else { return 0 };
+    open(&TUNNEL, fd, server, fingerprint, b"tbdirect", "torrbaby-direct", 8)
+}
+
+/// Open the relay: QUIC from socket `fd` (ownership passes here) to Torrbaby's rendezvous on
+/// bronze at `server` ("ip:port"), pinned to `fingerprint`. Each loopback connection becomes
+/// a stream that bronze splices to Diamond's standing connection. Returns the loopback port,
+/// or 0. Blocks for up to 5 s.
+#[unsafe(no_mangle)]
+pub extern "C" fn tbdirect_relay_start(fd: i32, server: *const c_char, fingerprint: *const c_char) -> u16 {
+    tbdirect_relay_stop();
+    open(&RELAY, fd, server, fingerprint, b"tbrelay", "torrbaby-rendezvous", 5)
+}
+
+fn open(slot: &Mutex<Option<Tunnel>>, fd: i32, server: *const c_char, fingerprint: *const c_char, alpn: &[u8], name: &str, seconds: u64) -> u16 {
+    let socket = if fd >= 0 { Some(unsafe { std::net::UdpSocket::from_raw_fd(fd) }) } else { None };
+    let (Some(socket), Some(server), Some(fingerprint)) = (socket, text(server), text(fingerprint)) else { return 0 };
     let Ok(server): Result<SocketAddr, _> = server.parse() else { return 0 };
     let Ok(runtime) = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build() else { return 0 };
     let opened = runtime.block_on(async move {
-        let socket = unsafe { std::net::UdpSocket::from_raw_fd(fd) };
         socket.set_nonblocking(true).ok()?;
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let mut tls = rustls::ClientConfig::builder_with_provider(provider.clone())
             .with_protocol_versions(&[&rustls::version::TLS13]).ok()?
-            .dangerous().with_custom_certificate_verifier(Arc::new(Pinned(fingerprint, provider)))
+            .dangerous().with_custom_certificate_verifier(Arc::new(Pinned(fingerprint.to_lowercase(), provider)))
             .with_no_client_auth();
-        tls.alpn_protocols = vec![b"tbdirect".to_vec()];
+        tls.alpn_protocols = vec![alpn.to_vec()];
         let mut client = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls).ok()?));
         let mut transport = quinn::TransportConfig::default();
         transport.keep_alive_interval(Some(Duration::from_secs(10)));
         transport.max_idle_timeout(Some(Duration::from_secs(45).try_into().ok()?));
+        transport.stream_receive_window((8u32 << 20).into());
+        transport.receive_window((32u32 << 20).into());
         client.transport_config(Arc::new(transport));
         let mut endpoint = quinn::Endpoint::new(quinn::EndpointConfig::default(), None, socket, Arc::new(quinn::TokioRuntime)).ok()?;
         endpoint.set_default_client_config(client);
-        let connecting = endpoint.connect(server, "torrbaby-direct").ok()?;
-        let connection = tokio::time::timeout(Duration::from_secs(8), connecting).await.ok()?.ok()?;
+        let connecting = endpoint.connect(server, name).ok()?;
+        let connection = tokio::time::timeout(Duration::from_secs(seconds), connecting).await.ok()?.ok()?;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.ok()?;
         let port = listener.local_addr().ok()?.port();
         let carrier = connection.clone();
@@ -90,7 +112,7 @@ pub extern "C" fn tbdirect_start(fd: i32, server: *const c_char, fingerprint: *c
         Some((connection, port))
     });
     let Some((connection, port)) = opened else { runtime.shutdown_background(); return 0 };
-    if let Ok(mut held) = TUNNEL.lock() { *held = Some(Tunnel { runtime, connection }) }
+    if let Ok(mut held) = slot.lock() { *held = Some(Tunnel { runtime, connection }) }
     port
 }
 
@@ -102,18 +124,30 @@ async fn pipe(tcp: tokio::net::TcpStream, mut send: quinn::SendStream, mut recv:
     tokio::join!(up, down);
 }
 
-/// Whether the tunnel is open.
-#[unsafe(no_mangle)]
-pub extern "C" fn tbdirect_alive() -> bool {
-    TUNNEL.lock().ok().and_then(|held| held.as_ref().map(|t| t.connection.close_reason().is_none())).unwrap_or(false)
+fn alive(slot: &Mutex<Option<Tunnel>>) -> bool {
+    slot.lock().ok().and_then(|held| held.as_ref().map(|t| t.connection.close_reason().is_none())).unwrap_or(false)
 }
 
-/// Close the tunnel, if any.
-#[unsafe(no_mangle)]
-pub extern "C" fn tbdirect_stop() {
-    let tunnel = TUNNEL.lock().ok().and_then(|mut held| held.take());
+fn stop(slot: &Mutex<Option<Tunnel>>) {
+    let tunnel = slot.lock().ok().and_then(|mut held| held.take());
     if let Some(tunnel) = tunnel {
         tunnel.connection.close(0u32.into(), b"done");
         tunnel.runtime.shutdown_background();
     }
 }
+
+/// Whether the tunnel is open.
+#[unsafe(no_mangle)]
+pub extern "C" fn tbdirect_alive() -> bool { alive(&TUNNEL) }
+
+/// Close the tunnel, if any.
+#[unsafe(no_mangle)]
+pub extern "C" fn tbdirect_stop() { stop(&TUNNEL) }
+
+/// Whether the relay is open.
+#[unsafe(no_mangle)]
+pub extern "C" fn tbdirect_relay_alive() -> bool { alive(&RELAY) }
+
+/// Close the relay, if any.
+#[unsafe(no_mangle)]
+pub extern "C" fn tbdirect_relay_stop() { stop(&RELAY) }
