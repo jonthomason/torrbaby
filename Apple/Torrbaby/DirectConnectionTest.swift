@@ -63,8 +63,9 @@ struct DirectConnectionTest: View {
             let started: Started = try await store.request("POST", "/v1/punch", body: ["ip": ip, "low": low, "high": high], timeout: 30)
             lines.append("Diamond: \(started.server), spraying \(started.low)–\(started.high)")
             let result = await Task.detached { probe.fire(at: started.server, id: started.id, seconds: 20) }.value
+            if let spray = result.firstSpray { lines.append("First spray arrived after \(spray.afterMs) ms on socket \(spray.socket)") }
             if let hit = result.hit {
-                lines.append("Got through after \(hit.afterMs) ms on socket \(hit.socket) (\(hit.kind))")
+                lines.append("Both ways after \(hit.afterMs) ms on socket \(hit.socket)")
                 if !result.roundTrips.isEmpty {
                     let sorted = result.roundTrips.sorted()
                     lines.append("Round trip: median \(sorted[sorted.count / 2]) ms, best \(sorted.first!) ms (\(sorted.count) pings)")
@@ -89,7 +90,7 @@ struct DirectConnectionTest: View {
 final class PunchProbe: @unchecked Sendable {
     struct Mapping { let socket: Int; let ip: String; let port: Int }
     struct Hit { let socket: Int; let afterMs: Int; let kind: String }
-    struct Result { var hit: Hit?; var roundTrips: [Int] = [] }
+    struct Result { var hit: Hit?; var firstSpray: Hit?; var roundTrips: [Int] = [] }
 
     let count: Int
     let interface: String?
@@ -221,7 +222,13 @@ final class PunchProbe: @unchecked Sendable {
                 while let (data, from) = receive(fd) {
                     guard from.sin_addr.s_addr == target.sin_addr.s_addr, let text = String(bytes: data, encoding: .utf8),
                           text.contains("TBPUNCH1 \(id) ") else { continue }
-                    result.hit = Hit(socket: index, afterMs: Self.milliseconds() - start, kind: text.hasPrefix("TBACK") ? "echo" : "Diamond's spray")
+                    // Only an echo proves both directions on this socket: a spray can arrive on
+                    // a socket whose outgoing port toward the server differs (random-port NATs).
+                    if text.hasPrefix("TBACK") {
+                        if result.hit == nil { result.hit = Hit(socket: index, afterMs: Self.milliseconds() - start, kind: "echo") }
+                    } else if result.firstSpray == nil {
+                        result.firstSpray = Hit(socket: index, afterMs: Self.milliseconds() - start, kind: "Diamond's spray")
+                    }
                 }
             }
             usleep(5_000)
