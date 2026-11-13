@@ -288,8 +288,9 @@ async fn start(s: &Service, body: &Value) -> Result<Value> {
     ensure!(!load(s).iter().any(|m| matches!(m.state.as_str(), "queued" | "running") && m.asset_ids.iter().any(|id| ids.contains(id))),
         "These files are already moving");
     let assets = assets(s, &ids)?;
-    let (units, _) = plan(s, &drives, &assets, Some(target), from.is_some()).await?;
+    let (mut units, _) = plan(s, &drives, &assets, Some(target), from.is_some()).await?;
     let carry = match from { Some(from) => leftovers(s, &drives, from, target, &units).await?, None => Vec::new() };
+    if let Some(from) = from { units.extend(strays(s, from, target, &units).await?); }
     let carried = carry.len();
     if units.is_empty() && carry.is_empty() && from.is_some() { return Ok(json!({"state":"done","bytes":0,"carried":0})); }
     ensure!(!units.is_empty() || !carry.is_empty(), "Already on that drive");
@@ -319,6 +320,54 @@ async fn leftovers(s: &Service, drives: &Drives, from: &Drive, target: &Drive, u
         if destination(drives, from, target, Path::new(dir)).is_some() { carry.push(hash.to_owned()); }
     }
     Ok(carry)
+}
+
+/// Emptying a drive: the files under its folders that no title or torrent takes (a subtitle
+/// that no longer shares its video's name, a note), to the same place on the target, so
+/// nothing is left behind. Files the library has a record of, files of a torrent, and
+/// hidden ones stay.
+async fn strays(s: &Service, from: &Drive, target: &Drive, units: &[Unit]) -> Result<Vec<Unit>> {
+    use crate::drives::{spelled, Role};
+    let torrents = crate::organizer::torrents(s).await?;
+    let held: Vec<PathBuf> = torrents.iter().filter_map(|t| {
+        let (dir, name) = (t["download_dir"].as_str()?, t["name"].as_str().filter(|n| !n.is_empty())?);
+        Some(spelled(&Path::new(dir).join(name)))
+    }).collect();
+    let recorded: std::collections::HashSet<PathBuf> = {
+        let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+        db.documents("assets")?.iter().filter_map(|a| a["path"].as_str().map(|p| spelled(Path::new(p)))).collect()
+    };
+    let planned: std::collections::HashSet<PathBuf> = units.iter().flat_map(|u| u.files.iter().map(|(name, _)| spelled(&u.from.join(name)))).collect();
+    let mut strays = Vec::new();
+    for role in [Role::Movies, Role::Tv, Role::Downloads] {
+        let root = from.root(role);
+        let files = stray_files(root, &|path| held.iter().any(|h| path.starts_with(h)) || recorded.contains(path) || planned.contains(path))?;
+        if !files.is_empty() { strays.push(Unit { torrent: None, from: root.to_path_buf(), to: target.root(role).to_path_buf(), files, step: "copying".into(), error: None }); }
+    }
+    Ok(strays)
+}
+
+/// The files under `root`, relative and with sizes, but for hidden ones, another move's
+/// partial copies, and those `taken` (given composed paths).
+fn stray_files(root: &Path, taken: &dyn Fn(&Path) -> bool) -> Result<Vec<(String, u64)>> {
+    let mut files = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if name.to_string_lossy().starts_with('.') || name.to_string_lossy().ends_with(".torrbaby-moving") { continue; }
+            let Ok(kind) = entry.file_type() else { continue };
+            let path = entry.path();
+            if kind.is_dir() { pending.push(path); continue; }
+            if !kind.is_file() { continue; }
+            let path = crate::drives::spelled(&path);
+            if taken(&path) { continue; }
+            let (Ok(relative), Ok(meta)) = (path.strip_prefix(crate::drives::spelled(root)), entry.metadata()) else { continue };
+            files.push((relative.to_string_lossy().into_owned(), meta.len()));
+        }
+    }
+    Ok(files)
 }
 
 /// Where a torrent kept in `dir` goes when `from` is emptied onto `target`: the same place
@@ -762,6 +811,25 @@ mod tests {
         // Already on the target, or on no drive: nothing to carry.
         assert!(to("/Volumes/Beta/Media/Downloads/").is_none());
         assert!(to("/Users/me/Downloads").is_none());
+    }
+
+    #[test]
+    fn emptying_a_drive_takes_the_files_no_title_or_torrent_takes() {
+        let root = std::env::temp_dir().join(format!("torrbaby-strays-{}", uuid::Uuid::new_v4()));
+        let tv = root.join("TV");
+        std::fs::create_dir_all(tv.join("Homeland/Season 5")).unwrap();
+        std::fs::create_dir_all(tv.join("Show")).unwrap();
+        std::fs::write(tv.join("Homeland/Season 5/Homeland S05E01.en.srt"), b"1").unwrap();
+        std::fs::write(tv.join("Homeland/Season 5/Homeland (2011) - S05E01 - Separation Anxiety.mp4"), b"22").unwrap();
+        std::fs::write(tv.join("Homeland/.DS_Store"), b"x").unwrap();
+        std::fs::write(tv.join("Homeland/Season 5/E02.mp4.torrbaby-moving"), b"x").unwrap();
+        std::fs::write(tv.join("Show/E01.mkv"), b"333").unwrap();
+        let recorded = tv.join("Homeland/Season 5/Homeland (2011) - S05E01 - Separation Anxiety.mp4");
+        let torrent = tv.join("Show");
+        let mut files = stray_files(&tv, &|p| p == recorded || p.starts_with(&torrent)).unwrap();
+        files.sort();
+        assert_eq!(files, [("Homeland/Season 5/Homeland S05E01.en.srt".to_owned(), 1)]);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
