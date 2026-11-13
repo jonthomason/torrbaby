@@ -81,31 +81,71 @@ final class DirectTunnel: @unchecked Sendable {
     private struct Started: Decodable { let id: String; let server: String; let fingerprint: String; let low: Int; let high: Int }
 
     /// Punch, ask the server to listen, and open the tunnel on the socket that got through.
-    /// `signal` is the route the request to the server takes (the Tailscale one).
+    /// `signal` is the route the request to the server takes (the relay or Tailscale). Each
+    /// step is recorded in `store.directAttempt` for Settings → Connection, and a failure says
+    /// which step failed and why.
     @MainActor static func establish(store: Store, signal: String) async throws -> DirectTunnel {
+        var attempt = Store.DirectAttempt()
+        attempt.signal = store.routeLabel(signal)
+        func record(_ change: (inout Store.DirectAttempt) -> Void) { change(&attempt); store.directAttempt = attempt }
+        func fail(_ why: String) -> Failure {
+            record { $0.failure = why; $0.finished = Date(); $0.ok = false }
+            return Failure(message: why)
+        }
+        record { $0.step = "opening sockets" }
         let probe = PunchProbe(count: 192)
         defer { probe.close() }
-        guard probe.ready, probe.interface != nil else { throw Failure(message: "No network for a direct path") }
-        guard let stun = store.stunServer else { throw Failure(message: "STUN: the rendezvous is not known yet") }
+        record { $0.interface = probe.interface }
+        guard probe.ready, probe.interface != nil else { throw fail("No Wi-Fi or cellular network to punch from") }
+        guard let stun = store.stunServer else { throw fail("bronze's address is not known yet (it comes with the online check or the pairing code)") }
+        record { $0.step = "asking bronze's STUN server (\(stun)) for this network's public ports"; $0.asked = 12 }
         let mappings = await Task.detached { probe.discover(stun: stun, limit: 12) }.value
-        guard let ip = mappings.first?.ip else { throw Failure(message: "STUN: no answer") }
+        guard let ip = mappings.first?.ip else { throw fail("bronze's STUN server did not answer: UDP to \(stun) may be blocked on this network") }
         let ports = mappings.map(\.port).sorted()
         let span = ports.last! - ports.first!
         let low = max(1, ports.first!), high = min(65535, ports.last! + span + 1024)
-        let started: Started = try await store.request("POST", "/v1/direct", body: ["ip": ip, "low": low, "high": high], timeout: 30, address: signal)
+        record { $0.publicAddress = ip; $0.answered = mappings.count; $0.window = "\(low)–\(high) (STUN saw \(ports.first!)–\(ports.last!))"; $0.step = "asking Diamond to start (over \(attempt.signal))" }
+        let started: Started
+        do { started = try await store.request("POST", "/v1/direct", body: ["ip": ip, "low": low, "high": high], timeout: 30, address: signal) }
+        catch { throw fail("Could not ask Diamond to start: \(Store.describe(error))") }
+        record { $0.server = started.server; $0.session = started.id; $0.step = "punching: firing from 192 sockets at \(started.server) while Diamond sprays \(started.low)–\(started.high)" }
+        let punchStart = Date()
         guard let winner = await Task.detached(operation: { probe.punch(at: started.server, id: started.id, word: "TBDIRECT1", seconds: 20) }).value,
-              let fd = probe.take(winner) else { throw Failure(message: "No direct path") }
+              let fd = probe.take(winner) else {
+            let view = await serverView(store: store, signal: signal, id: started.id)
+            record { $0.serverView = view }
+            throw fail("No packet got through both NATs in 20 s. This network probably gives each new destination an unpredictable port, or blocks incoming UDP")
+        }
+        record { $0.punchMs = Int(Date().timeIntervalSince(punchStart) * 1000); $0.step = "punched; opening QUIC on the winning socket" }
         // QUIC on the winning socket itself; the library owns the socket from here.
         let server = started.server, fingerprint = started.fingerprint
+        let quicStart = Date()
         let port = await Task.detached { () -> UInt16 in
             server.withCString { s in fingerprint.withCString { f in tbdirect_start(fd, s, f) } }
         }.value
-        guard port != 0 else { throw Failure(message: "QUIC did not open on the punched socket") }
+        guard port != 0 else {
+            let view = await serverView(store: store, signal: signal, id: started.id)
+            record { $0.serverView = view }
+            throw fail("Punched, but QUIC did not open on the punched socket within 8 s")
+        }
+        record { $0.quicMs = Int(Date().timeIntervalSince(quicStart) * 1000); $0.step = "open"; $0.ok = true; $0.finished = Date() }
         let tunnel = DirectTunnel()
         tunnel.port = port
         tunnel.how = "QUIC on the punched socket"
         tunnel.watch()
         return tunnel
+    }
+
+    /// What Diamond saw of a failed attempt (its state, error and where QUIC came from).
+    @MainActor private static func serverView(store: Store, signal: String, id: String) async -> String? {
+        struct View: Decodable { let state: String?; let error: String?; let device: String?; let firstQuicFrom: String?; let punchedAfterMs: Int? }
+        guard let view: View = try? await store.request("GET", "/v1/direct/\(id)", timeout: 8, address: signal) else { return nil }
+        var parts = ["state \(view.state ?? "?")"]
+        if let device = view.device { parts.append("heard this device from \(device)") }
+        if let ms = view.punchedAfterMs { parts.append("after \(ms) ms") }
+        if let from = view.firstQuicFrom { parts.append("QUIC came from \(from)") }
+        if let error = view.error { parts.append(error) }
+        return parts.joined(separator: ", ")
     }
 
     /// Notice when the path is gone (the server went quiet, the network changed).

@@ -333,6 +333,7 @@ final class Store: ObservableObject {
         if let id = identity.id?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty, id != serverID {
             serverID = id; defaults.set(id, forKey: "server-id")
         }
+        if let relay = identity.relay { relayServerConnected = relay.connected }
         if let relay = identity.relay, let address = relay.address, let fingerprint = relay.fingerprint,
            !address.isEmpty, fingerprint.count == 64, address != relayAddress || fingerprint != relayFingerprint {
             relayAddress = address; relayFingerprint = fingerprint
@@ -559,6 +560,70 @@ final class Store: ObservableObject {
     func stage(_ name: String) { checkInStage = (name, Date()) }
     /// The loopback proxy into the relay through bronze, while it is open (iPhone and iPad).
     @Published private(set) var relayRoute: String?
+    /// Whether Diamond said it was connected to bronze, at the last online check.
+    @Published private(set) var relayServerConnected: Bool?
+    /// The last answer (or failure) of each way to the server, for Settings → Connection:
+    /// "home", "tailscale", "relay", "direct".
+    struct RouteCheck { var ok: Bool; var ms: Int?; var detail: String; var at = Date() }
+    @Published private(set) var routeChecks: [String: RouteCheck] = [:]
+    func noteRoute(_ kind: String, _ check: RouteCheck) { routeChecks[kind] = check }
+    private func routeKind(_ address: String) -> String {
+        if address == Self.relayCandidate || (relayRoute != nil && address == relayRoute) { return "relay" }
+        if directRoute != nil && address == directRoute { return "direct" }
+        return ServerRoutes.normalized(address) == ServerRoutes.normalized(primaryAddress) ? "home" : "tailscale"
+    }
+    static func describe(_ error: Error) -> String {
+        if let url = error as? URLError {
+            switch url.code {
+            case .cancelled: return "not needed: another way answered first"
+            case .timedOut: return "no answer in time"
+            case .cannotFindHost, .dnsLookupFailed: return "name not found (\(url.failingURL?.host ?? "?") does not resolve on this network)"
+            case .cannotConnectToHost: return "could not connect"
+            case .notConnectedToInternet: return "no network"
+            case .networkConnectionLost: return "connection lost"
+            default: return "network error \(url.code.rawValue)"
+            }
+        }
+        return error.localizedDescription
+    }
+    /// A route's name for people: "home network", "relay via bronze", "Tailscale", "direct".
+    func routeLabel(_ address: String) -> String {
+        switch routeKind(address) { case "relay": "relay via bronze"; case "direct": "direct"; case "home": "home network"; default: "Tailscale" }
+    }
+    /// How this device reaches the server now.
+    enum Path: String { case home = "Home network", direct = "Direct (hole punch)", relay = "Relay via bronze", tailscale = "Tailscale", offline = "Offline" }
+    var path: Path {
+        guard connected, let active = activeServer else { return .offline }
+        #if os(iOS)
+        if directRoute != nil { return .direct }
+        if relayRoute != nil && active == relayRoute { return .relay }
+        #endif
+        return usingFallback ? .tailscale : .home
+    }
+    /// Time a request over every way to the server now (Settings → Connection).
+    func measurePaths() async {
+        var targets: [(String, String)] = []
+        if !primaryAddress.isEmpty { targets.append(("home", primaryAddress)) }
+        if !fallbackServer.isEmpty { targets.append(("tailscale", fallbackServer)) }
+        #if os(iOS)
+        if let relay = await ensureRelay() { targets.append(("relay", relay)) }
+        else if !relayAddress.isEmpty { noteRoute("relay", RouteCheck(ok: false, ms: nil, detail: "could not open the relay to \(relayAddress)")) }
+        if let direct = directRoute { targets.append(("direct", direct)) }
+        #endif
+        await withTaskGroup(of: Void.self) { group in
+            for (kind, address) in targets {
+                group.addTask { @MainActor in
+                    let started = Date()
+                    do {
+                        let _: ServerPing = try await self.request("GET", "/v1/ping", timeout: 10, address: address)
+                        self.noteRoute(kind, RouteCheck(ok: true, ms: Int(Date().timeIntervalSince(started) * 1000), detail: "answered"))
+                    } catch {
+                        self.noteRoute(kind, RouteCheck(ok: false, ms: nil, detail: Self.describe(error)))
+                    }
+                }
+            }
+        }
+    }
     #if os(iOS)
     private var relayTunnel: RelayTunnel?
     private var relayOpening: Task<String?, Never>?
@@ -609,6 +674,41 @@ final class Store: ObservableObject {
         if tunnel.interface != PunchProbe.physicalInterface() { dropRelay("network changed") }
     }
     private var directTunnel: DirectTunnel?
+    /// The last direct attempt, step by step, for Settings → Connection.
+    struct DirectAttempt {
+        var started = Date()
+        var signal = ""
+        var step = "starting"
+        var interface: String?
+        var publicAddress: String?
+        var answered = 0, asked = 0
+        var window: String?
+        var server: String?
+        var session: String?
+        var punchMs: Int?
+        var quicMs: Int?
+        var finished: Date?
+        var ok = false
+        var failure: String?
+        var serverView: String?
+    }
+    @Published var directAttempt: DirectAttempt?
+    @Published private(set) var directOpenedAt: Date?
+    /// Why there is no direct path now, or nil while one is open.
+    var directWhyNot: String? {
+        if directRoute != nil { return nil }
+        if directAttempting { return "trying now…" }
+        if !connected { return "not tried: offline (the online check has to succeed first, over the relay or Tailscale)" }
+        if !usingFallback { return "not needed: on the home network" }
+        if let failure = directAttempt?.failure { return failure }
+        return directNote.isEmpty ? "not tried yet" : directNote
+    }
+    /// When the next automatic attempt is due after a failure.
+    var nextDirectTry: Date? {
+        guard directRoute == nil, !directAttempting, lastDirectAttempt != .distantPast else { return nil }
+        let next = lastDirectAttempt.addingTimeInterval(180)
+        return next > Date() ? next : nil
+    }
     private var directAttempting = false
     private var lastDirectAttempt = Date.distantPast
     @Published private(set) var directNote = ""
@@ -618,7 +718,7 @@ final class Store: ObservableObject {
     func directEvent(_ text: String) {
         Self.connectionLog.notice("\(text, privacy: .public)")
         directEvents.append("\(Date().formatted(date: .omitted, time: .standard)) \(text)")
-        if directEvents.count > 12 { directEvents.removeFirst(directEvents.count - 12) }
+        if directEvents.count > 40 { directEvents.removeFirst(directEvents.count - 40) }
     }
     /// What the direct path is doing, for Settings → About → Direct connection test.
     var directDiagnostics: String {
@@ -647,6 +747,7 @@ final class Store: ObservableObject {
                 tunnel.onClose = { [weak self] in self?.dropDirect("closed") }
                 directTunnel = tunnel
                 directRoute = "http://127.0.0.1:\(tunnel.port)"
+                directOpenedAt = Date()
                 directEvent("open on port \(tunnel.port)")
                 directNote = "open since \(Date().formatted(date: .omitted, time: .shortened)), \(tunnel.how)"
             } catch {
@@ -658,7 +759,7 @@ final class Store: ObservableObject {
     func dropDirect(_ reason: String) {
         guard directTunnel != nil || directRoute != nil else { return }
         let tunnel = directTunnel
-        directTunnel = nil; directRoute = nil
+        directTunnel = nil; directRoute = nil; directOpenedAt = nil
         directNote = reason
         directEvent("dropped: \(reason)")
         // A path that was open and dropped (the app was in the background, a brief loss) is
@@ -686,12 +787,18 @@ final class Store: ObservableObject {
         let task = Task { @MainActor in
             let (_, probed): (String, (ServerPing, Bool, String)) = try await ServerRoutes.race(addresses: addresses, preferred: primary) { @MainActor candidate in
                 var address = candidate
+                let kind = self.routeKind(candidate)
+                let started = Date()
                 #if os(iOS)
                 if candidate == Self.relayCandidate {
-                    guard let opened = await self.ensureRelay() else { throw URLError(.cannotConnectToHost) }
+                    guard let opened = await self.ensureRelay() else {
+                        self.noteRoute(kind, RouteCheck(ok: false, ms: nil, detail: "could not open the relay to \(self.relayAddress)"))
+                        throw URLError(.cannotConnectToHost)
+                    }
                     address = opened
                 }
                 #endif
+                do {
                 let observer = RouteObserver()
                 // A tunnelled route over cellular can take longer than the LAN to answer.
                 let away = ServerRoutes.normalized(address) != ServerRoutes.normalized(primary)
@@ -707,7 +814,12 @@ final class Store: ObservableObject {
                 // on, so a tunnelled route only means "away" when no own interface is on the
                 // subnet of the address the name led to.
                 let tunnelled = observer.tunnelled && !ServerRoutes.sharesSubnet(observer.reached ?? address, interfaces: ServerRoutes.localInterfaces())
+                self.noteRoute(kind, RouteCheck(ok: true, ms: Int(Date().timeIntervalSince(started) * 1000), detail: tunnelled ? "answered, through a tunnel (not actually at home)" : "answered"))
                 return (value, tunnelled, address)
+                } catch {
+                    self.noteRoute(kind, RouteCheck(ok: false, ms: nil, detail: Self.describe(error)))
+                    throw error
+                }
             }
             guard self.server == identityServer, self.fallbackServer == fallback else { throw CancellationError() }
             let route = probed.2
