@@ -228,6 +228,28 @@ public final class Library {
       return role.equals("extra");
     }
 
+    /** The episode's own title, or "" when TMDB only repeats its number ("Episode 1", "第1集"). */
+    public String ownName() {
+      String n = name.trim();
+      if (episode > 0 && n.matches("(?i)^(episode|ep\\.?|第)\\s*#?\\d+(\\.\\d+)?\\s*[集话話期回]?$")) return "";
+      return n;
+    }
+
+    /**
+     * The player's line above its progress bar: "Season 1 Ep 2 – Name" for an episode, a special feature's
+     * own name, or the title's name for a movie.
+     */
+    public String heading(Title t) {
+      if (extra()) return ownName().isEmpty() ? t.title : ownName();
+      if (!"tv".equals(t.kind)) return t.title;
+      String number = episode <= 0 ? "" : hasSeason
+          ? String.format(L10n.locale(), L10n.t("Season %d Ep %d"), season, episode)
+          : String.format(L10n.locale(), L10n.t("Ep %d"), episode);
+      String own = ownName();
+      String line = number.isEmpty() ? own : own.isEmpty() ? number : number + " – " + own;
+      return line.isEmpty() ? t.title : line;
+    }
+
     public String label() {
       return episode > 0
           ? String.format(Locale.ROOT, "S%02d · E%02d   %s", season, episode, name)

@@ -2054,17 +2054,20 @@ public class MainActivity extends Activity {
     i.putExtra("title_id", t.id);
     i.putExtra("title", t.title);
     i.putExtra("name", a.label());
+    i.putExtra("heading", a.heading(t));
     i.putExtra("beginning", beginning);
-    ArrayList<String> ids = new ArrayList<>(), names = new ArrayList<>();
+    ArrayList<String> ids = new ArrayList<>(), names = new ArrayList<>(), headings = new ArrayList<>();
     Library.Asset next = t.next(a.id);
     Set<String> queued = new HashSet<>();
     while (next != null && queued.add(next.id)) {
       ids.add(next.id);
       names.add(next.label());
+      headings.add(next.heading(t));
       next = t.next(next.id);
     }
     i.putStringArrayListExtra("queue_ids", ids);
     i.putStringArrayListExtra("queue_names", names);
+    i.putStringArrayListExtra("queue_headings", headings);
     startActivity(i);
   }
 

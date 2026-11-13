@@ -19,6 +19,33 @@ private enum PlaybackSpeeds {
     }
 }
 
+/// What the player names: a movie's name, or the show's name above "Season 1 Ep 2 – Episode
+/// name" (an episode's number alone when it has no title of its own). iPhone, iPad and Apple TV
+/// show it natively above the scrubber; the Mac puts it in the window title.
+struct PlayerHeading: Equatable {
+    var title: String
+    /// The show (or movie) a special feature or episode belongs to, in smaller type above.
+    var context: String? = nil
+    @MainActor static func make(_ playback: Playback, library: MediaLibrary?) -> PlayerHeading {
+        guard let titleID = playback.libraryTitleID,
+              let title = library?.titles.first(where: { $0.id == titleID }) else { return PlayerHeading(title: playback.name) }
+        guard let asset = playback.libraryAssetID.flatMap({ id in title.assets.first { $0.id == id } }) else { return PlayerHeading(title: title.title) }
+        if asset.role == "extra" {
+            guard let name = asset.ownName, name != title.title else { return PlayerHeading(title: title.title) }
+            return PlayerHeading(title: name, context: title.title)
+        }
+        guard title.kind == "tv" else { return PlayerHeading(title: title.title) }
+        let number: String?
+        if let episode = asset.episode {
+            number = asset.season.map { L10n.format("Season %d Ep %d", $0, episode) } ?? L10n.format("Ep %d", episode)
+        } else { number = nil }
+        let line = [number, asset.ownName].compactMap { $0 }.joined(separator: " – ")
+        return line.isEmpty ? PlayerHeading(title: title.title) : PlayerHeading(title: line, context: title.title)
+    }
+    /// One line, for a window title or the system's Now Playing.
+    var joined: String { [context, title].compactMap { $0 }.joined(separator: " · ") }
+}
+
 @MainActor
 func skip(_ player: AVPlayer, seconds: Double) {
     let current = player.currentTime().seconds
@@ -33,6 +60,8 @@ final class PlaybackModel: ObservableObject {
     let player: AVPlayer
     @Published var error: String?
     @Published var title: String
+    /// The native players' title (the Mac's window title); follows the next episode.
+    private var heading: PlayerHeading
     @Published var endMessage: String?
     /// A movie or special feature played to its end: nothing follows, so the player closes itself.
     @Published var closeRequested = false
@@ -65,6 +94,7 @@ final class PlaybackModel: ObservableObject {
         self.store = store
         self.profileAtStart = store.activeProfile?.id ?? "profile-jon"
         self.title = playback.name
+        self.heading = PlayerHeading(title: playback.name)
         player = AVPlayer()
         player.defaultRate = PlaybackSpeeds.preferred
         load(playback)
@@ -98,7 +128,9 @@ final class PlaybackModel: ObservableObject {
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         observation = nil
         subtitleController?.stop(); subtitleController = nil
-        playback = next; title = next.name; error = nil; endMessage = nil
+        playback = next; error = nil; endMessage = nil
+        heading = PlayerHeading.make(next, library: store.library)
+        title = heading.joined
         sequence = 0; starting = false; resumed = false
         credits = nil; offerNextEpisode = false
         creditsTask?.cancel()
@@ -112,7 +144,7 @@ final class PlaybackModel: ObservableObject {
             }
         }
         let url = playback.url
-        let title = playback.name
+        let heading = self.heading
         // Also cover restored Mac playback windows and connection loss between
         // choosing a title and constructing the native player.
         guard url.isFileURL ? FileManager.default.fileExists(atPath: url.path) : store.canStream else {
@@ -123,11 +155,16 @@ final class PlaybackModel: ObservableObject {
         let item = AVPlayerItem(url: url)
         let playbackID = playback.id
         #if os(iOS) || os(tvOS)
-        let metadata = AVMutableMetadataItem()
-        metadata.identifier = .commonIdentifierTitle
-        metadata.value = title as NSString
-        metadata.extendedLanguageTag = "und"
-        item.externalMetadata = [metadata]
+        // Shown by AVKit above the scrubber (the show small, over the episode line) and in Now Playing.
+        func metadata(_ identifier: AVMetadataIdentifier, _ value: String) -> AVMetadataItem {
+            let item = AVMutableMetadataItem()
+            item.identifier = identifier
+            item.value = value as NSString
+            item.extendedLanguageTag = "und"
+            return item
+        }
+        item.externalMetadata = [metadata(.commonIdentifierTitle, heading.title)]
+            + (heading.context.map { [metadata(.iTunesMetadataTrackSubTitle, $0)] } ?? [])
         #endif
         player.replaceCurrentItem(with: item)
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
