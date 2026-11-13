@@ -1529,6 +1529,9 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         if let Some(id) = path.strip_prefix("/v1/punch/") {
             return crate::punch::TESTS.status(id);
         }
+        if let Some(id) = path.strip_prefix("/v1/direct/") {
+            return crate::direct::DIRECT.status(id);
+        }
         if let Some(title) = path.strip_prefix("/v1/library/titles/").and_then(|p| p.strip_suffix("/details")) {
             return db.catalog_details(profile, title);
         }
@@ -1608,6 +1611,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             Ok(json!({"name":state["server"]["name"],"id":state["server"]["id"]}))
         }
         ("POST","/v1/punch") => { drop(db); return crate::punch::TESTS.start(&body).await; }
+        ("POST","/v1/direct") => { drop(db); return crate::direct::DIRECT.start(&body, s.config.listen_port).await; }
         ("GET","/v1/events") => Ok(db.state()?["events"].take()),
         ("GET","/v1/clients") => Ok(json!(db.rows("SELECT clients.*, EXISTS(SELECT 1 FROM device_credentials WHERE client_id=clients.id) AS paired_credential FROM clients ORDER BY last_seen DESC",[])?)),
         ("POST","/v1/clients") => db.register(text(&body,"client_id")?,text(&body,"name")?,text(&body,"platform")?),

@@ -525,8 +525,44 @@ final class Store: ObservableObject {
         return URLSession(configuration: config)
     }()
     func endpoint(_ path: String) throws -> URL {
-        try ServerRoutes.endpoint(activeServer ?? primaryAddress, path: path)
+        try ServerRoutes.endpoint(directRoute ?? activeServer ?? primaryAddress, path: path)
     }
+    /// Torrbaby's own direct path to the server (a local proxy into a QUIC tunnel), used
+    /// instead of the Tailscale route while it is up. Only away from home, on iPhone and iPad.
+    @Published private(set) var directRoute: String?
+    #if os(iOS)
+    private var directTunnel: DirectTunnel?
+    private var directAttempting = false
+    private var lastDirectAttempt = Date.distantPast
+    private(set) var directNote = ""
+    /// Away from home, try for a direct path every few minutes until one holds.
+    private func startDirectIfUseful() {
+        guard connected, usingFallback, directRoute == nil, !directAttempting,
+              Date().timeIntervalSince(lastDirectAttempt) > 180, let signal = activeServer else { return }
+        directAttempting = true; lastDirectAttempt = Date()
+        Task { @MainActor in
+            defer { directAttempting = false }
+            do {
+                let tunnel = try await DirectTunnel.establish(store: self, signal: signal)
+                guard usingFallback else { tunnel.close(); return }
+                tunnel.onClose = { [weak self] in self?.dropDirect("closed") }
+                directTunnel = tunnel
+                directRoute = "http://127.0.0.1:\(tunnel.port)"
+                directNote = "open since \(Date().formatted(date: .omitted, time: .shortened))"
+            } catch {
+                directNote = "not available: \(error.localizedDescription)"
+            }
+        }
+    }
+    func dropDirect(_ reason: String) {
+        guard directTunnel != nil || directRoute != nil else { return }
+        let tunnel = directTunnel
+        directTunnel = nil; directRoute = nil
+        directNote = reason
+        tunnel?.onClose = nil
+        tunnel?.close()
+    }
+    #endif
     private func probeConnection() async throws -> ServerPing {
         if let connectionProbe { return try await connectionProbe.value }
         let identityServer = server, primary = primaryAddress, fallback = fallbackServer
@@ -573,7 +609,16 @@ final class Store: ObservableObject {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
-        let (data, response) = try await session.data(for: request, delegate: observer)
+        let throughDirect = address == nil && directRoute != nil
+        let (data, response): (Data, URLResponse)
+        do { (data, response) = try await session.data(for: request, delegate: observer) }
+        catch {
+            #if os(iOS)
+            // The direct path failed: back to Tailscale at once (the next try uses it).
+            if throughDirect, let network = error as? URLError, network.code != .cancelled { dropDirect("failed: \(network.code.rawValue)") }
+            #endif
+            throw error
+        }
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             throw APIError(message: payload?["error"] as? String ?? "The server could not complete the request.")
@@ -775,6 +820,9 @@ final class Store: ObservableObject {
                 async let statusPart: Void = refreshStatusIfShown()
                 _ = await (libraryPart, torrentsPart, operationsPart, activityPart, statusPart)
                 lastFullRefresh = Date()
+                #if os(iOS)
+                if usingFallback { startDirectIfUseful() } else { dropDirect("home") }
+                #endif
             } else {
                 async let torrentsPart: Void = ServerActivity.shared.torrentWatchers > 0 ? syncTorrentsAndOperations(identity) : ()
                 async let statusPart: Void = refreshStatusIfShown()

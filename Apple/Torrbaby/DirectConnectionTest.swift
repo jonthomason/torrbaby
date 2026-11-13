@@ -31,6 +31,10 @@ struct DirectConnectionTest: View {
             } footer: {
                 Text("Checks whether this device can reach your server directly instead of through Tailscale’s relay. Nothing else uses it.")
             }
+            SwiftUI.Section("Direct route") {
+                Text(verbatim: store.directRoute.map { "In use: \($0) (\(store.directNote))" } ?? "Not in use\(store.directNote.isEmpty ? "" : " (\(store.directNote))")")
+                    .font(.caption.monospaced())
+            }
             if !lines.isEmpty {
                 SwiftUI.Section("Details") {
                     ForEach(lines.indices, id: \.self) { Text(verbatim: lines[$0]).font(.caption.monospaced()).textSelection(.enabled) }
@@ -113,6 +117,34 @@ final class PunchProbe: @unchecked Sendable {
         }
     }
     func close() { for fd in sockets { Darwin.close(fd) }; sockets = [] }
+    /// The local port a socket is bound to.
+    func localPort(_ index: Int) -> UInt16? {
+        guard sockets.indices.contains(index) else { return nil }
+        var address = sockaddr_in(); var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let ok = withUnsafeMutablePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(sockets[index], $0, &length) } }
+        return ok == 0 ? UInt16(bigEndian: address.sin_port) : nil
+    }
+    /// Fire `word` packets at the server from every socket until one is echoed (both ways
+    /// proven); the index of that socket.
+    func punch(at server: String, id: String, word: String, seconds: Int) -> Int? {
+        guard let target = Self.endpoint(server) else { return nil }
+        let deadline = Self.milliseconds() + seconds * 1000
+        var nextSend = 0
+        while Self.milliseconds() < deadline {
+            if Self.milliseconds() >= nextSend {
+                for (index, fd) in sockets.enumerated() { send(fd, Array("\(word) \(id) \(index)".utf8), to: target) }
+                nextSend = Self.milliseconds() + 200
+            }
+            for (index, fd) in sockets.enumerated() {
+                while let (data, from) = receive(fd) {
+                    guard from.sin_addr.s_addr == target.sin_addr.s_addr, let text = String(bytes: data, encoding: .utf8) else { continue }
+                    if text.hasPrefix("TBACK") && text.contains("\(word) \(id) ") { return index }
+                }
+            }
+            usleep(5_000)
+        }
+        return nil
+    }
 
     /// Wi-Fi when it has an address, else cellular.
     static func physicalInterface() -> String? {
