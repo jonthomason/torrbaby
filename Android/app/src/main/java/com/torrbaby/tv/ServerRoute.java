@@ -4,7 +4,8 @@ package com.torrbaby.tv;
  * Where the server was found on the home network during this run of the app. It is never
  * saved: the address comes from DHCP and may change, so each launch finds the server again by
  * its Bonjour service. Until then requests go to a name that never resolves, fail at once, and
- * start that search.
+ * start that search. Away from home, a TV that knows Diamond's identity goes through
+ * Torrbaby's relay instead (see Relay).
  */
 final class ServerRoute {
   static final String UNKNOWN = "http://torrbaby.invalid:8765";
@@ -30,7 +31,21 @@ final class ServerRoute {
     });
     try { done.await(millis, java.util.concurrent.TimeUnit.MILLISECONDS); } catch (InterruptedException ignored) { }
     new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> { if (search[0] != null) search[0].close(); });
-    if (!result[0].isEmpty()) found = result[0];
+    if (!result[0].isEmpty()) { found = result[0]; Relay.stop(); }
     return result[0];
   }
+
+  /**
+   * Diamond on this network first; when it is not here, Torrbaby's relay (for a TV that knows
+   * Diamond's identity, so every relayed stream is encrypted end to end). "" when neither.
+   * Call off the main thread.
+   */
+  static String locate(android.content.Context context, String client, long millis) {
+    String home = find(context, millis);
+    if (!home.isEmpty()) return home;
+    String relay = Relay.base(context, client);
+    if (!relay.isEmpty()) found = relay;
+    return relay;
+  }
+
 }

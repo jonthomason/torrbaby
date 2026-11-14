@@ -18,8 +18,8 @@ public class MainActivity extends Activity {
   private Api api;
   private ServerDiscovery discovery;
   private final Handler discoveryHandler = new Handler(Looper.getMainLooper());
-  private int connectionGeneration;
-  private boolean discoveringScreen, connectingLan;
+  private volatile int connectionGeneration;
+  private boolean discoveringScreen, connectingLan, pairingScreen;
   private Art art;
   private SecureStore store;
   private Library library;
@@ -91,6 +91,9 @@ public class MainActivity extends Activity {
       ArrayList<String> ids = state.getStringArrayList("collection_ids");
       if (ids != null) collectionIds = ids;
     }
+    // Switching language recreates the activity: the away-from-home setup stays open (with a
+    // new code: the secret is never kept). Debug builds: `--ez pair_away true` opens it.
+    if ((state != null && state.getBoolean("pair_away")) || (BuildConfig.DEBUG && getIntent().getBooleanExtra("pair_away", false))) { pairAway(); return; }
     try {
       Api test = Bootstrap.from(getIntent());
       if (test != null) store.save(test);
@@ -123,6 +126,7 @@ public class MainActivity extends Activity {
     s.putInt("season", season);
     s.putString("collection", collectionName);
     s.putStringArrayList("collection_ids", collectionIds);
+    s.putBoolean("pair_away", pairingScreen);
   }
 
   @Override protected void onNewIntent(Intent intent) {
@@ -185,6 +189,7 @@ public class MainActivity extends Activity {
     stopDiscovery();
     discoveringScreen = false;
     connectingLan = false;
+    pairingScreen = false;
     connectionGeneration++;
     root = Ui.column(this);
     root.setBackgroundColor(Ui.BG);
@@ -2332,6 +2337,8 @@ public class MainActivity extends Activity {
             L10n.t("Disconnect"),
             (x, y) -> {
               store.clear();
+              new Thread(Relay::stop, "Relay").start();
+              ServerRoute.found = "";
               api = null;
               library = null;
               if (art != null) {
@@ -2355,7 +2362,16 @@ public class MainActivity extends Activity {
       if (!refinding) return;
       refinding = false;
       if (search[0] != null) search[0].close();
-      if (api == requested) load();
+      if (api != requested) return;
+      // Not on the home network: through Torrbaby's relay, when this TV knows Diamond's identity.
+      new Thread(() -> {
+        String relay = Relay.base(this, requested.client);
+        runOnUiThread(() -> {
+          if (api != requested || isDestroyed()) return;
+          if (!relay.isEmpty()) moveTo(requested, relay);
+          load();
+        });
+      }, "Relay").start();
     };
     search[0] = new ServerDiscovery(this, new ServerDiscovery.Listener() {
       public void changed(java.util.Map<String, String> servers) {
@@ -2366,17 +2382,8 @@ public class MainActivity extends Activity {
         String found = servers.values().iterator().next();
         ServerRoute.found = found;
         if (api != requested || isDestroyed()) return;
-        try {
-          if (!found.equals(requested.base)) {
-            Api moved = new Api(found, requested.token, requested.client, requested.profile, requested.profileName);
-            moved.profileAppearance = requested.profileAppearance;
-            store.save(moved);
-            if (art != null) art.close();
-            api = moved;
-            art = new Art(MainActivity.this, api);
-          }
-        } catch (Exception ignored) {
-        }
+        moveTo(requested, found);
+        learnAtHome(found);
         load();
       }
       public void failed() { give_up.run(); }
@@ -2384,6 +2391,35 @@ public class MainActivity extends Activity {
     search[0].start();
     discoveryHandler.postDelayed(give_up, 8000);
     return true;
+  }
+
+  /** Requests go to `base` from now on (Diamond found here again, or the relay). */
+  private void moveTo(Api requested, String base) {
+    ServerRoute.found = base;
+    if (base.equals(requested.base)) return;
+    try {
+      Api moved = new Api(base, requested.token, requested.client, requested.profile, requested.profileName);
+      moved.profileAppearance = requested.profileAppearance;
+      store.save(moved);
+      if (art != null) art.close();
+      api = moved;
+      art = new Art(MainActivity.this, api);
+    } catch (Exception ignored) {
+    }
+  }
+
+  /**
+   * At home, Diamond itself says who it is (its identity, which end-to-end encryption through
+   * bronze pins) and where its relay is: kept, so this TV can reach it away from home too.
+   */
+  private void learnAtHome(String home) {
+    io.execute(() -> {
+      Relay.stop(); // At home: nothing goes through bronze.
+      try {
+        JSONObject server = new Api(home, "", "").request("GET", "/v1/ping", null).optJSONObject("server");
+        if (server != null) Relay.Remote.from(server.optString("identity"), server.optJSONObject("relay")).save(this);
+      } catch (Exception ignored) { /* Learned another time. */ }
+    });
   }
 
   private void stopDiscovery() {
@@ -2438,6 +2474,8 @@ public class MainActivity extends Activity {
     Ui.add(root, retry, 200, 44);
     Ui.gap(root, 12);
     Ui.add(root, Ui.button(this, L10n.t("Enter server address"), () -> setup("")), 230, 44);
+    Ui.gap(root, 12);
+    Ui.add(root, Ui.button(this, L10n.t("Set up away from home"), this::pairAway), 260, 44);
     retry.requestFocus();
   }
 
@@ -2507,23 +2545,13 @@ public class MainActivity extends Activity {
             Api connected =
                 new Api(address, credential.getString("token"), credential.getString("client_id"));
             ServerRoute.found = address;
+            learnAtHome(address);
 
             runOnUiThread(
                 () -> {
                   if (generation != connectionGeneration || isDestroyed() || isFinishing()) return;
                   try {
-                    store.save(connected);
-
-                    if (art != null) art.close();
-                    api = connected;
-                    StartupTrace.connected(api);
-                    art = new Art(this, api);
-                    library = null;
-                    section = "Home";
-                    detailId = "";
-                    collectionName = "";
-                    restoreId = "";
-                    chooseProfile(false);
+                    connected(connected);
                   } catch (Exception e) {
                     connectingLan = false;
                     connectionFailed(message, message(e));
@@ -2541,6 +2569,127 @@ public class MainActivity extends Activity {
                 });
           }
         });
+  }
+
+  /** A new connection is ready: keep it and continue to the user chooser. */
+  private void connected(Api connected) throws Exception {
+    store.save(connected);
+    if (art != null) art.close();
+    api = connected;
+    StartupTrace.connected(api);
+    art = new Art(this, api);
+    library = null;
+    section = "Home";
+    detailId = "";
+    collectionName = "";
+    restoreId = "";
+    chooseProfile(false);
+  }
+
+  /**
+   * Setting up a TV that is never on the home network (docs/remote-pairing.md): it shows a code
+   * a paired phone scans, then claims its setup from Diamond through Torrbaby's relay, sealed
+   * with a key only the code holds.
+   */
+  private void pairAway() {
+    base();
+    pairingScreen = true;
+    int generation = connectionGeneration;
+    Pairing pairing;
+    try { pairing = Pairing.fresh(); } catch (Exception e) { error(message(e)); return; }
+    LinearLayout page = Ui.row(this);
+    Ui.pad(page, 30, 0);
+    root.addView(page, new LinearLayout.LayoutParams(-1, 0, 1));
+    LinearLayout words = Ui.column(this);
+    words.setGravity(Gravity.CENTER_VERTICAL);
+    page.addView(words, new LinearLayout.LayoutParams(0, -1, 1));
+    Ui.add(words, Ui.title(this, L10n.t("Set up away from home"), 28), -1, -2);
+    Ui.gap(words, 18);
+    Ui.add(words, Ui.text(this, L10n.t("Scan this code with Torrbaby on a phone or tablet that is already connected to your server."), 18, Ui.TEXT), -1, -2);
+    Ui.gap(words, 14);
+    Ui.add(words, Ui.text(this, L10n.t("No connected phone nearby? Take a photo of this code and send it to someone who has one. It works once and expires in 10 minutes."), 15, Ui.MUTED), -1, -2);
+    Ui.gap(words, 22);
+    TextView status = Ui.text(this, L10n.t("Connecting to Torrbaby’s relay…"), 15, Ui.MUTED);
+    Ui.add(words, status, -1, -2);
+    Ui.gap(words, 22);
+    LinearLayout buttons = Ui.row(this);
+    Button back = Ui.button(this, L10n.t("Back"), () -> discover(""));
+    Ui.add(buttons, back, -2, 44);
+    Ui.gap(buttons, 12);
+    Button renew = Ui.button(this, L10n.t("New setup code"), this::pairAway);
+    Ui.add(buttons, renew, -2, 44);
+    Ui.add(words, buttons, -1, -2);
+    Ui.gap(page, 48);
+    ImageView code = new ImageView(this);
+    code.setContentDescription(L10n.t("Setup code"));
+    code.setScaleType(ImageView.ScaleType.FIT_CENTER);
+    int side = Math.min(Ui.dp(this, 400), getResources().getDisplayMetrics().heightPixels - Ui.dp(this, 120));
+    try {
+      android.graphics.drawable.BitmapDrawable drawn = new android.graphics.drawable.BitmapDrawable(getResources(), QrCode.bitmap(pairing.code(Build.MODEL), side));
+      drawn.setFilterBitmap(false); // Sharp modules, not smoothed ones.
+      code.setImageDrawable(drawn);
+    } catch (Exception e) { error(message(e)); return; }
+    page.addView(code, new LinearLayout.LayoutParams(side, side));
+    back.requestFocus();
+    java.util.function.BooleanSupplier current = () -> generation == connectionGeneration && !isDestroyed();
+    java.util.function.Consumer<String> say = text -> runOnUiThread(() -> { if (current.getAsBoolean()) status.setText(text); });
+    new Thread(() -> {
+      long deadline = System.currentTimeMillis() + Pairing.LIFETIME_MILLIS;
+      // Nothing to pin yet: the claim goes plain through bronze, and its reply is sealed.
+      String relay = Relay.base(Relay.DEFAULT_ADDRESS, Relay.DEFAULT_FINGERPRINT, "", "");
+      if (relay.isEmpty()) {
+        say.accept(L10n.t("Could not reach Torrbaby’s relay. Check this TV’s internet connection, then choose New setup code."));
+        return;
+      }
+      say.accept(L10n.t("Waiting for the code to be scanned…"));
+      while (current.getAsBoolean() && System.currentTimeMillis() < deadline) {
+        try {
+          JSONObject reply = new Api(relay, "", "").request("POST", "/v1/pairings/remote/claim", pairing.claim());
+          JSONObject setup = pairing.open(reply);
+          android.util.Log.i("TorrbabyPairing", "Claim: " + (setup == null ? "waiting" : "setup received"));
+          if (setup != null) { finishPairing(setup, generation, say); return; }
+          say.accept(L10n.t("Waiting for the code to be scanned…"));
+        } catch (java.security.GeneralSecurityException | SecurityException forged) {
+          // Not sealed by Diamond (or not for this code): ignored, as the protocol says.
+          android.util.Log.w("TorrbabyPairing", "Claim reply did not open: " + forged);
+        } catch (Exception e) {
+          android.util.Log.w("TorrbabyPairing", "Claim failed: " + e);
+          say.accept(L10n.t("Your server is not answering through the relay yet. Still trying…"));
+          String reopened = Relay.base(Relay.DEFAULT_ADDRESS, Relay.DEFAULT_FINGERPRINT, "", "");
+          if (!reopened.isEmpty()) relay = reopened;
+        }
+        try { Thread.sleep(2000); } catch (InterruptedException e) { return; }
+      }
+      runOnUiThread(() -> {
+        if (!current.getAsBoolean()) return;
+        status.setText(L10n.t("This code has expired. Choose New setup code to show another."));
+        renew.requestFocus();
+      });
+    }, "Pairing").start();
+  }
+
+  /** On the pairing thread: keep what Diamond sent, open the relay pinned to Diamond, continue. */
+  private void finishPairing(JSONObject setup, int generation, java.util.function.Consumer<String> say) {
+    say.accept(L10n.t("Setting up…"));
+    JSONObject server = setup.optJSONObject("server");
+    Relay.Remote remote = Relay.Remote.from(server == null ? "" : server.optString("identity"), setup.optJSONObject("relay"));
+    if (remote.identity.isEmpty()) {
+      say.accept(L10n.t("Your server did not send its identity. Update Torrbaby on the server, then choose New setup code."));
+      return;
+    }
+    remote.save(this);
+    String client = setup.optString("client_id");
+    String base = Relay.base(remote.relayAddress, remote.relayFingerprint, remote.identity, client);
+    if (base.isEmpty()) {
+      say.accept(L10n.t("Could not reach Torrbaby’s relay. Check this TV’s internet connection, then choose New setup code."));
+      return;
+    }
+    ServerRoute.found = base;
+    runOnUiThread(() -> {
+      if (generation != connectionGeneration || isDestroyed()) return;
+      try { connected(new Api(base, setup.optString("token"), client)); }
+      catch (Exception e) { error(message(e)); }
+    });
   }
 
   private void setup(String note) {

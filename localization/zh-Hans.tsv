@@ -965,3 +965,15 @@ It finishes setting up by itself within a few seconds, wherever it is.	无论它
 This isn’t a Torrbaby setup code.	这不是 Torrbaby 设置码。
 This code isn't a Torrbaby setup code	这不是 Torrbaby 设置码
 Too many setup codes waiting. Try again in a few minutes.	等待中的设置码太多。请几分钟后再试。
+Set up away from home	不在家时设置
+Scan this code with Torrbaby on a phone or tablet that is already connected to your server.	请用已连接到服务器的手机或平板上的 Torrbaby 扫描此设置码。
+No connected phone nearby? Take a photo of this code and send it to someone who has one. It works once and expires in 10 minutes.	身边没有已连接的手机？请拍下此设置码，发给有已连接手机的人。设置码只能使用一次，10 分钟后失效。
+Connecting to Torrbaby’s relay…	正在连接 Torrbaby 中继…
+Setup code	设置码
+Could not reach Torrbaby’s relay. Check this TV’s internet connection, then choose New setup code.	无法连接 Torrbaby 中继。请检查这台电视的网络连接，然后选择“新设置码”。
+Waiting for the code to be scanned…	正在等待扫描设置码…
+Your server is not answering through the relay yet. Still trying…	服务器尚未通过中继响应，正在继续尝试…
+This code has expired. Choose New setup code to show another.	此设置码已过期。请选择“新设置码”显示新的设置码。
+Setting up…	正在设置…
+Your server did not send its identity. Update Torrbaby on the server, then choose New setup code.	服务器未发送其身份信息。请更新服务器上的 Torrbaby，然后选择“新设置码”。
+New setup code	新设置码

@@ -88,9 +88,9 @@ public class PlaybackActivity extends Activity {
             api = new SecureStore(this).load();
             if (api == null) throw new Exception("Link this TV to your server again.");
             // Opened straight into playback (Android restarted the app): find the server on
-            // the home network first, as the library does; no address is saved.
+            // the home network first, as the library does, then the relay; no address is saved.
             if (ServerRoute.found.isEmpty()) {
-              String found = ServerRoute.find(this, 8000);
+              String found = ServerRoute.locate(this, api.client, 8000);
               if (!found.isEmpty()) {
                 Api located = new Api(found, api.token, api.client, api.profile, api.profileName);
                 located.profileAppearance = api.profileAppearance;

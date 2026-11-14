@@ -172,6 +172,7 @@
     <string name="ui_c2f9b7b4897f" formatted="false">Connected</string>
     <string name="ui_182627e396c6" formatted="false">Connected under another name</string>
     <string name="ui_9449502ae14e" formatted="false">Connected · not used for new downloads</string>
+    <string name="ui_ca7e4b990121" formatted="false">Connecting to Torrbaby’s relay…</string>
     <string name="ui_fd3e79699426" formatted="false">Connecting…</string>
     <string name="ui_6512ee1541e9" formatted="false">Connection</string>
     <string name="ui_618aac54b120" formatted="false">Connection settings</string>
@@ -181,6 +182,7 @@
     <string name="ui_fcfa6de4b522" formatted="false">Could not create folders on this drive</string>
     <string name="ui_3498c19c828e" formatted="false">Could not find your server</string>
     <string name="ui_47dd74c0c423" formatted="false">Could not load users</string>
+    <string name="ui_dd5a1a5ba7fd" formatted="false">Could not reach Torrbaby’s relay. Check this TV’s internet connection, then choose New setup code.</string>
     <string name="ui_3bcad4a3da4b" formatted="false">Could not refresh.</string>
     <string name="ui_ec6c4f8da528" formatted="false">Could not write to this drive</string>
     <string name="ui_5a538c5c5377" formatted="false">Couldn’t add release</string>
@@ -439,6 +441,7 @@
     <string name="ui_5478cfd5b4d6" formatted="false">New episodes</string>
     <string name="ui_96df46930d75" formatted="false">New episodes go to the drive that already has the show. Everything else goes to the drive with the most free space.</string>
     <string name="ui_9e627c7b1aec" formatted="false">New name</string>
+    <string name="ui_7c7deb81c106" formatted="false">New setup code</string>
     <string name="ui_834ae0b1f228" formatted="false">Next Episode</string>
     <string name="ui_35da6a009052" formatted="false">Next check: %s</string>
     <string name="ui_882f1a46548e" formatted="false">Next episode</string>
@@ -446,6 +449,7 @@
     <string name="ui_a66974cfe156" formatted="false">No available next episode</string>
     <string name="ui_7f91412671b3" formatted="false">No confident match yet</string>
     <string name="ui_9e5c2b4cfc49" formatted="false">No connected drive takes new downloads</string>
+    <string name="ui_f102e428502b" formatted="false">No connected phone nearby? Take a photo of this code and send it to someone who has one. It works once and expires in 10 minutes.</string>
     <string name="ui_9367342a5e79" formatted="false">No downloads</string>
     <string name="ui_cd0af6cfca75" formatted="false">No matches</string>
     <string name="ui_b0b087bbea50" formatted="false">No matches. You can still enter a name above.</string>
@@ -628,6 +632,7 @@
     <string name="ui_d28ae0c30b7e" formatted="false">Scan the QR code</string>
     <string name="ui_9583c21034d6" formatted="false">Scan the code shown on the new device</string>
     <string name="ui_f055be48fe66" formatted="false">Scan the new device\'s code</string>
+    <string name="ui_00839fc38e1c" formatted="false">Scan this code with Torrbaby on a phone or tablet that is already connected to your server.</string>
     <string name="ui_bce06414177f" formatted="false">Search</string>
     <string name="ui_c4cfc9981ae1" formatted="false">Search movies and TV shows</string>
     <string name="ui_06040cbe6a6a" formatted="false">Search movies and TV shows.</string>
@@ -668,9 +673,12 @@
     <string name="ui_ed99436dccac" formatted="false">Server updated</string>
     <string name="ui_2546318d7620" formatted="false">Server version</string>
     <string name="ui_a5041fdaa241" formatted="false">Set up</string>
+    <string name="ui_6fe36c38478a" formatted="false">Set up away from home</string>
+    <string name="ui_cef9b69dc5e3" formatted="false">Setting up…</string>
     <string name="ui_c7f73bb54d92" formatted="false">Settings</string>
     <string name="ui_aef97bb06af4" formatted="false">Settings saved</string>
     <string name="ui_c0f6e98ebf63" formatted="false">Settings → Link a device</string>
+    <string name="ui_b45818b1270a" formatted="false">Setup code</string>
     <string name="ui_09ca55ca52d2" formatted="false">Share</string>
     <string name="ui_0fdbeb649276" formatted="false">Share with AirDrop…</string>
     <string name="ui_d97d1ee339e4" formatted="false">Show</string>
@@ -769,6 +777,7 @@
     <string name="ui_6315e169d054" formatted="false">These settings apply to everyone who uses this server.</string>
     <string name="ui_a3594939d5f3" formatted="false">This affects the entire download package and everyone’s library.</string>
     <string name="ui_1d3888fca6b7" formatted="false">This code has expired.</string>
+    <string name="ui_d81e74ecd0f8" formatted="false">This code has expired. Choose New setup code to show another.</string>
     <string name="ui_fc23739929e0" formatted="false">This code isn\'t a Torrbaby setup code</string>
     <string name="ui_fa5a6dd9d249" formatted="false">This device</string>
     <string name="ui_6aacdc553205" formatted="false">This device could not decode the video or audio format.</string>
@@ -881,6 +890,7 @@
     <string name="ui_64189e6dc1d9" formatted="false">Waiting for playback to stop</string>
     <string name="ui_d9852df62ffb" formatted="false">Waiting for processing to finish</string>
     <string name="ui_cf4eb74000b2" formatted="false">Waiting for subtitles</string>
+    <string name="ui_d7efb05044d9" formatted="false">Waiting for the code to be scanned…</string>
     <string name="ui_d8c33d5a3be9" formatted="false">Waiting for the drive to be connected</string>
     <string name="ui_a87cb3f030da" formatted="false">Waiting to check languages</string>
     <string name="ui_640215e9fe28" formatted="false">Waiting to verify</string>
@@ -900,6 +910,8 @@
     <string name="ui_edd9ec4fc336" formatted="false">Your library is empty</string>
     <string name="ui_eb57b880868f" formatted="false">Your library is unavailable</string>
     <string name="ui_19d4fb4f3901" formatted="false">Your selected profile is unavailable. Choose a user to continue.</string>
+    <string name="ui_e5f8d0476fd7" formatted="false">Your server did not send its identity. Update Torrbaby on the server, then choose New setup code.</string>
+    <string name="ui_3012c956c2bc" formatted="false">Your server is not answering through the relay yet. Still trying…</string>
     <string name="ui_8f3182a89e24" formatted="false">tb · Offline</string>
     <string name="ui_42aef171c1c0" formatted="false">track</string>
     <string name="ui_df316e17de9c" formatted="false">…</string>

@@ -172,6 +172,7 @@
     <string name="ui_c2f9b7b4897f" formatted="false">已连接</string>
     <string name="ui_182627e396c6" formatted="false">以其他名称连接</string>
     <string name="ui_9449502ae14e" formatted="false">已连接 · 不用于新下载</string>
+    <string name="ui_ca7e4b990121" formatted="false">正在连接 Torrbaby 中继…</string>
     <string name="ui_fd3e79699426" formatted="false">正在连接…</string>
     <string name="ui_6512ee1541e9" formatted="false">连接</string>
     <string name="ui_618aac54b120" formatted="false">连接设置</string>
@@ -181,6 +182,7 @@
     <string name="ui_fcfa6de4b522" formatted="false">无法在这块硬盘上创建文件夹</string>
     <string name="ui_3498c19c828e" formatted="false">找不到服务器</string>
     <string name="ui_47dd74c0c423" formatted="false">无法加载用户</string>
+    <string name="ui_dd5a1a5ba7fd" formatted="false">无法连接 Torrbaby 中继。请检查这台电视的网络连接，然后选择“新设置码”。</string>
     <string name="ui_3bcad4a3da4b" formatted="false">无法刷新。</string>
     <string name="ui_ec6c4f8da528" formatted="false">无法写入这块硬盘</string>
     <string name="ui_5a538c5c5377" formatted="false">无法添加版本</string>
@@ -439,6 +441,7 @@
     <string name="ui_5478cfd5b4d6" formatted="false">新剧集</string>
     <string name="ui_96df46930d75" formatted="false">新剧集会存到已有该剧的硬盘，其他内容存到可用空间最多的硬盘。</string>
     <string name="ui_9e627c7b1aec" formatted="false">新名称</string>
+    <string name="ui_7c7deb81c106" formatted="false">新设置码</string>
     <string name="ui_834ae0b1f228" formatted="false">下一集</string>
     <string name="ui_35da6a009052" formatted="false">下次检查：%s</string>
     <string name="ui_882f1a46548e" formatted="false">下一集</string>
@@ -446,6 +449,7 @@
     <string name="ui_a66974cfe156" formatted="false">暂无可播放的下一集</string>
     <string name="ui_7f91412671b3" formatted="false">尚无可靠匹配</string>
     <string name="ui_9e5c2b4cfc49" formatted="false">没有已连接的硬盘接收新下载</string>
+    <string name="ui_f102e428502b" formatted="false">身边没有已连接的手机？请拍下此设置码，发给有已连接手机的人。设置码只能使用一次，10 分钟后失效。</string>
     <string name="ui_9367342a5e79" formatted="false">暂无下载</string>
     <string name="ui_cd0af6cfca75" formatted="false">没有匹配结果</string>
     <string name="ui_b0b087bbea50" formatted="false">没有匹配结果，您仍可在上方输入名称。</string>
@@ -628,6 +632,7 @@
     <string name="ui_d28ae0c30b7e" formatted="false">扫描二维码</string>
     <string name="ui_9583c21034d6" formatted="false">扫描新设备上显示的二维码</string>
     <string name="ui_f055be48fe66" formatted="false">扫描新设备的二维码</string>
+    <string name="ui_00839fc38e1c" formatted="false">请用已连接到服务器的手机或平板上的 Torrbaby 扫描此设置码。</string>
     <string name="ui_bce06414177f" formatted="false">搜索</string>
     <string name="ui_c4cfc9981ae1" formatted="false">搜索电影和剧集</string>
     <string name="ui_06040cbe6a6a" formatted="false">搜索电影和剧集。</string>
@@ -668,9 +673,12 @@
     <string name="ui_ed99436dccac" formatted="false">服务器已更新</string>
     <string name="ui_2546318d7620" formatted="false">服务器版本</string>
     <string name="ui_a5041fdaa241" formatted="false">已设置</string>
+    <string name="ui_6fe36c38478a" formatted="false">不在家时设置</string>
+    <string name="ui_cef9b69dc5e3" formatted="false">正在设置…</string>
     <string name="ui_c7f73bb54d92" formatted="false">设置</string>
     <string name="ui_aef97bb06af4" formatted="false">设置已保存</string>
     <string name="ui_c0f6e98ebf63" formatted="false">设置 → 关联设备</string>
+    <string name="ui_b45818b1270a" formatted="false">设置码</string>
     <string name="ui_09ca55ca52d2" formatted="false">共享</string>
     <string name="ui_0fdbeb649276" formatted="false">通过隔空投送共享…</string>
     <string name="ui_d97d1ee339e4" formatted="false">显示</string>
@@ -769,6 +777,7 @@
     <string name="ui_6315e169d054" formatted="false">这些设置适用于使用此服务器的所有人。</string>
     <string name="ui_a3594939d5f3" formatted="false">此操作影响整个下载包及所有用户的媒体库。</string>
     <string name="ui_1d3888fca6b7" formatted="false">此代码已过期。</string>
+    <string name="ui_d81e74ecd0f8" formatted="false">此设置码已过期。请选择“新设置码”显示新的设置码。</string>
     <string name="ui_fc23739929e0" formatted="false">这不是 Torrbaby 设置码</string>
     <string name="ui_fa5a6dd9d249" formatted="false">此设备</string>
     <string name="ui_6aacdc553205" formatted="false">此设备无法解码该视频或音频格式。</string>
@@ -881,6 +890,7 @@
     <string name="ui_64189e6dc1d9" formatted="false">正在等待播放停止</string>
     <string name="ui_d9852df62ffb" formatted="false">正在等待处理完成</string>
     <string name="ui_cf4eb74000b2" formatted="false">等待生成字幕</string>
+    <string name="ui_d7efb05044d9" formatted="false">正在等待扫描设置码…</string>
     <string name="ui_d8c33d5a3be9" formatted="false">正在等待连接硬盘</string>
     <string name="ui_a87cb3f030da" formatted="false">等待检查语言</string>
     <string name="ui_640215e9fe28" formatted="false">等待校验</string>
@@ -900,6 +910,8 @@
     <string name="ui_edd9ec4fc336" formatted="false">媒体库为空</string>
     <string name="ui_eb57b880868f" formatted="false">媒体库不可用</string>
     <string name="ui_19d4fb4f3901" formatted="false">所选用户不可用，请选择用户以继续。</string>
+    <string name="ui_e5f8d0476fd7" formatted="false">服务器未发送其身份信息。请更新服务器上的 Torrbaby，然后选择“新设置码”。</string>
+    <string name="ui_3012c956c2bc" formatted="false">服务器尚未通过中继响应，正在继续尝试…</string>
     <string name="ui_8f3182a89e24" formatted="false">tb · 离线</string>
     <string name="ui_42aef171c1c0" formatted="false">轨道</string>
     <string name="ui_df316e17de9c" formatted="false">…</string>

@@ -16936,6 +16936,210 @@
           }
         }
       }
+    },
+    "Set up away from home": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set up away from home"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不在家时设置"
+          }
+        }
+      }
+    },
+    "Scan this code with Torrbaby on a phone or tablet that is already connected to your server.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan this code with Torrbaby on a phone or tablet that is already connected to your server."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请用已连接到服务器的手机或平板上的 Torrbaby 扫描此设置码。"
+          }
+        }
+      }
+    },
+    "No connected phone nearby? Take a photo of this code and send it to someone who has one. It works once and expires in 10 minutes.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No connected phone nearby? Take a photo of this code and send it to someone who has one. It works once and expires in 10 minutes."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "身边没有已连接的手机？请拍下此设置码，发给有已连接手机的人。设置码只能使用一次，10 分钟后失效。"
+          }
+        }
+      }
+    },
+    "Connecting to Torrbaby’s relay…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connecting to Torrbaby’s relay…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在连接 Torrbaby 中继…"
+          }
+        }
+      }
+    },
+    "Setup code": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Setup code"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置码"
+          }
+        }
+      }
+    },
+    "Could not reach Torrbaby’s relay. Check this TV’s internet connection, then choose New setup code.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not reach Torrbaby’s relay. Check this TV’s internet connection, then choose New setup code."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法连接 Torrbaby 中继。请检查这台电视的网络连接，然后选择“新设置码”。"
+          }
+        }
+      }
+    },
+    "Waiting for the code to be scanned…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for the code to be scanned…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待扫描设置码…"
+          }
+        }
+      }
+    },
+    "Your server is not answering through the relay yet. Still trying…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your server is not answering through the relay yet. Still trying…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "服务器尚未通过中继响应，正在继续尝试…"
+          }
+        }
+      }
+    },
+    "This code has expired. Choose New setup code to show another.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This code has expired. Choose New setup code to show another."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此设置码已过期。请选择“新设置码”显示新的设置码。"
+          }
+        }
+      }
+    },
+    "Setting up…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Setting up…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在设置…"
+          }
+        }
+      }
+    },
+    "Your server did not send its identity. Update Torrbaby on the server, then choose New setup code.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your server did not send its identity. Update Torrbaby on the server, then choose New setup code."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "服务器未发送其身份信息。请更新服务器上的 Torrbaby，然后选择“新设置码”。"
+          }
+        }
+      }
+    },
+    "New setup code": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New setup code"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新设置码"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

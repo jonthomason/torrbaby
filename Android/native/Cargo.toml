@@ -1,0 +1,25 @@
+[package]
+name = "tbandroid"
+version = "0.1.0"
+edition = "2024"
+description = "Torrbaby's relay to bronze in the Android TV app: a JNI shim over Apple/Direct (tbdirect)"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+doctest = false
+
+[dependencies]
+tbdirect = { path = "../../Apple/Direct" }
+jni = { version = "0.21", default-features = false }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+# As in tbdirect: a panic ends only the task (one connection) it happens in.
+panic = "unwind"
+strip = true
+
+[workspace]

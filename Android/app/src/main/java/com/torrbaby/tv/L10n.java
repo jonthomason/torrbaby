@@ -183,6 +183,7 @@ final class L10n {
     IDS.put("Connected", R.string.ui_c2f9b7b4897f);
     IDS.put("Connected under another name", R.string.ui_182627e396c6);
     IDS.put("Connected · not used for new downloads", R.string.ui_9449502ae14e);
+    IDS.put("Connecting to Torrbaby’s relay…", R.string.ui_ca7e4b990121);
     IDS.put("Connecting…", R.string.ui_fd3e79699426);
     IDS.put("Connection", R.string.ui_6512ee1541e9);
     IDS.put("Connection settings", R.string.ui_618aac54b120);
@@ -192,6 +193,7 @@ final class L10n {
     IDS.put("Could not create folders on this drive", R.string.ui_fcfa6de4b522);
     IDS.put("Could not find your server", R.string.ui_3498c19c828e);
     IDS.put("Could not load users", R.string.ui_47dd74c0c423);
+    IDS.put("Could not reach Torrbaby’s relay. Check this TV’s internet connection, then choose New setup code.", R.string.ui_dd5a1a5ba7fd);
     IDS.put("Could not refresh.", R.string.ui_3bcad4a3da4b);
     IDS.put("Could not write to this drive", R.string.ui_ec6c4f8da528);
     IDS.put("Couldn’t add release", R.string.ui_5a538c5c5377);
@@ -450,6 +452,7 @@ final class L10n {
     IDS.put("New episodes", R.string.ui_5478cfd5b4d6);
     IDS.put("New episodes go to the drive that already has the show. Everything else goes to the drive with the most free space.", R.string.ui_96df46930d75);
     IDS.put("New name", R.string.ui_9e627c7b1aec);
+    IDS.put("New setup code", R.string.ui_7c7deb81c106);
     IDS.put("Next Episode", R.string.ui_834ae0b1f228);
     IDS.put("Next check: %s", R.string.ui_35da6a009052);
     IDS.put("Next episode", R.string.ui_882f1a46548e);
@@ -457,6 +460,7 @@ final class L10n {
     IDS.put("No available next episode", R.string.ui_a66974cfe156);
     IDS.put("No confident match yet", R.string.ui_7f91412671b3);
     IDS.put("No connected drive takes new downloads", R.string.ui_9e5c2b4cfc49);
+    IDS.put("No connected phone nearby? Take a photo of this code and send it to someone who has one. It works once and expires in 10 minutes.", R.string.ui_f102e428502b);
     IDS.put("No downloads", R.string.ui_9367342a5e79);
     IDS.put("No matches", R.string.ui_cd0af6cfca75);
     IDS.put("No matches. You can still enter a name above.", R.string.ui_b0b087bbea50);
@@ -639,6 +643,7 @@ final class L10n {
     IDS.put("Scan the QR code", R.string.ui_d28ae0c30b7e);
     IDS.put("Scan the code shown on the new device", R.string.ui_9583c21034d6);
     IDS.put("Scan the new device's code", R.string.ui_f055be48fe66);
+    IDS.put("Scan this code with Torrbaby on a phone or tablet that is already connected to your server.", R.string.ui_00839fc38e1c);
     IDS.put("Search", R.string.ui_bce06414177f);
     IDS.put("Search movies and TV shows", R.string.ui_c4cfc9981ae1);
     IDS.put("Search movies and TV shows.", R.string.ui_06040cbe6a6a);
@@ -679,9 +684,12 @@ final class L10n {
     IDS.put("Server updated", R.string.ui_ed99436dccac);
     IDS.put("Server version", R.string.ui_2546318d7620);
     IDS.put("Set up", R.string.ui_a5041fdaa241);
+    IDS.put("Set up away from home", R.string.ui_6fe36c38478a);
+    IDS.put("Setting up…", R.string.ui_cef9b69dc5e3);
     IDS.put("Settings", R.string.ui_c7f73bb54d92);
     IDS.put("Settings saved", R.string.ui_aef97bb06af4);
     IDS.put("Settings → Link a device", R.string.ui_c0f6e98ebf63);
+    IDS.put("Setup code", R.string.ui_b45818b1270a);
     IDS.put("Share", R.string.ui_09ca55ca52d2);
     IDS.put("Share with AirDrop…", R.string.ui_0fdbeb649276);
     IDS.put("Show", R.string.ui_d97d1ee339e4);
@@ -780,6 +788,7 @@ final class L10n {
     IDS.put("These settings apply to everyone who uses this server.", R.string.ui_6315e169d054);
     IDS.put("This affects the entire download package and everyone’s library.", R.string.ui_a3594939d5f3);
     IDS.put("This code has expired.", R.string.ui_1d3888fca6b7);
+    IDS.put("This code has expired. Choose New setup code to show another.", R.string.ui_d81e74ecd0f8);
     IDS.put("This code isn't a Torrbaby setup code", R.string.ui_fc23739929e0);
     IDS.put("This device", R.string.ui_fa5a6dd9d249);
     IDS.put("This device could not decode the video or audio format.", R.string.ui_6aacdc553205);
@@ -892,6 +901,7 @@ final class L10n {
     IDS.put("Waiting for playback to stop", R.string.ui_64189e6dc1d9);
     IDS.put("Waiting for processing to finish", R.string.ui_d9852df62ffb);
     IDS.put("Waiting for subtitles", R.string.ui_cf4eb74000b2);
+    IDS.put("Waiting for the code to be scanned…", R.string.ui_d7efb05044d9);
     IDS.put("Waiting for the drive to be connected", R.string.ui_d8c33d5a3be9);
     IDS.put("Waiting to check languages", R.string.ui_a87cb3f030da);
     IDS.put("Waiting to verify", R.string.ui_640215e9fe28);
@@ -911,6 +921,8 @@ final class L10n {
     IDS.put("Your library is empty", R.string.ui_edd9ec4fc336);
     IDS.put("Your library is unavailable", R.string.ui_eb57b880868f);
     IDS.put("Your selected profile is unavailable. Choose a user to continue.", R.string.ui_19d4fb4f3901);
+    IDS.put("Your server did not send its identity. Update Torrbaby on the server, then choose New setup code.", R.string.ui_e5f8d0476fd7);
+    IDS.put("Your server is not answering through the relay yet. Still trying…", R.string.ui_3012c956c2bc);
     IDS.put("tb · Offline", R.string.ui_8f3182a89e24);
     IDS.put("track", R.string.ui_42aef171c1c0);
     IDS.put("…", R.string.ui_df316e17de9c);

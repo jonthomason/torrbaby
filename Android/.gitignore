@@ -4,3 +4,5 @@
 local.properties
 *.jks
 *.keystore
+native/target/
+app/src/main/jniLibs/
