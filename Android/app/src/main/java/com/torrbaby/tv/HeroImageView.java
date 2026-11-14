@@ -7,7 +7,7 @@ import android.graphics.drawable.Drawable;
 import android.widget.ImageView;
 
 /** Fill the hero while retaining the top of the artwork, where faces usually sit. */
-final class HeroImageView extends ImageView {
+final class HeroImageView extends ArtImageView {
   private final Matrix crop = new Matrix();
   HeroImageView(Context context) { super(context);setScaleType(ScaleType.MATRIX); }
   @Override protected void onDraw(Canvas canvas) {

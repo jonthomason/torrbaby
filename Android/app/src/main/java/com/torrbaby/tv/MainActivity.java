@@ -1988,7 +1988,7 @@ public class MainActivity extends Activity {
     row.setOnFocusChangeListener((v, focused) -> Ui.secondaryContrast(v, focused));
     Ui.pad(row, 14, 14);
     if (!a.thumbnail.isEmpty()) {
-      ImageView image = new ImageView(this);
+      ImageView image = new ArtImageView(this);
       image.setScaleType(ImageView.ScaleType.CENTER_CROP);
       Ui.round(image, 5);
       Ui.add(row, image, 125, 70);
