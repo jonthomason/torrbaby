@@ -102,6 +102,7 @@ import UIKit
             let ip = String(cString: host)
             // Ours, and iOS's own 192.0.0.x (464XLAT on IPv6-only cellular), are not other VPNs.
             if ip == "10.233.0.2" || ip.isEmpty || ip.hasPrefix("192.0.0.") { continue }
+            if ip == ABT.address { return "ABT" }
             found = ip.hasPrefix("100.") ? "Tailscale" : "a VPN (\(ip))"
         }
         return found
@@ -126,6 +127,13 @@ import UIKit
         // launch they come after pairing), with the app on screen. iOS also starts the app in
         // the background for downloads; that is not the user launching Torrbaby.
         let launching = !launched && ready && UIApplication.shared.applicationState != .background
+        // ABT carries Torrbaby to Diamond itself (see `ABT`): it is never taken over, at launch
+        // either. As with any VPN that took over, this tunnel is then off until the next launch.
+        if launching, !connected, ABT.connected {
+            launched = true
+            await yield()
+            return
+        }
         if launching { launched = true; TunnelYield.yielded = false }
         else if !connected, status != .connecting, TunnelYield.yielded || Self.otherVPN() != nil {
             await yield()
@@ -223,5 +231,18 @@ import UIKit
         @unknown default: "unknown"
         }
     }
+}
+
+/// ABT, the user's own VPN (~/src/abt), when it is installed and on. iOS runs one VPN at a
+/// time, so Torrbaby's tunnel and ABT cannot both be up; ABT does the same job for Torrbaby:
+/// Diamond runs ABT's host agent, and ABT answers the name below with a pipe to Diamond's
+/// server, straight across the home network at home, over a punched path away (the same punch
+/// as Torrbaby's own), and through ABT's exit when neither opens. The name resolves while the
+/// app is suspended too, so background downloads use it. Torrbaby's tunnel then stays off.
+@MainActor enum ABT {
+    static let route = "http://torrbaby.diamond.abt.jonthomason.com"
+    /// The address ABT's tunnel gives its interface on iPhone and iPad.
+    static let address = "198.18.0.2"
+    static var connected: Bool { PacketTunnel.otherVPN() == "ABT" }
 }
 #endif

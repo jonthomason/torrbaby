@@ -125,6 +125,7 @@ struct ConnectionStatusSections: View {
         switch store.path {
         case .home: return ms("home")
         case .tunnel: return ms("tunnel")
+        case .abt: return ms("abt")
         case .direct:
             #if os(iOS)
             return ms("direct") + (store.directOpenedAt.map { " · since \(clock($0))" } ?? "")
@@ -142,10 +143,16 @@ struct ConnectionStatusSections: View {
             row("Home network", kind: "home", inUse: store.path == .home, detail: store.homeRoute.isEmpty ? store.primaryAddress : store.homeRoute)
             #if os(iOS)
             row("Torrbaby tunnel", kind: "tunnel", inUse: store.path == .tunnel, detail: tunnel.installed ? tunnel.statusText + (tunnel.connected ? (tunnelPaths.map { "\n\($0)" } ?? "") : "") : "not installed")
+            if ABT.connected || store.path == .abt {
+                row("ABT", kind: "abt", inUse: store.path == .abt, detail: ABT.connected ? "on: \(ABT.route) (home network, punched, or ABT's exit; ABT's own app says which)" : "off")
+            }
             // While the tunnel is connected the app's own direct path and relay stand down: their
             // old checks would read as failures, so they say so instead, and the relay line shows
             // the tunnel's own relay.
-            if tunnel.connected {
+            if store.path == .abt {
+                row("Direct (in the app)", kind: "direct", inUse: false, detail: "not used: ABT carries traffic", showCheck: false)
+                row("Relay via bronze", kind: "relay", inUse: false, detail: "not used: ABT carries traffic", showCheck: false)
+            } else if tunnel.connected {
                 row("Direct (in the app)", kind: "direct", inUse: false, detail: "not used: the Torrbaby tunnel carries traffic", showCheck: false)
                 row("Relay via bronze", kind: "relay", inUse: false, detail: "in the tunnel: " + (tunnelRelay ?? "state not known yet"), showCheck: false)
             } else {
@@ -348,17 +355,17 @@ struct ConnectionStatusSections: View {
     private func ms(_ kind: String) -> String { store.routeChecks[kind]?.ms.map { "\($0) ms" } ?? "" }
     private func clock(_ date: Date) -> String { date.formatted(date: .omitted, time: .standard) }
     private func symbol(_ path: Store.Path) -> String {
-        switch path { case .home: "house.fill"; case .tunnel: "lock.shield.fill"; case .direct: "bolt.horizontal.fill"; case .relay: "arrow.triangle.branch"; case .tailscale: "network.badge.shield.half.filled"; case .offline: "wifi.slash" }
+        switch path { case .home: "house.fill"; case .tunnel, .abt: "lock.shield.fill"; case .direct: "bolt.horizontal.fill"; case .relay: "arrow.triangle.branch"; case .tailscale: "network.badge.shield.half.filled"; case .offline: "wifi.slash" }
     }
     private func color(_ path: Store.Path) -> Color {
-        switch path { case .home, .tunnel, .direct: .green; case .relay: .blue; case .tailscale: .orange; case .offline: .red }
+        switch path { case .home, .tunnel, .abt, .direct: .green; case .relay: .blue; case .tailscale: .orange; case .offline: .red }
     }
 
     /// Everything on the page as plain text, to paste into a message.
     private var report: String {
         var lines = ["Torrbaby connection report \(Date().formatted(date: .abbreviated, time: .standard))", AppRelease.description,
                      "Connected by: \(store.path.rawValue) — \(summary)", "Route: \(store.activeServer ?? "none")"]
-        for (kind, title) in [("home", "Home network"), ("tunnel", "Torrbaby tunnel"), ("direct", "Direct"), ("relay", "Relay"), ("tailscale", "Tailscale")] {
+        for (kind, title) in [("home", "Home network"), ("tunnel", "Torrbaby tunnel"), ("abt", "ABT"), ("direct", "Direct"), ("relay", "Relay"), ("tailscale", "Tailscale")] {
             if let check = store.routeChecks[kind] { lines.append("\(title): \(check.ok ? "ok" : "failed") at \(clock(check.at)), \(check.detail)\(check.ms.map { ", \($0) ms" } ?? "")") }
         }
         #if os(iOS)

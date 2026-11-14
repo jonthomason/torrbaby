@@ -467,6 +467,7 @@ final class Store: ObservableObject {
                 if !available { self.connectionError = URLError(.notConnectedToInternet).localizedDescription }
                 #if os(iOS)
                 self.networkChanged()
+                self.abtChanged()
                 #endif
                 self.networkAvailable = available
                 if restored {
@@ -608,6 +609,9 @@ final class Store: ObservableObject {
     func downloadEndpoint(_ path: String) throws -> URL {
         #if os(iOS)
         if PacketTunnel.shared.connected { return try ServerRoutes.endpoint(PacketTunnel.route, path: path) }
+        // ABT's name for Diamond, likewise: one address at home and away, answered while the
+        // app is suspended.
+        if abtAnswered != nil, ABT.connected { return try ServerRoutes.endpoint(ABT.route, path: path) }
         #endif
         return try endpoint(path)
     }
@@ -636,6 +640,7 @@ final class Store: ObservableObject {
     private func routeKind(_ address: String) -> String {
         #if os(iOS)
         if address == PacketTunnel.route { return "tunnel" }
+        if address == ABT.route { return "abt" }
         #endif
         if address == Self.relayCandidate || (relayRoute != nil && address == relayRoute) { return "relay" }
         if directRoute != nil && address == directRoute { return "direct" }
@@ -657,7 +662,7 @@ final class Store: ObservableObject {
     }
     /// A route's name for people: "home network", "relay via bronze", "Tailscale", "direct".
     func routeLabel(_ address: String) -> String {
-        switch routeKind(address) { case "relay": "relay via bronze"; case "direct": "direct"; case "home": "home network"; case "tunnel": "Torrbaby tunnel"; default: "Tailscale" }
+        switch routeKind(address) { case "relay": "relay via bronze"; case "direct": "direct"; case "home": "home network"; case "tunnel": "Torrbaby tunnel"; case "abt": "ABT"; default: "Tailscale" }
     }
     /// Whether this device still uses Tailscale: only where the relay through bronze is not
     /// known (Mac and Apple TV are at home; iPhone and iPad use the relay instead).
@@ -669,11 +674,12 @@ final class Store: ObservableObject {
         #endif
     }
     /// How this device reaches the server now.
-    enum Path: String { case home = "Home network", tunnel = "Torrbaby tunnel", direct = "Direct (hole punch)", relay = "Relay via bronze", tailscale = "Tailscale", offline = "Offline" }
+    enum Path: String { case home = "Home network", tunnel = "Torrbaby tunnel", abt = "ABT", direct = "Direct (hole punch)", relay = "Relay via bronze", tailscale = "Tailscale", offline = "Offline" }
     var path: Path {
         guard connected, let active = activeServer else { return .offline }
         #if os(iOS)
         if active == PacketTunnel.route { return .tunnel }
+        if active == ABT.route { return .abt }
         if directRoute != nil { return .direct }
         if relayRoute != nil && active == relayRoute { return .relay }
         #endif
@@ -689,6 +695,7 @@ final class Store: ObservableObject {
         else if !relayAddress.isEmpty { noteRoute("relay", RouteCheck(ok: false, ms: nil, detail: "could not open the relay to \(relayAddress)")) }
         if let direct = directRoute { targets.append(("direct", direct)) }
         if PacketTunnel.shared.connected { targets.append(("tunnel", PacketTunnel.route)) }
+        if ABT.connected { targets.append(("abt", ABT.route)) }
         #endif
         await withTaskGroup(of: Void.self) { group in
             for (kind, address) in targets {
@@ -801,6 +808,41 @@ final class Store: ObservableObject {
     /// path's hole was opened for the old public address, so it is dropped at once and tried
     /// again; the relay is reopened if its interface went away (on the same interface QUIC
     /// carries it across to the new address).
+    /// Whether ABT was on at the last look, and when its route to Diamond last answered (this
+    /// launch): downloads use it only once it has.
+    private var abtWasConnected = false
+    private var abtAnswered: Date?
+    private var abtChecking = false
+    /// ABT was turned on or off (seen as a change of network, and on returning to the app):
+    /// the best route changes at once.
+    private func abtChanged() {
+        let now = ABT.connected
+        guard now != abtWasConnected else { return }
+        abtWasConnected = now
+        directEvent("ABT \(now ? "is on" : "is off")")
+        if !now {
+            abtAnswered = nil
+            // Requests must stop going to its name at once, not at the next check.
+            if activeServer == ABT.route { activeServer = nil; lastDirectAttempt = .distantPast }
+        }
+        refreshFullyNext()
+        Task { await refresh(polling: true) }
+    }
+    /// With ABT on and another route in use (at home, the home name wins the race), see once
+    /// that ABT's route answers too, so downloads can take it.
+    private func checkABTRoute() {
+        guard ABT.connected, abtAnswered == nil, !abtChecking else { return }
+        abtChecking = true
+        Task { @MainActor in
+            defer { abtChecking = false }
+            let started = Date()
+            do {
+                let _: ServerPing = try await request("GET", "/v1/ping", timeout: 10, address: ABT.route)
+                abtAnswered = Date()
+                noteRoute("abt", RouteCheck(ok: true, ms: Int(Date().timeIntervalSince(started) * 1000), detail: "answered"))
+            } catch { noteRoute("abt", RouteCheck(ok: false, ms: nil, detail: Self.describe(error))) }
+        }
+    }
     private func networkChanged() {
         let signature = PunchProbe.networkSignature()
         guard signature != networkSignature else { return }
@@ -875,6 +917,8 @@ final class Store: ObservableObject {
     private func startDirectIfUseful() {
         // The packet tunnel holds its own direct path: the app's would be a second one.
         guard activeServer != PacketTunnel.route, !PacketTunnel.shared.connected else { directNote = "not needed: the Torrbaby tunnel is in use"; return }
+        // ABT punches its own path to Diamond (the same punch): the app's would be a second one.
+        guard activeServer != ABT.route else { directNote = "not needed: ABT is in use"; return }
         guard connected, usingFallback, directRoute == nil, !directAttempting,
               Date().timeIntervalSince(lastDirectAttempt) > 180, let signal = activeServer else {
             let note = !connected ? "not tried: offline" : !usingFallback ? "not tried: at home" : directAttempting ? "trying…" : directNote
@@ -906,6 +950,7 @@ final class Store: ObservableObject {
     /// way and the path is punched again at once, instead of each request failing first.
     func checkPathsOnReturn() {
         PacketTunnel.shared.refresh()
+        abtChanged()
         autoConnectTunnel()
         var dropped = false
         if directTunnel != nil, directTunnel?.alive != true { dropDirect("closed while the app was in the background"); dropped = true }
@@ -968,6 +1013,12 @@ final class Store: ObservableObject {
             addresses.removeAll { $0 == Self.relayCandidate }
             addresses.append(PacketTunnel.route)
         }
+        // ABT, when it is on, likewise: its pipe to Diamond always has a way (home network,
+        // punched, or ABT's exit), so the relay through bronze is not opened beside it.
+        if ABT.connected {
+            addresses.removeAll { $0 == Self.relayCandidate }
+            addresses.append(ABT.route)
+        }
         #if DEBUG
         // Simulator checks of the relay from home: -relayOnly YES leaves home and Tailscale out.
         if UserDefaults.standard.bool(forKey: "relayOnly") { addresses = [Self.relayCandidate] }
@@ -1014,6 +1065,10 @@ final class Store: ObservableObject {
             let route = probed.2
             self.activeServer = route
             #if os(iOS)
+            if route == ABT.route {
+                self.abtAnswered = Date()
+                self.dropDirect("ABT is in use"); self.dropRelay("ABT is in use")
+            } else { self.checkABTRoute() }
             if ServerRoutes.normalized(route) == ServerRoutes.normalized(primary) && !probed.1 { self.dropRelay("home") }
             #endif
             self.adopt(probed.0.server, atHome: ServerRoutes.normalized(route) == ServerRoutes.normalized(primary) && !probed.1)
