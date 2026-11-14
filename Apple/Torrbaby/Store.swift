@@ -835,6 +835,18 @@ final class Store: ObservableObject {
             }
         }
     }
+    /// Back from the background. iOS suspends the app, so its keepalives stop and a path left
+    /// for more than 45 s has closed; drop such paths now so the first requests take another
+    /// way and the path is punched again at once, instead of each request failing first.
+    func checkPathsOnReturn() {
+        var dropped = false
+        if directTunnel != nil, directTunnel?.alive != true { dropDirect("closed while the app was in the background"); dropped = true }
+        if relayTunnel != nil, relayTunnel?.alive != true { dropRelay("closed while the app was in the background"); dropped = true }
+        if dropped {
+            refreshFullyNext()
+            Task { await refresh(polling: true) }
+        }
+    }
     func dropDirect(_ reason: String) {
         guard directTunnel != nil || directRoute != nil else { return }
         let tunnel = directTunnel
@@ -1443,6 +1455,9 @@ struct ProfileGate<Content: View>: View {
             }
         }
         .onChange(of: scenePhase) { _, phase in
+            #if os(iOS)
+            if phase == .active { store.checkPathsOnReturn() }
+            #endif
             if phase == .active && store.profileReady { Task { await store.loadProfiles() } }
         }
         .task(id: store.server + "|" + store.clientId) {

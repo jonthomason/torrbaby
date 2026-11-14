@@ -194,6 +194,8 @@ final class DirectTunnel: @unchecked Sendable {
         return parts.joined(separator: ", ")
     }
 
+    var alive: Bool { tbdirect_alive() }
+
     /// Notice when the path is gone (the server went quiet, the network changed).
     private func watch() {
         watcher = Task.detached { [weak self] in
