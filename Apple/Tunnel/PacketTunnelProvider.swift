@@ -9,7 +9,6 @@ import os
 @_silgen_name("tbtunnel_stop") private func tbtunnel_stop()
 @_silgen_name("tbtunnel_alive") private func tbtunnel_alive() -> Bool
 @_silgen_name("tbtunnel_stats") private func tbtunnel_stats(_ buffer: UnsafeMutablePointer<CChar>, _ capacity: Int) -> Int32
-@_silgen_name("tbdirect_start_lean") private func tbdirect_start(_ fd: Int32, _ server: UnsafePointer<CChar>, _ fingerprint: UnsafePointer<CChar>) -> UInt16
 @_silgen_name("tbdirect_alive") private func tbdirect_alive() -> Bool
 @_silgen_name("tbdirect_stop") private func tbdirect_stop()
 @_silgen_name("tbdirect_relay_start_lean") private func tbdirect_relay_start(_ fd: Int32, _ server: UnsafePointer<CChar>, _ fingerprint: UnsafePointer<CChar>) -> UInt16
@@ -261,17 +260,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         note("punching a direct path (memory \(String(format: "%.1f", Self.memoryMB())) MB)")
         defer { attempting = false }
         do {
-            let port = relayPort, token = token
-            let punched = try await DirectPunch.run(stun: stun, randomFrom: windowFailedFrom, start: { body in
-                try await Self.post(port: port, token: token, path: "/v1/direct", body: body)
-            }, report: { [weak self] in self?.note("direct: \($0.step)") })
-            note("punched: \(punched.summary); opening QUIC")
-            let opened = punched.server.withCString { s in punched.fingerprint.withCString { f in tbdirect_start(punched.fd, s, f) } }
-            if opened == 0 { throw DirectPunch.Failure(message: "QUIC did not open on the punched socket") }
+            let punched = try await DirectPunch.run(stun: stun, signal: "http://127.0.0.1:\(relayPort)", token: token, randomFrom: windowFailedFrom, lean: true) { [weak self] in
+                self?.note("direct: \($0.step)")
+            }
             status = ""
             self.punched = punched.summary
             punchedFrom = punched.publicAddress
-            note("direct open (memory \(String(format: "%.1f", Self.memoryMB())) MB)")
+            note("direct open: \(punched.summary), QUIC \(punched.quicMs.map { "\($0) ms" } ?? "?") (memory \(String(format: "%.1f", Self.memoryMB())) MB)")
         } catch {
             if let address = (error as? DirectPunch.Failure)?.windowFailedAt { windowFailedFrom.insert(address) }
             status = "last try failed: \(error.localizedDescription)"
@@ -291,20 +286,4 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         else { note("relay open (loopback port \(port))") }
     }
 
-    /// A request to Diamond over the relay's loopback port, with the device's credentials.
-    private static func post<T: Decodable>(port: UInt16, token: String, path: String, body: [String: Any]) async throws -> T {
-        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)\(path)")!)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 30
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw DirectPunch.Failure(message: String(data: data, encoding: .utf8) ?? "Diamond refused")
-        }
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return try decoder.decode(T.self, from: data)
-    }
 }

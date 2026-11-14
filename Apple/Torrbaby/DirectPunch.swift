@@ -1,30 +1,30 @@
 #if os(iOS)
 import Foundation
 
-/// One attempt at a direct path to Diamond, shared by the app (DirectTunnel.establish, which
-/// shows each step on Settings → Connection) and the packet tunnel extension:
-/// - STUN from many sockets through bronze, then the same sockets ask bronze's second STUN
-///   port, to see whether this network's NAT gives each destination its own port.
-/// - Ask Diamond to start (over the relay or Tailscale), telling it this network's public
-///   ports: it sprays exactly those when the NAT keeps one port per socket but hands ports
-///   out at random (T-Mobile US); the predicted window when they come in sequence (China
-///   Telecom); random ports across the range when each destination gets its own (China Mobile).
-/// - Fire from every socket while Diamond sprays, and hand over the socket that got through.
+// Apple/Direct (Rust): the whole punch, shared with the packet tunnel and other clients.
+@_silgen_name("tbdirect_punch") private func tbdirect_punch(_ request: UnsafePointer<CChar>, _ report: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?) -> Void, _ context: UnsafeMutableRawPointer?) -> UnsafeMutablePointer<CChar>?
+@_silgen_name("tbdirect_free") private func tbdirect_free(_ text: UnsafeMutablePointer<CChar>?)
+
+/// One attempt at a direct path to Diamond: the app (DirectTunnel.establish, which shows each
+/// step on Settings → Connection) and the packet tunnel extension both call it. The punching
+/// itself is in the Rust library (Apple/Direct/src/punch.rs), so Android and Miyu Code share
+/// it: STUN through bronze on both its ports, the NAT's behaviour, asking Diamond to start over
+/// the route given, firing from every socket while Diamond sprays, and QUIC on the socket that
+/// got through. On success the direct tunnel is open and its loopback port returned.
 enum DirectPunch {
     struct Failure: LocalizedError {
         let message: String
         /// Diamond's session, when it was asked to start (its view explains a failed punch).
         var session: String? = nil
-        /// This network's public address, when a predicted window or exact ports failed from
-        /// it: the next attempt from there should spray random ports.
+        /// This network's public address, when a predicted spray failed from it: the next
+        /// attempt from there should spray random ports.
         var windowFailedAt: String? = nil
         var errorDescription: String? { message }
     }
-    struct Started: Decodable { let id: String; let server: String; let fingerprint: String; let low: Int; let high: Int; let spread: String? }
-    struct Punched { let fd: Int32; let server: String; let fingerprint: String; let publicAddress: String; let summary: String }
+    struct Punched { let port: UInt16; let publicAddress: String; let summary: String; let quicMs: Int?; let report: Report }
 
     /// What the attempt has found so far, reported as it goes.
-    struct Report {
+    struct Report: Decodable {
         var step = ""
         var interface: String?
         var publicAddress: String?
@@ -37,65 +37,44 @@ enum DirectPunch {
         var punchMs: Int?
     }
 
-    /// `stun` is bronze's STUN server ("ip:3478"); `randomFrom` are public addresses a
-    /// predicted spray failed from before (random ports from there); `start` sends Diamond the
-    /// request (POST /v1/direct) and returns its answer; `report` hears each step.
-    static func run(stun: String, randomFrom: Set<String>, start: ([String: Any]) async throws -> Started, report: (Report) -> Void) async throws -> Punched {
-        var r = Report()
-        func step(_ text: String, _ change: (inout Report) -> Void = { _ in }) { change(&r); r.step = text; report(r) }
-        step("opening sockets")
-        let probe = PunchProbe(count: 192)
-        defer { probe.close() }
-        step("opening sockets") { $0.interface = probe.interface }
-        guard probe.ready, probe.interface != nil else { throw Failure(message: "No Wi-Fi or cellular network to punch from") }
-        step("asking bronze's STUN server (\(stun)) for this network's public ports") { $0.asked = 12 }
-        let mappings = await Task.detached { probe.discover(stun: stun, limit: 12) }.value
-        guard let ip = mappings.first?.ip else { throw Failure(message: "bronze's STUN server did not answer: UDP to \(stun) may be blocked on this network") }
-        let randomSpray = randomFrom.contains(ip)
-        let ports = mappings.map(\.port).sorted()
-        let span = ports.last! - ports.first!
-        let low = max(1, ports.first!), high = min(65535, ports.last! + span + 1024)
-        step("comparing ports toward bronze's two STUN ports") { $0.publicAddress = ip; $0.answered = mappings.count }
-        let host = stun.split(separator: ":").first.map(String.init) ?? ""
-        let second = await Task.detached { probe.discover(stun: "\(host):3479", limit: 6) }.value
-        let first = Dictionary(mappings.map { ($0.socket, $0) }, uniquingKeysWith: { a, _ in a })
-        let pairs = second.compactMap { other in first[other.socket].map { ($0, other) } }
-        let perDestination = pairs.contains { $0.0.port != $0.1.port || $0.0.ip != $0.1.ip }
-        let steps = zip(ports, ports.dropFirst()).map { $1 - $0 }.sorted()
-        let medianStep = steps.isEmpty ? 0 : steps[steps.count / 2]
-        // One port per socket, but handed out far apart: no window can be predicted, and none
-        // is needed, since the ports STUN saw are the very ones Diamond will see.
-        let exact = !perDestination && !pairs.isEmpty && medianStep > 512 && !randomSpray
-        let random = randomSpray || perDestination
-        var diagnosis = pairs.isEmpty ? "second STUN port did not answer" :
-            (perDestination ? "NAT gives each destination its own port" : "same port for every destination") +
-            " (" + pairs.prefix(3).map { "\($0.0.port)/\($0.1.port)" + ($0.0.ip != $0.1.ip ? " \($0.1.ip)" : "") }.joined(separator: ", ") + ")"
-        diagnosis += ", median step \(medianStep)"
-        if randomSpray && !perDestination { diagnosis += ", window failed here before" }
-        let spread = exact ? "exact" : random ? "random" : "window"
-        step("asking Diamond to start") {
-            $0.diagnosis = diagnosis; $0.spread = spread
-            $0.window = exact ? "the \(mappings.count) ports STUN saw (\(ports.first!)–\(ports.last!))"
-                : random ? "2048 random ports across the whole range" : "\(low)–\(high) (STUN saw \(ports.first!)–\(ports.last!))"
+    private final class Listener {
+        let report: (Report) -> Void
+        init(_ report: @escaping (Report) -> Void) { self.report = report }
+    }
+    private static let decoder: JSONDecoder = { let d = JSONDecoder(); d.keyDecodingStrategy = .convertFromSnakeCase; return d }()
+
+    /// `stun` is bronze's STUN server ("ip:3478"); `signal` the route to ask Diamond over
+    /// ("http://host:port": the relay's loopback port, or Tailscale), with `token`;
+    /// `randomFrom` public addresses a predicted spray failed from before; `lean` the packet
+    /// tunnel's smaller buffers. `report` hears each step, on the punching thread.
+    static func run(stun: String, signal: String, token: String, randomFrom: Set<String>, lean: Bool, report: @escaping (Report) -> Void) async throws -> Punched {
+        let request: [String: Any] = ["stun": stun, "signal": signal, "token": token, "interface": PunchProbe.physicalInterface() ?? "",
+                                      "random_from": Array(randomFrom), "sockets": 192, "lean": lean]
+        guard let json = try? JSONSerialization.data(withJSONObject: request), let text = String(data: json, encoding: .utf8) else {
+            throw Failure(message: "Could not prepare the punch")
         }
-        var body: [String: Any] = ["ip": ip, "low": low, "high": high, "diagnosis": diagnosis, "ports": mappings.map(\.port)]
-        if spread != "window" { body["spread"] = spread }
-        let started: Started
-        do { started = try await start(body) } catch { throw Failure(message: "Could not ask Diamond to start: \(error.localizedDescription)") }
-        let sprays = started.spread == "random" ? "2048 random ports" : started.spread == "exact" ? "the \(mappings.count) ports STUN saw" : "\(started.low)–\(started.high)"
-        step("punching: firing from 192 sockets at \(started.server) while Diamond sprays \(sprays)") { $0.server = started.server; $0.session = started.id }
-        let began = Date()
-        guard let winner = await Task.detached(operation: { probe.punch(at: started.server, id: started.id, word: "TBDIRECT1", seconds: 20) }).value,
-              let fd = probe.take(winner) else {
-            let why = started.spread == "random"
-                ? "No packet got through both NATs in 20 s, even spraying random ports. This network may use a different public address toward Diamond, or block incoming UDP"
-                : "No packet got through both NATs in 20 s spraying \(sprays); the next attempt from \(ip) sprays random ports"
-            throw Failure(message: why, session: started.id, windowFailedAt: started.spread == "random" ? nil : ip)
+        let listener = Unmanaged.passRetained(Listener(report))
+        let reply: String? = await Task.detached {
+            defer { listener.release() }
+            let result = text.withCString { tbdirect_punch($0, { context, line in
+                guard let context, let line, let data = String(cString: line).data(using: .utf8),
+                      let step = try? DirectPunch.decoder.decode(Report.self, from: data) else { return }
+                Unmanaged<Listener>.fromOpaque(context).takeUnretainedValue().report(step)
+            }, listener.toOpaque()) }
+            defer { tbdirect_free(result) }
+            return result.map { String(cString: $0) }
+        }.value
+        struct Reply: Decodable {
+            let ok: Bool; let port: UInt16?; let summary: String?; let publicAddress: String?; let quicMs: Int?
+            let failure: String?; let session: String?; let windowFailedAt: String?; let report: Report?
         }
-        let ms = Int(Date().timeIntervalSince(began) * 1000)
-        step("punched; opening QUIC on the winning socket") { $0.punchMs = ms }
-        return Punched(fd: fd, server: started.server, fingerprint: started.fingerprint, publicAddress: ip,
-                       summary: "punched from \(ip) in \(ms) ms (\(started.spread ?? spread))")
+        guard let reply, let data = reply.data(using: .utf8), let result = try? decoder.decode(Reply.self, from: data) else {
+            throw Failure(message: "The punch gave no answer")
+        }
+        guard result.ok, let port = result.port else {
+            throw Failure(message: result.failure ?? "The punch failed", session: result.session, windowFailedAt: result.windowFailedAt)
+        }
+        return Punched(port: port, publicAddress: result.publicAddress ?? "", summary: result.summary ?? "", quicMs: result.quicMs, report: result.report ?? Report())
     }
 }
 #endif

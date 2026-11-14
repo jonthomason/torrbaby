@@ -22,6 +22,7 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
 pub mod packet;
+pub mod punch;
 
 struct Tunnel {
     runtime: tokio::runtime::Runtime,
@@ -96,10 +97,15 @@ pub extern "C" fn tbdirect_relay_start(fd: i32, server: *const c_char, fingerpri
     open(&RELAY, fd, server, fingerprint, b"tbrelay", "torrbaby-rendezvous", 5, (10, 45), APP_WINDOWS)
 }
 
-fn open(slot: &Mutex<Option<Tunnel>>, fd: i32, server: *const c_char, fingerprint: *const c_char, alpn: &[u8], name: &str, seconds: u64, (keepalive, idle): (u64, u64), (stream_window, window): (u32, u32)) -> u16 {
+fn open(slot: &Mutex<Option<Tunnel>>, fd: i32, server: *const c_char, fingerprint: *const c_char, alpn: &[u8], name: &str, seconds: u64, timing: (u64, u64), windows: (u32, u32)) -> u16 {
     let socket = if fd >= 0 { Some(unsafe { std::net::UdpSocket::from_raw_fd(fd) }) } else { None };
     let (Some(socket), Some(server), Some(fingerprint)) = (socket, text(server), text(fingerprint)) else { return 0 };
     let Ok(server): Result<SocketAddr, _> = server.parse() else { return 0 };
+    open_on(slot, socket, server, fingerprint, alpn, name, seconds, timing, windows)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn open_on(slot: &Mutex<Option<Tunnel>>, socket: std::net::UdpSocket, server: SocketAddr, fingerprint: String, alpn: &[u8], name: &str, seconds: u64, (keepalive, idle): (u64, u64), (stream_window, window): (u32, u32)) -> u16 {
     let Ok(runtime) = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build() else { return 0 };
     let opened = runtime.block_on(async move {
         socket.set_nonblocking(true).ok()?;
@@ -290,4 +296,58 @@ pub extern "C" fn tbtunnel_alive() -> bool {
 pub extern "C" fn tbtunnel_stop() {
     let stack = packet::STACK.lock().ok().and_then(|mut held| held.take());
     if let Some(stack) = stack { stack.runtime.shutdown_background() }
+}
+
+/// Each step of a punch, as JSON (see punch::Report), from the punching thread.
+pub type PunchReporter = extern "C" fn(context: *mut std::ffi::c_void, report: *const c_char);
+
+/// Punch a direct path to Diamond and open QUIC on it (see punch.rs). `request` is JSON:
+/// {"stun": "ip:3478", "signal": "http://host:port", "token": "…", "interface": "en0",
+/// "random_from": ["ip", …], "sockets": 192, "lean": false}. Each step goes to `report`.
+/// Blocks up to about 40 s. Returns JSON, to be freed with `tbdirect_free`:
+/// {"ok": true, "port": <loopback port>, "summary", "public_address", "quic_ms", "report"} or
+/// {"ok": false, "failure", "session", "window_failed_at", "report"}.
+#[unsafe(no_mangle)]
+pub extern "C" fn tbdirect_punch(request: *const c_char, report: PunchReporter, context: *mut std::ffi::c_void) -> *mut c_char {
+    let reply = punch_json(text(request).unwrap_or_default(), |r| {
+        if let Ok(line) = std::ffi::CString::new(r.json().to_string()) { report(context, line.as_ptr()) }
+    });
+    std::ffi::CString::new(reply.to_string()).map(|c| c.into_raw()).unwrap_or(std::ptr::null_mut())
+}
+
+/// Free a string `tbdirect_punch` returned.
+#[unsafe(no_mangle)]
+pub extern "C" fn tbdirect_free(text: *mut c_char) {
+    if !text.is_null() { drop(unsafe { std::ffi::CString::from_raw(text) }) }
+}
+
+/// The punch behind `tbdirect_punch`, with JSON in and out (Rust callers use it directly).
+pub fn punch_json(request: String, mut report: impl FnMut(&punch::Report)) -> serde_json::Value {
+    use serde_json::json;
+    let request: serde_json::Value = serde_json::from_str(&request).unwrap_or_default();
+    let string = |key: &str| request[key].as_str().unwrap_or("").to_owned();
+    let plan = punch::Plan {
+        stun: string("stun"), stun2: request["stun2"].as_str().map(str::to_owned), signal: string("signal"), token: string("token"),
+        interface: request["interface"].as_str().filter(|s| !s.is_empty()).map(str::to_owned),
+        random_from: request["random_from"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect(),
+        sockets: request["sockets"].as_u64().unwrap_or(192).clamp(1, 512) as usize,
+    };
+    let lean = request["lean"].as_bool().unwrap_or(false);
+    let mut last = punch::Report::default();
+    let outcome = punch::punch(&plan, |r| { last = r.clone(); report(r) });
+    match outcome {
+        Err(failure) => json!({"ok": false, "failure": failure.message, "session": failure.session, "window_failed_at": failure.window_failed_at, "report": last.json()}),
+        Ok(punched) => {
+            tbdirect_stop();
+            let started = std::time::Instant::now();
+            let port = open_on(&TUNNEL, punched.socket, punched.server, punched.fingerprint, b"tbdirect", "torrbaby-direct", 8, (5, 45),
+                if lean { LEAN_WINDOWS } else { APP_WINDOWS });
+            if port == 0 {
+                json!({"ok": false, "failure": "Punched, but QUIC did not open on the punched socket within 8 s", "session": last.session, "window_failed_at": null, "report": last.json()})
+            } else {
+                json!({"ok": true, "port": port, "summary": punched.summary, "public_address": punched.public_address,
+                    "quic_ms": started.elapsed().as_millis() as u64, "report": last.json()})
+            }
+        }
+    }
 }

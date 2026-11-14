@@ -2,7 +2,6 @@
 import Foundation
 
 /// The in-app half of the direct connection (Apple/Direct, Rust), linked statically.
-@_silgen_name("tbdirect_start") private func tbdirect_start(_ fd: Int32, _ server: UnsafePointer<CChar>, _ fingerprint: UnsafePointer<CChar>) -> UInt16
 @_silgen_name("tbdirect_alive") private func tbdirect_alive() -> Bool
 @_silgen_name("tbdirect_stop") private func tbdirect_stop()
 @_silgen_name("tbdirect_relay_start") private func tbdirect_relay_start(_ fd: Int32, _ server: UnsafePointer<CChar>, _ fingerprint: UnsafePointer<CChar>) -> UInt16
@@ -114,16 +113,18 @@ final class DirectTunnel: @unchecked Sendable {
         guard let stun = store.stunServer else { throw fail("bronze's address is not known yet (it comes with the online check or the pairing code)") }
         let label = attempt.signal
         let punched: DirectPunch.Punched
+        let began = Date()
         do {
-            punched = try await DirectPunch.run(stun: stun, randomFrom: windowFailedFrom, start: { body in
-                try await store.request("POST", "/v1/direct", body: body, timeout: 30, address: signal)
-            }, report: { r in
-                record {
-                    $0.step = r.step.hasPrefix("asking Diamond") ? "asking Diamond to start (over \(label))" : r.step
-                    $0.interface = r.interface; $0.publicAddress = r.publicAddress; $0.asked = r.asked; $0.answered = r.answered
-                    $0.diagnosis = r.diagnosis; $0.spread = r.spread; $0.window = r.window; $0.server = r.server; $0.session = r.session; $0.punchMs = r.punchMs
+            // The Rust library punches, asks Diamond (over `signal`) and opens QUIC itself.
+            punched = try await DirectPunch.run(stun: stun, signal: signal, token: store.token, randomFrom: windowFailedFrom, lean: false) { r in
+                Task { @MainActor in
+                    record {
+                        $0.step = r.step.hasPrefix("asking Diamond") ? "asking Diamond to start (over \(label))" : r.step
+                        $0.interface = r.interface; $0.publicAddress = r.publicAddress; $0.asked = r.asked; $0.answered = r.answered
+                        $0.diagnosis = r.diagnosis; $0.spread = r.spread; $0.window = r.window; $0.server = r.server; $0.session = r.session; $0.punchMs = r.punchMs
+                    }
                 }
-            })
+            }
         } catch let failure as DirectPunch.Failure {
             if let session = failure.session {
                 let view = await serverView(store: store, signal: signal, id: session)
@@ -132,17 +133,13 @@ final class DirectTunnel: @unchecked Sendable {
             if let address = failure.windowFailedAt { windowFailedFrom.insert(address) }
             throw fail(failure.message)
         }
-        // QUIC on the winning socket itself; the library owns the socket from here.
-        let server = punched.server, fingerprint = punched.fingerprint, fd = punched.fd
-        let quicStart = Date()
-        let port = await Task.detached { () -> UInt16 in
-            server.withCString { s in fingerprint.withCString { f in tbdirect_start(fd, s, f) } }
-        }.value
-        guard port != 0 else {
-            if let session = attempt.session { let view = await serverView(store: store, signal: signal, id: session); record { $0.serverView = view } }
-            throw fail("Punched, but QUIC did not open on the punched socket within 8 s")
+        let port = punched.port
+        record {
+            let r = punched.report
+            $0.interface = r.interface; $0.publicAddress = r.publicAddress; $0.asked = r.asked; $0.answered = r.answered
+            $0.diagnosis = r.diagnosis; $0.spread = r.spread; $0.window = r.window; $0.server = r.server; $0.session = r.session; $0.punchMs = r.punchMs
+            $0.quicMs = punched.quicMs ?? Int(Date().timeIntervalSince(began) * 1000); $0.step = "open"; $0.ok = true; $0.finished = Date()
         }
-        record { $0.quicMs = Int(Date().timeIntervalSince(quicStart) * 1000); $0.step = "open"; $0.ok = true; $0.finished = Date() }
         let tunnel = DirectTunnel()
         tunnel.port = port
         tunnel.how = "QUIC on the punched socket"
