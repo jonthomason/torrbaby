@@ -628,10 +628,11 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         }
     }
     @discardableResult
-    func report(_ id: UUID, profile: String, position: Double, duration: Double, reachedEnd: Bool, watchedEligible: Bool = true) -> Bool {
+    func report(_ id: UUID, profile: String, position: Double, duration: Double, reachedEnd: Bool, watchedEligible: Bool = true, creditsStart: Double? = nil) -> Bool {
         guard let storage, position.isFinite, duration.isFinite, duration > 0, position >= 0 else { return false }
         do {
-            try storage.recordPlayback(id, profile: profile, position: position, duration: duration, reachedEnd: reachedEnd, watchedEligible: watchedEligible)
+            try storage.recordPlayback(id, profile: profile, position: position, duration: duration, reachedEnd: reachedEnd,
+                                       watchedEligible: watchedEligible, creditsStart: creditsStart)
             reload()
             Task { await syncProgress() }
             return true

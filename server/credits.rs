@@ -16,6 +16,29 @@ pub fn cached(db:&Database,id:&str)->Result<Value> {
     }
     Ok(json!({"state":"pending","segments":[]}))
 }
+/// Detected segments this close together are one closing-credits sequence: the cast
+/// cards after the last scene, then the crawl (Harry Potter and the Chamber of Secrets:
+/// cards from 9922 s, crawl from 10082 s).
+pub const CREDITS_RUN_GAP:f64=150.0;
+/// Where the closing credits begin, for deciding that a file was watched: the last
+/// detected segment and any just before it (CREDITS_RUN_GAP), in the second half of
+/// the file only, when the analysis was made of a file of this `duration` (within 5 s;
+/// a replaced file's old analysis does not count). Apple's offline rule matches this.
+pub fn closing_start(document:&Value, duration:f64)->Option<f64> {
+    if document["state"]!="ready" || !duration.is_finite() || duration<=0.0 {return None;}
+    if document["duration"].as_f64().is_some_and(|analysed|(analysed-duration).abs()>5.0) {return None;}
+    let mut segments:Vec<(f64,f64)>=document["segments"].as_array()?.iter()
+        .filter_map(|s|Some((s["start"].as_f64()?,s["end"].as_f64()?)))
+        .filter(|(start,end)|start.is_finite() && *start>0.0 && end>start).collect();
+    segments.sort_by(|a,b|a.0.total_cmp(&b.0));
+    let (mut start,_)=*segments.last()?;
+    if start<duration*0.5 || start>=duration {return None;}
+    for (earlier,end) in segments.iter().rev().skip(1) {
+        if *earlier<duration*0.5 || end+CREDITS_RUN_GAP<start {break;}
+        start=start.min(*earlier);
+    }
+    Some(start)
+}
 /// An unfinished or failed analysis must always say why; the processing queue
 /// surfaces this text instead of a bare "incomplete".
 fn explain(mut document:Value)->Value {

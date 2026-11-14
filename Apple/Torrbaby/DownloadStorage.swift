@@ -1,6 +1,19 @@
 import Foundation
 import CryptoKit
 
+/// Diamond's completion rule (server/profiles.rs `finished`) for playback recorded on this
+/// device: the end of the file, or the start of its closing credits, or without detected
+/// credits the last two minutes (at most 5% of a short file). Diamond applies the same
+/// rule to the reports it receives, from every client.
+enum PlaybackCompletion {
+    static func finished(position: Double, duration: Double, creditsStart: Double?) -> Bool {
+        guard position.isFinite, duration.isFinite, duration > 0 else { return false }
+        if position >= duration { return true }
+        if let start = creditsStart, start.isFinite, start >= duration * 0.5, start < duration { return position >= start }
+        return duration - position <= min(120, duration * 0.05)
+    }
+}
+
 /// Durable ownership and space accounting for device-local media, separate from torrents.
 /// All mutations are serialized by the download coordinator on the main actor.
 @MainActor
@@ -514,12 +527,15 @@ final class DownloadStorage {
         do { try update(id) { $0.state = .ready; $0.received = $0.size; $0.error = nil } }
         catch { try? fm.removeItem(at: destination); throw error }
     }
-    func recordPlayback(_ id: UUID, profile: String = "profile-jon", position: Double, duration: Double, reachedEnd: Bool, watchedEligible: Bool = true) throws {
+    /// `creditsStart`: where Diamond found the closing credits begin, when known.
+    func recordPlayback(_ id: UUID, profile: String = "profile-jon", position: Double, duration: Double, reachedEnd: Bool,
+                        watchedEligible: Bool = true, creditsStart: Double? = nil) throws {
         guard position.isFinite, duration.isFinite, duration > 0, position >= 0 else { return }
         try update(id) { item in
             var value = item.viewing(profile)
             value.position = min(position, duration); value.duration = duration
-            value.watched = value.watched || reachedEnd || (watchedEligible && position >= duration)
+            value.watched = value.watched || reachedEnd
+                || (watchedEligible && PlaybackCompletion.finished(position: position, duration: duration, creditsStart: creditsStart))
             value.playbackFinished = reachedEnd
             value.progressNeedsSync = true
             value.progressEventID = UUID()
