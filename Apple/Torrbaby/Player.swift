@@ -84,6 +84,8 @@ final class PlaybackModel: ObservableObject {
     @Published var offerNextEpisode = false
     /// The closing credits Diamond detected for the current file, if any.
     private var credits: EpisodeCredits?
+    /// Diamond's whole credits analysis of the current file, for deciding it was watched.
+    private var creditsAnalysis: CreditsDetection?
     private var creditsTask: Task<Void, Never>?
     private var progressTicks = 0
     private var nextEpisodeTask: Task<Void, Never>?
@@ -149,7 +151,7 @@ final class PlaybackModel: ObservableObject {
         heading = PlayerHeading.make(next, library: store.library)
         title = heading.joined
         sequence = 0; starting = false; resumed = false
-        credits = nil; offerNextEpisode = false
+        credits = nil; creditsAnalysis = nil; offerNextEpisode = false
         creditsTask?.cancel()
         if let assetID = next.libraryAssetID, store.connected {
             let playbackID = next.id
@@ -158,6 +160,7 @@ final class PlaybackModel: ObservableObject {
                 let analysis: CreditsDetection? = try? await self.store.request("GET", "/v1/library/assets/\(assetID)/credits", timeout: 10)
                 guard !Task.isCancelled, self.playback.id == playbackID, let analysis else { return }
                 self.credits = analysis.closingCredits
+                self.creditsAnalysis = analysis
             }
         }
         let url = playback.url
@@ -407,20 +410,25 @@ final class PlaybackModel: ObservableObject {
         if !played && Date().timeIntervalSince(openedAt) > 8 { ClientLogs.failed("Playback never started (waited \(Int(Date().timeIntervalSince(openedAt))) s)") }
         else if stalls >= 2 { ClientLogs.failed("Playback stalled \(stalls) times in \(Int(watched)) s") }
     }
+    /// A report while playing (not scrubbing while paused) is evidence of watching, so one
+    /// in the closing credits finishes the file (Diamond's rule, server/profiles.rs `finished`).
+    /// `playing`: whether it was playing, for a caller that has just paused it to close.
     @discardableResult
-    func report(ended: Bool = false, reachedEnd: Bool = false) -> Bool {
+    func report(ended: Bool = false, reachedEnd: Bool = false, playing: Bool? = nil) -> Bool {
         guard resumed, !finished else { return false }
         let duration = player.currentItem?.duration.seconds ?? 0
         let position = player.currentTime().seconds
         guard duration.isFinite, duration > 0, position.isFinite else { return false }
+        let eligible = playing ?? (player.rate > 0)
         #if !os(tvOS)
         if let id = playback.localDownloadID {
-            return DownloadQueue.shared.report(id, profile: profileAtStart, position: position, duration: duration, reachedEnd: reachedEnd, watchedEligible: player.rate > 0)
+            return DownloadQueue.shared.report(id, profile: profileAtStart, position: position, duration: duration, reachedEnd: reachedEnd,
+                                               watchedEligible: eligible, creditsStart: creditsAnalysis?.closingStart(duration: duration))
         }
         #endif
         guard let session = playback.sessionId else { return false }
         sequence += 1
-        store.reportProgress(sessionId: session, sequence: sequence, position: position, duration: duration, ended: ended, watchedEligible: player.rate > 0, reachedEnd: reachedEnd)
+        store.reportProgress(sessionId: session, sequence: sequence, position: position, duration: duration, ended: ended, watchedEligible: eligible, reachedEnd: reachedEnd)
         return true
     }
     func stop() {
@@ -433,8 +441,10 @@ final class PlaybackModel: ObservableObject {
         nextEpisodeTask?.cancel(); nextEpisodeTask = nil
         creditsTask?.cancel(); creditsTask = nil
         subtitleController?.stop(); subtitleController = nil
+        // Closed while playing (in the credits, say): the last report counts as watching.
+        let playing = player.rate > 0
         player.pause()
-        let saved = report(ended: true)
+        let saved = report(ended: true, playing: playing)
         if !saved, let session = playback.sessionId {
             Task { struct Ended: Decodable { let accepted: Bool }
                 let _: Ended? = try? await store.request("POST", "/v1/playback/end", body: ["session_id": session])
@@ -462,6 +472,20 @@ struct CreditsDetection: Decodable {
         guard state == "ready" else { return nil }
         return (segments ?? []).filter { $0.end > $0.start && $0.start > 0 }.max { $0.start < $1.start }
             .map { EpisodeCredits(start: $0.start, end: $0.end) }
+    }
+    /// Where the closing credits begin, for deciding the file was watched (Diamond's
+    /// credits::closing_start): the last segment and any within 150 s before it, in the
+    /// second half of a file of this duration (the analysis must be of this file, within 5 s).
+    func closingStart(duration: Double) -> Double? {
+        guard state == "ready", duration.isFinite, duration > 0 else { return nil }
+        if let analysed = self.duration, abs(analysed - duration) > 5 { return nil }
+        let runs = (segments ?? []).filter { $0.start.isFinite && $0.start > 0 && $0.end > $0.start }.sorted { $0.start < $1.start }
+        guard var start = runs.last?.start, start >= duration * 0.5, start < duration else { return nil }
+        for earlier in runs.dropLast().reversed() {
+            if earlier.start < duration * 0.5 || earlier.end + 150 < start { break }
+            start = min(start, earlier.start)
+        }
+        return start
     }
 }
 

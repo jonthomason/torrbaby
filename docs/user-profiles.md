@@ -93,6 +93,16 @@ and offline reporting on every platform. Do not mark watched from scrubbing alon
 base it on a valid playback report with a known duration. Keep an explicit
 Mark watched / Mark unwatched action for corrections.
 
+Current rule (2026-11-14, server/profiles.rs `finished`): a report made while playing
+(`watched_eligible`) at or past the start of the closing credits Diamond detected
+(credits::closing_start: the final run of segments, second half only, analysis of a
+file of the same duration) marks the file watched; without detected credits, the last
+two minutes (at most 5% of a short file). The end of the file, Next Episode
+(`reached_end`) and Mark as Watched still finish it. Reports while paused never do.
+Diamond applies this to every client's streaming and offline reports; Apple's offline
+record uses the same rule (PlaybackCompletion). On first start with the rule, Diamond
+marks earlier records already past their credits watched, once (data_repairs).
+
 Once watched, keep that flag through rewatches until explicitly marked unwatched.
 Retain real resume/history data as appropriate, but remove finished items from
 Continue Watching. Update all devices viewing the same profile after refresh.

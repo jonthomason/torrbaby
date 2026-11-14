@@ -108,7 +108,8 @@ pub fn sync(db: &mut Database, body: Value) -> Result<Value> {
     let observed = report.recorded_at.min(time);
     let accepted = observed > latest;
     let prior_watched: bool = tx.query_row("SELECT watched FROM profile_playback WHERE profile_id=? AND media_id=?", params![profile,media], |r|r.get(0))?;
-    let watched = prior_watched || report.reached_end || (report.watched_eligible.unwrap_or(true) && crate::profiles::completed(report.position, report.duration));
+    let watched = prior_watched || report.reached_end || (report.watched_eligible.unwrap_or(true)
+        && crate::profiles::finished(report.position, report.duration, crate::profiles::closing_credits(&tx, &media, report.duration)?));
     if accepted {
         tx.execute("DELETE FROM profile_hidden_titles WHERE profile_id=? AND hidden_at<? AND title_id IN (SELECT json_extract(document,'$.entity_id') FROM library_assets WHERE json_extract(document,'$.torrent_hash')=? AND COALESCE(json_extract(document,'$.file_index'),0)=?)",params![profile,observed,hash,i64::try_from(index)?])?;
         tx.execute("UPDATE profile_playback SET position=?,duration=?,watched=?,last_played=?,client_id=?,active_session=NULL WHERE profile_id=? AND media_id=?",

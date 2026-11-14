@@ -46,6 +46,12 @@ impl Database {
         let mut database = Self { connection };
         database.migrate_profiles(version)?;
         database.initialize_catalog_revision()?;
+        // Fault tolerant: a failed repair is logged and the server starts regardless.
+        match database.repair_finished_playback() {
+            Ok(0) => {}
+            Ok(n) => eprintln!("Marked {n} playback records stopped in the closing credits as watched"),
+            Err(error) => eprintln!("Repairing playback stopped in the closing credits failed: {error:#}"),
+        }
         let existing: Option<String> = database
             .connection
             .query_row("SELECT document FROM organizer_state WHERE id=1", [], |r| {
@@ -210,7 +216,9 @@ impl Database {
         if active.as_deref() != Some(session) || sequence <= previous || finished {
             return Ok(json!({"accepted":false,"reason":"superseded_or_stale"}));
         }
-        let watched = watched || reached_end || (watched_eligible && crate::profiles::completed(position, duration));
+        // Played (not scrubbed while paused) into the closing credits, or to the end.
+        let watched = watched || reached_end || (watched_eligible
+            && crate::profiles::finished(position, duration, crate::profiles::closing_credits(&tx, &media, duration)?));
         let time = now();
         tx.execute("UPDATE profile_playback SET position=?,duration=?,watched=?,last_played=?,client_id=? WHERE profile_id=? AND media_id=?", params![position.min(duration),duration,watched,time,client,profile,media])?;
         tx.execute(

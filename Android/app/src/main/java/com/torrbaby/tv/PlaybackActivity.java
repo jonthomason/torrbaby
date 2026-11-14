@@ -518,7 +518,16 @@ public class PlaybackActivity extends Activity {
             });
   }
 
+  /**
+   * A report while playing (not scrubbing while paused) is evidence of watching: Diamond counts
+   * one in the closing credits as finished (server/profiles.rs finished).
+   */
   private void report(boolean ended) {
+    report(ended, false);
+  }
+
+  /** {@code completed}: an explicit completion (Next Episode), as at the end of the file. */
+  private void report(boolean ended, boolean completed) {
     if (player == null || api == null || session.isEmpty() || !ready || (finished && !ended))
       return;
     long duration = player.getDuration();
@@ -532,7 +541,7 @@ public class PlaybackActivity extends Activity {
               .put("duration", duration / 1000.0)
               .put("ended", ended)
               .put("watched_eligible", player.isPlaying())
-              .put("reached_end", player.getPlaybackState() == Player.STATE_ENDED);
+              .put("reached_end", completed || player.getPlaybackState() == Player.STATE_ENDED);
       ProgressQueue.save(this, api, update);
       io.execute(() -> ProgressQueue.flush(this, api));
     } catch (Exception ignored) {
@@ -561,7 +570,8 @@ public class PlaybackActivity extends Activity {
   private void advanceNextEpisode() {
     if (advancingEpisode || !hasNextEpisode()) return;
     advancingEpisode = true;
-    report(true);
+    // Choosing Next Episode is an explicit completion, as on Apple's players.
+    report(true, true);
     finished = true;
     if (player != null) player.pause();
     ArrayList<String> ids = getIntent().getStringArrayListExtra("queue_ids");

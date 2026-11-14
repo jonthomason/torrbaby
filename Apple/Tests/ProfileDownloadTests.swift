@@ -25,6 +25,16 @@ struct EpisodeNumber: Codable, Hashable { let season: Int; let episode: Int }
         // Watched only once playback actually reaches the end (b50454c), and only for that person.
         try storage.recordPlayback(item.id, profile: "alex", position: 920, duration: 1000, reachedEnd: false)
         assert(!storage.items[0].viewing("alex").watched)
+        // Played into the closing credits (not scrubbed there while paused): watched.
+        try storage.recordPlayback(item.id, profile: "sam", position: 930, duration: 1000, reachedEnd: false, watchedEligible: false, creditsStart: 900)
+        assert(!storage.items[0].viewing("sam").watched)
+        try storage.recordPlayback(item.id, profile: "sam", position: 880, duration: 1000, reachedEnd: false, creditsStart: 900)
+        assert(!storage.items[0].viewing("sam").watched)
+        try storage.recordPlayback(item.id, profile: "sam", position: 930, duration: 1000, reachedEnd: false, creditsStart: 900)
+        assert(storage.items[0].viewing("sam").watched && !storage.items[0].viewing("sam").playbackFinished)
+        assert(PlaybackCompletion.finished(position: 5790, duration: 5904, creditsStart: nil))
+        assert(!PlaybackCompletion.finished(position: 5138.563, duration: 5667.412, creditsStart: nil))
+        assert(!PlaybackCompletion.finished(position: 5700, duration: 5904, creditsStart: 1000))
         try storage.recordPlayback(item.id, profile: "alex", position: 1000, duration: 1000, reachedEnd: true)
         assert(storage.items[0].viewing("alex").watched)
         assert(!storage.items[0].viewing("profile-jon").watched)
