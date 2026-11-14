@@ -51,7 +51,6 @@ final class Ui {
     s.addState(new int[] {android.R.attr.state_pressed}, shape(Color.WHITE, Color.WHITE, c));
     s.addState(new int[] {}, shape(0x38ffffff, 0, c));
     b.setBackground(s);
-    b.setPadding(dp(c, 22), dp(c, 8), dp(c, 22), dp(c, 8));
   }
 
   /** A bar that reads as a panel when idle and turns white under the remote, with its text and its children's text following. */

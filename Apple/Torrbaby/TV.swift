@@ -352,7 +352,7 @@ private struct TVMonochromeButtonStyle: ButtonStyle {
     @Environment(\.isFocused) private var focused
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .padding(.horizontal, resting ? 26 : 18).padding(.vertical, resting ? 12 : 8)
+            .padding(.horizontal, 18).padding(.vertical, 8)
             // Where the remote is must never look the same as what is merely chosen: focus
             // is solid white and a little larger; the chosen tab is a quiet tint until focused.
             .foregroundStyle(focused ? Color.black : .white)
@@ -439,26 +439,26 @@ private struct TVMediaDetail: View {
                             if let asset = store.preferredLibraryAsset(title) {
                                 // TV shows keep the episode guide directly below the hero, so their
                                 // secondary actions live in one compact menu beside Play.
-                                VStack(alignment: .leading, spacing: 14) {
-                                    HStack(spacing: 30) {
+                                HStack(alignment: .top, spacing: 30) {
+                                    // The time left sits centred beneath Play, so the button stays a short label.
+                                    VStack(spacing: 12) {
                                         Button { play(asset, title: title) } label: {
                                             if asset.offline == true {
-                                                Label("Drive not connected", systemImage: "externaldrive.badge.xmark").font(TVHeroAction.font)
+                                                Label("Drive not connected", systemImage: "externaldrive.badge.xmark").font(.headline)
                                             } else {
-                                                // The time left goes beneath, so the button stays a short label.
                                                 Label(asset.playbackActionTitle(television: title.kind == "tv", brief: true), systemImage: "play.fill")
-                                                    .font(TVHeroAction.font)
+                                                    .font(.headline)
                                             }
                                         }.buttonStyle(TVMonochromeButtonStyle(resting: true)).focused($heroFocused)
-                                        if title.kind == "tv" {
-                                            TVMoreActions(asset: asset, title: title) { play(asset, title: title, fromBeginning: true) }
-                                                .focused($moreFocused)
+                                        if asset.offline != true, let left = asset.timeLeft {
+                                            Text(verbatim: left).font(.system(size: 24)).foregroundStyle(.white.opacity(0.7))
                                         }
-                                    }.focusSection().defaultFocus($heroFocused, true, priority: .userInitiated)
-                                    if asset.offline != true, let left = asset.timeLeft {
-                                        Text(verbatim: left).font(.system(size: 24)).foregroundStyle(.white.opacity(0.7)).padding(.leading, 4)
                                     }
-                                }
+                                    if title.kind == "tv" {
+                                        TVMoreActions(asset: asset, title: title) { play(asset, title: title, fromBeginning: true) }
+                                            .focused($moreFocused)
+                                    }
+                                }.focusSection().defaultFocus($heroFocused, true, priority: .userInitiated)
                             }
                         }.padding(44).frame(maxWidth: 1400, alignment: .leading)
                     }.frame(height: 650)
@@ -620,7 +620,7 @@ private struct TVMoreActions: View {
     @State private var showFiles = false
     var body: some View {
         Button { showMenu = true } label: {
-            Text("More…").font(TVHeroAction.font)
+            Text("More…").font(.headline)
         }.buttonStyle(TVMonochromeButtonStyle(resting: true))
         .confirmationDialog(title.title, isPresented: $showMenu, titleVisibility: .visible) {
             if title.cast?.isEmpty == false { Button("Cast") { showCast = true } }
@@ -865,9 +865,5 @@ private struct TVSearchView: View {
         }.searchable(text: $query, prompt: "Movies and TV shows")
             .background(Theme.canvas)
     }
-}
-/// Play/Resume and More… in a title's hero, just above the summary text (headline, 38 pt, shouted).
-enum TVHeroAction {
-    static let font = Font.system(size: 29, weight: .semibold)
 }
 #endif

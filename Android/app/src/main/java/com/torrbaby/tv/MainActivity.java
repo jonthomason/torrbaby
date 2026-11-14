@@ -592,11 +592,19 @@ public class MainActivity extends Activity {
               });
       Ui.primary(play);
       Ui.resting(play);
-      // Smaller than other buttons' 15, and the time left goes beneath: the full label was too loud.
-      play.setTextSize(13);
       play.setTag("hero");
-      Ui.add(buttons, play, -2, 48);
-      Ui.add(info, buttons, -1, 52);
+      // The time left sits centred beneath Play, so the button stays a short label.
+      LinearLayout playColumn = Ui.column(this);
+      playColumn.setGravity(Gravity.CENTER_HORIZONTAL);
+      Ui.add(playColumn, play, -2, 48);
+      String left = timeLeft(asset);
+      if (!left.isEmpty()) {
+        Ui.gap(playColumn, 6);
+        Ui.add(playColumn, Ui.text(this, left, 12, Ui.MUTED), -2, -2);
+      }
+      Ui.add(buttons, playColumn, -2, -2);
+      buttons.setGravity(Gravity.TOP);
+      Ui.add(info, buttons, -1, -2);
       View.OnFocusChangeListener heroFocus = (v,f)-> {
         frame.setForeground(f ? Ui.shape(0,0x99ffffff,this) : null);
         frame.animate().scaleX(f?1.006f:1).scaleY(f?1.006f:1).setDuration(140).start();
@@ -608,17 +616,9 @@ public class MainActivity extends Activity {
         Ui.gap(buttons, 20);
         Button more = Ui.button(this, L10n.t("More…"), () -> moreActions(t));
         Ui.resting(more);
-        more.setTextSize(13);
         more.setTag("more");
         more.setOnFocusChangeListener(heroFocus);
         Ui.add(buttons, more, -2, 48);
-      }
-      String left = timeLeft(asset);
-      if (!left.isEmpty()) {
-        Ui.gap(info, 6);
-        TextView time = Ui.text(this, left, 12, Ui.MUTED);
-        time.setPadding(Ui.dp(this, 3), 0, 0, 0);
-        Ui.add(info, time, -2, -2);
       }
       play.requestFocus();
     } else {
