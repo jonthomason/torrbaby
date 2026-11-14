@@ -384,6 +384,8 @@ private struct TVLanguagePicker: View {
 }
 
 private struct TVFeaturedHero: View {
+    /// Play's label, the time left and the title's name are worked out in the interface language.
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let title: LibraryTitle
     @FocusState private var focused: Bool
