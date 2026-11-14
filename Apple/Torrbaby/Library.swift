@@ -912,7 +912,8 @@ struct LibraryDetail: View {
     @State private var season: Int = -1
     @State private var playback: Playback?
     @State private var loading = false
-    @State private var preparation = ""
+    /// The file being prepared to play: its Play button shows a spinner, and pressing it again cancels.
+    @State private var preparing: String?
     @State private var playbackTask: Task<Void, Never>?
     /// Worked out once per refresh from the title's seasons (it was recomputed for every
     /// season button and every row).
@@ -925,14 +926,20 @@ struct LibraryDetail: View {
         // The time left sits centred beneath Play, so the button stays a short label; on a
         // phone, where Play spans the page, it stays in the button ("Resume · 1h 55m left").
         VStack(spacing: 5) {
-            Button { play(asset, title: title.title) } label: {
+            Button { playOrCancel(asset, title: title.title) } label: {
                 Label {
                     if store.canPlay(asset) {
-                        Text(asset.playbackActionTitle(television: title.kind == "tv", brief: !stacksActions)).lineLimit(2)
+                        // Beside Download (Mac, iPad) Play keeps its one-line width; Download gives way.
+                        Text(asset.playbackActionTitle(television: title.kind == "tv", brief: !stacksActions))
+                            .lineLimit(stacksActions ? 2 : 1).fixedSize(horizontal: !stacksActions, vertical: false)
                     } else { Text(LocalizedStringKey(store.onMissingDrive(asset) ? "Drive not connected" : "Not downloaded")) }
-                } icon: { Image(systemName: store.canPlay(asset) ? "play.fill" : store.onMissingDrive(asset) ? "externaldrive.badge.xmark" : "wifi.slash") }
+                } icon: {
+                    if preparing == asset.id { PlaybackSpinner(color: Theme.onAccent) }
+                    else { Image(systemName: store.canPlay(asset) ? "play.fill" : store.onMissingDrive(asset) ? "externaldrive.badge.xmark" : "wifi.slash") }
+                }
                     .font(.headline).frame(minWidth: title.kind == "tv" && !stacksActions ? 120 : nil, alignment: .leading).frame(minHeight: 44)
-            }.libraryActionStyle(prominent: true).disabled(loading || store.onMissingDrive(asset))
+            }.libraryActionStyle(prominent: true).disabled((loading && preparing != asset.id) || store.onMissingDrive(asset))
+            .modifier(PreparingPlayback(active: preparing == asset.id))
             if store.canPlay(asset), !stacksActions, let left = asset.timeLeft {
                 Text(verbatim: left).font(.caption).foregroundStyle(.white.opacity(0.75))
             }
@@ -1021,16 +1028,6 @@ struct LibraryDetail: View {
                 }.padding(contentPadding)
             }
         }.background(Theme.canvas).navigationTitle(title?.title ?? "Library")
-        .overlay(alignment: .bottom) {
-            if loading {
-                HStack(spacing: 12) {
-                    ProgressView().controlSize(.small)
-                    Text(LocalizedStringKey(preparation.isEmpty ? "Preparing playback…" : preparation)).font(.callout)
-                    Button("Cancel") { playbackTask?.cancel() }
-                }.padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-                    .padding(16)
-            }
-        }
         .onDisappear { playbackTask?.cancel() }
         // Cast and each file's tracks come with the page, not the list.
         .task(id: titleID) { await store.loadDetails(titleID) }
@@ -1047,9 +1044,12 @@ struct LibraryDetail: View {
     }
     private func episodeRow(_ asset: LibraryAsset, title: LibraryTitle) -> some View {
         HStack(spacing: 8) {
-            Button { play(asset, title: title.title) } label: {
+            Button { playOrCancel(asset, title: title.title) } label: {
                 HStack(spacing: 12) {
-                    Image(systemName: "play.circle.fill").font(.title).foregroundStyle(Theme.accent)
+                    Group {
+                        if preparing == asset.id { PlaybackSpinner(color: Theme.accent).frame(width: 28, height: 28) }
+                        else { Image(systemName: "play.circle.fill").font(.title).foregroundStyle(Theme.accent) }
+                    }
                     VStack(alignment: .leading, spacing: 5) {
                         // An episode with no title of its own is headed by its number, once.
                         if asset.season != nil, let e = asset.episode {
@@ -1069,15 +1069,19 @@ struct LibraryDetail: View {
                     }
                     Spacer(minLength: 0)
                 }.contentShape(Rectangle())
-            }.buttonStyle(.plain).disabled(loading)
+            }.buttonStyle(.plain).disabled(loading && preparing != asset.id)
+            .modifier(PreparingPlayback(active: preparing == asset.id))
             LibraryEpisodeActions(asset: asset, title: title)
         }.padding(14).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
     }
+    private func playOrCancel(_ asset: LibraryAsset, title: String) {
+        if preparing == asset.id { playbackTask?.cancel() } else { play(asset, title: title) }
+    }
     func play(_ asset: LibraryAsset, title: String) {
         guard !loading, store.canPlay(asset) else { return }
-        loading = true; preparation = ""
+        loading = true; preparing = asset.id
         playbackTask = Task {
-            defer { loading = false; playbackTask = nil }
+            defer { loading = false; preparing = nil; playbackTask = nil }
             do {
                 #if !os(tvOS)
                 let downloads = DownloadQueue.shared
@@ -1094,7 +1098,7 @@ struct LibraryDetail: View {
                 try store.requireStreamingConnection()
                 await store.flushProgress()
                 try await store.registerClient()
-                let link = try await store.mediaPlaybackLink(asset: asset, titleID: titleID) { preparation = $0 }
+                let link = try await store.mediaPlaybackLink(asset: asset, titleID: titleID)
                 let item = Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0, url: try store.endpoint(link.path), name: asset.season == nil ? title : title + " · " + (asset.name ?? ""), libraryAssetID: asset.id, libraryTitleID: titleID)
                 #if os(macOS)
                 MacPlaybackWindows.open(item, with: openWindow)
@@ -1134,6 +1138,34 @@ extension EnvironmentValues {
 }
 
 // Shared geometry for every library detail action on Mac, iPhone and iPad.
+/// In place of a Play button's icon while the file is prepared to play.
+struct PlaybackSpinner: View {
+    /// The colour of the icon it stands in for (tvOS follows focus instead).
+    var color: Color = Theme.onAccent
+    #if os(tvOS)
+    /// A focused TV button is white, so the spinner turns dark with its text.
+    @Environment(\.isFocused) private var focused
+    #endif
+    var body: some View {
+        ProgressView()
+            #if os(tvOS)
+            .tint(focused ? .black : .white)
+            #else
+            .controlSize(.small).tint(color)
+            #endif
+            .accessibilityHidden(true)
+    }
+}
+/// A Play button preparing its file: says so, and pressing it again cancels.
+struct PreparingPlayback: ViewModifier {
+    let active: Bool
+    func body(content: Content) -> some View {
+        if active {
+            content.accessibilityValue(Text("Preparing playback…")).accessibilityHint(Text("Cancel"))
+        } else { content }
+    }
+}
+
 private struct LibraryActionButtonStyle: ButtonStyle {
     var prominent = false
     /// Secondary actions and season tabs are quieter than the main Play/Download row.

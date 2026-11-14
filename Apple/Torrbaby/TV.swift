@@ -439,7 +439,8 @@ private struct TVMediaDetail: View {
     @State private var season: Int?
     @State private var playback: Playback?
     @State private var loading = false
-    @State private var preparation = ""
+    /// The file being prepared to play: its button shows a spinner, and pressing it again cancels.
+    @State private var preparing: String?
     @State private var playbackTask: Task<Void, Never>?
     private var title: LibraryTitle? { store.library?.titles.first { $0.id == titleID } }
     var body: some View {
@@ -459,13 +460,18 @@ private struct TVMediaDetail: View {
                                 HStack(alignment: .top, spacing: 30) {
                                     // The time left sits centred beneath Play, so the button stays a short label.
                                     VStack(spacing: 12) {
-                                        Button { play(asset, title: title) } label: {
+                                        Button { playOrCancel(asset, title: title) } label: {
                                             if asset.offline == true {
                                                 Label("Drive not connected", systemImage: "externaldrive.badge.xmark")
                                             } else {
-                                                Label(asset.playbackActionTitle(television: title.kind == "tv", brief: true), systemImage: "play.fill")
+                                                Label {
+                                                    Text(asset.playbackActionTitle(television: title.kind == "tv", brief: true))
+                                                } icon: {
+                                                    if preparing == asset.id { PlaybackSpinner() } else { Image(systemName: "play.fill") }
+                                                }
                                             }
                                         }.buttonStyle(TVMonochromeButtonStyle(resting: true)).focused($heroFocused)
+                                        .modifier(PreparingPlayback(active: preparing == asset.id))
                                         if asset.offline != true, let left = asset.timeLeft {
                                             Text(verbatim: left).font(.system(size: 24)).foregroundStyle(.white.opacity(0.7))
                                         }
@@ -553,15 +559,6 @@ private struct TVMediaDetail: View {
                 }.padding(.horizontal, 32).padding(.top, 8)
             }
         }.background(Color.black)
-            .overlay(alignment: .bottom) {
-                if loading {
-                    HStack(spacing: 16) {
-                        ProgressView().tint(.white)
-                        Text(LocalizedStringKey(preparation.isEmpty ? "Preparing playback…" : preparation))
-                    }.padding(20).background(.black.opacity(0.9), in: RoundedRectangle(cornerRadius: 10))
-                        .padding(.bottom, 24).allowsHitTesting(false)
-                }
-            }
             .toolbar(.hidden, for: .navigationBar)
             // No exit handler of our own here: the system player takes Back first, hiding its
             // controls when they are showing, and only then does Back close the player.
@@ -580,13 +577,15 @@ private struct TVMediaDetail: View {
     }
     private func assetButton(_ asset: LibraryAsset, title: LibraryTitle) -> some View {
         HStack(spacing: 20) {
-        Button { play(asset, title: title) } label: {
+        Button { playOrCancel(asset, title: title) } label: {
             HStack(spacing: 28) {
                 if asset.thumbnail != nil {
                     LibraryArtwork(id: asset.id, variant: "episode")
                         .frame(width: 250, height: 140).clipShape(RoundedRectangle(cornerRadius: 10))
                 }
-                Image(systemName: "play.circle.fill").font(.largeTitle)
+                Group {
+                    if preparing == asset.id { PlaybackSpinner() } else { Image(systemName: "play.circle.fill") }
+                }.font(.largeTitle).frame(width: 60)
                 VStack(alignment: .leading, spacing: 10) {
                     // An episode with no title of its own is headed by its number, once.
                     if let episode = asset.episode {
@@ -605,19 +604,23 @@ private struct TVMediaDetail: View {
                 Spacer()
                 if asset.duration > 0 { Text("\(Int(asset.duration / 60)) min").font(.caption) }
             }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
-        }.buttonStyle(.card).disabled(!asset.complete || asset.offline == true)
+        }.buttonStyle(.card).disabled(!asset.complete || asset.offline == true || (loading && preparing != asset.id))
+        .modifier(PreparingPlayback(active: preparing == asset.id))
         }
+    }
+    private func playOrCancel(_ asset: LibraryAsset, title: LibraryTitle) {
+        if preparing == asset.id { playbackTask?.cancel() } else { play(asset, title: title) }
     }
     private func play(_ asset: LibraryAsset, title: LibraryTitle, fromBeginning: Bool = false) {
         guard !loading, asset.offline != true else { return }
-        loading = true; preparation = ""
+        loading = true; preparing = asset.id
         playbackTask = Task {
-            defer { loading = false; playbackTask = nil }
+            defer { loading = false; preparing = nil; playbackTask = nil }
             do {
                 try store.requireStreamingConnection()
                 await store.flushProgress()
                 try await store.registerClient()
-                let link = try await store.mediaPlaybackLink(asset: asset, titleID: title.id) { preparation = $0 }
+                let link = try await store.mediaPlaybackLink(asset: asset, titleID: title.id)
                 playback = Playback(sessionId: link.sessionId, resumePosition: fromBeginning ? 0 : (link.resumePosition ?? 0),
                     url: try store.endpoint(link.path), name: asset.episode == nil ? title.title : title.title + " · " + (asset.ownName ?? L10n.format("Ep %d", asset.episode!)), libraryAssetID: asset.id, libraryTitleID: title.id)
             } catch { if !Task.isCancelled { store.actionError = error.localizedDescription } }
