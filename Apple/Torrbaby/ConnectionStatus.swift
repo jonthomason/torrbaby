@@ -41,7 +41,7 @@ struct ConnectionStatusSections: View {
                 try? await Task.sleep(for: .seconds(1))
                 tick &+= 1
                 #if os(iOS)
-                tunnelState = await tunnel.ask()
+                tunnelState = tunnel.connected ? await tunnel.ask() : nil
                 #endif
             }
         }
@@ -82,7 +82,7 @@ struct ConnectionStatusSections: View {
         SwiftUI.Section {
             row("Home network", kind: "home", inUse: store.path == .home, detail: store.homeRoute.isEmpty ? store.primaryAddress : store.homeRoute)
             #if os(iOS)
-            row("Torrbaby tunnel", kind: "tunnel", inUse: store.path == .tunnel, detail: tunnel.installed ? "\(tunnel.statusText)" + (tunnelState.map { " · \($0)" } ?? "") : "not installed")
+            row("Torrbaby tunnel", kind: "tunnel", inUse: store.path == .tunnel, detail: tunnel.installed ? tunnel.statusText + (tunnel.connected ? (tunnelState.map { "\n\($0)" } ?? "") : "") : "not installed")
             row("Direct (hole punch)", kind: "direct", inUse: store.path == .direct, detail: store.directRoute == nil ? (store.directWhyNot ?? "") : "open, QUIC on the punched socket")
             row("Relay via bronze", kind: "relay", inUse: store.path == .relay, detail: relayDetail)
             #endif
@@ -158,11 +158,20 @@ struct ConnectionStatusSections: View {
     /// suspended, so background downloads keep going.
     @ViewBuilder private var tunnelSection: some View {
         SwiftUI.Section {
-            labeled("State", tunnel.statusText + (tunnelState.map { " · \($0)" } ?? ""))
+            labeled("State", tunnel.statusText)
+            // The extension's report only while it runs: its last one would be stale.
+            if tunnel.connected, let report = tunnelState { labeled("Paths", report) }
             if let error = tunnel.lastError { labeled("Last error", error) }
             if tunnel.installed {
-                Button { Task { _ = await tunnel.ask("punch") } } label: { Text(verbatim: "Punch the direct path again") }.disabled(!tunnel.connected)
-                Button(role: .destructive) { Task { await tunnel.turnOff() } } label: { Text(verbatim: "Turn off and remove") }
+                if tunnel.connected {
+                    Button { Task { _ = await tunnel.ask("punch") } } label: { Text(verbatim: "Punch the direct path again") }
+                    Button { tunnel.disconnect() } label: { Text(verbatim: "Disconnect (Tailscale can connect again)") }
+                } else {
+                    Button {
+                        Task { await tunnel.turnOn(relay: store.relayAddress, relayFingerprint: store.relayFingerprint, stun: store.stunServer ?? "", token: store.token) }
+                    } label: { Text(verbatim: "Connect (disconnects Tailscale)") }
+                }
+                Button(role: .destructive) { Task { await tunnel.turnOff() } } label: { Text(verbatim: "Remove Torrbaby tunnel") }
             } else {
                 Button {
                     Task { await tunnel.turnOn(relay: store.relayAddress, relayFingerprint: store.relayFingerprint, stun: store.stunServer ?? "", token: store.token) }

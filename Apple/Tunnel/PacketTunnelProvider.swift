@@ -75,11 +75,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
         let message = String(data: messageData, encoding: .utf8) ?? ""
         if message == "punch" { lastAttempt = .distantPast }
-        let state = "direct \(tbdirect_alive() ? "open" : "closed") · relay \(tbdirect_relay_alive() ? "open" : "closed") · \(status)"
+        // One line per part, for Settings → Connection.
+        let direct = tbdirect_alive() ? "Direct path: open, \(punched)" : "Direct path: not open" + (status.isEmpty ? "" : " (\(status))")
+        let state = direct + "\nRelay via bronze: " + (tbdirect_relay_alive() ? "open" : "closed")
         completionHandler?(state.data(using: .utf8))
     }
 
+    /// Why the last attempt failed, or what it is doing; empty once open.
     private var status = "starting"
+    /// How the open direct path was made ("punched from … in … ms (window)").
+    private var punched = ""
 
     private func readPackets() {
         packetFlow.readPackets { [weak self] packets, _ in
@@ -133,11 +138,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             }, step: { [log] in log.info("direct: \($0, privacy: .public)") })
             let opened = punched.server.withCString { s in punched.fingerprint.withCString { f in tbdirect_start(punched.fd, s, f) } }
             if opened == 0 { throw DirectPunch.Failure(message: "QUIC did not open on the punched socket") }
-            status = "direct: \(punched.summary)"
+            status = ""
+            self.punched = punched.summary
             log.notice("direct open: \(punched.summary, privacy: .public)")
         } catch {
             sprayRandom = true
-            status = "direct failed: \(error.localizedDescription)"
+            status = "last try failed: \(error.localizedDescription)"
             log.error("direct failed: \(error.localizedDescription, privacy: .public)")
         }
     }

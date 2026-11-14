@@ -29,8 +29,9 @@ import NetworkExtension
         update()
     }
 
-    /// Install (iOS asks once) or update the configuration, and connect. On demand, so iOS
-    /// brings it back after a restart or a drop.
+    /// Install (iOS asks once) or update the configuration, and connect. Not on demand yet:
+    /// on a device that also runs Tailscale, iOS reconnecting this would knock Tailscale off.
+    /// On demand belongs to devices that use only this tunnel (the coming Automatic setting).
     func turnOn(relay: String, relayFingerprint: String, stun: String, token: String) async {
         lastError = nil
         let manager = self.manager ?? NETunnelProviderManager()
@@ -41,8 +42,7 @@ import NetworkExtension
         manager.protocolConfiguration = configuration
         manager.localizedDescription = "Torrbaby"
         manager.isEnabled = true
-        manager.onDemandRules = [NEOnDemandRuleConnect()]
-        manager.isOnDemandEnabled = true
+        manager.isOnDemandEnabled = false
         do {
             try await manager.saveToPreferences()
             try await manager.loadFromPreferences()
@@ -55,6 +55,9 @@ import NetworkExtension
         }
         update()
     }
+
+    /// Disconnect, keeping the configuration (another VPN, such as Tailscale, can connect).
+    func disconnect() { manager?.connection.stopVPNTunnel() }
 
     func turnOff() async {
         guard let manager else { return }
@@ -96,11 +99,11 @@ import NetworkExtension
 
     var statusText: String {
         switch status {
-        case .connected: "connected"
+        case .connected: "VPN connected"
         case .connecting: "connecting"
         case .disconnecting: "disconnecting"
         case .reasserting: "reconnecting"
-        case .disconnected: "disconnected"
+        case .disconnected: "VPN off (another VPN, such as Tailscale, may be connected instead)"
         case .invalid: installed ? "not configured" : "not installed"
         @unknown default: "unknown"
         }
