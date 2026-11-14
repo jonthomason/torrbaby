@@ -98,11 +98,18 @@ impl Database {
         for (table, condition) in [
             ("library_assets", "OLD.document IS NOT NEW.document"),
             ("library_entities", "OLD.document IS NOT NEW.document"),
-            ("media_inventory", "OLD.document IS NOT NEW.document"),
+            // A record pointed at a moved or renamed file changes only its revision; clients
+            // holding the library must still refetch, or they keep what they had meanwhile.
+            ("media_inventory", "OLD.document IS NOT NEW.document OR OLD.revision IS NOT NEW.revision"),
             ("profile_hidden_titles", "1"), ("profile_playback", "1"), ("playback", "1"), ("media", "1"),
             ("library_operations", "OLD.package_id IS NOT NEW.package_id"),
             ("library_operation_assets", "1"),
         ] {
+            // Made before its condition included the revision; replaced once.
+            if table == "media_inventory" {
+                let current: Option<String> = self.connection.query_row("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='catalog_revision_media_inventory_UPDATE'", [], |r| r.get(0)).ok();
+                if current.is_some_and(|sql| !sql.contains("OLD.revision")) { self.connection.execute_batch("DROP TRIGGER catalog_revision_media_inventory_UPDATE")?; }
+            }
             for event in ["INSERT", "UPDATE", "DELETE"] {
                 let when = if event == "UPDATE" { format!(" WHEN {condition}") } else { String::new() };
                 self.connection.execute_batch(&format!("CREATE TRIGGER IF NOT EXISTS catalog_revision_{table}_{event} AFTER {event} ON {table}{when} BEGIN UPDATE catalog_revision SET revision=revision+1 WHERE id=1; END;"))?;
@@ -466,6 +473,13 @@ mod completion_tests {
         db.initialize_catalog_revision()?;
         db.connection.execute("INSERT INTO organizer_state VALUES(1,'{}')",[])?;
         let first=db.catalog_revision()?;
+        // A language record following a moved file changes the revision too.
+        db.connection.execute("INSERT INTO media_inventory VALUES('a','r1','{}',0)",[])?;
+        let inserted=db.catalog_revision()?;
+        db.connection.execute("UPDATE media_inventory SET revision='r2' WHERE asset_id='a'",[])?;
+        assert_ne!(db.catalog_revision()?,inserted);
+        db.connection.execute("DELETE FROM media_inventory",[])?;
+        let first=if first==db.catalog_revision()? {first} else {db.catalog_revision()?};
         db.connection.execute("UPDATE organizer_state SET document='{\"last_poll\":42}'",[])?;
         db.connection.execute("INSERT INTO clients VALUES('test','TV','other',0,0)",[])?;
         assert_eq!(first,db.catalog_revision()?);
