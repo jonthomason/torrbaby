@@ -47,3 +47,44 @@ enum TunnelLog {
     static var available: Bool { group != nil }
 }
 #endif
+
+#if os(iOS)
+/// What the packet tunnel needs to reach Diamond, written by the app and read by the
+/// extension, in the shared keychain group: bronze's address and certificate fingerprint,
+/// its STUN server, and this device's token (kept out of the VPN configuration). The app
+/// writes it whenever it connects the tunnel, so a new token or bronze address reaches the
+/// extension at its next reconnect.
+struct TunnelShared: Codable, Equatable {
+    var relay: String
+    var relayFingerprint: String
+    var stun: String
+    var token: String
+
+    private static var group: String? { Bundle.main.object(forInfoDictionaryKey: "TorrbabySharedKeychainGroup") as? String }
+    private static func query(_ group: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "org.torrbaby.tunnel",
+         kSecAttrAccount as String: "configuration", kSecAttrAccessGroup as String: group]
+    }
+
+    func save() {
+        guard let group = Self.group, let data = try? JSONEncoder().encode(self), Self.load() != self else { return }
+        let status = SecItemUpdate(Self.query(group) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if status == errSecItemNotFound {
+            var add = Self.query(group)
+            add[kSecValueData as String] = data
+            // The extension runs while the phone is locked (after its first unlock since a restart).
+            add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            SecItemAdd(add as CFDictionary, nil)
+        }
+    }
+
+    static func load() -> TunnelShared? {
+        guard let group else { return nil }
+        var request = query(group)
+        request[kSecReturnData as String] = true
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(request as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
+        return try? JSONDecoder().decode(TunnelShared.self, from: data)
+    }
+}
+#endif

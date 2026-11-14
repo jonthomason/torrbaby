@@ -14,6 +14,7 @@ import os
 @_silgen_name("tbdirect_relay_start_lean") private func tbdirect_relay_start(_ fd: Int32, _ server: UnsafePointer<CChar>, _ fingerprint: UnsafePointer<CChar>) -> UInt16
 @_silgen_name("tbdirect_relay_alive") private func tbdirect_relay_alive() -> Bool
 @_silgen_name("tbdirect_relay_stop") private func tbdirect_relay_stop()
+@_silgen_name("tbdirect_relay_info") private func tbdirect_relay_info(_ buffer: UnsafeMutablePointer<CChar>, _ capacity: Int) -> Int32
 
 /// Torrbaby's packet tunnel: Diamond at 10.233.0.1, reached straight through both NATs.
 ///
@@ -34,6 +35,39 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private var lastAttempt = Date.distantPast
     private let started = Date()
     private var attempting = false
+    /// Behind the same NAT as Diamond (bronze sees the same public IP for both): the home
+    /// network reaches Diamond, so the tunnel stands down (no relay, no direct path, no
+    /// keepalives) until the network changes or 5 minutes pass.
+    private var atHome = false
+    private var lastHomeCheck = Date.distantPast
+    /// The public IP the direct path was punched from, and when bronze was last asked.
+    private var punchedFrom: String?
+    private var lastInfo = Date.distantPast
+
+    /// Bronze, the token and STUN: from the shared keychain the app writes (current), else the
+    /// VPN configuration (tunnels set up by earlier builds).
+    private func loadConfiguration() {
+        let configuration = (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration ?? [:]
+        let shared = TunnelShared.load()
+        relay = shared?.relay ?? configuration["relay"] as? String ?? ""
+        relayFingerprint = shared?.relayFingerprint ?? configuration["relayFingerprint"] as? String ?? ""
+        stun = shared?.stun ?? configuration["stun"] as? String ?? ""
+        token = shared?.token ?? configuration["token"] as? String ?? ""
+    }
+
+    /// Bronze's view over the relay: this device's public IP and Diamond's.
+    private static func relayInfo() async -> (ip: String, homeIP: String?)? {
+        await Task.detached { () -> (String, String?)? in
+            var buffer = [CChar](repeating: 0, count: 256)
+            guard tbdirect_relay_info(&buffer, buffer.count) > 0 else { return nil }
+            var ip: String?, home: String?
+            for line in String(cString: buffer).split(separator: "\n") {
+                if line.hasPrefix("you ") { ip = line.dropFirst(4).split(separator: ":").dropLast().joined(separator: ":") }
+                if line.hasPrefix("homeip ") { home = String(line.dropFirst(7)) }
+            }
+            return ip.map { ($0, home) }
+        }.value
+    }
 
     /// Logged to the system and to the App Group log the app shows on Settings → Connection.
     private func note(_ line: String) { log.notice("\(line, privacy: .public)"); TunnelLog.write(line) }
@@ -48,11 +82,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         note("starting (memory \(String(format: "%.1f", Self.memoryMB())) MB)")
-        let configuration = (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration ?? [:]
-        relay = configuration["relay"] as? String ?? ""
-        relayFingerprint = configuration["relayFingerprint"] as? String ?? ""
-        stun = configuration["stun"] as? String ?? ""
-        token = configuration["token"] as? String ?? ""
+        loadConfiguration()
         guard !relay.isEmpty, relayFingerprint.count == 64, !token.isEmpty else {
             note("cannot start: configuration incomplete (relay \(relay.isEmpty ? "missing" : relay), fingerprint \(relayFingerprint.count) chars, token \(token.isEmpty ? "missing" : "present"))")
             completionHandler(NEVPNError(.configurationInvalid)); return
@@ -91,7 +121,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let direct = tbdirect_alive() ? "Direct path: open, \(punched)" : "Direct path: not open" + (status.isEmpty ? "" : " (\(status))")
         let info = Bundle.main.infoDictionary
         let version = "version \(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))"
-        let state = version + "\n" + direct + "\nRelay via bronze: " + (tbdirect_relay_alive() ? "open" : "closed")
+        let state = atHome ? version + "\nAt home: standing down (Diamond is on this network)"
+            : version + "\n" + direct + "\nRelay via bronze: " + (tbdirect_relay_alive() ? "open" : "closed")
         completionHandler?(state.data(using: .utf8))
     }
 
@@ -140,6 +171,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                     self.note("network changed (\(self.networkSignature) → \(signature)): dropping both paths")
                     tbdirect_stop(); tbdirect_relay_stop()
                     self.lastAttempt = .distantPast
+                    self.atHome = false; self.punchedFrom = nil
                 }
                 self.networkSignature = signature
             }
@@ -177,7 +209,30 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             note("TCP stack stopped: starting it again")
             _ = startStack()
         }
-        if !tbdirect_relay_alive() { await openRelay() }
+        if atHome {
+            guard Date().timeIntervalSince(lastHomeCheck) > 300 else { return }
+            atHome = false
+            note("checking whether this is still the home network")
+        }
+        if !tbdirect_relay_alive() { loadConfiguration(); await openRelay() }
+        // Every 6 s, bronze's view: at home, or the public address moved (a carrier switch
+        // behind a hotspot, invisible from here) and the direct path's hole is for the old one.
+        if tbdirect_relay_alive(), Date().timeIntervalSince(lastInfo) > 6 {
+            lastInfo = Date()
+            if let info = await Self.relayInfo() {
+                if let home = info.homeIP, home == info.ip {
+                    note("at home (same public address as Diamond, \(home)): standing down")
+                    tbdirect_stop(); tbdirect_relay_stop()
+                    atHome = true; lastHomeCheck = Date(); punchedFrom = nil
+                    status = "at home: Diamond is on this network"
+                    return
+                }
+                if let from = punchedFrom, tbdirect_alive(), from != info.ip {
+                    note("public address changed (\(from) → \(info.ip)): punching again")
+                    tbdirect_stop(); punchedFrom = nil; lastAttempt = .distantPast
+                }
+            }
+        }
         guard !tbdirect_alive(), !attempting, tbdirect_relay_alive() else { return }
         // A failure waits a minute before the next try; a path that dropped is tried at once.
         guard Date().timeIntervalSince(lastAttempt) > 60 else { return }
@@ -194,6 +249,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             if opened == 0 { throw DirectPunch.Failure(message: "QUIC did not open on the punched socket") }
             status = ""
             self.punched = punched.summary
+            punchedFrom = punched.publicAddress
             note("direct open (memory \(String(format: "%.1f", Self.memoryMB())) MB)")
         } catch {
             if let address = (error as? DirectPunch.Failure)?.windowFailedAt { windowFailedFrom.insert(address) }

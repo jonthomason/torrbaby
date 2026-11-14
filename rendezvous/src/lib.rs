@@ -14,7 +14,8 @@
 //!   new stream on Diamond's connection. Requests stay ordinary Torrbaby requests carrying the
 //!   device's own credentials, which Diamond checks; this side holds no client credentials.
 //!   A stream that starts with `TBINFO1\n` is answered here instead: whether Diamond is
-//!   connected and the device's address as seen from here.
+//!   connected, the device's address as seen from here, and Diamond's public IP (a device
+//!   with the same public IP is behind the same NAT: at home).
 //!
 //! The certificate is self-signed, made once and kept in the state directory; devices pin its
 //! SHA-256 fingerprint, which reaches them through pairing or Diamond's status.
@@ -198,6 +199,11 @@ impl Hub {
     fn home_online(&self) -> bool {
         self.home.borrow().as_ref().is_some_and(|c| c.close_reason().is_none())
     }
+
+    /// Diamond's public IP, as its standing connection comes from.
+    fn home_ip(&self) -> Option<std::net::IpAddr> {
+        self.home.borrow().as_ref().filter(|c| c.close_reason().is_none()).map(|c| c.remote_address().ip())
+    }
 }
 
 /// Accept connections on `endpoint` until it closes.
@@ -282,7 +288,9 @@ async fn splice(mut device_send: quinn::SendStream, mut device_recv: quinn::Recv
     let mut first = vec![0u8; 4096];
     let n = match device_recv.read(&mut first).await { Ok(Some(n)) => n, _ => 0 };
     if first[..n].starts_with(INFO) {
-        let reply = format!("home {}\nyou {from}\n", if hub.home_online() { "online" } else { "offline" });
+        // Older clients read only the first two lines; "homeip" is on its own line after them.
+        let mut reply = format!("home {}\nyou {from}\n", if hub.home_online() { "online" } else { "offline" });
+        if let Some(ip) = hub.home_ip() { reply.push_str(&format!("homeip {ip}\n")) }
         let _ = device_send.write_all(reply.as_bytes()).await;
         let _ = device_send.finish();
         return;

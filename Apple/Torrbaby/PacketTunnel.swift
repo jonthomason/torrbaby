@@ -41,14 +41,20 @@ import NetworkExtension
         lastError = nil
         heldOff = false
         let manager = self.manager ?? NETunnelProviderManager()
+        // The token goes to the shared keychain, not the VPN configuration.
+        TunnelShared(relay: relay, relayFingerprint: relayFingerprint, stun: stun, token: token).save()
         let configuration = NETunnelProviderProtocol()
         configuration.providerBundleIdentifier = Self.extensionID
         configuration.serverAddress = "Diamond"
-        configuration.providerConfiguration = ["relay": relay, "relayFingerprint": relayFingerprint, "stun": stun, "token": token]
+        configuration.providerConfiguration = ["relay": relay, "relayFingerprint": relayFingerprint, "stun": stun]
         manager.protocolConfiguration = configuration
         manager.localizedDescription = "Torrbaby"
         manager.isEnabled = true
-        manager.isOnDemandEnabled = false
+        // On demand (iOS keeps it connected, after a restart too) only where it cannot fight
+        // another VPN: none is connected, or Settings lets this one replace it.
+        let onDemand = Self.otherVPN() == nil || UserDefaults.standard.bool(forKey: Self.replacesOtherVPNKey)
+        manager.onDemandRules = [NEOnDemandRuleConnect()]
+        manager.isOnDemandEnabled = onDemand
         do {
             try await manager.saveToPreferences()
             try await manager.loadFromPreferences()
@@ -64,7 +70,12 @@ import NetworkExtension
 
     /// Disconnect, keeping the configuration (another VPN, such as Tailscale, can connect).
     /// It stays off until Connect: Torrbaby does not connect it again by itself.
-    func disconnect() { heldOff = true; manager?.connection.stopVPNTunnel() }
+    func disconnect() {
+        heldOff = true
+        // On demand would bring it straight back.
+        if let manager, manager.isOnDemandEnabled { manager.isOnDemandEnabled = false; Task { try? await manager.saveToPreferences(); manager.connection.stopVPNTunnel() } }
+        else { manager?.connection.stopVPNTunnel() }
+    }
 
     /// Whether the user disconnected it on the Connection page (it stays off until Connect).
     var heldOff: Bool {
@@ -100,6 +111,15 @@ import NetworkExtension
     /// other VPN is connected, and over another VPN only when Settings says so. Not after the
     /// user disconnected it, and not before the app knows bronze and has its credentials.
     func autoConnect(relay: String, relayFingerprint: String, stun: String, token: String) async {
+        // Keep the extension's copy current (a new token, a new bronze) even while connected.
+        if installed, !relay.isEmpty, relayFingerprint.count == 64, !token.isEmpty {
+            TunnelShared(relay: relay, relayFingerprint: relayFingerprint, stun: stun, token: token).save()
+        }
+        // Another VPN turned up and may not be replaced: on demand off, so iOS does not fight it.
+        if let manager, manager.isOnDemandEnabled, Self.otherVPN() != nil, !UserDefaults.standard.bool(forKey: Self.replacesOtherVPNKey) {
+            manager.isOnDemandEnabled = false
+            try? await manager.saveToPreferences()
+        }
         guard !connected, status != .connecting, !heldOff, !relay.isEmpty, relayFingerprint.count == 64, !token.isEmpty else { return }
         if Self.otherVPN() != nil && !UserDefaults.standard.bool(forKey: Self.replacesOtherVPNKey) { return }
         await turnOn(relay: relay, relayFingerprint: relayFingerprint, stun: stun, token: token)
