@@ -102,17 +102,22 @@ struct LibraryCastLink: View {
     }
 }
 extension LibraryAsset {
-    /// `brief` leaves out the time remaining, for buttons with little room.
+    /// "Resume Season 1 Ep 2", "Resume" or "Play"; unless `brief`, followed by the time left
+    /// ("Resume Season 1 Ep 2 · 40m left"), worded as everywhere else in the app.
     func playbackActionTitle(television: Bool, brief: Bool = false) -> String {
         let resume = position > 0 && !watched
-        guard television, let season, let episode else {
-            guard resume, duration > position, !brief else { return L10n.text(resume ? "Resume" : "Play") }
-            let minutes = Int(ceil((duration - position) / 60))
-            return minutes >= 60 ? L10n.format("Resume (%d hr %d min left)", minutes / 60, minutes % 60) : L10n.format("Resume (%d min left)", minutes)
-        }
-        guard resume else { return L10n.format("Start Season %d Ep %d", season, episode) }
-        if duration > position && !brief { return L10n.format("Resume Season %d Ep %d (%d min remaining)", season, episode, Int(ceil((duration - position) / 60))) }
-        return L10n.format("Resume Season %d Ep %d", season, episode)
+        let action: String
+        if television, let season, let episode {
+            action = L10n.format(resume ? "Resume Season %d Ep %d" : "Start Season %d Ep %d", season, episode)
+        } else { action = L10n.text(resume ? "Resume" : "Play") }
+        guard !brief, let left = timeLeft else { return action }
+        return "\(action) · \(left)"
+    }
+    /// "40m left" or "1h 5m left" for a title partly watched; nil otherwise.
+    var timeLeft: String? {
+        guard position > 0, !watched, duration > position else { return nil }
+        let minutes = Int(ceil((duration - position) / 60))
+        return minutes >= 60 ? L10n.format("%dh %dm left", minutes / 60, minutes % 60) : L10n.format("%dm left", minutes)
     }
 }
 

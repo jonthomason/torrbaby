@@ -347,14 +347,16 @@ private struct TVLibraryView: View {
 
 private struct TVMonochromeButtonStyle: ButtonStyle {
     var selected = false
+    /// A main action (Play, More…) that reads as a button even without focus.
+    var resting = false
     @Environment(\.isFocused) private var focused
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .padding(.horizontal, 18).padding(.vertical, 8)
+            .padding(.horizontal, resting ? 26 : 18).padding(.vertical, resting ? 12 : 8)
             // Where the remote is must never look the same as what is merely chosen: focus
             // is solid white and a little larger; the chosen tab is a quiet tint until focused.
             .foregroundStyle(focused ? Color.black : .white)
-            .background(focused ? Color.white : selected ? Color.white.opacity(0.22) : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .background(focused ? Color.white : selected || resting ? Color.white.opacity(0.22) : .clear, in: RoundedRectangle(cornerRadius: 8))
             .scaleEffect(focused ? 1.08 : 1)
             .opacity(configuration.isPressed ? 0.75 : 1)
             .animation(.easeOut(duration: 0.15), value: focused)
@@ -437,20 +439,26 @@ private struct TVMediaDetail: View {
                             if let asset = store.preferredLibraryAsset(title) {
                                 // TV shows keep the episode guide directly below the hero, so their
                                 // secondary actions live in one compact menu beside Play.
-                                HStack(spacing: 30) {
-                                    Button { play(asset, title: title) } label: {
-                                        if asset.offline == true {
-                                            Label("Drive not connected", systemImage: "externaldrive.badge.xmark").font(TVHeroAction.font)
-                                        } else {
-                                            Label(asset.playbackActionTitle(television: title.kind == "tv"), systemImage: "play.fill")
-                                                .font(TVHeroAction.font)
+                                VStack(alignment: .leading, spacing: 14) {
+                                    HStack(spacing: 30) {
+                                        Button { play(asset, title: title) } label: {
+                                            if asset.offline == true {
+                                                Label("Drive not connected", systemImage: "externaldrive.badge.xmark").font(TVHeroAction.font)
+                                            } else {
+                                                // The time left goes beneath, so the button stays a short label.
+                                                Label(asset.playbackActionTitle(television: title.kind == "tv", brief: true), systemImage: "play.fill")
+                                                    .font(TVHeroAction.font)
+                                            }
+                                        }.buttonStyle(TVMonochromeButtonStyle(resting: true)).focused($heroFocused)
+                                        if title.kind == "tv" {
+                                            TVMoreActions(asset: asset, title: title) { play(asset, title: title, fromBeginning: true) }
+                                                .focused($moreFocused)
                                         }
-                                    }.buttonStyle(TVMonochromeButtonStyle()).focused($heroFocused)
-                                    if title.kind == "tv" {
-                                        TVMoreActions(asset: asset, title: title) { play(asset, title: title, fromBeginning: true) }
-                                            .focused($moreFocused)
+                                    }.focusSection().defaultFocus($heroFocused, true, priority: .userInitiated)
+                                    if asset.offline != true, let left = asset.timeLeft {
+                                        Text(verbatim: left).font(.system(size: 24)).foregroundStyle(.white.opacity(0.7)).padding(.leading, 4)
                                     }
-                                }.focusSection().defaultFocus($heroFocused, true, priority: .userInitiated)
+                                }
                             }
                         }.padding(44).frame(maxWidth: 1400, alignment: .leading)
                     }.frame(height: 650)
@@ -613,7 +621,7 @@ private struct TVMoreActions: View {
     var body: some View {
         Button { showMenu = true } label: {
             Text("More…").font(TVHeroAction.font)
-        }.buttonStyle(TVMonochromeButtonStyle())
+        }.buttonStyle(TVMonochromeButtonStyle(resting: true))
         .confirmationDialog(title.title, isPresented: $showMenu, titleVisibility: .visible) {
             if title.cast?.isEmpty == false { Button("Cast") { showCast = true } }
             if asset.position > 0 { Button("Start from Beginning", action: restart) }
@@ -858,8 +866,7 @@ private struct TVSearchView: View {
             .background(Theme.canvas)
     }
 }
-/// Play/Resume and More… in a title's hero. Headline (38 pt) made a label such as
-/// "Resume Season 1 Ep 2 (40 min remaining)" shout; this sits just above the summary text.
+/// Play/Resume and More… in a title's hero, just above the summary text (headline, 38 pt, shouted).
 enum TVHeroAction {
     static let font = Font.system(size: 29, weight: .semibold)
 }

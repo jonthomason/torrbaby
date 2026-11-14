@@ -309,6 +309,12 @@ public class MainActivity extends Activity {
                   if (api != requested || selectingProfile) return;
                   boolean firstScreen = library == null;
                   library = result;
+                  // Debug builds: `-e open_title <id>` opens that title's page, to check its layout.
+                  String debugTitle = BuildConfig.DEBUG ? getIntent().getStringExtra("open_title") : null;
+                  if (debugTitle != null) {
+                    getIntent().removeExtra("open_title");
+                    for (Library.Title candidate : library.titles) if (candidate.id.equals(debugTitle)) { open(candidate); return; }
+                  }
                   // Cached content is already usable. Refresh the model without tearing
                   // down the screen immediately before its first frame.
                   if (firstScreen || refreshingExistingScreen || !liveRaw.equals(librarySnapshot)) {
@@ -585,7 +591,8 @@ public class MainActivity extends Activity {
                 else play(t, asset, false);
               });
       Ui.primary(play);
-      // Smaller than other buttons' 15: "Resume Season 1 Ep 2 (40 min remaining)" was too loud.
+      Ui.resting(play);
+      // Smaller than other buttons' 15, and the time left goes beneath: the full label was too loud.
       play.setTextSize(13);
       play.setTag("hero");
       Ui.add(buttons, play, -2, 48);
@@ -600,10 +607,18 @@ public class MainActivity extends Activity {
       if (t.kind.equals("tv") && asset != null) {
         Ui.gap(buttons, 20);
         Button more = Ui.button(this, L10n.t("More…"), () -> moreActions(t));
+        Ui.resting(more);
         more.setTextSize(13);
         more.setTag("more");
         more.setOnFocusChangeListener(heroFocus);
         Ui.add(buttons, more, -2, 48);
+      }
+      String left = timeLeft(asset);
+      if (!left.isEmpty()) {
+        Ui.gap(info, 6);
+        TextView time = Ui.text(this, left, 12, Ui.MUTED);
+        time.setPadding(Ui.dp(this, 3), 0, 0, 0);
+        Ui.add(info, time, -2, -2);
       }
       play.requestFocus();
     } else {
@@ -1664,19 +1679,23 @@ public class MainActivity extends Activity {
     }
   }
 
+  /** "▶  Resume Season 1 Ep 2", "▶  Resume" or "▶  Play"; the time left is shown beneath (timeLeft). */
   private String playbackLabel(Library.Title title, Library.Asset asset) {
     if (asset == null) return "▶  Start";
     if (asset.offline) return L10n.t("Drive not connected");
     boolean resume = asset.position > 0 && !asset.watched;
-    int minutes = resume && asset.duration > asset.position ? (int) Math.ceil((asset.duration - asset.position) / 60) : 0;
-    if (!title.kind.equals("tv") || asset.episode <= 0) {
-      if (minutes <= 0) return L10n.t(resume ? "▶  Resume" : "▶  Play");
-      return "▶  " + (minutes >= 60
-          ? String.format(L10n.locale(), L10n.t("Resume (%d hr %d min left)"), minutes / 60, minutes % 60)
-          : String.format(L10n.locale(), L10n.t("Resume (%d min left)"), minutes));
-    }
-    String key = !resume ? "Start Season %d Ep %d" : minutes > 0 ? "Resume Season %d Ep %d (%d min remaining)" : "Resume Season %d Ep %d";
-    return "▶  " + String.format(L10n.locale(), L10n.t(key), asset.season, asset.episode, minutes);
+    if (!title.kind.equals("tv") || asset.episode <= 0) return L10n.t(resume ? "▶  Resume" : "▶  Play");
+    String key = resume ? "Resume Season %d Ep %d" : "Start Season %d Ep %d";
+    return "▶  " + String.format(L10n.locale(), L10n.t(key), asset.season, asset.episode);
+  }
+
+  /** "40m left" or "1h 5m left", worded as on the Apple apps; empty unless partly watched. */
+  static String timeLeft(Library.Asset asset) {
+    if (asset == null || asset.offline || asset.position <= 0 || asset.watched || asset.duration <= asset.position) return "";
+    int minutes = (int) Math.ceil((asset.duration - asset.position) / 60);
+    return minutes >= 60
+        ? String.format(L10n.locale(), L10n.t("%dh %dm left"), minutes / 60, minutes % 60)
+        : String.format(L10n.locale(), L10n.t("%dm left"), minutes);
   }
 
   private void castPage(Library.Title title) {
