@@ -436,9 +436,9 @@ struct RootView: View {
                     else { TorrentListView(section: selection ?? .active) }
                 }
                 .background(Theme.canvas)
-                #if os(macOS)
-                .toolbarBackground(Theme.canvas, for: .windowToolbar)
-                #else
+                // Not on the Mac: a painted window-toolbar background covered the title bar, and
+                // the window could not be dragged from anywhere along its top.
+                #if !os(macOS)
                 .toolbarBackground(Theme.canvas, for: .navigationBar)
                 #endif
                 .navigationTitle(L10n.text(selection?.rawValue ?? "Torrbaby"))
