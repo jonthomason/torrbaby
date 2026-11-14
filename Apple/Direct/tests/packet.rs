@@ -185,6 +185,9 @@ fn many_connections_with_half_aborted_mid_transfer() {
         if done { break }
         std::thread::sleep(Duration::from_micros(200));
     }
+    let mut stats = [0 as std::ffi::c_char; 768];
+    assert!(tbdirect::tbtunnel_stats(stats.as_mut_ptr(), stats.len()) > 0);
+    eprintln!("{}", unsafe { std::ffi::CStr::from_ptr(stats.as_ptr()) }.to_str().unwrap());
     let alive = tbdirect::tbtunnel_alive();
     eprintln!("received {:?}, alive {alive}", received.iter().map(|n| n / 1024).collect::<Vec<_>>());
     tbdirect::tbtunnel_stop();

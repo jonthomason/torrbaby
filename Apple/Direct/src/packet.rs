@@ -90,8 +90,13 @@ impl Stack {
                         if started.elapsed() >= wait { break None }
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     };
-                    let Some(connection) = connection else { return };
-                    let Ok((mut send, mut recv)) = connection.open_bi().await else { return };
+                    let Some(connection) = connection else { stats::add(&stats::FLOWS_UNCARRIED, 1); return };
+                    let Ok((mut send, mut recv)) = connection.open_bi().await else { stats::add(&stats::FLOWS_UNCARRIED, 1); return };
+                    stats::add(&stats::FLOWS_OPENED, 1);
+                    stats::add(&stats::FLOWS_OPEN, 1);
+                    struct Open;
+                    impl Drop for Open { fn drop(&mut self) { stats::FLOWS_OPEN.fetch_sub(1, std::sync::atomic::Ordering::Relaxed); } }
+                    let _open = Open;
                     let (mut from_ios, mut to_ios) = tokio::io::split(tcp);
                     let complete = {
                     // ipstack marks a connection closed when iOS resets it (a player cutting a
@@ -104,7 +109,7 @@ impl Stack {
                             match tokio::time::timeout(Duration::from_secs(1), from_ios.read(&mut buffer)).await {
                                 Err(_) => continue,
                                 Ok(Ok(0)) => { let _ = send.finish(); return false }
-                                Ok(Ok(n)) => { if send.write_all(&buffer[..n]).await.is_err() { return true } }
+                                Ok(Ok(n)) => { if send.write_all(&buffer[..n]).await.is_err() { return true }; stats::add(&stats::STREAM_UP, n as u64) }
                                 Ok(Err(_)) => { let _ = send.finish(); return true }
                             }
                         }
@@ -123,7 +128,7 @@ impl Stack {
                             while written < n {
                                 match tokio::time::timeout(Duration::from_secs(1), to_ios.write(&buffer[written..n])).await {
                                     Ok(Ok(0)) | Ok(Err(_)) => return false,
-                                    Ok(Ok(m)) => { written += m; idle = 0 }
+                                    Ok(Ok(m)) => { written += m; idle = 0; stats::add(&stats::STREAM_DOWN, m as u64) }
                                     // iOS taking nothing for a minute: the connection is dead.
                                     Err(_) => { idle += 1; if idle >= 60 { return false } }
                                 }
@@ -146,7 +151,7 @@ impl Stack {
                     // A connection abandoned midway: tell QUIC to discard what it holds for
                     // this stream, or that data keeps the connection's receive allowance and,
                     // added up over many abandoned requests (video seeks), stalls every stream.
-                    if !complete { let _ = recv.stop(0u32.into()); }
+                    if !complete { let _ = recv.stop(0u32.into()); stats::add(&stats::FLOWS_ABANDONED, 1); }
                 });
             }
             // The stack's own task ended (a panic inside it): the extension restarts it.
@@ -156,7 +161,34 @@ impl Stack {
     }
 
     /// One packet from the extension. Dropped when the stack is this far behind (TCP resends).
-    pub fn input(&self, packet: Vec<u8>) -> bool { self.input.try_send(packet).is_ok() }
+    pub fn input(&self, packet: Vec<u8>) -> bool {
+        let length = packet.len() as u64;
+        let accepted = self.input.try_send(packet).is_ok();
+        if accepted { stats::add(&stats::PACKETS_IN, 1); stats::add(&stats::BYTES_IN, length) } else { stats::add(&stats::DROPPED_IN, 1) }
+        accepted
+    }
+}
+
+/// Counters for the extension's periodic log line (what the tunnel carried, and where it lost).
+pub mod stats {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    pub static PACKETS_IN: AtomicU64 = AtomicU64::new(0);
+    pub static BYTES_IN: AtomicU64 = AtomicU64::new(0);
+    pub static PACKETS_OUT: AtomicU64 = AtomicU64::new(0);
+    pub static BYTES_OUT: AtomicU64 = AtomicU64::new(0);
+    /// Packets from iOS dropped because the stack was behind (TCP resends them).
+    pub static DROPPED_IN: AtomicU64 = AtomicU64::new(0);
+    /// TCP connections from iOS: opened, open now, given up (abandoned or stalled).
+    pub static FLOWS_OPENED: AtomicU64 = AtomicU64::new(0);
+    pub static FLOWS_OPEN: AtomicU64 = AtomicU64::new(0);
+    pub static FLOWS_ABANDONED: AtomicU64 = AtomicU64::new(0);
+    /// Connections that found no direct path or relay to carry them.
+    pub static FLOWS_UNCARRIED: AtomicU64 = AtomicU64::new(0);
+    /// Bytes delivered from Diamond to iOS, and from iOS to Diamond, through streams.
+    pub static STREAM_DOWN: AtomicU64 = AtomicU64::new(0);
+    pub static STREAM_UP: AtomicU64 = AtomicU64::new(0);
+    pub fn add(counter: &AtomicU64, n: u64) { counter.fetch_add(n, Relaxed); }
+    pub fn get(counter: &AtomicU64) -> u64 { counter.load(Relaxed) }
 }
 
 /// Whether the stack is accepting connections.

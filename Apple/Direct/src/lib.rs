@@ -233,6 +233,8 @@ pub extern "C" fn tbtunnel_start(mtu: u16, write: PacketWriter, context: *mut st
             data.extend_from_slice(&packet); lengths.push(packet.len());
             // Whatever else is already waiting goes in the same call (up to 64 packets).
             while lengths.len() < 64 { let Ok(more) = output.try_recv() else { break }; data.extend_from_slice(&more); lengths.push(more.len()); }
+            packet::stats::add(&packet::stats::PACKETS_OUT, lengths.len() as u64);
+            packet::stats::add(&packet::stats::BYTES_OUT, data.len() as u64);
             write(context.0, data.as_ptr(), lengths.as_ptr(), lengths.len());
         }
     });
@@ -246,6 +248,35 @@ pub extern "C" fn tbtunnel_input(packet: *const u8, length: usize) -> bool {
     if packet.is_null() { return false }
     let bytes = unsafe { std::slice::from_raw_parts(packet, length) }.to_vec();
     packet::STACK.lock().ok().and_then(|held| held.as_ref().map(|stack| stack.input(bytes))).unwrap_or(false)
+}
+
+/// One line of counters for the extension's log: packets and bytes each way through the TCP
+/// stack, drops, connections, and each QUIC path's round trip, congestion window and loss.
+/// Writes it NUL-terminated into `buffer`; returns its length, or -1.
+#[unsafe(no_mangle)]
+pub extern "C" fn tbtunnel_stats(buffer: *mut c_char, capacity: usize) -> i32 {
+    use packet::stats::*;
+    if buffer.is_null() || capacity == 0 { return -1 }
+    let mut line = format!(
+        "in {} pkts/{} KB, out {} pkts/{} KB, dropped in {}, streams down {} KB up {} KB, flows open {} (opened {}, abandoned {}, uncarried {})",
+        get(&PACKETS_IN), get(&BYTES_IN) / 1024, get(&PACKETS_OUT), get(&BYTES_OUT) / 1024, get(&DROPPED_IN),
+        get(&STREAM_DOWN) / 1024, get(&STREAM_UP) / 1024, get(&FLOWS_OPEN), get(&FLOWS_OPENED), get(&FLOWS_ABANDONED), get(&FLOWS_UNCARRIED));
+    for (name, slot) in [("direct", &TUNNEL), ("relay", &RELAY)] {
+        let connection = slot.lock().ok().and_then(|held| held.as_ref().map(|t| t.connection.clone()));
+        if let Some(connection) = connection.filter(|c| c.close_reason().is_none()) {
+            let stats = connection.stats();
+            line.push_str(&format!("; {name} rtt {} ms, cwnd {} KB, lost {} pkts, sent {} KB, received {} KB",
+                stats.path.rtt.as_millis(), stats.path.cwnd / 1024, stats.path.lost_packets,
+                stats.udp_tx.bytes / 1024, stats.udp_rx.bytes / 1024));
+        }
+    }
+    let bytes = line.as_bytes();
+    let length = bytes.len().min(capacity - 1);
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, buffer, length);
+        *buffer.add(length) = 0;
+    }
+    length as i32
 }
 
 /// Whether the packet tunnel's TCP stack is running (false after a panic inside it).

@@ -8,6 +8,7 @@ import os
 @_silgen_name("tbtunnel_input") private func tbtunnel_input(_ packet: UnsafePointer<UInt8>?, _ length: Int) -> Bool
 @_silgen_name("tbtunnel_stop") private func tbtunnel_stop()
 @_silgen_name("tbtunnel_alive") private func tbtunnel_alive() -> Bool
+@_silgen_name("tbtunnel_stats") private func tbtunnel_stats(_ buffer: UnsafeMutablePointer<CChar>, _ capacity: Int) -> Int32
 @_silgen_name("tbdirect_start_lean") private func tbdirect_start(_ fd: Int32, _ server: UnsafePointer<CChar>, _ fingerprint: UnsafePointer<CChar>) -> UInt16
 @_silgen_name("tbdirect_alive") private func tbdirect_alive() -> Bool
 @_silgen_name("tbdirect_stop") private func tbdirect_stop()
@@ -184,10 +185,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private func keep() {
         keeper = Task.detached { [weak self] in
             var ticks = 0
+            var lastStats = ""
             while !Task.isCancelled {
                 await self?.maintain()
                 ticks += 1
-                if ticks % 10 == 0 { self?.note("memory \(String(format: "%.1f", Self.memoryMB())) MB, direct \(tbdirect_alive() ? "open" : "closed"), relay \(tbdirect_relay_alive() ? "open" : "closed")") }
+                // Every ~9 s while traffic flows (the counters moved), every 30 s otherwise.
+                var buffer = [CChar](repeating: 0, count: 768)
+                let stats = tbtunnel_stats(&buffer, buffer.count) > 0 ? String(cString: buffer) : ""
+                let counters = stats.components(separatedBy: "; ").first ?? ""
+                if (ticks % 3 == 0 && counters != lastStats) || ticks % 10 == 0 {
+                    lastStats = counters
+                    self?.note("memory \(String(format: "%.1f", Self.memoryMB())) MB, direct \(tbdirect_alive() ? "open" : "closed"), relay \(tbdirect_relay_alive() ? "open" : "closed"); \(stats)")
+                }
                 try? await Task.sleep(for: .seconds(3))
             }
         }
