@@ -73,8 +73,10 @@ struct TunnelShared: Codable, Equatable {
          kSecAttrAccount as String: "configuration", kSecAttrAccessGroup as String: group]
     }
 
-    func save() {
-        guard let group = Self.group, let data = try? JSONEncoder().encode(self), Self.load() != self else { return }
+    /// Saved when it differs from what is kept; true when it did (the extension is then told).
+    @discardableResult
+    func save() -> Bool {
+        guard let group = Self.group, let data = try? JSONEncoder().encode(self), Self.load() != self else { return false }
         let status = SecItemUpdate(Self.query(group) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecItemNotFound {
             var add = Self.query(group)
@@ -83,6 +85,7 @@ struct TunnelShared: Codable, Equatable {
             add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             SecItemAdd(add as CFDictionary, nil)
         }
+        return true
     }
 
     static func load() -> TunnelShared? {

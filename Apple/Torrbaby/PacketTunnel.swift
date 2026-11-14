@@ -83,6 +83,7 @@ import UIKit
     }
     /// This launch has been handled (the tunnel taken back from another VPN if need be).
     private var launched = false
+    private var reloadedThisLaunch = false
 
     /// Another VPN's interface is up: a utun with an IPv4 address other than this tunnel's
     /// (iOS's own utun interfaces carry only IPv6 link-local addresses). Tailscale's is 100.x.
@@ -114,7 +115,11 @@ import UIKit
     func autoConnect(relay: String, relayFingerprint: String, stun: String, token: String, home: String? = nil, identity: String? = nil, client: String? = nil) async {
         // Keep the extension's copy current (a new token, a new bronze) even while connected.
         if installed, !relay.isEmpty, relayFingerprint.count == 64, !token.isEmpty {
-            TunnelShared(relay: relay, relayFingerprint: relayFingerprint, stun: stun, token: token, home: home, identity: identity, client: client).save()
+            let changed = TunnelShared(relay: relay, relayFingerprint: relayFingerprint, stun: stun, token: token, home: home, identity: identity, client: client).save()
+            // A running extension reads its copy only when it starts or reopens the relay: told
+            // at once, so Diamond's identity (encryption) or home name take effect now.
+            // Also once per launch: an extension started by an older build may hold an older copy.
+            if connected, changed || !reloadedThisLaunch { reloadedThisLaunch = true; _ = await ask("reload") }
         }
         let ready = !relay.isEmpty && relayFingerprint.count == 64 && !token.isEmpty
         // The launch: the first call of this process with the credentials known (on a first

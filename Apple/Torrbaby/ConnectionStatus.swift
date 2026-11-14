@@ -226,6 +226,11 @@ struct ConnectionStatusSections: View {
             labeled("State", tunnel.statusText)
             // The extension's report only while it runs: its last one would be stale.
             if tunnel.connected, let report = tunnelPaths { labeled("Paths", report) }
+            // End-to-end encryption through bronze needs Diamond's identity, learned only where
+            // bronze cannot interfere.
+            labeled("Diamond's identity", store.diamondIdentity.isEmpty
+                ? "not known yet: learned the next time this device reaches Diamond on the home network, or from pairing. Until then the relay is not encrypted end to end."
+                : "\(store.diamondIdentity.prefix(16))…, learned \(store.diamondIdentitySource.isEmpty ? "at home" : store.diamondIdentitySource)")
             if let error = tunnel.lastError { labeled("Last error", error) }
             if !tunnel.connected, let why = tunnel.lastDisconnect { labeled("Why it last disconnected (iOS)", why) }
             // The extension's own log (App Group), newest last: what it did, including just

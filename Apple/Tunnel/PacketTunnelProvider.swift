@@ -201,6 +201,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
         let message = String(data: messageData, encoding: .utf8) ?? ""
         if message == "punch" { lastAttempt = .distantPast; nextPunch = .distantPast }
+        if message == "reload" {
+            let had = identity
+            loadConfiguration()
+            note("configuration reloaded from the app" + (identity != had ? (identity.count == 64 ? ": relay now encrypted end to end to Diamond" : ": Diamond's identity forgotten") : ""))
+        }
         // One line per part, for Settings → Connection.
         let direct = tbdirect_alive() ? "Direct path: open, \(punched)" : "Direct path: not open" + (status.isEmpty ? "" : " (\(status))")
         let info = Bundle.main.infoDictionary

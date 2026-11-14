@@ -322,10 +322,17 @@ final class Store: ObservableObject {
     /// path must present it. Learned only where bronze cannot interfere: from pairing, or from
     /// Diamond itself on the home network (which also replaces it, should Diamond's change).
     @Published private(set) var diamondIdentity = UserDefaults.standard.string(forKey: "diamond-identity") ?? ""
-    func learnIdentity(_ fingerprint: String?) {
+    /// Where and when it was learned ("at home, 14 Nov 15:21"), for the Connection page.
+    @Published private(set) var diamondIdentitySource = UserDefaults.standard.string(forKey: "diamond-identity-source") ?? ""
+    func learnIdentity(_ fingerprint: String?, from source: String = "at home") {
         guard let fingerprint = fingerprint?.lowercased(), fingerprint.count == 64, fingerprint != diamondIdentity else { return }
         diamondIdentity = fingerprint
+        diamondIdentitySource = "\(source), \(Date().formatted(date: .abbreviated, time: .shortened))"
         UserDefaults.standard.set(fingerprint, forKey: "diamond-identity")
+        UserDefaults.standard.set(diamondIdentitySource, forKey: "diamond-identity-source")
+        #if os(iOS)
+        directEvent("Diamond's identity learned \(source): relayed traffic is now encrypted end to end")
+        #endif
         #if os(iOS)
         DirectTunnel.pin(identity: fingerprint)
         autoConnectTunnel()

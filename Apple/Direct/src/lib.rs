@@ -266,7 +266,18 @@ static CLIENT: Mutex<String> = Mutex::new(String::new());
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tbdirect_client(id: *const c_char) {
-    if let Ok(mut held) = CLIENT.lock() { *held = text(id).unwrap_or_default() }
+    let id = text(id).unwrap_or_default();
+    let changed = CLIENT.lock().map(|mut held| { let changed = *held != id; *held = id.clone(); changed }).unwrap_or(false);
+    // A relay already open is told now (a newly opened one names itself as it opens).
+    if !changed || id.is_empty() { return }
+    let open = RELAY.lock().ok().and_then(|held| held.as_ref().map(|t| (t.runtime.handle().clone(), t.connection.clone())));
+    if let Some((handle, connection)) = open {
+        handle.spawn(async move {
+            let Ok((mut send, _recv)) = connection.open_bi().await else { return };
+            let _ = send.write_all(format!("TBNAME1 {id}\n").as_bytes()).await;
+            let _ = send.finish();
+        });
+    }
 }
 
 /// Diamond's identity fingerprint, learned from pairing or from Diamond at home: relayed
