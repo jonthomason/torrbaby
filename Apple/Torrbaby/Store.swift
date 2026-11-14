@@ -469,6 +469,8 @@ final class Store: ObservableObject {
         PacketTunnel.shared.onChange = { [weak self] in
             guard let self else { return }
             self.directEvent("Torrbaby tunnel \(PacketTunnel.shared.statusText)")
+            // Connected: it is the way to Diamond; the app's own paths would only compete.
+            if PacketTunnel.shared.connected { self.dropDirect("the Torrbaby tunnel is connected"); self.dropRelay("the Torrbaby tunnel is connected") }
             self.refreshFullyNext()
             Task { await self.refresh(polling: true) }
         }
@@ -565,7 +567,11 @@ final class Store: ObservableObject {
         return URLSession(configuration: config)
     }()
     func endpoint(_ path: String) throws -> URL {
-        try ServerRoutes.endpoint(directRoute ?? activeServer ?? primaryAddress, path: path)
+        #if os(iOS)
+        // The tunnel, when it is the route, is used even if an in-app path is still open.
+        if activeServer == PacketTunnel.route { return try ServerRoutes.endpoint(PacketTunnel.route, path: path) }
+        #endif
+        return try ServerRoutes.endpoint(directRoute ?? activeServer ?? primaryAddress, path: path)
     }
     /// Torrbaby's own direct path to the server (a local proxy into a QUIC tunnel), used
     /// instead of the Tailscale route while it is up. Only away from home, on iPhone and iPad.
@@ -637,6 +643,7 @@ final class Store: ObservableObject {
         if let relay = await ensureRelay() { targets.append(("relay", relay)) }
         else if !relayAddress.isEmpty { noteRoute("relay", RouteCheck(ok: false, ms: nil, detail: "could not open the relay to \(relayAddress)")) }
         if let direct = directRoute { targets.append(("direct", direct)) }
+        if PacketTunnel.shared.connected { targets.append(("tunnel", PacketTunnel.route)) }
         #endif
         await withTaskGroup(of: Void.self) { group in
             for (kind, address) in targets {
@@ -808,7 +815,7 @@ final class Store: ObservableObject {
     /// Away from home, try for a direct path every few minutes until one holds.
     private func startDirectIfUseful() {
         // The packet tunnel holds its own direct path: the app's would be a second one.
-        guard activeServer != PacketTunnel.route else { directNote = "not needed: the Torrbaby tunnel is in use"; return }
+        guard activeServer != PacketTunnel.route, !PacketTunnel.shared.connected else { directNote = "not needed: the Torrbaby tunnel is in use"; return }
         guard connected, usingFallback, directRoute == nil, !directAttempting,
               Date().timeIntervalSince(lastDirectAttempt) > 180, let signal = activeServer else {
             let note = !connected ? "not tried: offline" : !usingFallback ? "not tried: at home" : directAttempting ? "trying…" : directNote
@@ -839,6 +846,7 @@ final class Store: ObservableObject {
     /// for more than 45 s has closed; drop such paths now so the first requests take another
     /// way and the path is punched again at once, instead of each request failing first.
     func checkPathsOnReturn() {
+        PacketTunnel.shared.refresh()
         var dropped = false
         if directTunnel != nil, directTunnel?.alive != true { dropDirect("closed while the app was in the background"); dropped = true }
         if relayTunnel != nil, relayTunnel?.alive != true { dropRelay("closed while the app was in the background"); dropped = true }
@@ -877,6 +885,7 @@ final class Store: ObservableObject {
         // the relay are the only ways.
         if !tailscaleInUse { addresses.removeAll { $0 != Self.relayCandidate && ServerRoutes.normalized($0) != ServerRoutes.normalized(primary) } }
         // Torrbaby's packet tunnel, when connected, replaces the app's relay and direct path.
+        PacketTunnel.shared.refresh()
         if PacketTunnel.shared.connected {
             addresses.removeAll { $0 == Self.relayCandidate }
             addresses.append(PacketTunnel.route)

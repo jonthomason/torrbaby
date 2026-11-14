@@ -162,6 +162,7 @@ struct ConnectionStatusSections: View {
             // The extension's report only while it runs: its last one would be stale.
             if tunnel.connected, let report = tunnelState { labeled("Paths", report) }
             if let error = tunnel.lastError { labeled("Last error", error) }
+            if !tunnel.connected, let why = tunnel.lastDisconnect { labeled("Why it last disconnected (iOS)", why) }
             if tunnel.installed {
                 if tunnel.connected {
                     Button { Task { _ = await tunnel.ask("punch") } } label: { Text(verbatim: "Punch the direct path again") }

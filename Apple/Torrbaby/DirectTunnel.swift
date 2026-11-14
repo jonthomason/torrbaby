@@ -95,14 +95,13 @@ final class DirectTunnel: @unchecked Sendable {
     private var watcher: Task<Void, Never>?
 
     struct Failure: LocalizedError { let message: String; var errorDescription: String? { message } }
-    private struct Started: Decodable { let id: String; let server: String; let fingerprint: String; let low: Int; let high: Int; let spread: String? }
-    /// Public addresses a punch has failed from with a predicted window: the next attempt
-    /// from there sprays random ports instead.
+    /// Public addresses a punch has failed from with a predicted window or exact ports: the
+    /// next attempt from there sprays random ports instead.
     @MainActor static var windowFailedFrom: Set<String> = []
 
-    /// Punch, ask the server to listen, and open the tunnel on the socket that got through.
-    /// `signal` is the route the request to the server takes (the relay or Tailscale). Each
-    /// step is recorded in `store.directAttempt` for Settings → Connection, and a failure says
+    /// Punch (DirectPunch, shared with the packet tunnel), with Diamond asked over `signal`
+    /// (the relay or Tailscale), and open the tunnel on the socket that got through. Each step
+    /// is recorded in `store.directAttempt` for Settings → Connection, and a failure says
     /// which step failed and why.
     @MainActor static func establish(store: Store, signal: String) async throws -> DirectTunnel {
         var attempt = Store.DirectAttempt()
@@ -112,65 +111,35 @@ final class DirectTunnel: @unchecked Sendable {
             record { $0.failure = why; $0.finished = Date(); $0.ok = false }
             return Failure(message: why)
         }
-        record { $0.step = "opening sockets" }
-        let probe = PunchProbe(count: 192)
-        defer { probe.close() }
-        record { $0.interface = probe.interface }
-        guard probe.ready, probe.interface != nil else { throw fail("No Wi-Fi or cellular network to punch from") }
         guard let stun = store.stunServer else { throw fail("bronze's address is not known yet (it comes with the online check or the pairing code)") }
-        record { $0.step = "asking bronze's STUN server (\(stun)) for this network's public ports"; $0.asked = 12 }
-        let mappings = await Task.detached { probe.discover(stun: stun, limit: 12) }.value
-        guard let ip = mappings.first?.ip else { throw fail("bronze's STUN server did not answer: UDP to \(stun) may be blocked on this network") }
-        let ports = mappings.map(\.port).sorted()
-        let span = ports.last! - ports.first!
-        let low = max(1, ports.first!), high = min(65535, ports.last! + span + 1024)
-        // Does this network's NAT give each destination its own port? The same sockets ask
-        // bronze's second STUN port; a different answer means the port Diamond will see cannot
-        // be predicted from STUN (China Mobile), so Diamond sprays random ports instead.
-        record { $0.step = "comparing ports toward bronze's two STUN ports" }
-        let host = stun.split(separator: ":").first.map(String.init) ?? ""
-        let second = await Task.detached { probe.discover(stun: "\(host):3479", limit: 6) }.value
-        let first = Dictionary(mappings.map { ($0.socket, $0) }, uniquingKeysWith: { a, _ in a })
-        let pairs = second.compactMap { other in first[other.socket].map { ($0, other) } }
-        let perDestination = pairs.contains { $0.0.port != $0.1.port || $0.0.ip != $0.1.ip }
-        let steps = zip(ports, ports.dropFirst()).map { $1 - $0 }.sorted()
-        let medianStep = steps.isEmpty ? 0 : steps[steps.count / 2]
-        var diagnosis = pairs.isEmpty ? "second STUN port did not answer" :
-            (perDestination ? "NAT gives each destination its own port" : "same port for every destination") +
-            " (" + pairs.prefix(3).map { "\($0.0.port)/\($0.1.port)" + ($0.0.ip != $0.1.ip ? " \($0.1.ip)" : "") }.joined(separator: ", ") + ")"
-        diagnosis += ", median step \(medianStep)"
-        let random = perDestination || windowFailedFrom.contains(ip)
-        if windowFailedFrom.contains(ip) && !perDestination { diagnosis += ", window failed here before" }
-        record { $0.publicAddress = ip; $0.answered = mappings.count; $0.diagnosis = diagnosis; $0.spread = random ? "random" : "window"
-            $0.window = random ? "2048 random ports across the whole range" : "\(low)–\(high) (STUN saw \(ports.first!)–\(ports.last!))"
-            $0.step = "asking Diamond to start (over \(attempt.signal))" }
-        let started: Started
-        var body: [String: Any] = ["ip": ip, "low": low, "high": high, "diagnosis": diagnosis]
-        if random { body["spread"] = "random" }
-        do { started = try await store.request("POST", "/v1/direct", body: body, timeout: 30, address: signal) }
-        catch { throw fail("Could not ask Diamond to start: \(Store.describe(error))") }
-        record { $0.server = started.server; $0.session = started.id; $0.step = "punching: firing from 192 sockets at \(started.server) while Diamond sprays " + (started.spread == "random" ? "2048 random ports" : "\(started.low)–\(started.high)") }
-        let punchStart = Date()
-        guard let winner = await Task.detached(operation: { probe.punch(at: started.server, id: started.id, word: "TBDIRECT1", seconds: 20) }).value,
-              let fd = probe.take(winner) else {
-            let view = await serverView(store: store, signal: signal, id: started.id)
-            record { $0.serverView = view }
-            if started.spread != "random" {
-                windowFailedFrom.insert(ip)
-                throw fail("No packet got through both NATs in 20 s with the predicted ports; the next attempt from \(ip) sprays random ports")
+        let label = attempt.signal
+        let punched: DirectPunch.Punched
+        do {
+            punched = try await DirectPunch.run(stun: stun, randomFrom: windowFailedFrom, start: { body in
+                try await store.request("POST", "/v1/direct", body: body, timeout: 30, address: signal)
+            }, report: { r in
+                record {
+                    $0.step = r.step.hasPrefix("asking Diamond") ? "asking Diamond to start (over \(label))" : r.step
+                    $0.interface = r.interface; $0.publicAddress = r.publicAddress; $0.asked = r.asked; $0.answered = r.answered
+                    $0.diagnosis = r.diagnosis; $0.spread = r.spread; $0.window = r.window; $0.server = r.server; $0.session = r.session; $0.punchMs = r.punchMs
+                }
+            })
+        } catch let failure as DirectPunch.Failure {
+            if let session = failure.session {
+                let view = await serverView(store: store, signal: signal, id: session)
+                record { $0.serverView = view }
             }
-            throw fail("No packet got through both NATs in 20 s, even spraying random ports. This network may use a different public address toward Diamond, or block incoming UDP")
+            if let address = failure.windowFailedAt { windowFailedFrom.insert(address) }
+            throw fail(failure.message)
         }
-        record { $0.punchMs = Int(Date().timeIntervalSince(punchStart) * 1000); $0.step = "punched; opening QUIC on the winning socket" }
         // QUIC on the winning socket itself; the library owns the socket from here.
-        let server = started.server, fingerprint = started.fingerprint
+        let server = punched.server, fingerprint = punched.fingerprint, fd = punched.fd
         let quicStart = Date()
         let port = await Task.detached { () -> UInt16 in
             server.withCString { s in fingerprint.withCString { f in tbdirect_start(fd, s, f) } }
         }.value
         guard port != 0 else {
-            let view = await serverView(store: store, signal: signal, id: started.id)
-            record { $0.serverView = view }
+            if let session = attempt.session { let view = await serverView(store: store, signal: signal, id: session); record { $0.serverView = view } }
             throw fail("Punched, but QUIC did not open on the punched socket within 8 s")
         }
         record { $0.quicMs = Int(Date().timeIntervalSince(quicStart) * 1000); $0.step = "open"; $0.ok = true; $0.finished = Date() }

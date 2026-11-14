@@ -68,18 +68,31 @@ impl Direct {
         ensure!((1..=65535).contains(&low) && (low..=65535).contains(&high), "ports must be 1–65535, low ≤ high");
         let high = high.min(low + MAX_WINDOW - 1);
         let random = body["spread"] == "random";
-        let ports: Arc<Vec<u16>> = Arc::new(if random { random_ports(RANDOM_PORTS) } else { (low..=high).map(|p| p as u16).collect() });
+        // The device's public ports as STUN saw them. Where its NAT keeps one port per socket
+        // they are exactly the ports to aim at, so they go first; "exact" sprays only them (the
+        // NAT hands ports out far apart, as T-Mobile US does, so no window predicts them).
+        let known: Vec<u16> = body["ports"].as_array().into_iter().flatten()
+            .filter_map(|p| p.as_u64()).filter(|p| (1..=65535).contains(p)).map(|p| p as u16).take(64).collect();
+        let exact = body["spread"] == "exact" && !known.is_empty();
+        let mut list = known.clone();
+        if !exact {
+            let rest: Vec<u16> = if random { random_ports(RANDOM_PORTS) } else { (low..=high).map(|p| p as u16).collect() };
+            list.extend(rest.into_iter().filter(|p| !known.contains(p)));
+        }
+        let ports: Arc<Vec<u16>> = Arc::new(list);
+        let spread = if exact { "exact" } else if random { "random" } else { "window" };
         let identity = self.identity()?;
         let std_socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
         std_socket.set_nonblocking(true)?;
         let socket = UdpSocket::from_std(std_socket)?;
         let public = crate::punch::stun(&socket).await.context("Diamond could not learn its public address")?;
         let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_owned();
-        if random { eprintln!("Direct {id}: requested by {ip}, spraying {RANDOM_PORTS} random ports from {public} ({})", body["diagnosis"].as_str().unwrap_or("")) }
+        if exact { eprintln!("Direct {id}: requested by {ip}, spraying its {} known ports from {public} ({})", known.len(), body["diagnosis"].as_str().unwrap_or("")) }
+        else if random { eprintln!("Direct {id}: requested by {ip}, spraying {RANDOM_PORTS} random ports from {public} ({})", body["diagnosis"].as_str().unwrap_or("")) }
         else { eprintln!("Direct {id}: requested by {ip}, spraying {low}–{high} from {public} ({})", body["diagnosis"].as_str().unwrap_or("")) }
         let state = Arc::new(Mutex::new(json!({
             "id": id, "state": "punching", "server": public.to_string(), "device_ip": ip.to_string(),
-            "low": low, "high": high, "spread": if random { "random" } else { "window" }, "device": null, "punched_after_ms": null, "streams": 0, "other_sources": [],
+            "low": low, "high": high, "spread": spread, "device": null, "punched_after_ms": null, "streams": 0, "other_sources": [],
         })));
         {
             let mut sessions = self.sessions.lock().map_err(|_| anyhow::anyhow!("Direct connection unavailable"))?;
@@ -95,7 +108,7 @@ impl Direct {
                 if let Ok(mut s) = state.lock() { s["state"] = json!("failed"); s["error"] = json!(error.to_string()); }
             }
         });
-        Ok(json!({"id": id, "server": public.to_string(), "fingerprint": fingerprint, "low": low, "high": high, "spread": if random { "random" } else { "window" }}))
+        Ok(json!({"id": id, "server": public.to_string(), "fingerprint": fingerprint, "low": low, "high": high, "spread": spread}))
     }
 
     pub fn status(&self, id: &str) -> Result<Value> {

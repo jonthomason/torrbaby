@@ -28,8 +28,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private var monitor: NWPathMonitor?
     private var keeper: Task<Void, Never>?
     private var networkSignature = ""
-    /// After a failed attempt the next sprays random ports (a predicted window can miss).
-    private var sprayRandom = false
+    /// Public addresses a predicted spray failed from: the next attempt there sprays random ports.
+    private var windowFailedFrom: Set<String> = []
     private var lastAttempt = Date.distantPast
     private var attempting = false
 
@@ -133,16 +133,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         defer { attempting = false }
         do {
             let port = relayPort, token = token
-            let punched = try await DirectPunch.run(stun: stun, randomSpray: sprayRandom, start: { body in
+            let punched = try await DirectPunch.run(stun: stun, randomFrom: windowFailedFrom, start: { body in
                 try await Self.post(port: port, token: token, path: "/v1/direct", body: body)
-            }, step: { [log] in log.info("direct: \($0, privacy: .public)") })
+            }, report: { [log] in log.info("direct: \($0.step, privacy: .public)") })
             let opened = punched.server.withCString { s in punched.fingerprint.withCString { f in tbdirect_start(punched.fd, s, f) } }
             if opened == 0 { throw DirectPunch.Failure(message: "QUIC did not open on the punched socket") }
             status = ""
             self.punched = punched.summary
             log.notice("direct open: \(punched.summary, privacy: .public)")
         } catch {
-            sprayRandom = true
+            if let address = (error as? DirectPunch.Failure)?.windowFailedAt { windowFailedFrom.insert(address) }
             status = "last try failed: \(error.localizedDescription)"
             log.error("direct failed: \(error.localizedDescription, privacy: .public)")
         }
