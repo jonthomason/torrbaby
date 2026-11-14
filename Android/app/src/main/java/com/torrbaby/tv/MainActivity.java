@@ -623,6 +623,7 @@ public class MainActivity extends Activity {
       play.requestFocus();
     } else {
       Button explore=Ui.button(this,L10n.t("▶  Explore"),()->open(t));
+      Ui.resting(explore);
       Ui.add(info,explore,-2,44);explore.setTag("hero");
       explore.setOnFocusChangeListener((v,f)-> {
         frame.setForeground(f ? Ui.shape(0,0x99ffffff,this) : null);

@@ -395,8 +395,8 @@ private struct TVFeaturedHero: View {
                 Text(([title.yearLabel] + title.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.headline)
                 NavigationLink(value: LibraryDestination(id: title.id)) {
-                    Label("Explore", systemImage: "play.fill").font(.headline)
-                }.buttonStyle(TVMonochromeButtonStyle()).focused($focused)
+                    Label("Explore", systemImage: "play.fill")
+                }.buttonStyle(TVMonochromeButtonStyle(resting: true)).focused($focused)
             }.foregroundStyle(.white).padding(44)
         }.frame(height: 650)
             .clipShape(RoundedRectangle(cornerRadius: 18))
@@ -444,10 +444,9 @@ private struct TVMediaDetail: View {
                                     VStack(spacing: 12) {
                                         Button { play(asset, title: title) } label: {
                                             if asset.offline == true {
-                                                Label("Drive not connected", systemImage: "externaldrive.badge.xmark").font(.headline)
+                                                Label("Drive not connected", systemImage: "externaldrive.badge.xmark")
                                             } else {
                                                 Label(asset.playbackActionTitle(television: title.kind == "tv", brief: true), systemImage: "play.fill")
-                                                    .font(.headline)
                                             }
                                         }.buttonStyle(TVMonochromeButtonStyle(resting: true)).focused($heroFocused)
                                         if asset.offline != true, let left = asset.timeLeft {
@@ -620,7 +619,7 @@ private struct TVMoreActions: View {
     @State private var showFiles = false
     var body: some View {
         Button { showMenu = true } label: {
-            Text("More…").font(.headline)
+            Text("More…")
         }.buttonStyle(TVMonochromeButtonStyle(resting: true))
         .confirmationDialog(title.title, isPresented: $showMenu, titleVisibility: .visible) {
             if title.cast?.isEmpty == false { Button("Cast") { showCast = true } }
