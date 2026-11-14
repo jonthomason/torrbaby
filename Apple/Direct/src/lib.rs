@@ -235,13 +235,35 @@ pub extern "C" fn tbdirect_relay_info(buffer: *mut c_char, capacity: usize) -> i
     length as i32
 }
 
-/// The connection a tunnel stream should take: the direct path while it is open, else the relay.
-fn carrier() -> Option<quinn::Connection> {
-    for slot in [&TUNNEL, &RELAY] {
-        let connection = slot.lock().ok().and_then(|held| held.as_ref().map(|t| t.connection.clone()));
-        if let Some(connection) = connection.filter(|c| c.close_reason().is_none()) { return Some(connection) }
-    }
-    None
+/// Diamond's address on this network while the device is at home (set by the extension):
+/// tunnel connections go straight to it, with no QUIC and nothing through bronze. So the
+/// tunnel's address works everywhere, and a background download keeps one address whether
+/// the phone is at home or away.
+static HOME: Mutex<Option<SocketAddr>> = Mutex::new(None);
+
+/// Diamond on this network ("ip:port"), or empty when away from home.
+#[unsafe(no_mangle)]
+pub extern "C" fn tbtunnel_home(address: *const c_char) {
+    let address = text(address).and_then(|a| a.parse::<SocketAddr>().ok());
+    if let Ok(mut held) = HOME.lock() { *held = address }
+}
+
+fn open_connection(slot: &Mutex<Option<Tunnel>>) -> Option<quinn::Connection> {
+    slot.lock().ok().and_then(|held| held.as_ref().map(|t| t.connection.clone())).filter(|c| c.close_reason().is_none())
+}
+
+/// The route a tunnel connection should take: Diamond on this network at home, else the
+/// direct path while it is open, else the relay.
+fn carrier() -> Option<packet::Route> {
+    if let Some(address) = HOME.lock().ok().and_then(|held| *held) { return Some(packet::Route::Lan(address)) }
+    open_connection(&TUNNEL).or_else(|| open_connection(&RELAY)).map(packet::Route::Quic)
+}
+
+/// A connection on the relay makes way once Diamond on this network or the direct path is open.
+fn superseded(route: &packet::Route) -> bool {
+    let packet::Route::Quic(connection) = route else { return false };
+    let on_relay = open_connection(&TUNNEL).is_none_or(|direct| direct.stable_id() != connection.stable_id());
+    on_relay && (HOME.lock().ok().is_some_and(|held| held.is_some()) || open_connection(&TUNNEL).is_some())
 }
 
 /// Packets the stack sends back to the extension, in batches: `count` packets laid end to end
@@ -256,8 +278,7 @@ unsafe impl Send for Context {}
 #[unsafe(no_mangle)]
 pub extern "C" fn tbtunnel_start(mtu: u16, write: PacketWriter, context: *mut std::ffi::c_void) -> bool {
     tbtunnel_stop();
-    let direct = || TUNNEL.lock().ok().and_then(|held| held.as_ref().map(|t| t.connection.clone())).filter(|c| c.close_reason().is_none());
-    let Some((stack, mut output)) = packet::Stack::start(mtu, Box::new(carrier), Box::new(direct), Duration::from_secs(20)) else { return false };
+    let Some((stack, mut output)) = packet::Stack::start(mtu, Box::new(carrier), Box::new(superseded), Duration::from_secs(20)) else { return false };
     let context = Context(context);
     stack.runtime.spawn(async move {
         let context = context;
@@ -292,9 +313,9 @@ pub extern "C" fn tbtunnel_stats(buffer: *mut c_char, capacity: usize) -> i32 {
     use packet::stats::*;
     if buffer.is_null() || capacity == 0 { return -1 }
     let mut line = format!(
-        "in {} pkts/{} KB, out {} pkts/{} KB, dropped in {}, streams down {} KB up {} KB, flows open {} (opened {}, abandoned {}, uncarried {}, moved to direct {})",
+        "in {} pkts/{} KB, out {} pkts/{} KB, dropped in {}, streams down {} KB up {} KB, flows open {} (opened {}, abandoned {}, uncarried {}, moved to a better route {}, at home {})",
         get(&PACKETS_IN), get(&BYTES_IN) / 1024, get(&PACKETS_OUT), get(&BYTES_OUT) / 1024, get(&DROPPED_IN),
-        get(&STREAM_DOWN) / 1024, get(&STREAM_UP) / 1024, get(&FLOWS_OPEN), get(&FLOWS_OPENED), get(&FLOWS_ABANDONED), get(&FLOWS_UNCARRIED), get(&FLOWS_MOVED));
+        get(&STREAM_DOWN) / 1024, get(&STREAM_UP) / 1024, get(&FLOWS_OPEN), get(&FLOWS_OPENED), get(&FLOWS_ABANDONED), get(&FLOWS_UNCARRIED), get(&FLOWS_MOVED), get(&FLOWS_LAN));
     for (name, slot) in [("direct", &TUNNEL), ("relay", &RELAY)] {
         let connection = slot.lock().ok().and_then(|held| held.as_ref().map(|t| t.connection.clone()));
         if let Some(connection) = connection.filter(|c| c.close_reason().is_none()) {

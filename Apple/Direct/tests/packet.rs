@@ -9,6 +9,8 @@ use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr, Ipv4Address};
 use std::{ffi::CString, os::fd::IntoRawFd, sync::{Arc, Mutex, mpsc}, time::{Duration, Instant}};
 
 static FROM_STACK: Mutex<Option<mpsc::Sender<Vec<u8>>>> = Mutex::new(None);
+/// The tunnel, its stack and its paths are process-wide: the tests take turns.
+static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 extern "C" fn written(_: *mut std::ffi::c_void, data: *const u8, lengths: *const usize, count: usize) {
     let lengths = unsafe { std::slice::from_raw_parts(lengths, count) };
     let total: usize = lengths.iter().sum();
@@ -50,6 +52,7 @@ impl Device for Wire {
 
 #[test]
 fn a_tcp_connection_in_packets_reaches_diamond_as_a_quic_stream() {
+    let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let runtime = tokio::runtime::Runtime::new().unwrap();
     // Diamond's stand-in: answers a request with 2 MB, as a download would.
     let made = rcgen::generate_simple_self_signed(vec!["torrbaby-direct".into()]).unwrap();
@@ -126,6 +129,7 @@ fn a_tcp_connection_in_packets_reaches_diamond_as_a_quic_stream() {
 /// The stack must keep carrying the rest, and nothing may panic.
 #[test]
 fn many_connections_with_half_aborted_mid_transfer() {
+    let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let made = rcgen::generate_simple_self_signed(vec!["torrbaby-direct".into()]).unwrap();
     let cert = made.cert.der().clone();

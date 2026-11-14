@@ -8,6 +8,7 @@ import os
 @_silgen_name("tbtunnel_input") private func tbtunnel_input(_ packet: UnsafePointer<UInt8>?, _ length: Int) -> Bool
 @_silgen_name("tbtunnel_stop") private func tbtunnel_stop()
 @_silgen_name("tbtunnel_alive") private func tbtunnel_alive() -> Bool
+@_silgen_name("tbtunnel_home") private func tbtunnel_home(_ address: UnsafePointer<CChar>)
 @_silgen_name("tbtunnel_stats") private func tbtunnel_stats(_ buffer: UnsafeMutablePointer<CChar>, _ capacity: Int) -> Int32
 @_silgen_name("tbdirect_alive") private func tbdirect_alive() -> Bool
 @_silgen_name("tbdirect_stop") private func tbdirect_stop()
@@ -26,7 +27,7 @@ import os
 final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     static let diamond = "10.233.0.1"
     private let log = Logger(subsystem: "org.torrbaby", category: "tunnel")
-    private var relay = "", relayFingerprint = "", stun = "", token = ""
+    private var relay = "", relayFingerprint = "", stun = "", token = "", home = ""
     private var relayPort: UInt16 = 0
     private var monitor: NWPathMonitor?
     private var keeper: Task<Void, Never>?
@@ -36,10 +37,52 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private var lastAttempt = Date.distantPast
     private let started = Date()
     private var attempting = false
-    /// Behind the same NAT as Diamond (bronze sees the same public IP for both): the home
-    /// network reaches Diamond, so the tunnel goes quiet (no relay, no direct path, no
-    /// keepalives, nothing to bronze) until the network changes.
+    /// Behind the same NAT as Diamond (bronze sees the same public IP for both) and Diamond
+    /// answers on this network: the tunnel carries its connections straight to Diamond here
+    /// and is otherwise quiet (no relay, no direct path, no keepalives, nothing to bronze)
+    /// until the network changes. The tunnel's address works at home too, so a background
+    /// download keeps one address whether the phone is at home or away.
     private var atHome = false
+    /// Diamond on this network ("ip:port") while at home, and when it was last looked up.
+    private var homeAddress = ""
+    private var homeLookedUp = Date.distantPast
+    private var noHomeNoted = false
+    /// Same public address as Diamond, but Diamond does not answer here: relay only.
+    private var behindDiamondNAT = false
+
+    /// Diamond's home name looked up and connected to (1 s), as "ip:port"; nil when it does
+    /// not answer here.
+    private static func reachHome(_ home: String) -> String? {
+        guard let colon = home.lastIndex(of: ":") else { return nil }
+        let host = String(home[..<colon]), port = String(home[home.index(after: colon)...])
+        var hints = addrinfo(); hints.ai_family = AF_INET; hints.ai_socktype = SOCK_STREAM
+        var list: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, port, &hints, &list) == 0, let first = list else { return nil }
+        defer { freeaddrinfo(list) }
+        for pointer in sequence(first: first, next: { $0.pointee.ai_next }) {
+            let entry = pointer.pointee
+            guard let address = entry.ai_addr else { continue }
+            let fd = socket(AF_INET, SOCK_STREAM, 0)
+            guard fd >= 0 else { continue }
+            defer { close(fd) }
+            _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+            if connect(fd, address, entry.ai_addrlen) != 0 && errno != EINPROGRESS { continue }
+            var poll = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+            var error: Int32 = 0; var length = socklen_t(MemoryLayout<Int32>.size)
+            guard Darwin.poll(&poll, 1, 1000) == 1, getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &length) == 0, error == 0 else { continue }
+            var name = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            getnameinfo(address, entry.ai_addrlen, &name, socklen_t(name.count), nil, 0, NI_NUMERICHOST)
+            return String(cString: name) + ":" + port
+        }
+        return nil
+    }
+
+    /// Point the tunnel's connections at Diamond on this network, or (empty) away from it.
+    private func setHome(_ address: String) {
+        guard address != homeAddress else { return }
+        homeAddress = address
+        address.withCString { tbtunnel_home($0) }
+    }
     /// The public IP the direct path was punched from, and when bronze was last asked.
     private var punchedFrom: String?
     private var lastInfo = Date.distantPast
@@ -81,6 +124,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         relayFingerprint = shared?.relayFingerprint ?? configuration["relayFingerprint"] as? String ?? ""
         stun = shared?.stun ?? configuration["stun"] as? String ?? ""
         token = shared?.token ?? configuration["token"] as? String ?? ""
+        home = shared?.home ?? ""
     }
 
     /// Bronze's view over the relay: this device's public IP and Diamond's.
@@ -151,7 +195,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let direct = tbdirect_alive() ? "Direct path: open, \(punched)" : "Direct path: not open" + (status.isEmpty ? "" : " (\(status))")
         let info = Bundle.main.infoDictionary
         let version = "version \(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))"
-        let state = atHome ? version + "\nAt home: standing down (Diamond is on this network)"
+        let state = atHome ? version + "\nAt home: connections go straight to Diamond on this network (\(homeAddress))"
             : version + "\n" + direct + "\nRelay via bronze: " + (tbdirect_relay_alive() ? "open" : "closed")
         completionHandler?(state.data(using: .utf8))
     }
@@ -221,6 +265,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// is punched again. The relay moves with QUIC to the new network and keeps bridging
     /// meanwhile (bronze has a public address); only if it cannot move is it opened again.
     private func networkChanged(to signature: String) {
+        setHome("")
         tbdirect_stop()
         let probe = PunchProbe(count: 1)
         let moved = probe.ready && tbdirect_relay_alive() && probe.take(0).map { tbdirect_relay_rebind($0) } == true
@@ -229,7 +274,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         note("network changed (\(networkSignature) → \(signature)): direct path dropped, relay " + (moved ? "moved to the new network" : "reopening"))
         networkSignature = signature
         lastAttempt = .distantPast
-        atHome = false; punchedFrom = nil
+        atHome = false; punchedFrom = nil; noHomeNoted = false; behindDiamondNAT = false
         punchFailures = 0; nextPunch = .distantPast; punchedOnThisNetwork = false; publicIP = nil
     }
 
@@ -282,7 +327,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             note("TCP stack stopped: starting it again")
             _ = startStack()
         }
-        if atHome { return }
+        if atHome {
+            // Diamond's address here is looked up again each minute (it may have changed).
+            guard Date().timeIntervalSince(homeLookedUp) > 60 else { return }
+            homeLookedUp = Date()
+            let home = self.home
+            if let address = await Task.detached(operation: { Self.reachHome(home) }).value { setHome(address); return }
+            note("at home, but Diamond no longer answers on this network: using the relay again")
+            setHome(""); atHome = false
+        }
         if !tbdirect_relay_alive() { loadConfiguration(); await openRelay() }
         // Every 6 s, bronze's view: at home, or the public address moved (a carrier switch
         // behind a hotspot, invisible from here) and the direct path's hole is for the old one.
@@ -290,13 +343,26 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             lastInfo = Date()
             if let info = await Self.relayInfo() {
                 publicIP = info.ip
-                if let home = info.homeIP, home == info.ip {
-                    note("at home (same public address as Diamond, \(home)): standing down")
-                    tbdirect_stop(); tbdirect_relay_stop()
-                    atHome = true; punchedFrom = nil
-                    status = "at home: Diamond is on this network"
+                if let homeIP = info.homeIP, homeIP == info.ip {
+                    let home = self.home
+                    if !home.isEmpty, let address = await Task.detached(operation: { Self.reachHome(home) }).value {
+                        note("at home (same public address as Diamond, \(homeIP)): connections go to Diamond at \(address); relay and direct path closed")
+                        // Connections are pointed home first; those on the relay are then cut and
+                        // their clients' next requests go home.
+                        setHome(address); homeLookedUp = Date()
+                        tbdirect_stop(); tbdirect_relay_stop()
+                        atHome = true; punchedFrom = nil
+                        status = "at home: Diamond is on this network"
+                        return
+                    }
+                    // Behind Diamond's own NAT a punch can only hairpin, which gets through one
+                    // way at best: the relay carries everything here.
+                    if !noHomeNoted { note("same public address as Diamond, but \(home.isEmpty ? "Diamond's home address is not known" : "\(home) does not answer here"): relay only, no punching"); noHomeNoted = true }
+                    tbdirect_stop(); punchedFrom = nil; behindDiamondNAT = true
+                    status = "behind Diamond's own network address: relay only"
                     return
                 }
+                behindDiamondNAT = false
                 if let from = punchedFrom, tbdirect_alive(), from != info.ip {
                     if !relayReopenedForMismatch {
                         note("bronze sees \(info.ip), the direct path is from \(from): reconnecting the relay over the current network first")
@@ -310,7 +376,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 }
             }
         }
-        guard !tbdirect_alive(), !attempting, tbdirect_relay_alive() else { return }
+        guard !tbdirect_alive(), !attempting, !behindDiamondNAT, tbdirect_relay_alive() else { return }
         // A failure waits a minute before the next try; a path that dropped is tried at once.
         guard Date() >= nextPunch else { return }
         attempting = true; lastAttempt = Date()

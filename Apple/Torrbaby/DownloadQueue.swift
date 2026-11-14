@@ -150,7 +150,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         for (id, task) in tasks {
             guard items.first(where: { $0.id == id })?.state == .transferring else { continue }
             if store?.connected == true && !waitingForWiFi {
-                if let base = try? store?.endpoint("/").absoluteString,
+                if let base = try? store?.downloadEndpoint("/").absoluteString,
                    let url = (task.currentRequest ?? task.originalRequest)?.url?.absoluteString,
                    !url.hasPrefix(base) {
                     pause(id, requeue: true)
@@ -341,7 +341,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         do {
             try storage.markTransferring(item.id)
             let suffix = item.virtualJob.map { "?virtual=" + $0 } ?? ""
-            var request = URLRequest(url: try store.endpoint("/v1/library/assets/\(item.assetID)/download" + suffix))
+            var request = URLRequest(url: try store.downloadEndpoint("/v1/library/assets/\(item.assetID)/download" + suffix))
             request.setValue("Bearer " + store.token, forHTTPHeaderField: "Authorization")
             request.setValue(item.revision, forHTTPHeaderField: "If-Match")
             let allowed = meteredAllowed
@@ -349,7 +349,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             request.allowsExpensiveNetworkAccess = allowed
             request.allowsConstrainedNetworkAccess = allowed
             request.timeoutInterval = 120
-            let context = Data(SHA256.hash(data: Data("\(store.activeServer ?? store.primaryAddress)|\(store.token)|\(!allowed)".utf8)))
+            let context = Data(SHA256.hash(data: Data("\(request.url?.host ?? "")|\(store.token)|\(!allowed)".utf8)))
             let task: URLSessionDownloadTask
             let saved = try? Data(contentsOf: storage.resumeURL(item.id))
             if let saved, (try? Data(contentsOf: storage.resumeContextURL(item.id))) == context {
@@ -505,7 +505,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             let file = storage.mediaURL(item)
             let same = await Task.detached { DownloadStorage.matches(update, file: file) }.value
             guard same else { throw APIError(message: "This download can't be updated in place. Delete it and download it again.") }
-            var request = URLRequest(url: try store.endpoint("/v1/library/assets/\(item.assetID)/download?virtual=" + update.virtualJob))
+            var request = URLRequest(url: try store.downloadEndpoint("/v1/library/assets/\(item.assetID)/download?virtual=" + update.virtualJob))
             request.setValue("Bearer " + store.token, forHTTPHeaderField: "Authorization")
             request.setValue(update.revision, forHTTPHeaderField: "If-Match")
             request.setValue("bytes=\(update.prefix)-", forHTTPHeaderField: "Range")

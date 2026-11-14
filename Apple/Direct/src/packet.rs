@@ -50,11 +50,17 @@ impl AsyncWrite for Packets {
     fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> { Poll::Ready(Ok(())) }
 }
 
-/// Where a TCP connection from the tunnel goes: a QUIC connection to open a stream on.
-pub type Carrier = Box<dyn Fn() -> Option<quinn::Connection> + Send + Sync>;
-/// The direct path's connection while it is open (a connection carried by anything else is on
-/// the relay).
-pub type Direct = Box<dyn Fn() -> Option<quinn::Connection> + Send + Sync>;
+/// Where a TCP connection from the tunnel goes: a stream on a QUIC connection (the direct
+/// path or the relay), or, at home, a plain TCP connection to Diamond on this network.
+#[derive(Clone)]
+pub enum Route {
+    Quic(quinn::Connection),
+    Lan(std::net::SocketAddr),
+}
+pub type Carrier = Box<dyn Fn() -> Option<Route> + Send + Sync>;
+/// Whether a connection on `route` should make way: it is on the relay, and the direct path
+/// or Diamond on this network is now open.
+pub type Superseded = Box<dyn Fn(&Route) -> bool + Send + Sync>;
 
 /// The running stack: packets in through `input`, packets out through the receiver given to
 /// `start`'s caller.
@@ -64,20 +70,20 @@ pub struct Stack {
 }
 
 impl Stack {
-    /// Start the stack. `carrier` is asked for a connection whenever a TCP connection arrives;
+    /// Start the stack. `carrier` is asked for a route whenever a TCP connection arrives;
     /// while it has none (the path is being punched) the connection waits up to `wait`.
     ///
-    /// A connection carried by the relay is closed once the direct path has been open for 2 s,
-    /// so the player's next request takes the direct path. Players hold one connection for as
-    /// long as they can: video started while the path was being punched (just back from the
-    /// background, a new network) otherwise stayed on the relay to the end, at the relay's
-    /// speed, with the direct path open and unused.
-    pub fn start(mtu: u16, carrier: Carrier, direct: Direct, wait: Duration) -> Option<(Stack, mpsc::UnboundedReceiver<Vec<u8>>)> {
+    /// A connection carried by the relay is closed once a better route has been open for 2 s
+    /// (the direct path, or Diamond on this network), so the client's next request takes it.
+    /// Players hold one connection for as long as they can: video started while the path was
+    /// being punched (just back from the background, a new network) otherwise stayed on the
+    /// relay to the end, at the relay's speed, with the direct path open and unused.
+    pub fn start(mtu: u16, carrier: Carrier, superseded: Superseded, wait: Duration) -> Option<(Stack, mpsc::UnboundedReceiver<Vec<u8>>)> {
         let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().ok()?;
         let (input, incoming) = mpsc::channel(1024);
         let (outgoing, output) = mpsc::unbounded_channel();
         let carrier = std::sync::Arc::new(carrier);
-        let direct = std::sync::Arc::new(direct);
+        let superseded = std::sync::Arc::new(superseded);
         runtime.spawn(async move {
             let mut config = ipstack::IpStackConfig::default();
             config.mtu_unchecked(mtu);
@@ -93,89 +99,46 @@ impl Stack {
             while let Ok(stream) = stack.accept().await {
                 let ipstack::IpStackStream::Tcp(tcp) = stream else { continue };
                 let carrier = carrier.clone();
-                let direct = direct.clone();
+                let superseded = superseded.clone();
                 tokio::spawn(async move {
                     let started = tokio::time::Instant::now();
-                    let connection = loop {
-                        if let Some(connection) = carrier() { break Some(connection) }
+                    let route = loop {
+                        if let Some(route) = carrier() { break Some(route) }
                         if started.elapsed() >= wait { break None }
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     };
-                    let Some(connection) = connection else { stats::add(&stats::FLOWS_UNCARRIED, 1); return };
-                    let on_relay = direct().is_none_or(|d| d.stable_id() != connection.stable_id());
-                    let Ok((mut send, mut recv)) = connection.open_bi().await else { stats::add(&stats::FLOWS_UNCARRIED, 1); return };
-                    stats::add(&stats::FLOWS_OPENED, 1);
-                    stats::add(&stats::FLOWS_OPEN, 1);
-                    struct Open;
-                    impl Drop for Open { fn drop(&mut self) { stats::FLOWS_OPEN.fetch_sub(1, std::sync::atomic::Ordering::Relaxed); } }
-                    let _open = Open;
-                    let (mut from_ios, mut to_ios) = tokio::io::split(tcp);
-                    let complete = {
-                    // ipstack marks a connection closed when iOS resets it (a player cutting a
-                    // request short) but wakes nothing waiting on it, so reads and writes toward
-                    // iOS are attempted in 1 s slices: each new attempt sees the close at once.
-                    let up = async {
-                        let mut buffer = vec![0u8; 16 * 1024];
-                        loop {
-                            use tokio::io::AsyncReadExt;
-                            match tokio::time::timeout(Duration::from_secs(1), from_ios.read(&mut buffer)).await {
-                                Err(_) => continue,
-                                Ok(Ok(0)) => { let _ = send.finish(); return false }
-                                Ok(Ok(n)) => { if send.write_all(&buffer[..n]).await.is_err() { return true }; stats::add(&stats::STREAM_UP, n as u64) }
-                                Ok(Err(_)) => { let _ = send.finish(); return true }
+                    let Some(route) = route else { stats::add(&stats::FLOWS_UNCARRIED, 1); return };
+                    // A better route open at two checks a second apart: this one makes way.
+                    let moved = {
+                        let route = route.clone();
+                        async move {
+                            let mut seen = 0;
+                            loop {
+                                tokio::time::sleep(Duration::from_secs(1)).await;
+                                seen = if superseded(&route) { seen + 1 } else { 0 };
+                                if seen >= 2 { return }
                             }
                         }
                     };
-                    let down = async {
-                        use tokio::io::AsyncWriteExt;
-                        let mut buffer = vec![0u8; 16 * 1024];
-                        loop {
-                            // Diamond quiet for 2 minutes: the stream is given up.
-                            let n = match tokio::time::timeout(Duration::from_secs(120), recv.read(&mut buffer)).await {
-                                Ok(Ok(Some(n))) => n,
-                                Ok(Ok(None)) => break,
-                                _ => return false,
-                            };
-                            let (mut written, mut idle) = (0, 0);
-                            while written < n {
-                                match tokio::time::timeout(Duration::from_secs(1), to_ios.write(&buffer[written..n])).await {
-                                    Ok(Ok(0)) | Ok(Err(_)) => return false,
-                                    Ok(Ok(m)) => { written += m; idle = 0; stats::add(&stats::STREAM_DOWN, m as u64) }
-                                    // iOS taking nothing for a minute: the connection is dead.
-                                    Err(_) => { idle += 1; if idle >= 60 { return false } }
-                                }
-                            }
+                    match route {
+                        Route::Quic(connection) => {
+                            let Ok((mut send, mut recv)) = connection.open_bi().await else { stats::add(&stats::FLOWS_UNCARRIED, 1); return };
+                            let complete = carry(tcp, &mut send, &mut recv, moved).await;
+                            // A connection abandoned midway: tell QUIC to discard what it holds
+                            // for this stream, or that data keeps the connection's receive
+                            // allowance and, added up over many abandoned requests (video
+                            // seeks), stalls every stream.
+                            if !complete { let _ = recv.stop(0u32.into()); }
                         }
-                        // ipstack sends the FIN only if nothing is in flight when asked and is
-                        // not woken when that clears, so ask again until it goes (up to 30 s).
-                        for _ in 0..600 {
-                            if tokio::time::timeout(Duration::from_millis(50), to_ios.shutdown()).await.is_ok() { break }
+                        Route::Lan(address) => {
+                            let connected = tokio::time::timeout(Duration::from_secs(3), tokio::net::TcpStream::connect(address)).await;
+                            let Ok(Ok(diamond)) = connected else { stats::add(&stats::FLOWS_UNCARRIED, 1); return };
+                            let _ = diamond.set_nodelay(true);
+                            stats::add(&stats::FLOWS_LAN, 1);
+                            let (mut from_diamond, mut to_diamond) = diamond.into_split();
+                            carry(tcp, &mut to_diamond, &mut from_diamond, moved).await;
                         }
-                        true
-                    };
-                    // On the relay: watch for the direct path (open at two checks a second apart).
-                    let moved = async {
-                        if !on_relay { return std::future::pending::<()>().await }
-                        let mut seen = 0;
-                        loop {
-                            tokio::time::sleep(Duration::from_secs(1)).await;
-                            seen = if direct().is_some() { seen + 1 } else { 0 };
-                            if seen >= 2 { return }
-                        }
-                    };
-                    tokio::pin!(down);
-                    tokio::pin!(up);
-                    tokio::pin!(moved);
-                    tokio::select! {
-                        delivered = &mut down => { if delivered { let _ = up.await; } delivered }
-                        failed = &mut up => if failed { false } else { down.await },
-                        _ = &mut moved => { stats::add(&stats::FLOWS_MOVED, 1); false }
                     }
-                    };
-                    // A connection abandoned midway: tell QUIC to discard what it holds for
-                    // this stream, or that data keeps the connection's receive allowance and,
-                    // added up over many abandoned requests (video seeks), stalls every stream.
-                    if !complete { let _ = recv.stop(0u32.into()); stats::add(&stats::FLOWS_ABANDONED, 1); }
                 });
             }
             // The stack's own task ended (a panic inside it): the extension restarts it.
@@ -193,6 +156,79 @@ impl Stack {
     }
 }
 
+/// Carry one TCP connection from iOS to Diamond (`up`) and back (`down`) until either side
+/// ends it or `moved` fires. True when Diamond's reply was delivered whole.
+async fn carry<W, R>(tcp: ipstack::IpStackTcpStream, up_to: &mut W, down_from: &mut R, moved: impl std::future::Future<Output = ()>) -> bool
+where W: tokio::io::AsyncWrite + Unpin, R: tokio::io::AsyncRead + Unpin {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    stats::add(&stats::FLOWS_OPENED, 1);
+    stats::add(&stats::FLOWS_OPEN, 1);
+    struct Open;
+    impl Drop for Open { fn drop(&mut self) { stats::FLOWS_OPEN.fetch_sub(1, std::sync::atomic::Ordering::Relaxed); } }
+    let _open = Open;
+    let (mut from_ios, mut to_ios) = tokio::io::split(tcp);
+    // ipstack marks a connection closed when iOS resets it (a player cutting a request short)
+    // but wakes nothing waiting on it, so reads and writes toward iOS are attempted in 1 s
+    // slices: each new attempt sees the close at once. `up` is true when it failed.
+    let up = async {
+        let mut buffer = vec![0u8; 16 * 1024];
+        loop {
+            match tokio::time::timeout(Duration::from_secs(1), from_ios.read(&mut buffer)).await {
+                Err(_) => continue,
+                Ok(Ok(0)) => { let _ = up_to.shutdown().await; return false }
+                Ok(Ok(n)) => { if up_to.write_all(&buffer[..n]).await.is_err() { return true }; stats::add(&stats::STREAM_UP, n as u64) }
+                Ok(Err(_)) => { let _ = up_to.shutdown().await; return true }
+            }
+        }
+    };
+    let down = async {
+        let mut buffer = vec![0u8; 16 * 1024];
+        loop {
+            // Diamond quiet for 2 minutes: the stream is given up.
+            let n = match tokio::time::timeout(Duration::from_secs(120), down_from.read(&mut buffer)).await {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => n,
+                _ => return false,
+            };
+            let (mut written, mut idle) = (0, 0);
+            while written < n {
+                match tokio::time::timeout(Duration::from_secs(1), to_ios.write(&buffer[written..n])).await {
+                    Ok(Ok(0)) | Ok(Err(_)) => return false,
+                    Ok(Ok(m)) => { written += m; idle = 0; stats::add(&stats::STREAM_DOWN, m as u64) }
+                    // iOS taking nothing for a minute: the connection is dead.
+                    Err(_) => { idle += 1; if idle >= 60 { return false } }
+                }
+            }
+        }
+        // ipstack sends the FIN only if nothing is in flight when asked and is not woken when
+        // that clears, so ask again until it goes (up to 30 s).
+        for _ in 0..600 {
+            if tokio::time::timeout(Duration::from_millis(50), to_ios.shutdown()).await.is_ok() { break }
+        }
+        true
+    };
+    let (complete, was_moved) = {
+        tokio::pin!(down);
+        tokio::pin!(up);
+        tokio::pin!(moved);
+        tokio::select! {
+            delivered = &mut down => { if delivered { let _ = up.await; } (delivered, false) }
+            failed = &mut up => (if failed { false } else { down.await }, false),
+            _ = &mut moved => (false, true),
+        }
+    };
+    if was_moved { stats::add(&stats::FLOWS_MOVED, 1) } else if !complete { stats::add(&stats::FLOWS_ABANDONED, 1) }
+    if !complete {
+        // Dropping the stream tells iOS nothing: the connection is closed toward it (FIN), so
+        // the client sees the reply cut short and asks again (by the better route, if moved)
+        // instead of waiting on a connection nothing will ever answer.
+        for _ in 0..100 {
+            if tokio::time::timeout(Duration::from_millis(50), to_ios.shutdown()).await.is_ok() { break }
+        }
+    }
+    complete
+}
+
 /// Counters for the extension's periodic log line (what the tunnel carried, and where it lost).
 pub mod stats {
     use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
@@ -206,7 +242,9 @@ pub mod stats {
     pub static FLOWS_OPENED: AtomicU64 = AtomicU64::new(0);
     pub static FLOWS_OPEN: AtomicU64 = AtomicU64::new(0);
     pub static FLOWS_ABANDONED: AtomicU64 = AtomicU64::new(0);
-    /// Connections closed on the relay so their next request takes the direct path.
+    /// Connections carried to Diamond on this network (at home).
+    pub static FLOWS_LAN: AtomicU64 = AtomicU64::new(0);
+    /// Connections closed on the relay so their next request takes a better route.
     pub static FLOWS_MOVED: AtomicU64 = AtomicU64::new(0);
     /// Connections that found no direct path or relay to carry them.
     pub static FLOWS_UNCARRIED: AtomicU64 = AtomicU64::new(0);

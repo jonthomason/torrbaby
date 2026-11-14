@@ -573,6 +573,16 @@ final class Store: ObservableObject {
         config.timeoutIntervalForResource = 45
         return URLSession(configuration: config)
     }()
+    /// Downloads, which iOS carries on while the app is suspended: through Torrbaby's tunnel
+    /// whenever it is connected, at home too (the tunnel then hands them to Diamond on the home
+    /// network), so a download keeps one address as the phone comes and goes. Elsewhere, as
+    /// `endpoint`.
+    func downloadEndpoint(_ path: String) throws -> URL {
+        #if os(iOS)
+        if PacketTunnel.shared.connected { return try ServerRoutes.endpoint(PacketTunnel.route, path: path) }
+        #endif
+        return try endpoint(path)
+    }
     func endpoint(_ path: String) throws -> URL {
         #if os(iOS)
         // The tunnel, when it is the route, is used even if an in-app path is still open.
@@ -880,7 +890,9 @@ final class Store: ObservableObject {
     /// Torrbaby's tunnel connects by itself where it may (see PacketTunnel.autoConnect).
     func autoConnectTunnel() {
         let relay = relayAddress, fingerprint = relayFingerprint, stun = stunServer ?? "", token = token
-        Task { await PacketTunnel.shared.autoConnect(relay: relay, relayFingerprint: fingerprint, stun: stun, token: token) }
+        // Diamond's home name and port, for the tunnel to reach it directly at home.
+        let home = URL(string: primaryAddress).flatMap { url in url.host.map { "\($0):\(url.port ?? 80)" } }
+        Task { await PacketTunnel.shared.autoConnect(relay: relay, relayFingerprint: fingerprint, stun: stun, token: token, home: home) }
     }
     func dropDirect(_ reason: String) {
         guard directTunnel != nil || directRoute != nil else { return }
