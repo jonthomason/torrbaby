@@ -104,7 +104,9 @@ public final class Library {
       year = string(j, "year");
       endYear = string(j, "end_year");
       ongoing = j.isNull("ongoing") ? null : (Boolean) j.optBoolean("ongoing");
-      summary = string(j, "summary");
+      // TMDB's Chinese description, or one translated on Diamond; English when there is none yet.
+      String chineseSummary = string(j, "summary_zh");
+      summary = !chineseSummary.isEmpty() && L10n.locale().getLanguage().equals("zh") ? chineseSummary : string(j, "summary");
       rating = string(j, "content_rating");
       poster = string(j, "poster");
       backdrop = string(j, "backdrop");

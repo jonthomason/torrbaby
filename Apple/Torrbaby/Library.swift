@@ -217,7 +217,7 @@ struct LibraryTitle: Decodable, Identifiable {
     /// Both names, for search: a title is found by either.
     var searchNames: [String] { [englishTitle, titleZh].compactMap { $0 }.filter { !$0.isEmpty } }
     private enum CodingKeys: String, CodingKey {
-        case id, kind, englishTitle = "title", titleZh, year, endYear, ongoing, genres, summary, contentRating, durationMinutes
+        case id, kind, englishTitle = "title", titleZh, year, endYear, ongoing, genres, englishSummary = "summary", summaryZh, contentRating, durationMinutes
         case poster, backdrop, addedAt, assets, continueWatchingHidden, cast, offline
     }
     let year: String?
@@ -235,7 +235,15 @@ struct LibraryTitle: Decodable, Identifiable {
         return year
     }
     let genres: [String]
-    let summary: String
+    /// TMDB's description, in English.
+    let englishSummary: String
+    /// Its Simplified Chinese description: TMDB's, or translated on Diamond; empty when none yet.
+    var summaryZh: String? = nil
+    /// The description shown: the Chinese one while the interface is in Chinese.
+    var summary: String {
+        if L10n.code.hasPrefix("zh"), let summaryZh, !summaryZh.isEmpty { return summaryZh }
+        return englishSummary
+    }
     let contentRating: String?
     let durationMinutes: Double?
     let poster: String?

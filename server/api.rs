@@ -2553,6 +2553,10 @@ fn keep_backfilled(connection: &rusqlite::Connection, id: &str, mut entity: Valu
             let known = !(stored[field].is_null() || stored[field].as_str() == Some(""));
             if missing && known && entity.is_object() { entity[field] = stored[field].clone(); }
         }
+        // A Chinese description translated on Diamond stays until TMDB has its own.
+        if stored["summary_zh_source"] == "machine" && entity["summary_zh_source"] != "tmdb" && entity.is_object() {
+            for field in ["summary_zh", "summary_zh_source", "summary_zh_checked"] { entity[field] = stored[field].clone(); }
+        }
     }
     Ok(entity)
 }
@@ -2587,6 +2591,39 @@ fn save_match(s: &Service, id: &str, entity: Value, confirmed: bool) -> Result<(
     )?;
     tx.commit()?;
     db.link_extras()?;
+    Ok(())
+}
+
+/// Translates up to 16 titles' English descriptions into Simplified Chinese per pass, in one
+/// request to the on-device translator, and saves each as a machine translation. A title whose
+/// description changed while it was being translated is left for the next pass.
+async fn translate_summaries(s: &Service, entities: &[Value]) -> Result<()> {
+    let pending: Vec<(String, String)> = entities.iter()
+        .filter(|entity| crate::metadata::wants_summary_translation(entity))
+        .filter_map(|entity| Some((entity["id"].as_str()?.to_owned(), entity["summary"].as_str()?.trim().to_owned())))
+        .filter(|(id, summary)| id.len() <= 128 && summary.len() <= 16_384)
+        .take(16).collect();
+    if pending.is_empty() { return Ok(()); }
+    let helper = std::env::current_exe()?.with_file_name("torrbaby-subtitle-translator");
+    let request = crate::subtitles::TranslationRequest {
+        source: "en".into(), target: "zh-Hans".into(),
+        cues: pending.iter().map(|(id, summary)| crate::subtitles::Cue { id: id.clone(), text: summary.clone() }).collect(),
+    };
+    let response = crate::subtitles::translate(&helper, request).await?;
+    let translated = response.cues.context("Missing translated descriptions")?;
+    let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+    for cue in translated {
+        let Some((id, english)) = pending.iter().find(|(id, _)| *id == cue.id) else { continue };
+        let chinese = cue.text.trim();
+        if chinese.is_empty() { continue; }
+        if let Some(row) = db.rows("SELECT document FROM library_entities WHERE id=?", [id.as_str()])?.first() {
+            let mut current: Value = serde_json::from_str(text(row, "document")?)?;
+            if !crate::metadata::wants_summary_translation(&current) || current["summary"].as_str().map(str::trim) != Some(english.as_str()) { continue; }
+            current["summary_zh"] = json!(chinese);
+            current["summary_zh_source"] = json!("machine");
+            db.connection.execute("UPDATE library_entities SET document=? WHERE id=?", [current.to_string(), id.clone()])?;
+        }
+    }
     Ok(())
 }
 
@@ -2639,23 +2676,33 @@ async fn collect_metadata(s: &Service) -> Result<()> {
             Err(error)=>{eprintln!("Series run metadata: {error}");s.metadata.record_failure(key).await;}
         }
     }
-    // Titles saved before Chinese names were kept pick them up here.
+    // Titles saved before Chinese names and descriptions were kept pick them up here; titles
+    // with a machine translation (or none) ask TMDB again now and then.
     let mut lookups=0;
-    for entity in entities.iter().filter(|entity| entity["provider"]=="TMDB" && entity.get("title_zh").is_none()) {
+    let checked_at=now();
+    for entity in entities.iter().filter(|entity| entity["provider"]=="TMDB" && (entity.get("title_zh").is_none() || crate::metadata::wants_chinese_summary(entity, checked_at))) {
         let key=entity["id"].as_str().unwrap_or_default();
         if lookups>=20 || s.metadata.recently_failed(key).await {continue;}
         lookups+=1;
-        match s.metadata.chinese_title(entity).await {
-            Ok(chinese) => {
+        match s.metadata.chinese_details(entity).await {
+            Ok((name, summary)) => {
                 let id=text(entity,"id")?;
                 let db=s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
                 if let Some(row)=db.rows("SELECT document FROM library_entities WHERE id=?",[id])?.first() {
                     let mut current:Value=serde_json::from_str(text(row,"document")?)?;
-                    current["title_zh"]=json!(chinese);
+                    current["title_zh"]=json!(name);
+                    crate::metadata::set_chinese_summary(&mut current, &summary);
                     db.connection.execute("UPDATE library_entities SET document=? WHERE id=?",[current.to_string(),id.to_string()])?;
                 }
             }
             Err(error)=>{eprintln!("Chinese title metadata: {error}");s.metadata.record_failure(key).await;}
+        }
+    }
+    // Where TMDB has no Chinese description, Diamond translates the English one on device.
+    if !s.metadata.recently_failed("chinese-summary-translation").await {
+        if let Err(error)=translate_summaries(s,&entities).await {
+            eprintln!("Description translation: {error:#}");
+            s.metadata.record_failure("chinese-summary-translation").await;
         }
     }
     if let Ok(torrents) = crate::organizer::torrents(s).await {
@@ -2926,6 +2973,18 @@ mod backfill_tests {
         let fresh = json!({"id":"tmdb:tv:1437","series_status":"Ended","last_air_date":"2003-01-01","cast":[]});
         assert_eq!(keep_backfilled(&connection, "tmdb:tv:1437", fresh)?["series_status"], "Ended");
         assert_eq!(keep_backfilled(&connection, "unknown", json!({"id":"unknown"}))?["series_status"], Value::Null);
+        Ok(())
+    }
+    #[test]
+    fn rematching_keeps_a_machine_chinese_summary_until_tmdb_has_one() -> Result<()> {
+        let connection = rusqlite::Connection::open_in_memory()?;
+        connection.execute("CREATE TABLE library_entities (id TEXT PRIMARY KEY, document TEXT NOT NULL)", [])?;
+        connection.execute("INSERT INTO library_entities VALUES('tmdb:tv:1',?)",
+            [json!({"id":"tmdb:tv:1","summary_zh":"机器翻译","summary_zh_source":"machine","summary_zh_checked":1.0}).to_string()])?;
+        let none = keep_backfilled(&connection, "tmdb:tv:1", json!({"id":"tmdb:tv:1","summary_zh":"","summary_zh_source":"none","summary_zh_checked":2.0}))?;
+        assert_eq!((none["summary_zh"].as_str(), none["summary_zh_source"].as_str()), (Some("机器翻译"), Some("machine")));
+        let tmdb = keep_backfilled(&connection, "tmdb:tv:1", json!({"id":"tmdb:tv:1","summary_zh":"官方简介","summary_zh_source":"tmdb"}))?;
+        assert_eq!((tmdb["summary_zh"].as_str(), tmdb["summary_zh_source"].as_str()), (Some("官方简介"), Some("tmdb")));
         Ok(())
     }
 }
