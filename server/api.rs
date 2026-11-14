@@ -1616,6 +1616,8 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             db.save_state(&state)?;
             Ok(json!({"name":state["server"]["name"],"id":state["server"]["id"]}))
         }
+        // Settings → Connection → Send logs to Diamond: saved under client-logs/ for debugging.
+        ("POST","/v1/diagnostics/logs") => { drop(db); return crate::diagnostics::receive(&s.data_dir, &body); }
         ("POST","/v1/punch") => { drop(db); return crate::punch::TESTS.start(&body).await; }
         ("POST","/v1/direct") => { drop(db); return crate::direct::DIRECT.start(&body, s.config.listen_port).await; }
         ("GET","/v1/events") => Ok(db.state()?["events"].take()),

@@ -28,10 +28,12 @@ struct TorrbabyApp: App {
     #endif
     @ViewBuilder private var mainContent: some View {
         #if os(tvOS)
-        LocalizedInterface { ProfileGate { TVRootView() } }.environmentObject(store).tint(Theme.accent).preferredColorScheme(.dark)
+        LocalizedInterface { ProfileGate { TVRootView() } }.environmentObject(store)
+            .task { await ClientLogs.runAutomatic(store) }.tint(Theme.accent).preferredColorScheme(.dark)
         #else
         LocalizedInterface { ProfileGate { RootView() } }
-            .environmentObject(store).tint(Theme.accent).preferredColorScheme(.dark)
+            .environmentObject(store)
+            .task { await ClientLogs.runAutomatic(store) }.tint(Theme.accent).preferredColorScheme(.dark)
             .toggleStyle(MonoToggleStyle())
             #if os(iOS)
             .buttonBorderShape(.roundedRectangle(radius: 8))

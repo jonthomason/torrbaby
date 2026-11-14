@@ -66,6 +66,15 @@ final class PlaybackModel: ObservableObject {
     /// The native players' title (the Mac's window title); follows the next episode.
     private var heading: PlayerHeading
     @Published var endMessage: String?
+    /// The player has been waiting for data for more than a moment (starting, or a stall): a
+    /// spinner shows. AVKit shows none of its own, only a play or pause button over black.
+    @Published var waiting = false
+    private var waitingTask: Task<Void, Never>?
+    private var statusObservation: NSKeyValueObservation?
+    private var itemObservers: [NSObjectProtocol] = []
+    /// When the current file was opened, and whether it has played yet, for the logs.
+    private var openedAt = Date()
+    private var played = false
     /// A movie or special feature played to its end: nothing follows, so the player closes itself.
     @Published var closeRequested = false
     @Published var preparingNext = false
@@ -122,12 +131,17 @@ final class PlaybackModel: ObservableObject {
         rateObservation = player.observe(\.rate, options: [.new]) { [weak self] _, _ in
             Task { @MainActor [weak self] in self?.report() }
         }
+        // .initial: the first file was opened (and asked to play) before this was set up.
+        statusObservation = player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in self?.timeControlChanged() }
+        }
         speedObservation = player.observe(\.defaultRate, options: [.new]) { player, _ in
             let rate = player.defaultRate
             Task { @MainActor in PlaybackSpeeds.remember(rate) }
         }
     }
     private func load(_ next: Playback) {
+        summarize()
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         observation = nil
         subtitleController?.stop(); subtitleController = nil
@@ -183,6 +197,16 @@ final class PlaybackModel: ObservableObject {
         }
         #endif
         player.replaceCurrentItem(with: item)
+        openedAt = Date(); played = false
+        ClientDiagnostics.note("Play \(heading.joined) [\(playback.libraryAssetID ?? "local")] via \(url.isFileURL ? "this device" : store.path.rawValue): \(url.path), resume at \(Int(playback.resumePosition)) s")
+        observe(item)
+        // Start at once, asking for the resume point before the file is ready: AVKit then waits
+        // to play (pause button, our spinner) instead of sitting paused behind a play button.
+        // Where that point is not taken, start() puts it right once the file is ready.
+        if playback.resumePosition > 0 {
+            player.seek(to: CMTime(seconds: playback.resumePosition, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+        player.play()
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard self?.playback.id == playbackID else { return }
@@ -193,6 +217,7 @@ final class PlaybackModel: ObservableObject {
             if item.status == .readyToPlay {
                 Task { @MainActor [weak self] in
                     guard let self, self.player.currentItem === item else { return }
+                    ClientDiagnostics.note(String(format: "Ready after %.1f s at %.1f s", Date().timeIntervalSince(self.openedAt), self.player.currentTime().seconds))
                     if self.subtitleController == nil {
                         let info = self.playback.libraryAssetID.flatMap { id in self.store.library?.titles.lazy.flatMap(\.assets).first { $0.id == id }?.mediaInfo }
                         self.subtitleController = SubtitlePlaybackController(item: item, store: self.store, overPictureSubtitles: info?.hasPictureSubtitles == true)
@@ -202,6 +227,7 @@ final class PlaybackModel: ObservableObject {
             }
             if item.status == .failed {
                 let message = item.error?.localizedDescription ?? "Apple's player cannot open this file."
+                ClientLogs.failed("Playback: \((item.error as NSError?).map { "\($0.domain) \($0.code) \($0.localizedDescription) \($0.userInfo[NSUnderlyingErrorKey] ?? "")" } ?? message)")
                 Task { @MainActor [weak self] in self?.error = message }
             }
         }
@@ -305,18 +331,78 @@ final class PlaybackModel: ObservableObject {
         }
     }
     #endif
+    /// Once the file is ready. Playing began when it was opened; this confirms the resume point
+    /// was taken (else seeks to it) before any progress is reported, so a missed seek can never
+    /// save the start of the file over where the person had got to.
     private func start() {
         guard !starting, !finished else { return }
         starting = true
-        if playback.resumePosition > 0 {
-            player.seek(to: CMTime(seconds: playback.resumePosition, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+        let want = playback.resumePosition
+        let at = player.currentTime().seconds
+        if want > 0, !(at.isFinite && abs(at - want) < 2) {
+            ClientDiagnostics.note(String(format: "Resume point not taken early (at %.1f s); seeking to %.0f s", at, want))
+            let wasPlaying = player.rate > 0
+            player.seek(to: CMTime(seconds: want, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self, !self.finished else { return }
                     self.resumed = true
-                    self.player.play()
+                    if wasPlaying { self.player.play() }
                 }
             }
-        } else { resumed = true; player.play() }
+        } else { resumed = true }
+    }
+    /// Notes each change for the logs and shows the spinner after half a second of waiting.
+    private func timeControlChanged() {
+        let position = player.currentTime().seconds
+        waitingTask?.cancel()
+        switch player.timeControlStatus {
+        case .waitingToPlayAtSpecifiedRate:
+            ClientDiagnostics.note(String(format: "Waiting (%@) at %.1f s", player.reasonForWaitingToPlay?.rawValue ?? "?", position))
+            waitingTask = Task { @MainActor [weak self] in
+                do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+                guard let self, self.player.timeControlStatus == .waitingToPlayAtSpecifiedRate else { return }
+                self.waiting = true
+            }
+        case .playing:
+            if !played { played = true; ClientDiagnostics.note(String(format: "Playing after %.1f s at %.1f s", Date().timeIntervalSince(openedAt), position)) }
+            else { ClientDiagnostics.note(String(format: "Playing at %.1f s", position)) }
+            waiting = false
+        case .paused:
+            ClientDiagnostics.note(String(format: "Paused at %.1f s", position))
+            waiting = false
+        @unknown default: waiting = false
+        }
+    }
+    /// AVFoundation's own account of the file: stalls and errors as they happen.
+    private func observe(_ item: AVPlayerItem) {
+        for observer in itemObservers { NotificationCenter.default.removeObserver(observer) }
+        let center = NotificationCenter.default
+        itemObservers = [
+            center.addObserver(forName: .AVPlayerItemPlaybackStalled, object: item, queue: .main) { [weak item] _ in
+                ClientDiagnostics.note(String(format: "Stalled at %.1f s", item?.currentTime().seconds ?? -1))
+            },
+            center.addObserver(forName: .AVPlayerItemNewErrorLogEntry, object: item, queue: .main) { [weak item] _ in
+                guard let event = item?.errorLog()?.events.last else { return }
+                ClientDiagnostics.note("AVFoundation error \(event.errorStatusCode) \(event.errorDomain) \(event.errorComment ?? "") server \(event.serverAddress ?? "?")")
+            },
+            center.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main) { notification in
+                let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? NSError
+                ClientLogs.failed("Playback stopped before the end: \(error.map { "\($0.domain) \($0.code) \($0.localizedDescription)" } ?? "?")")
+            },
+        ]
+    }
+    /// The file's totals from AVFoundation's access log, when it closes or the next one starts.
+    private func summarize() {
+        guard let item = player.currentItem else { return }
+        let events = item.accessLog()?.events ?? []
+        let bytes = events.reduce(Int64(0)) { $0 + max(0, $1.numberOfBytesTransferred) }
+        let stalls = events.reduce(0) { $0 + max(0, $1.numberOfStalls) }
+        let watched = events.reduce(0.0) { $0 + max(0, $1.durationWatched) }
+        let observed = events.last.map { $0.observedBitrate / 1_000_000 } ?? 0
+        let indicated = events.last.map { $0.indicatedBitrate / 1_000_000 } ?? 0
+        ClientDiagnostics.note(String(format: "Closed at %.1f s: %@ received, watched %.0f s, %d stalls, observed %.1f Mb/s (file %.1f Mb/s), startup %.1f s%@",
+                                      player.currentTime().seconds, ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file), watched, stalls,
+                                      observed, indicated, events.first?.startupTime ?? 0, played ? "" : ", never played"))
     }
     @discardableResult
     func report(ended: Bool = false, reachedEnd: Bool = false) -> Bool {
@@ -336,6 +422,10 @@ final class PlaybackModel: ObservableObject {
     }
     func stop() {
         guard !finished else { return }
+        summarize()
+        waitingTask?.cancel(); waiting = false
+        for observer in itemObservers { NotificationCenter.default.removeObserver(observer) }
+        itemObservers = []
         if let profileObserver { NotificationCenter.default.removeObserver(profileObserver); self.profileObserver = nil }
         nextEpisodeTask?.cancel(); nextEpisodeTask = nil
         creditsTask?.cancel(); creditsTask = nil
@@ -351,6 +441,7 @@ final class PlaybackModel: ObservableObject {
         player.replaceCurrentItem(with: nil)
         if let timeObserver { player.removeTimeObserver(timeObserver); self.timeObserver = nil }
         rateObservation = nil
+        statusObservation = nil
         speedObservation = nil
         observation = nil
         if let endObserver { NotificationCenter.default.removeObserver(endObserver); self.endObserver = nil }
@@ -385,6 +476,17 @@ struct EpisodeCredits: Equatable {
     /// Once offered, the prompt stays up until the file ends.
     static func prompting(_ credits: EpisodeCredits?, position: Double, duration: Double) -> Bool {
         position >= offerStart(credits, duration: duration)
+    }
+}
+
+/// A spinner over the picture while the player waits for the file.
+struct PlayerWaitingIndicator: View {
+    var body: some View {
+        ProgressView()
+            .controlSize(.large).tint(.white)
+            .padding(18).background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 14))
+            .allowsHitTesting(false)
+            .accessibilityLabel(Text("Loading…"))
     }
 }
 
@@ -652,6 +754,14 @@ struct PlayerScreen: View {
                 #endif
             }
         }
+        // Waiting for the file (starting, or a stall): AVKit itself shows nothing here on the
+        // Mac or Apple TV. iPhone and iPad draw their own (MobilePlayerPresentation).
+        .overlay {
+            if model.waiting && !model.preparingNext && model.error == nil && model.endMessage == nil {
+                PlayerWaitingIndicator().transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: model.waiting)
         #if os(macOS)
         .overlay(alignment: .bottomTrailing) {
             if model.offerNextEpisode && !model.preparingNext && model.error == nil && model.endMessage == nil {

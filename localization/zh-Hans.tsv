@@ -949,3 +949,9 @@ Details	详细信息
 Checks whether this device can reach your server directly instead of through Tailscale’s relay. Nothing else uses it.	检查这台设备能否不经 Tailscale 中继、直接连接到你的服务器。其他功能不会使用这条连接。
 Turn off another VPN to connect	连接时关闭其他 VPN
 Torrbaby tunnel	Torrbaby 隧道
+Loading…	正在加载…
+Send logs automatically	自动发送日志
+Send logs now	立即发送日志
+Sending logs…	正在发送日志…
+Logs sent	日志已发送
+Couldn’t send logs	无法发送日志

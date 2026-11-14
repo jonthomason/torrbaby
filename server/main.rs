@@ -10,6 +10,7 @@ mod config;
 mod container;
 mod credit_series;
 mod credits;
+mod diagnostics;
 mod dolby;
 mod hls;
 mod lan;

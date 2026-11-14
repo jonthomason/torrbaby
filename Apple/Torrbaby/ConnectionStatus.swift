@@ -12,6 +12,10 @@ import AppKit
 struct ConnectionStatusSections: View {
     @EnvironmentObject var store: Store
     @State private var measuring = false
+    @AppStorage(ClientLogs.automaticKey) private var automaticLogs = false
+    @State private var sendingLogs = false
+    /// What became of the last "Send logs to Diamond": the file's name there, or why it failed.
+    @State private var logResult: String?
     #if os(iOS)
     @ObservedObject private var tunnel = PacketTunnel.shared
     /// The extension's own account of its paths, asked each second while the page is open.
@@ -238,6 +242,20 @@ struct ConnectionStatusSections: View {
                 HStack { Text(verbatim: measuring ? "Testing every way…" : "Test all ways now"); if measuring { Spacer(); ProgressView() } }
             }.disabled(measuring)
             Button { copy(report) } label: { Text(verbatim: "Copy report") }
+            // The report, the tunnel's log, playback notes and the app's own log, saved on
+            // Diamond under client-logs/: automatically (periodically and after failures) or now.
+            Toggle(isOn: $automaticLogs) { Text("Send logs automatically") }
+            Button {
+                sendingLogs = true; logResult = nil
+                Task {
+                    do { logResult = L10n.text("Logs sent") + " · " + (try await ClientLogs.send(store: store, report: report)) }
+                    catch { logResult = L10n.text("Couldn’t send logs") + " · " + error.localizedDescription }
+                    sendingLogs = false
+                }
+            } label: {
+                HStack { Text(LocalizedStringKey(sendingLogs ? "Sending logs…" : "Send logs now")); if sendingLogs { Spacer(); ProgressView() } }
+            }.disabled(sendingLogs)
+            if let logResult { Text(verbatim: logResult).font(.caption).foregroundStyle(.secondary).selectableText() }
             #if os(iOS)
             NavigationLink { DirectConnectionTest() } label: { Text(verbatim: "Hole punch test (diagnostic)") }
             #endif
