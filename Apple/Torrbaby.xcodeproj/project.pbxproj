@@ -32,6 +32,7 @@
 			<array>
 				<string>716E9590E60B3AFA6E62BF18</string>
 				<string>5694D66D757D9839B4D7A233</string>
+				<string>FADDF7BD4312C134E3099E8A</string>
 			</array>
 			<key>isa</key>
 			<string>PBXResourcesBuildPhase</string>
@@ -427,6 +428,7 @@
 			<array>
 				<string>2E467AA8A963DAC64F91F7E6</string>
 				<string>D013120995A59D610A2DBC0B</string>
+				<string>69A474A678BF2DCCDCA10893</string>
 			</array>
 			<key>buildRules</key>
 			<array/>
@@ -504,6 +506,7 @@
 				<string>D30CD61CA83866619391CEF3</string>
 				<string>AD502992EE81FA26E6DFF6D1</string>
 				<string>9E6F28336073016EFCEAF590</string>
+				<string>9A560D5F219E432294F41EBD</string>
 			</array>
 			<key>isa</key>
 			<string>PBXGroup</string>
@@ -805,6 +808,19 @@
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
 		</dict>
+		<key>69A474A678BF2DCCDCA10893</key>
+		<dict>
+			<key>buildActionMask</key>
+			<integer>2147483647</integer>
+			<key>files</key>
+			<array>
+				<string>763F42BC1494A92A96801446</string>
+			</array>
+			<key>isa</key>
+			<string>PBXResourcesBuildPhase</string>
+			<key>runOnlyForDeploymentPostprocessing</key>
+			<integer>0</integer>
+		</dict>
 		<key>6D268131FBAC417DC3315BC7</key>
 		<dict>
 			<key>children</key>
@@ -871,6 +887,13 @@
 			<string>PBXFrameworksBuildPhase</string>
 			<key>runOnlyForDeploymentPostprocessing</key>
 			<integer>0</integer>
+		</dict>
+		<key>763F42BC1494A92A96801446</key>
+		<dict>
+			<key>fileRef</key>
+			<string>9A560D5F219E432294F41EBD</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
 		</dict>
 		<key>7668BDACD42DB7E9ECCFB802</key>
 		<dict>
@@ -1062,6 +1085,17 @@
 				<string>E41107E7D33B17C46AF1E962</string>
 				<string>34707FBDC7A651A37FDEF0AB</string>
 			</array>
+		</dict>
+		<key>9A560D5F219E432294F41EBD</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>text.xml</string>
+			<key>path</key>
+			<string>PrivacyInfo.xcprivacy</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
 		</dict>
 		<key>9E6F28336073016EFCEAF590</key>
 		<dict>
@@ -1546,6 +1580,17 @@
 			<string>Release</string>
 			<key>isa</key>
 			<string>XCConfigurationList</string>
+		</dict>
+		<key>FADDF7BD4312C134E3099E8A</key>
+		<dict>
+			<key>fileRef</key>
+			<string>9A560D5F219E432294F41EBD</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>platformFilters</key>
+			<array>
+				<string>ios</string>
+			</array>
 		</dict>
 		<key>FB5B27D43B1E0CCC6483A8F7</key>
 		<dict>
