@@ -144,7 +144,7 @@ struct ConnectionStatusSections: View {
             #if os(iOS)
             row("Torrbaby tunnel", kind: "tunnel", inUse: store.path == .tunnel, detail: tunnel.installed ? tunnel.statusText + (tunnel.connected ? (tunnelPaths.map { "\n\($0)" } ?? "") : "") : "not installed")
             if ABT.connected || store.path == .abt {
-                row("ABT", kind: "abt", inUse: store.path == .abt, detail: ABT.connected ? "on: \(ABT.route) (home network, punched, or ABT's exit; ABT's own app says which)" : "off")
+                row("ABT", kind: "abt", inUse: store.path == .abt, detail: ABT.connected ? "on; its path to \(server): " + (store.abtPath.map { $0 == "lan" ? "home network" : $0 == "punched" ? "punched" : "none yet (the relay is used; never through ABT's exit)" } ?? "not known yet") : "off")
             }
             // While the tunnel is connected the app's own direct path and relay stand down: their
             // old checks would read as failures, so they say so instead, and the relay line shows

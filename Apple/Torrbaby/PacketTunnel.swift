@@ -237,12 +237,26 @@ import UIKit
 /// time, so Torrbaby's tunnel and ABT cannot both be up; ABT does the same job for Torrbaby:
 /// Diamond runs ABT's host agent, and ABT answers the name below with a pipe to Diamond's
 /// server, straight across the home network at home, over a punched path away (the same punch
-/// as Torrbaby's own), and through ABT's exit when neither opens. The name resolves while the
-/// app is suspended too, so background downloads use it. Torrbaby's tunnel then stays off.
+/// as Torrbaby's own). Never through ABT's exit, which is abroad: Diamond refuses this service
+/// to anything that did not come straight to it, and without a straight path Torrbaby uses its
+/// relay through bronze, as it does without ABT. The name resolves while the app is suspended
+/// too, so background downloads use it. Torrbaby's tunnel then stays off.
 @MainActor enum ABT {
     static let route = "http://torrbaby.diamond.abt.jonthomason.com"
     /// The address ABT's tunnel gives its interface on iPhone and iPad.
     static let address = "198.18.0.2"
     static var connected: Bool { PacketTunnel.otherVPN() == "ABT" }
+    /// ABT's own account of how it reaches Diamond now, from the page its tunnel answers on
+    /// the device itself: "lan" (home network), "punched", "exit" (no straight path) or
+    /// "unknown"; nil when ABT did not answer.
+    static func pathToDiamond() async -> String? {
+        guard let url = URL(string: "http://status.abt.jonthomason.com/") else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 2
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let status = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let hosts = status["hosts"] as? [[String: Any]] else { return nil }
+        return hosts.first { $0["device"] as? String == "diamond" }?["path"] as? String ?? "unknown"
+    }
 }
 #endif

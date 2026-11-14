@@ -611,7 +611,7 @@ final class Store: ObservableObject {
         if PacketTunnel.shared.connected { return try ServerRoutes.endpoint(PacketTunnel.route, path: path) }
         // ABT's name for Diamond, likewise: one address at home and away, answered while the
         // app is suspended.
-        if abtAnswered != nil, ABT.connected { return try ServerRoutes.endpoint(ABT.route, path: path) }
+        if abtDirect, ABT.connected { return try ServerRoutes.endpoint(ABT.route, path: path) }
         #endif
         return try endpoint(path)
     }
@@ -808,11 +808,45 @@ final class Store: ObservableObject {
     /// path's hole was opened for the old public address, so it is dropped at once and tried
     /// again; the relay is reopened if its interface went away (on the same interface QUIC
     /// carries it across to the new address).
-    /// Whether ABT was on at the last look, and when its route to Diamond last answered (this
-    /// launch): downloads use it only once it has.
+    /// Whether ABT was on at the last look, and how it said it reaches Diamond then ("lan",
+    /// "punched", "exit", "unknown"). Its route is used only while that is a straight path:
+    /// Torrbaby never goes through ABT's exit (Diamond refuses it there too), and without a
+    /// straight path the relay through bronze carries it.
     private var abtWasConnected = false
-    private var abtAnswered: Date?
+    @Published private(set) var abtPath: String?
+    var abtDirect: Bool { abtPath == "lan" || abtPath == "punched" }
     private var abtChecking = false
+    private var abtLastAsked = Date.distantPast
+    private var abtWatch: Task<Void, Never>?
+    /// While ABT is on: its path to Diamond is read every few seconds, so the app moves onto
+    /// ABT's route when a straight path opens and off it the moment that path is gone.
+    private func watchABT() {
+        guard abtWatch == nil else { return }
+        abtWatch = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self, ABT.connected else { break }
+                await self.readABTPath()
+                try? await Task.sleep(for: .seconds(4))
+            }
+            self?.abtWatch = nil
+        }
+    }
+    private func readABTPath() async {
+        let path = await ABT.pathToDiamond()
+        guard ABT.connected else { return }
+        let was = abtDirect
+        if path != abtPath { abtPath = path; directEvent("ABT's path to Diamond: \(path ?? "no answer from ABT")") }
+        if abtDirect != was {
+            // Gone: requests must stop going to its name at once. Opened: take it now.
+            if !abtDirect, activeServer == ABT.route { activeServer = nil }
+            refreshFullyNext()
+            await refresh(polling: true)
+        } else if !abtDirect, Date().timeIntervalSince(abtLastAsked) > 60 {
+            // ABT looks for a path to a host (and punches) when its name is used: asked once a
+            // minute, which Diamond refuses in one round trip while there is no path.
+            checkABTRoute()
+        }
+    }
     /// ABT was turned on or off (seen as a change of network, and on returning to the app):
     /// the best route changes at once.
     private func abtChanged() {
@@ -821,26 +855,26 @@ final class Store: ObservableObject {
         abtWasConnected = now
         directEvent("ABT \(now ? "is on" : "is off")")
         if !now {
-            abtAnswered = nil
+            abtPath = nil
             // Requests must stop going to its name at once, not at the next check.
             if activeServer == ABT.route { activeServer = nil; lastDirectAttempt = .distantPast }
+            refreshFullyNext()
+            Task { await refresh(polling: true) }
+        } else {
+            Task { await readABTPath(); refreshFullyNext(); await refresh(polling: true); watchABT() }
         }
-        refreshFullyNext()
-        Task { await refresh(polling: true) }
     }
-    /// With ABT on and another route in use (at home, the home name wins the race), see once
-    /// that ABT's route answers too, so downloads can take it.
+    /// Uses ABT's name for Diamond once, which makes ABT look for a straight path to it.
     private func checkABTRoute() {
-        guard ABT.connected, abtAnswered == nil, !abtChecking else { return }
-        abtChecking = true
+        guard ABT.connected, !abtChecking else { return }
+        abtChecking = true; abtLastAsked = Date()
         Task { @MainActor in
             defer { abtChecking = false }
             let started = Date()
             do {
                 let _: ServerPing = try await request("GET", "/v1/ping", timeout: 10, address: ABT.route)
-                abtAnswered = Date()
                 noteRoute("abt", RouteCheck(ok: true, ms: Int(Date().timeIntervalSince(started) * 1000), detail: "answered"))
-            } catch { noteRoute("abt", RouteCheck(ok: false, ms: nil, detail: Self.describe(error))) }
+            } catch { noteRoute("abt", RouteCheck(ok: false, ms: nil, detail: abtDirect ? Self.describe(error) : "no straight path yet (never through ABT's exit): the relay is used")) }
         }
     }
     private func networkChanged() {
@@ -917,8 +951,9 @@ final class Store: ObservableObject {
     private func startDirectIfUseful() {
         // The packet tunnel holds its own direct path: the app's would be a second one.
         guard activeServer != PacketTunnel.route, !PacketTunnel.shared.connected else { directNote = "not needed: the Torrbaby tunnel is in use"; return }
-        // ABT punches its own path to Diamond (the same punch): the app's would be a second one.
-        guard activeServer != ABT.route else { directNote = "not needed: ABT is in use"; return }
+        // ABT punches its own path to Diamond (the same punch): the app's would be a second
+        // one, spraying the same NAT. Until ABT's opens, the relay carries the app.
+        guard !ABT.connected else { directNote = "left to ABT, which punches its own path to Diamond"; return }
         guard connected, usingFallback, directRoute == nil, !directAttempting,
               Date().timeIntervalSince(lastDirectAttempt) > 180, let signal = activeServer else {
             let note = !connected ? "not tried: offline" : !usingFallback ? "not tried: at home" : directAttempting ? "trying…" : directNote
@@ -1013,11 +1048,15 @@ final class Store: ObservableObject {
             addresses.removeAll { $0 == Self.relayCandidate }
             addresses.append(PacketTunnel.route)
         }
-        // ABT, when it is on, likewise: its pipe to Diamond always has a way (home network,
-        // punched, or ABT's exit), so the relay through bronze is not opened beside it.
+        // ABT, when it is on and has a straight path to Diamond (home network or punched),
+        // likewise. Without one its name is left out and the relay through bronze stays in:
+        // Torrbaby is never carried through ABT's exit.
         if ABT.connected {
-            addresses.removeAll { $0 == Self.relayCandidate }
-            addresses.append(ABT.route)
+            watchABT()
+            if abtDirect {
+                addresses.removeAll { $0 == Self.relayCandidate }
+                addresses.append(ABT.route)
+            }
         }
         #if DEBUG
         // Simulator checks of the relay from home: -relayOnly YES leaves home and Tailscale out.
@@ -1065,10 +1104,7 @@ final class Store: ObservableObject {
             let route = probed.2
             self.activeServer = route
             #if os(iOS)
-            if route == ABT.route {
-                self.abtAnswered = Date()
-                self.dropDirect("ABT is in use"); self.dropRelay("ABT is in use")
-            } else { self.checkABTRoute() }
+            if route == ABT.route { self.dropDirect("ABT is in use"); self.dropRelay("ABT is in use") }
             if ServerRoutes.normalized(route) == ServerRoutes.normalized(primary) && !probed.1 { self.dropRelay("home") }
             #endif
             self.adopt(probed.0.server, atHome: ServerRoutes.normalized(route) == ServerRoutes.normalized(primary) && !probed.1)
@@ -1109,6 +1145,9 @@ final class Store: ObservableObject {
                 }
             }
             if throughRelay, let network = error as? URLError, network.code != .cancelled, network.code != .timedOut { dropRelay("failed: \(network.code.rawValue)") }
+            // ABT's straight path to Diamond went (through its exit Diamond refuses Torrbaby):
+            // ask ABT now, which moves the app onto the relay at once if so.
+            if address == nil, activeServer == ABT.route, let network = error as? URLError, network.code != .cancelled { Task { await self.readABTPath() } }
             #endif
             throw error
         }
