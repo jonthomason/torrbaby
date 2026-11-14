@@ -81,8 +81,10 @@ final class L10n {
     IDS.put("All releases", R.string.ui_ef3238d2ee68);
     IDS.put("All resolutions", R.string.ui_f1f67dc07e63);
     IDS.put("All seasons", R.string.ui_5666605dbc6a);
+    IDS.put("Allow", R.string.ui_3ad0e3698278);
     IDS.put("Allow cellular for 3 hours", R.string.ui_a2faebc19189);
     IDS.put("Allow downloads over cellular or hotspot", R.string.ui_0deb0259dcd9);
+    IDS.put("Allowing…", R.string.ui_9a746b65c42e);
     IDS.put("Alphabetical", R.string.ui_9d12608fc0bd);
     IDS.put("Already had as good: %d", R.string.ui_e1bc0ebdf8b8);
     IDS.put("Already in the download queue.", R.string.ui_6894bde06f9a);
@@ -230,6 +232,7 @@ final class L10n {
     IDS.put("Description", R.string.ui_55f8ebc805e6);
     IDS.put("Details", R.string.ui_dc3decbb9384);
     IDS.put("Detecting credits", R.string.ui_d9319c338d5b);
+    IDS.put("Device allowed", R.string.ui_a23975400420);
     IDS.put("Device linked", R.string.ui_d56e2646caaa);
     IDS.put("Devices", R.string.ui_df485c871329);
     IDS.put("Direct connection failed", R.string.ui_0f3409cf286f);
@@ -356,6 +359,7 @@ final class L10n {
     IDS.put("Initial or emoji", R.string.ui_8bfa1406b66d);
     IDS.put("Interface language", R.string.ui_9407e9ca65ce);
     IDS.put("Interrupted", R.string.ui_50be3afcff74);
+    IDS.put("It finishes setting up by itself within a few seconds, wherever it is.", R.string.ui_f0a1400a18ca);
     IDS.put("It is connected under another name. Restart the server Mac to put it back. Nothing has been removed.", R.string.ui_65b63733a6f3);
     IDS.put("Its drive is not connected", R.string.ui_16001f72b451);
     IDS.put("Its files stay on the drive. Torrbaby stops using it.", R.string.ui_eadbdb3346d4);
@@ -373,6 +377,7 @@ final class L10n {
     IDS.put("Languages unavailable", R.string.ui_4ece8db0cba2);
     IDS.put("Last checked %s", R.string.ui_b288f8c8e974);
     IDS.put("Leave Torrbaby?", R.string.ui_88a68e0e00b7);
+    IDS.put("Let this device join?", R.string.ui_93f9edb5b925);
     IDS.put("Library", R.string.ui_b8100f5ba8bd);
     IDS.put("Library & Organizing", R.string.ui_cbfda9ea6b27);
     IDS.put("Library files", R.string.ui_16add3775c70);
@@ -632,6 +637,8 @@ final class L10n {
     IDS.put("Scan connection code", R.string.ui_b3b48e971d6e);
     IDS.put("Scan media library", R.string.ui_875f33d23a6c);
     IDS.put("Scan the QR code", R.string.ui_d28ae0c30b7e);
+    IDS.put("Scan the code shown on the new device", R.string.ui_9583c21034d6);
+    IDS.put("Scan the new device's code", R.string.ui_f055be48fe66);
     IDS.put("Search", R.string.ui_bce06414177f);
     IDS.put("Search movies and TV shows", R.string.ui_c4cfc9981ae1);
     IDS.put("Search movies and TV shows.", R.string.ui_06040cbe6a6a);
@@ -773,6 +780,7 @@ final class L10n {
     IDS.put("These settings apply to everyone who uses this server.", R.string.ui_6315e169d054);
     IDS.put("This affects the entire download package and everyone’s library.", R.string.ui_a3594939d5f3);
     IDS.put("This code has expired.", R.string.ui_1d3888fca6b7);
+    IDS.put("This code isn't a Torrbaby setup code", R.string.ui_fc23739929e0);
     IDS.put("This device", R.string.ui_fa5a6dd9d249);
     IDS.put("This device could not decode the video or audio format.", R.string.ui_6aacdc553205);
     IDS.put("This download can't be updated in place. Delete it and download it again.", R.string.ui_63f0d417cbbf);
@@ -781,6 +789,7 @@ final class L10n {
     IDS.put("This drive is read-only", R.string.ui_9f9b021c3d1c);
     IDS.put("This episode is not yet available on the server.", R.string.ui_f85d694d9581);
     IDS.put("This file couldn’t play", R.string.ui_f71f96454e21);
+    IDS.put("This isn’t a Torrbaby setup code.", R.string.ui_51284e6a9c92);
     IDS.put("This media file is not yet available on the server.", R.string.ui_6ca3d776fe97);
     IDS.put("This package is in Junk. The server will finish seeding and delete it automatically.", R.string.ui_b38d0b241735);
     IDS.put("This release has no downloadable torrent.", R.string.ui_951eb7043b7a);
@@ -800,6 +809,7 @@ final class L10n {
     IDS.put("Title A–Z", R.string.ui_44a4597b5507);
     IDS.put("To remove this drive, first move everything on it to another drive.", R.string.ui_476e06db8f10);
     IDS.put("To remove this drive, first move its titles to another drive from each title’s Manage Files.", R.string.ui_eafdcec8c9d0);
+    IDS.put("Too many setup codes waiting. Try again in a few minutes.", R.string.ui_39cd0e4ab4aa);
     IDS.put("Torrbaby makes a Media folder on the drive, with Downloads, Movies and TV inside, and keeps a small file there to recognise the drive.", R.string.ui_7fc3a24d77a0);
     IDS.put("Torrbaby transfer rates", R.string.ui_625fdd6c399e);
     IDS.put("Torrbaby tunnel", R.string.ui_fecc14ee3002);

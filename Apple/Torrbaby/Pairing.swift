@@ -28,6 +28,9 @@ struct PairingCodeView: View {
     @State private var error: String?
     @State private var paired = false
     @State private var generation = UUID()
+    #if os(iOS)
+    @State private var showJoin = false
+    #endif
     private struct Grant: Decodable { let id: String; let code: String; let expires: Double }
     private struct Status: Decodable { let paired: Bool }
     private var qr: CGImage? {
@@ -57,6 +60,10 @@ struct PairingCodeView: View {
                                 .multilineTextAlignment(.center)
                             Text("Expires in \(Int(grant.expires - context.date.timeIntervalSince1970)) seconds")
                                 .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            #if os(iOS)
+                            // A device far away (a TV that is never at home) shows its own code instead.
+                            Button("Scan the new device's code") { showJoin = true }
+                            #endif
                         } else {
                             Text("This code has expired.")
                             Button("New code") { generation = UUID() }
@@ -66,6 +73,9 @@ struct PairingCodeView: View {
             }.padding(30).frame(maxWidth: 420, minHeight: 410)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
         }
+        #if os(iOS)
+        .sheet(isPresented: $showJoin) { LocalizedInterface { JoinScannerView() }.environmentObject(store) }
+        #endif
         .task(id: generation) {
             error = nil; paired = false
             if let grant { try? await store.send("DELETE", "/v1/pairings/" + grant.id) }
@@ -190,6 +200,73 @@ struct PairingScannerView: View {
             await store.connect()
             guard store.connected else { throw APIError(message: store.connectionError ?? "Could not connect") }
             dismiss(); connected()
+        } catch { self.error = error.localizedDescription }
+    }
+}
+
+/// Let a new device join from anywhere (docs/remote-pairing.md): scan the code it shows, which
+/// holds a one-time secret, and hand the secret to Diamond over this device's own connection.
+/// The new device then fetches its setup through bronze, sealed with that secret.
+struct JoinScannerView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    @Environment(\.dismiss) private var dismiss
+    struct Join: Decodable { let app: String; let kind: String; let v: Int; let secret: String; let name: String?; let platform: String? }
+    @State private var join: Join?
+    @State private var allowed = false
+    @State private var error: String?
+    @State private var busy = false
+    @State private var scannerID = UUID()
+    var body: some View {
+        NavigationStack {
+            Group {
+                if allowed {
+                    VStack(spacing: 18) {
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 80)).foregroundStyle(Theme.accent)
+                        Text("Device allowed").font(.title2.bold())
+                        Text("It finishes setting up by itself within a few seconds, wherever it is.").multilineTextAlignment(.center)
+                        Button("Done") { dismiss() }.buttonStyle(MonoButtonStyle(prominent: true))
+                    }.padding(24)
+                } else if let join {
+                    VStack(spacing: 18) {
+                        Image(systemName: join.platform?.contains("tv") == true ? "tv" : "iphone").font(.largeTitle)
+                        Text("Let this device join?").font(.title2.bold())
+                        Text(verbatim: join.name ?? "").font(.callout)
+                        Button(LocalizedStringKey(busy ? "Allowing…" : "Allow")) { Task { await allow(join) } }
+                            .buttonStyle(MonoButtonStyle(prominent: true)).disabled(busy)
+                        Button("Scan again") { self.join = nil; error = nil; scannerID = UUID() }.disabled(busy)
+                        if let error { Text(L10n.text(error)).foregroundStyle(.orange) }
+                    }.padding(24)
+                } else {
+                    VStack(spacing: 16) {
+                        CameraScanner { value in
+                            guard let decoded = try? JSONDecoder().decode(Join.self, from: Data(value.utf8)),
+                                  decoded.app == "torrbaby", decoded.kind == "join", decoded.v == 1, decoded.secret.count == 43 else {
+                                error = "This isn’t a Torrbaby setup code."; return
+                            }
+                            join = decoded
+                        } failed: { error = $0 }
+                        .id(scannerID)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        Text("Scan the code shown on the new device").font(.headline)
+                        if let error {
+                            Text(L10n.text(error)).font(.caption).foregroundStyle(.orange)
+                            Button("Try again") { self.error = nil; scannerID = UUID() }
+                        }
+                    }.padding(20)
+                }
+            }.navigationTitle("Scan the new device's code")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(busy) } }
+        }
+    }
+    private func allow(_ join: Join) async {
+        busy = true; defer { busy = false }
+        do {
+            struct Granted: Decodable { let id: String }
+            let _: Granted = try await store.request("POST", "/v1/pairings/remote", body: ["secret": join.secret, "name": join.name ?? "", "platform": join.platform ?? ""])
+            allowed = true
         } catch { self.error = error.localizedDescription }
     }
 }

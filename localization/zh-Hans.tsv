@@ -955,3 +955,13 @@ Send logs now	立即发送日志
 Sending logs…	正在发送日志…
 Logs sent	日志已发送
 Couldn’t send logs	无法发送日志
+Scan the new device's code	扫描新设备的二维码
+Scan the code shown on the new device	扫描新设备上显示的二维码
+Let this device join?	允许此设备加入？
+Allow	允许
+Allowing…	正在允许…
+Device allowed	已允许此设备
+It finishes setting up by itself within a few seconds, wherever it is.	无论它在哪里，都会在几秒内自行完成设置。
+This isn’t a Torrbaby setup code.	这不是 Torrbaby 设置码。
+This code isn't a Torrbaby setup code	这不是 Torrbaby 设置码
+Too many setup codes waiting. Try again in a few minutes.	等待中的设置码太多。请几分钟后再试。

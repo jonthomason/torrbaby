@@ -70,8 +70,10 @@
     <string name="ui_ef3238d2ee68" formatted="false">全部资源</string>
     <string name="ui_f1f67dc07e63" formatted="false">所有分辨率</string>
     <string name="ui_5666605dbc6a" formatted="false">全部季</string>
+    <string name="ui_3ad0e3698278" formatted="false">允许</string>
     <string name="ui_a2faebc19189" formatted="false">允许使用蜂窝网络 3 小时</string>
     <string name="ui_0deb0259dcd9" formatted="false">允许通过蜂窝网络或热点下载</string>
+    <string name="ui_9a746b65c42e" formatted="false">正在允许…</string>
     <string name="ui_9d12608fc0bd" formatted="false">按名称排序</string>
     <string name="ui_e1bc0ebdf8b8" formatted="false">已有同样好的版本：%d</string>
     <string name="ui_6894bde06f9a" formatted="false">已在下载队列中。</string>
@@ -219,6 +221,7 @@
     <string name="ui_55f8ebc805e6" formatted="false">简介</string>
     <string name="ui_dc3decbb9384" formatted="false">详细信息</string>
     <string name="ui_d9319c338d5b" formatted="false">检测片尾字幕</string>
+    <string name="ui_a23975400420" formatted="false">已允许此设备</string>
     <string name="ui_d56e2646caaa" formatted="false">设备已关联</string>
     <string name="ui_df485c871329" formatted="false">设备</string>
     <string name="ui_0f3409cf286f" formatted="false">直连失败</string>
@@ -345,6 +348,7 @@
     <string name="ui_8bfa1406b66d" formatted="false">首字母或表情符号</string>
     <string name="ui_9407e9ca65ce" formatted="false">界面语言</string>
     <string name="ui_50be3afcff74" formatted="false">已中断</string>
+    <string name="ui_f0a1400a18ca" formatted="false">无论它在哪里，都会在几秒内自行完成设置。</string>
     <string name="ui_65b63733a6f3" formatted="false">它以其他名称连接。请重新启动服务器 Mac 以恢复。没有删除任何内容。</string>
     <string name="ui_16001f72b451" formatted="false">所在的硬盘未连接</string>
     <string name="ui_eadbdb3346d4" formatted="false">文件会保留在硬盘上，Torrbaby 将不再使用它。</string>
@@ -362,6 +366,7 @@
     <string name="ui_4ece8db0cba2" formatted="false">语言信息不可用</string>
     <string name="ui_b288f8c8e974" formatted="false">上次检查：%s</string>
     <string name="ui_88a68e0e00b7" formatted="false">退出 Torrbaby？</string>
+    <string name="ui_93f9edb5b925" formatted="false">允许此设备加入？</string>
     <string name="ui_b8100f5ba8bd" formatted="false">媒体库</string>
     <string name="ui_cbfda9ea6b27" formatted="false">媒体库与整理</string>
     <string name="ui_16add3775c70" formatted="false">媒体库文件</string>
@@ -621,6 +626,8 @@
     <string name="ui_b3b48e971d6e" formatted="false">扫描连接码</string>
     <string name="ui_875f33d23a6c" formatted="false">扫描媒体库</string>
     <string name="ui_d28ae0c30b7e" formatted="false">扫描二维码</string>
+    <string name="ui_9583c21034d6" formatted="false">扫描新设备上显示的二维码</string>
+    <string name="ui_f055be48fe66" formatted="false">扫描新设备的二维码</string>
     <string name="ui_bce06414177f" formatted="false">搜索</string>
     <string name="ui_c4cfc9981ae1" formatted="false">搜索电影和剧集</string>
     <string name="ui_06040cbe6a6a" formatted="false">搜索电影和剧集。</string>
@@ -762,6 +769,7 @@
     <string name="ui_6315e169d054" formatted="false">这些设置适用于使用此服务器的所有人。</string>
     <string name="ui_a3594939d5f3" formatted="false">此操作影响整个下载包及所有用户的媒体库。</string>
     <string name="ui_1d3888fca6b7" formatted="false">此代码已过期。</string>
+    <string name="ui_fc23739929e0" formatted="false">这不是 Torrbaby 设置码</string>
     <string name="ui_fa5a6dd9d249" formatted="false">此设备</string>
     <string name="ui_6aacdc553205" formatted="false">此设备无法解码该视频或音频格式。</string>
     <string name="ui_63f0d417cbbf" formatted="false">此下载无法就地更新。请删除后重新下载。</string>
@@ -770,6 +778,7 @@
     <string name="ui_9f9b021c3d1c" formatted="false">这块硬盘是只读的</string>
     <string name="ui_f85d694d9581" formatted="false">服务器上的此集尚不可用。</string>
     <string name="ui_f71f96454e21" formatted="false">无法播放此文件</string>
+    <string name="ui_51284e6a9c92" formatted="false">这不是 Torrbaby 设置码。</string>
     <string name="ui_6ca3d776fe97" formatted="false">服务器上的此媒体文件尚不可用。</string>
     <string name="ui_b38d0b241735" formatted="false">此下载包已在废弃区，服务器将在做种完成后自动删除。</string>
     <string name="ui_951eb7043b7a" formatted="false">此版本没有可下载的种子。</string>
@@ -789,6 +798,7 @@
     <string name="ui_44a4597b5507" formatted="false">片名 A–Z</string>
     <string name="ui_476e06db8f10" formatted="false">要移除这块硬盘，请先将其中的全部内容移到另一块硬盘。</string>
     <string name="ui_eafdcec8c9d0" formatted="false">要移除此硬盘，请先在各影片的“管理文件”中将其移到另一块硬盘。</string>
+    <string name="ui_39cd0e4ab4aa" formatted="false">等待中的设置码太多。请几分钟后再试。</string>
     <string name="ui_7fc3a24d77a0" formatted="false">Torrbaby 会在硬盘上创建 Media 文件夹，内含 Downloads、Movies 和 TV，并保存一个小文件用于识别这块硬盘。</string>
     <string name="ui_625fdd6c399e" formatted="false">Torrbaby 传输速度</string>
     <string name="ui_fecc14ee3002" formatted="false">Torrbaby 隧道</string>

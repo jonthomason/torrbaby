@@ -491,7 +491,9 @@ async fn dispatch(
     let mut actual = <Hmac<Sha256> as hmac::KeyInit>::new_from_slice(s.token.as_bytes())
         .expect("HMAC accepts any key size");
     actual.update(supplied.as_bytes());
-    let redeem = method == Method::POST && uri.path() == "/v1/pairings/redeem";
+    // Pairing: redeeming a code, and a remote device claiming its sealed setup through bronze
+    // (docs/remote-pairing.md), come from devices without credentials yet.
+    let redeem = method == Method::POST && (uri.path() == "/v1/pairings/redeem" || uri.path() == "/v1/pairings/remote/claim");
     let device_authorized =
         s.db.lock()
             .map(|db| crate::pairing::authorized(&db, supplied))
@@ -1092,6 +1094,20 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
                 "etag":file_revision(&metadata),"content_type":media_type(&path),"representation":"original"}),
             );
         }
+    }
+    if method == Method::POST && path == "/v1/pairings/remote" {
+        return crate::pairing::remote::grant(&body);
+    }
+    if method == Method::POST && path == "/v1/pairings/remote/claim" {
+        let mut db = s.db.lock().map_err(|_| anyhow::anyhow!("Database lock failed"))?;
+        let state = db.state()?;
+        let relay = crate::rendezvous::advertised();
+        let setup = json!({
+            "server": {"id": state["server"]["id"], "name": state["server"]["name"], "identity": crate::direct::fingerprint()},
+            "relay": {"address": relay["address"], "fingerprint": relay["fingerprint"]},
+            "routes": ROUTES.read().map(|r| r.clone()).unwrap_or_default(),
+        });
+        return crate::pairing::remote::claim(&mut db, &body, setup);
     }
     if path == "/v1/pairings"
         || path.starts_with("/v1/pairings/")

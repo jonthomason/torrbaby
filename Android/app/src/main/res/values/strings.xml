@@ -70,8 +70,10 @@
     <string name="ui_ef3238d2ee68" formatted="false">All releases</string>
     <string name="ui_f1f67dc07e63" formatted="false">All resolutions</string>
     <string name="ui_5666605dbc6a" formatted="false">All seasons</string>
+    <string name="ui_3ad0e3698278" formatted="false">Allow</string>
     <string name="ui_a2faebc19189" formatted="false">Allow cellular for 3 hours</string>
     <string name="ui_0deb0259dcd9" formatted="false">Allow downloads over cellular or hotspot</string>
+    <string name="ui_9a746b65c42e" formatted="false">Allowing…</string>
     <string name="ui_9d12608fc0bd" formatted="false">Alphabetical</string>
     <string name="ui_e1bc0ebdf8b8" formatted="false">Already had as good: %d</string>
     <string name="ui_6894bde06f9a" formatted="false">Already in the download queue.</string>
@@ -219,6 +221,7 @@
     <string name="ui_55f8ebc805e6" formatted="false">Description</string>
     <string name="ui_dc3decbb9384" formatted="false">Details</string>
     <string name="ui_d9319c338d5b" formatted="false">Detecting credits</string>
+    <string name="ui_a23975400420" formatted="false">Device allowed</string>
     <string name="ui_d56e2646caaa" formatted="false">Device linked</string>
     <string name="ui_df485c871329" formatted="false">Devices</string>
     <string name="ui_0f3409cf286f" formatted="false">Direct connection failed</string>
@@ -345,6 +348,7 @@
     <string name="ui_8bfa1406b66d" formatted="false">Initial or emoji</string>
     <string name="ui_9407e9ca65ce" formatted="false">Interface language</string>
     <string name="ui_50be3afcff74" formatted="false">Interrupted</string>
+    <string name="ui_f0a1400a18ca" formatted="false">It finishes setting up by itself within a few seconds, wherever it is.</string>
     <string name="ui_65b63733a6f3" formatted="false">It is connected under another name. Restart the server Mac to put it back. Nothing has been removed.</string>
     <string name="ui_16001f72b451" formatted="false">Its drive is not connected</string>
     <string name="ui_eadbdb3346d4" formatted="false">Its files stay on the drive. Torrbaby stops using it.</string>
@@ -362,6 +366,7 @@
     <string name="ui_4ece8db0cba2" formatted="false">Languages unavailable</string>
     <string name="ui_b288f8c8e974" formatted="false">Last checked %s</string>
     <string name="ui_88a68e0e00b7" formatted="false">Leave Torrbaby?</string>
+    <string name="ui_93f9edb5b925" formatted="false">Let this device join?</string>
     <string name="ui_b8100f5ba8bd" formatted="false">Library</string>
     <string name="ui_cbfda9ea6b27" formatted="false">Library &amp; Organizing</string>
     <string name="ui_16add3775c70" formatted="false">Library files</string>
@@ -621,6 +626,8 @@
     <string name="ui_b3b48e971d6e" formatted="false">Scan connection code</string>
     <string name="ui_875f33d23a6c" formatted="false">Scan media library</string>
     <string name="ui_d28ae0c30b7e" formatted="false">Scan the QR code</string>
+    <string name="ui_9583c21034d6" formatted="false">Scan the code shown on the new device</string>
+    <string name="ui_f055be48fe66" formatted="false">Scan the new device\'s code</string>
     <string name="ui_bce06414177f" formatted="false">Search</string>
     <string name="ui_c4cfc9981ae1" formatted="false">Search movies and TV shows</string>
     <string name="ui_06040cbe6a6a" formatted="false">Search movies and TV shows.</string>
@@ -762,6 +769,7 @@
     <string name="ui_6315e169d054" formatted="false">These settings apply to everyone who uses this server.</string>
     <string name="ui_a3594939d5f3" formatted="false">This affects the entire download package and everyone’s library.</string>
     <string name="ui_1d3888fca6b7" formatted="false">This code has expired.</string>
+    <string name="ui_fc23739929e0" formatted="false">This code isn\'t a Torrbaby setup code</string>
     <string name="ui_fa5a6dd9d249" formatted="false">This device</string>
     <string name="ui_6aacdc553205" formatted="false">This device could not decode the video or audio format.</string>
     <string name="ui_63f0d417cbbf" formatted="false">This download can\'t be updated in place. Delete it and download it again.</string>
@@ -770,6 +778,7 @@
     <string name="ui_9f9b021c3d1c" formatted="false">This drive is read-only</string>
     <string name="ui_f85d694d9581" formatted="false">This episode is not yet available on the server.</string>
     <string name="ui_f71f96454e21" formatted="false">This file couldn’t play</string>
+    <string name="ui_51284e6a9c92" formatted="false">This isn’t a Torrbaby setup code.</string>
     <string name="ui_6ca3d776fe97" formatted="false">This media file is not yet available on the server.</string>
     <string name="ui_b38d0b241735" formatted="false">This package is in Junk. The server will finish seeding and delete it automatically.</string>
     <string name="ui_951eb7043b7a" formatted="false">This release has no downloadable torrent.</string>
@@ -789,6 +798,7 @@
     <string name="ui_44a4597b5507" formatted="false">Title A–Z</string>
     <string name="ui_476e06db8f10" formatted="false">To remove this drive, first move everything on it to another drive.</string>
     <string name="ui_eafdcec8c9d0" formatted="false">To remove this drive, first move its titles to another drive from each title’s Manage Files.</string>
+    <string name="ui_39cd0e4ab4aa" formatted="false">Too many setup codes waiting. Try again in a few minutes.</string>
     <string name="ui_7fc3a24d77a0" formatted="false">Torrbaby makes a Media folder on the drive, with Downloads, Movies and TV inside, and keeps a small file there to recognise the drive.</string>
     <string name="ui_625fdd6c399e" formatted="false">Torrbaby transfer rates</string>
     <string name="ui_fecc14ee3002" formatted="false">Torrbaby tunnel</string>
