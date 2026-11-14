@@ -2358,12 +2358,29 @@ public class MainActivity extends Activity {
     refinding = true;
     lastRefind = System.currentTimeMillis();
     ServerDiscovery[] search = new ServerDiscovery[1];
+    // Away from home the search would find nothing for its full 8 s; the relay is tried after
+    // 2.5 s instead, while the search goes on (Diamond found here later still wins).
+    boolean[] onRelay = {false};
+    Runnable tryRelay = () -> {
+      if (!refinding || api != requested) return;
+      new Thread(() -> {
+        String relay = Relay.base(this, requested.client);
+        runOnUiThread(() -> {
+          if (!refinding || api != requested || isDestroyed() || relay.isEmpty()) return;
+          onRelay[0] = true;
+          // Not on the home network: through Torrbaby's relay (this TV knows Diamond's identity).
+          moveTo(requested, relay);
+          load();
+        });
+      }, "Relay").start();
+    };
     Runnable give_up = () -> {
       if (!refinding) return;
       refinding = false;
       if (search[0] != null) search[0].close();
-      if (api != requested) return;
-      // Not on the home network: through Torrbaby's relay, when this TV knows Diamond's identity.
+      discoveryHandler.removeCallbacks(tryRelay);
+      if (api != requested || onRelay[0]) return;
+      // The relay was not ready in time (or this TV has no relay): one last try, then load.
       new Thread(() -> {
         String relay = Relay.base(this, requested.client);
         runOnUiThread(() -> {
@@ -2379,16 +2396,20 @@ public class MainActivity extends Activity {
         refinding = false;
         search[0].close();
         discoveryHandler.removeCallbacks(give_up);
+        discoveryHandler.removeCallbacks(tryRelay);
         String found = servers.values().iterator().next();
         ServerRoute.found = found;
-        if (api != requested || isDestroyed()) return;
-        moveTo(requested, found);
-        learnAtHome(found);
+        // Still the connection this search was for, or the relay it moved to meanwhile.
+        Api current = api;
+        if (isDestroyed() || current == null || (current != requested && !onRelay[0])) return;
+        moveTo(current, found);
+        learnAtHome(found, current);
         load();
       }
       public void failed() { give_up.run(); }
     });
     search[0].start();
+    discoveryHandler.postDelayed(tryRelay, 2500);
     discoveryHandler.postDelayed(give_up, 8000);
     return true;
   }
@@ -2412,11 +2433,12 @@ public class MainActivity extends Activity {
    * At home, Diamond itself says who it is (its identity, which end-to-end encryption through
    * bronze pins) and where its relay is: kept, so this TV can reach it away from home too.
    */
-  private void learnAtHome(String home) {
+  private void learnAtHome(String home, Api credentials) {
     io.execute(() -> {
       Relay.stop(); // At home: nothing goes through bronze.
       try {
-        JSONObject server = new Api(home, "", "").request("GET", "/v1/ping", null).optJSONObject("server");
+        // With this TV's own credentials: Diamond answers /v1/ping only to its devices.
+        JSONObject server = new Api(home, credentials.token, credentials.client).request("GET", "/v1/ping", null).optJSONObject("server");
         if (server != null) Relay.Remote.from(server.optString("identity"), server.optJSONObject("relay")).save(this);
       } catch (Exception ignored) { /* Learned another time. */ }
     });
@@ -2468,7 +2490,7 @@ public class MainActivity extends Activity {
   private void connectionFailed(TextView label, String reason) {
     View spinner = root.findViewWithTag("connection_spinner");
     if (spinner != null) spinner.setVisibility(View.GONE);
-    label.setText(reason);
+    label.setText(L10n.t(reason));
     Ui.gap(root, 24);
     Button retry = Ui.button(this, L10n.t("Try again"), () -> discover(""));
     Ui.add(root, retry, 200, 44);
@@ -2545,7 +2567,7 @@ public class MainActivity extends Activity {
             Api connected =
                 new Api(address, credential.getString("token"), credential.getString("client_id"));
             ServerRoute.found = address;
-            learnAtHome(address);
+            learnAtHome(address, connected);
 
             runOnUiThread(
                 () -> {
