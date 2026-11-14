@@ -64,6 +64,8 @@ struct TunnelShared: Codable, Equatable {
     var home: String? = nil
     /// Diamond's identity fingerprint: relayed traffic is encrypted end to end to it.
     var identity: String? = nil
+    /// This device's Torrbaby client id (the relay names its connection with it).
+    var client: String? = nil
 
     private static var group: String? { Bundle.main.object(forInfoDictionaryKey: "TorrbabySharedKeychainGroup") as? String }
     private static func query(_ group: String) -> [String: Any] {

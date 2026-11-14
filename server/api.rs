@@ -1621,6 +1621,12 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         ("POST","/v1/diagnostics/logs") => { drop(db); return crate::diagnostics::receive(&s.data_dir, &body); }
         ("POST","/v1/punch") => { drop(db); return crate::punch::TESTS.start(&body).await; }
         ("POST","/v1/direct") => { drop(db); return crate::direct::DIRECT.start(&body, s.config.listen_port, &s.data_dir).await; }
+        // bronze's relay: who is on it now and how much it carried, with device names.
+        ("GET","/v1/relay-usage") => {
+            // The database is moved into the block and released there, before the wait.
+            let names = { let db = db; client_names(&db)? };
+            return crate::rendezvous::usage_named(names).await;
+        }
         ("GET","/v1/punch-results") => { drop(db); return Ok(json!({"results": crate::direct::results::summary(&s.data_dir)})); }
         ("GET","/v1/events") => Ok(db.state()?["events"].take()),
         ("GET","/v1/clients") => Ok(json!(db.rows("SELECT clients.*, EXISTS(SELECT 1 FROM device_credentials WHERE client_id=clients.id) AS paired_credential FROM clients ORDER BY last_seen DESC",[])?)),
@@ -3108,4 +3114,10 @@ mod backfill_tests {
         assert_eq!((bare["summary_zh"].as_str(), bare["summary_zh_source"].as_str(), bare["title_zh"].as_str()), (Some("官方简介"), Some("tmdb"), Some("古战场传奇")));
         Ok(())
     }
+}
+
+/// Each device's name by its client id.
+fn client_names(db: &Database) -> Result<std::collections::HashMap<String, String>> {
+    Ok(db.rows("SELECT id, name FROM clients", [])?.into_iter()
+        .filter_map(|c| Some((c["id"].as_str()?.to_owned(), c["name"].as_str().unwrap_or("").to_owned()))).collect())
 }

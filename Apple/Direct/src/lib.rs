@@ -145,6 +145,15 @@ fn open_on(slot: &Mutex<Option<Tunnel>>, socket: std::net::UdpSocket, server: So
         let port = listener.local_addr().ok()?.port();
         let carrier = connection.clone();
         let kept = endpoint.clone();
+        let client = CLIENT.lock().map(|c| c.clone()).unwrap_or_default();
+        if relayed && !client.is_empty() {
+            let naming = connection.clone();
+            tokio::spawn(async move {
+                let Ok((mut send, _recv)) = naming.open_bi().await else { return };
+                let _ = send.write_all(format!("TBNAME1 {client}\n").as_bytes()).await;
+                let _ = send.finish();
+            });
+        }
         tokio::spawn(async move {
             let _endpoint = endpoint;
             while let Ok((tcp, _)) = listener.accept().await {
@@ -250,6 +259,15 @@ pub extern "C" fn tbdirect_relay_info(buffer: *mut c_char, capacity: usize) -> i
 /// tunnel's address works everywhere, and a background download keeps one address whether
 /// the phone is at home or away.
 static HOME: Mutex<Option<SocketAddr>> = Mutex::new(None);
+
+/// This device's Torrbaby client id: the relay names its connection with it, so Diamond's
+/// Connection page can show which devices use bronze (bronze is told nothing more).
+static CLIENT: Mutex<String> = Mutex::new(String::new());
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tbdirect_client(id: *const c_char) {
+    if let Ok(mut held) = CLIENT.lock() { *held = text(id).unwrap_or_default() }
+}
 
 /// Diamond's identity fingerprint, learned from pairing or from Diamond at home: relayed
 /// streams are encrypted end to end to it, and the direct path must present it. Empty forgets it.

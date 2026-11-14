@@ -42,12 +42,15 @@ fn main() -> Result<()> {
         tokio::spawn(stun::serve(stun_socket_2));
         eprintln!("tbrendezvous: STUN on UDP {stun_port} and {stun_port_2}, QUIC on UDP {quic_port}, fingerprint {}", identity.fingerprint);
         tokio::spawn(stun::serve(stun_socket));
+        let hub = Hub::new(&secret);
+        hub.keep_usage(&state);
         let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
         tokio::select! {
-            _ = serve(endpoint.clone(), Hub::new(&secret)) => {}
+            _ = serve(endpoint.clone(), hub.clone()) => {}
             _ = terminate.recv() => {}
             _ = tokio::signal::ctrl_c() => {}
         }
+        hub.save_usage();
         endpoint.close(0u32.into(), b"shutting down");
         endpoint.wait_idle().await;
         anyhow::Ok(())

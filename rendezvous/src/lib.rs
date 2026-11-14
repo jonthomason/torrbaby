@@ -15,7 +15,12 @@
 //!   device's own credentials, which Diamond checks; this side holds no client credentials.
 //!   A stream that starts with `TBINFO1\n` is answered here instead: whether Diamond is
 //!   connected, the device's address as seen from here, and Diamond's public IP (a device
-//!   with the same public IP is behind the same NAT: at home).
+//!   with the same public IP is behind the same NAT: at home). One that is `TBNAME1 <client
+//!   id>\n` names the connection's device (its Torrbaby client id; Diamond knows the names).
+//!
+//! Usage, for Diamond's Connection page: the devices connected now (client id, address, since,
+//! bytes relayed) and bytes relayed per day (China time), kept in usage.json in the state
+//! directory. Diamond asks over its own connection with a `TBUSAGE1\n` stream.
 //!
 //! The certificate is self-signed, made once and kept in the state directory; devices pin its
 //! SHA-256 fingerprint, which reaches them through pairing or Diamond's status.
@@ -33,6 +38,8 @@ pub const ALPN_HOME: &[u8] = b"tbhome";
 pub const ALPN_RELAY: &[u8] = b"tbrelay";
 pub const HOME_HELLO: &str = "TBHOME1 ";
 pub const INFO: &[u8] = b"TBINFO1\n";
+pub const NAME: &[u8] = b"TBNAME1 ";
+pub const USAGE: &[u8] = b"TBUSAGE1\n";
 /// Stream reset code when Diamond is not connected.
 pub const HOME_OFFLINE: u32 = 2;
 const MAGIC: u32 = 0x2112A442;
@@ -186,11 +193,106 @@ pub struct Hub {
     home: watch::Sender<Option<quinn::Connection>>,
     devices: AtomicU64,
     streams: AtomicU64,
+    /// The devices connected now, by connection.
+    connected: std::sync::Mutex<std::collections::BTreeMap<usize, Arc<Device>>>,
+    /// Bytes relayed since start (down: Diamond to devices; up: devices to Diamond), and the
+    /// per-day totals they are folded into each minute.
+    down: AtomicU64,
+    up: AtomicU64,
+    days: std::sync::Mutex<Days>,
+}
+
+/// One connected device.
+struct Device {
+    client: std::sync::Mutex<String>,
+    address: std::sync::Mutex<SocketAddr>,
+    since: u64,
+    down: AtomicU64,
+    up: AtomicU64,
+    streams: AtomicU64,
+}
+
+/// Bytes relayed per day ("2026-11-14", China time): (down, up). Folded from the running
+/// counters; `folded` is how much of them is already counted.
+#[derive(Default)]
+struct Days { days: std::collections::BTreeMap<String, (u64, u64)>, folded: (u64, u64), file: Option<std::path::PathBuf> }
+
+fn unix_now() -> u64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) }
+
+/// The date in China (UTC+8, no daylight saving) at `unix` seconds.
+pub fn china_day(unix: u64) -> String {
+    let days = (unix + 8 * 3600) / 86400;
+    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
+    let z = days as i64 + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+    format!("{y:04}-{m:02}-{d:02}")
 }
 
 impl Hub {
     pub fn new(secret: &str) -> Arc<Hub> {
-        Arc::new(Hub { secret: Sha256::digest(secret.as_bytes()).into(), home: watch::channel(None).0, devices: AtomicU64::new(0), streams: AtomicU64::new(0) })
+        Arc::new(Hub { secret: Sha256::digest(secret.as_bytes()).into(), home: watch::channel(None).0, devices: AtomicU64::new(0), streams: AtomicU64::new(0),
+            connected: Default::default(), down: AtomicU64::new(0), up: AtomicU64::new(0), days: Default::default() })
+    }
+
+    /// Keep the per-day totals in `dir`/usage.json: read now, written each minute while
+    /// traffic flows (the last 400 days are kept).
+    pub fn keep_usage(self: &Arc<Self>, dir: &Path) {
+        let file = dir.join("usage.json");
+        if let Ok(mut days) = self.days.lock() {
+            if let Some(saved) = std::fs::read(&file).ok().and_then(|d| serde_json::from_slice::<serde_json::Value>(&d).ok()) {
+                for (day, totals) in saved["days"].as_object().into_iter().flatten() {
+                    days.days.insert(day.clone(), (totals["down"].as_u64().unwrap_or(0), totals["up"].as_u64().unwrap_or(0)));
+                }
+            }
+            days.file = Some(file);
+        }
+        let hub = self.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                hub.fold(true);
+            }
+        });
+    }
+
+    /// Write the totals now (on shutdown).
+    pub fn save_usage(&self) { self.fold(true) }
+
+    /// Fold the running counters into today's total; written to the file when asked and changed.
+    fn fold(&self, write: bool) {
+        let (down, up) = (self.down.load(Ordering::Relaxed), self.up.load(Ordering::Relaxed));
+        let Ok(mut days) = self.days.lock() else { return };
+        let (delta_down, delta_up) = (down - days.folded.0, up - days.folded.1);
+        if delta_down == 0 && delta_up == 0 { return }
+        days.folded = (down, up);
+        let today = days.days.entry(china_day(unix_now())).or_default();
+        today.0 += delta_down; today.1 += delta_up;
+        while days.days.len() > 400 { let first = days.days.keys().next().cloned().unwrap_or_default(); days.days.remove(&first); }
+        if let (true, Some(file)) = (write, days.file.clone()) {
+            let json = serde_json::json!({"days": days.days.iter().map(|(day, (down, up))| (day.clone(), serde_json::json!({"down": down, "up": up}))).collect::<serde_json::Map<_, _>>()});
+            let temporary = file.with_extension("json.tmp");
+            if std::fs::write(&temporary, json.to_string()).is_ok() { let _ = std::fs::rename(&temporary, &file); }
+        }
+    }
+
+    /// What Diamond's Connection page shows: the devices connected now and bytes per day.
+    pub fn usage(&self) -> serde_json::Value {
+        self.fold(false);
+        let devices: Vec<_> = self.connected.lock().map(|connected| connected.values().map(|device| serde_json::json!({
+            "client": *device.client.lock().unwrap_or_else(|e| e.into_inner()),
+            "address": device.address.lock().map(|a| a.to_string()).unwrap_or_default(),
+            "since": device.since, "down": device.down.load(Ordering::Relaxed), "up": device.up.load(Ordering::Relaxed),
+            "streams": device.streams.load(Ordering::Relaxed),
+        })).collect()).unwrap_or_default();
+        let days: serde_json::Map<_, _> = self.days.lock().map(|days| days.days.iter().map(|(day, (down, up))| (day.clone(), serde_json::json!({"down": down, "up": up}))).collect()).unwrap_or_default();
+        serde_json::json!({"devices": devices, "days": days, "today": china_day(unix_now()), "home_online": self.home_online()})
     }
 
     /// Diamond's connection, waiting up to `wait` for one (it reconnects within seconds).
@@ -261,6 +363,19 @@ async fn home(connection: quinn::Connection, hub: Arc<Hub>) {
     let previous = hub.home.send_replace(Some(connection.clone()));
     if let Some(previous) = previous { previous.close(4u32.into(), b"replaced") }
     eprintln!("Home {from}: connected");
+    // Diamond's own questions on its connection (it is proved): usage, for its Connection page.
+    let asking = connection.clone();
+    let asked = hub.clone();
+    tokio::spawn(async move {
+        while let Ok((mut send, mut recv)) = asking.accept_bi().await {
+            let hub = asked.clone();
+            tokio::spawn(async move {
+                let Ok(request) = recv.read_to_end(64).await else { return };
+                if request == USAGE { let _ = send.write_all(hub.usage().to_string().as_bytes()).await; }
+                let _ = send.finish();
+            });
+        }
+    });
     let started = Instant::now();
     let reason = connection.closed().await;
     hub.home.send_if_modified(|held| {
@@ -274,14 +389,20 @@ async fn device(connection: quinn::Connection, hub: Arc<Hub>) {
     let id = connection.stable_id();
     hub.devices.fetch_add(1, Ordering::Relaxed);
     eprintln!("Device {id} {from}: connected");
+    let record = Arc::new(Device { client: Default::default(), address: std::sync::Mutex::new(from), since: unix_now(), down: AtomicU64::new(0), up: AtomicU64::new(0), streams: AtomicU64::new(0) });
+    if let Ok(mut connected) = hub.connected.lock() { connected.insert(id, record.clone()); }
     let started = Instant::now();
     let mut streams = 0u64;
     while let Ok((send, recv)) = connection.accept_bi().await {
         streams += 1;
         hub.streams.fetch_add(1, Ordering::Relaxed);
+        record.streams.fetch_add(1, Ordering::Relaxed);
         // The address now, not at connect: a device that moved networks migrated its connection.
-        tokio::spawn(splice(send, recv, hub.clone(), connection.remote_address(), id));
+        let address = connection.remote_address();
+        if let Ok(mut held) = record.address.lock() { *held = address }
+        tokio::spawn(splice(send, recv, hub.clone(), address, id, record.clone()));
     }
+    if let Ok(mut connected) = hub.connected.lock() { connected.remove(&id); }
     hub.devices.fetch_sub(1, Ordering::Relaxed);
     eprintln!("Device {id} {from}: closed after {} s, {streams} streams ({})", started.elapsed().as_secs(),
         connection.close_reason().map(|r| r.to_string()).unwrap_or_default());
@@ -289,7 +410,7 @@ async fn device(connection: quinn::Connection, hub: Arc<Hub>) {
 
 /// One device stream onto one new stream to Diamond, both ways. The first request line
 /// (method and path, never the query, which can carry signatures) goes to the log.
-async fn splice(mut device_send: quinn::SendStream, mut device_recv: quinn::RecvStream, hub: Arc<Hub>, from: SocketAddr, id: usize) {
+async fn splice(mut device_send: quinn::SendStream, mut device_recv: quinn::RecvStream, hub: Arc<Hub>, from: SocketAddr, id: usize, record: Arc<Device>) {
     let started = Instant::now();
     let mut first = vec![0u8; 4096];
     let n = match device_recv.read(&mut first).await { Ok(Some(n)) => n, _ => 0 };
@@ -301,22 +422,47 @@ async fn splice(mut device_send: quinn::SendStream, mut device_recv: quinn::Recv
         let _ = device_send.finish();
         return;
     }
+    if first[..n].starts_with(NAME) {
+        let client = String::from_utf8_lossy(&first[NAME.len()..n]).trim().chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(64).collect::<String>();
+        if let Ok(mut held) = record.client.lock() { *held = client }
+        let _ = device_send.finish();
+        return;
+    }
     let Some(home) = hub.home(Duration::from_secs(5)).await else {
         let _ = device_send.reset(HOME_OFFLINE.into());
         eprintln!("Device {id}: stream refused, Diamond is not connected");
         return;
     };
     let Ok((mut home_send, mut home_recv)) = home.open_bi().await else { let _ = device_send.reset(HOME_OFFLINE.into()); return };
-    let line = String::from_utf8_lossy(&first[..n]).lines().next().unwrap_or("").split('?').next().unwrap_or("").to_owned();
+    // Encrypted end to end (a TLS handshake): nothing here can be read.
+    let line = if first.first() == Some(&0x16) { "(end to end)".to_owned() } else {
+        String::from_utf8_lossy(&first[..n]).lines().next().unwrap_or("").split('?').next().unwrap_or("").to_owned()
+    };
     if n > 0 && home_send.write_all(&first[..n]).await.is_err() { let _ = device_send.reset(HOME_OFFLINE.into()); return }
+    hub.up.fetch_add(n as u64, Ordering::Relaxed); record.up.fetch_add(n as u64, Ordering::Relaxed);
     let up = async {
-        let sent = tokio::io::copy(&mut device_recv, &mut home_send).await;
+        let sent = counted_copy(&mut device_recv, &mut home_send, [&hub.up, &record.up]).await;
         match sent { Ok(_) => { let _ = home_send.finish(); } Err(_) => { let _ = home_send.reset(0u32.into()); } }
     };
     let down = async {
-        let got = tokio::io::copy(&mut home_recv, &mut device_send).await;
+        let got = counted_copy(&mut home_recv, &mut device_send, [&hub.down, &record.down]).await;
         match got { Ok(bytes) => { let _ = device_send.finish(); bytes } Err(_) => { let _ = device_send.reset(0u32.into()); 0 } }
     };
     let (_, down_bytes) = tokio::join!(up, down);
     eprintln!("Device {id}: {line} → {down_bytes} bytes in {} ms", started.elapsed().as_millis());
+}
+
+/// Copy until the end, adding each chunk to `counters` as it goes (so a long video counts as
+/// it plays, not when it ends).
+async fn counted_copy<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin>(from: &mut R, to: &mut W, counters: [&AtomicU64; 2]) -> std::io::Result<u64> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut buffer = vec![0u8; 64 * 1024];
+    let mut total = 0u64;
+    loop {
+        let n = from.read(&mut buffer).await?;
+        if n == 0 { return Ok(total) }
+        to.write_all(&buffer[..n]).await?;
+        total += n as u64;
+        for counter in counters { counter.fetch_add(n as u64, Ordering::Relaxed); }
+    }
 }

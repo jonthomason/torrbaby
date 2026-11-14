@@ -9,6 +9,7 @@ import os
 @_silgen_name("tbtunnel_stop") private func tbtunnel_stop()
 @_silgen_name("tbtunnel_alive") private func tbtunnel_alive() -> Bool
 @_silgen_name("tbdirect_identity") private func tbdirect_identity(_ fingerprint: UnsafePointer<CChar>)
+@_silgen_name("tbdirect_client") private func tbdirect_client(_ id: UnsafePointer<CChar>)
 @_silgen_name("tbtunnel_home") private func tbtunnel_home(_ address: UnsafePointer<CChar>)
 @_silgen_name("tbtunnel_stats") private func tbtunnel_stats(_ buffer: UnsafeMutablePointer<CChar>, _ capacity: Int) -> Int32
 @_silgen_name("tbdirect_alive") private func tbdirect_alive() -> Bool
@@ -128,6 +129,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         home = shared?.home ?? ""
         identity = shared?.identity ?? ""
         identity.withCString { tbdirect_identity($0) }
+        (shared?.client ?? "").withCString { tbdirect_client($0) }
     }
 
     /// Bronze's view over the relay: this device's public IP and Diamond's.

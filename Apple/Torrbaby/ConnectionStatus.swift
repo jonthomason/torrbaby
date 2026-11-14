@@ -16,6 +16,13 @@ struct ConnectionStatusSections: View {
     @State private var punchResults: [PunchResult] = []
     struct PunchResult: Decodable, Hashable { let carrier: String; let kind: String; let punched: Int; let failed: Int; let medianMs: Int?; let failedBySpread: [String: Int]? }
     private struct PunchResults: Decodable { let results: [PunchResult] }
+    /// bronze's account of the relay (GET /v1/relay-usage): devices on it now, bytes per day.
+    @State private var relayUsage: RelayUsage?
+    struct RelayUsage: Decodable {
+        struct Device: Decodable, Hashable { let client: String; let name: String?; let address: String; let since: Double; let down: Int64; let up: Int64; let streams: Int64 }
+        struct Day: Decodable { let down: Int64; let up: Int64 }
+        let devices: [Device]; let days: [String: Day]; let today: String
+    }
     @AppStorage(ClientLogs.automaticKey) private var automaticLogs = false
     @State private var sendingLogs = false
     /// What became of the last "Send logs to Diamond": the file's name there, or why it failed.
@@ -39,6 +46,7 @@ struct ConnectionStatusSections: View {
             pathSections
             actionsSection
             punchResultsSection
+            relayUsageSection
             #if os(iOS)
             tunnelSection
             directSection
@@ -46,6 +54,13 @@ struct ConnectionStatusSections: View {
             #endif
         }
         .task { await loadPunchResults() }
+        .task {
+            // Every 10 s while the page is open: bytes move while video plays.
+            while !Task.isCancelled {
+                await loadRelayUsage()
+                try? await Task.sleep(for: .seconds(10))
+            }
+        }
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
@@ -264,6 +279,29 @@ struct ConnectionStatusSections: View {
                 }
             } header: { Text(verbatim: "Punch results (last 30 days)") }
         }
+    }
+    /// Who uses bronze's relay and how much it carries (bronze's own count, China days).
+    @ViewBuilder private var relayUsageSection: some View {
+        if let usage = relayUsage {
+            SwiftUI.Section {
+                if usage.devices.isEmpty { labeled("Devices", "none on the relay now") }
+                ForEach(usage.devices, id: \.self) { device in
+                    let minutes = Int(max(0, Date().timeIntervalSince1970 - device.since) / 60)
+                    labeled(device.name ?? (device.client.isEmpty ? "A device (an older build)" : "Device \(device.client.prefix(8))"),
+                            "\(device.address), connected \(minutes < 60 ? "\(minutes) min" : "\(minutes / 60) h \(minutes % 60) min"), ↓ \(Self.bytes(device.down)) ↑ \(Self.bytes(device.up))")
+                }
+                let today = usage.days[usage.today]
+                let month = usage.days.filter { $0.key.hasPrefix(String(usage.today.prefix(7))) }.values
+                let recent = usage.days.keys.sorted().suffix(30).compactMap { usage.days[$0] }
+                labeled("Today", today.map { "↓ \(Self.bytes($0.down)) ↑ \(Self.bytes($0.up))" } ?? "nothing yet")
+                labeled("This month", "↓ \(Self.bytes(month.reduce(0) { $0 + $1.down })) ↑ \(Self.bytes(month.reduce(0) { $0 + $1.up }))")
+                labeled("Last 30 days", "↓ \(Self.bytes(recent.reduce(0) { $0 + $1.down })) ↑ \(Self.bytes(recent.reduce(0) { $0 + $1.up }))")
+            } header: { Text(verbatim: "Relay through bronze") } footer: { Text(verbatim: "Counted by bronze; days in China time.") }
+        }
+    }
+    private static func bytes(_ count: Int64) -> String { ByteCountFormatter.string(fromByteCount: count, countStyle: .file) }
+    private func loadRelayUsage() async {
+        if let loaded: RelayUsage = try? await store.request("GET", "/v1/relay-usage", timeout: 15) { relayUsage = loaded }
     }
     private func loadPunchResults() async {
         if let loaded: PunchResults = try? await store.request("GET", "/v1/punch-results", timeout: 15) { punchResults = loaded.results }

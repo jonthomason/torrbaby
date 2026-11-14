@@ -19,6 +19,23 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const ALPN: &[u8] = b"tbhome";
 
 static STATE: Mutex<Option<Value>> = Mutex::new(None);
+/// The standing connection while it is up (for asking bronze about its usage).
+static CONNECTION: Mutex<Option<quinn::Connection>> = Mutex::new(None);
+
+/// bronze's account of the relay: the devices on it now (by Torrbaby client id, with the
+/// bytes relayed for each) and bytes relayed per day, China time.
+pub async fn usage() -> Result<Value> {
+    let connection = CONNECTION.lock().ok().and_then(|held| held.clone()).filter(|c| c.close_reason().is_none())
+        .context("Not connected to the rendezvous")?;
+    let asked = async {
+        let (mut send, mut recv) = connection.open_bi().await?;
+        send.write_all(b"TBUSAGE1\n").await?;
+        send.finish()?;
+        let reply = recv.read_to_end(4 << 20).await?;
+        anyhow::Ok(serde_json::from_slice::<Value>(&reply)?)
+    };
+    tokio::time::timeout(Duration::from_secs(10), asked).await.context("The rendezvous did not answer")?
+}
 
 fn set(update: impl FnOnce(&mut Value)) {
     if let Ok(mut held) = STATE.lock() {
@@ -35,6 +52,16 @@ pub fn advertised() -> Value {
     STATE.lock().ok().and_then(|held| held.clone()).map(|state| json!({
         "address": state["address"], "fingerprint": state["fingerprint"], "connected": state["state"] == "connected",
     })).unwrap_or(Value::Null)
+}
+
+/// `usage`, with each device's name from `names` (client id → name).
+pub async fn usage_named(names: std::collections::HashMap<String, String>) -> Result<Value> {
+    let mut usage = usage().await?;
+    for device in usage["devices"].as_array_mut().into_iter().flatten() {
+        let name = device["client"].as_str().and_then(|c| names.get(c)).cloned();
+        device["name"] = json!(name);
+    }
+    Ok(usage)
 }
 
 /// The connection's state for /v1/status: address, state, since, streams, last error.
@@ -104,6 +131,7 @@ async fn connect_and_serve(config: &RendezvousConfig, http_port: u16) -> Result<
     tokio::time::timeout(Duration::from_secs(10), proved).await.context("The rendezvous did not answer the hello")??;
     eprintln!("Rendezvous: connected to {server}");
     set(|s| { s["state"] = json!("connected"); s["since"] = json!(now()); s["last_error"] = Value::Null; });
+    if let Ok(mut held) = CONNECTION.lock() { *held = Some(connection.clone()) }
     while let Ok((send, recv)) = connection.accept_bi().await {
         set(|s| s["streams"] = json!(s["streams"].as_u64().unwrap_or(0) + 1));
         tokio::spawn(crate::direct::pipe(send, recv, http_port, "Relay".to_owned()));

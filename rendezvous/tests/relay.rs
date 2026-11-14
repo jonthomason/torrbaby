@@ -141,3 +141,35 @@ async fn stun_reports_the_senders_address() {
     wrong_length[3] = 4;
     assert!(stun::answer(&wrong_length, address).is_none());
 }
+
+/// Diamond's Connection page: the devices on the relay (by Torrbaby client id) and the bytes
+/// relayed, per device and per day, asked over Diamond's own connection.
+#[tokio::test]
+async fn diamond_sees_who_uses_the_relay_and_how_much() {
+    let (server, secret) = start();
+    let diamond = home(server, &secret).await.unwrap();
+    let device = connect(server, ALPN_RELAY).await;
+    ask(&device, b"TBNAME1 3f2a-client\n").await.unwrap();
+    let big = [b"POST /v1/x HTTP/1.1\r\n\r\n".as_slice(), &vec![b'a'; 300_000]].concat();
+    ask(&device, &big).await.unwrap();
+    let (mut send, mut recv) = diamond.open_bi().await.unwrap();
+    send.write_all(tbrendezvous::USAGE).await.unwrap();
+    send.finish().unwrap();
+    let usage: serde_json::Value = serde_json::from_slice(&recv.read_to_end(1 << 20).await.unwrap()).unwrap();
+    let devices = usage["devices"].as_array().unwrap();
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices[0]["client"], "3f2a-client");
+    assert!(devices[0]["up"].as_u64().unwrap() >= big.len() as u64, "{usage}");
+    assert!(devices[0]["down"].as_u64().unwrap() > 0);
+    let today = usage["today"].as_str().unwrap();
+    assert!(usage["days"][today]["up"].as_u64().unwrap() >= big.len() as u64, "{usage}");
+}
+
+#[test]
+fn china_days() {
+    assert_eq!(tbrendezvous::china_day(0), "1970-01-01");
+    // 2026-11-14 15:59:59 UTC is 23:59:59 in China; a second later it is the 15th there.
+    assert_eq!(tbrendezvous::china_day(1794671999), "2026-11-14");
+    assert_eq!(tbrendezvous::china_day(1794672000), "2026-11-15");
+    assert_eq!(tbrendezvous::china_day(951782400 - 8 * 3600), "2000-02-29");
+}

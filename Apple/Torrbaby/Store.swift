@@ -493,6 +493,7 @@ final class Store: ObservableObject {
             Task { await self.refresh(polling: true) }
         }
         if !diamondIdentity.isEmpty { DirectTunnel.pin(identity: diamondIdentity) }
+        DirectTunnel.name(client: clientId)
         Task { [weak self] in
             await PacketTunnel.shared.load()
             self?.autoConnectTunnel()
@@ -907,8 +908,8 @@ final class Store: ObservableObject {
         let relay = relayAddress, fingerprint = relayFingerprint, stun = stunServer ?? "", token = token
         // Diamond's home name and port, for the tunnel to reach it directly at home.
         let home = URL(string: primaryAddress).flatMap { url in url.host.map { "\($0):\(url.port ?? 80)" } }
-        let identity = diamondIdentity
-        Task { await PacketTunnel.shared.autoConnect(relay: relay, relayFingerprint: fingerprint, stun: stun, token: token, home: home, identity: identity) }
+        let identity = diamondIdentity, client = clientId
+        Task { await PacketTunnel.shared.autoConnect(relay: relay, relayFingerprint: fingerprint, stun: stun, token: token, home: home, identity: identity, client: client) }
     }
     func dropDirect(_ reason: String) {
         guard directTunnel != nil || directRoute != nil else { return }
