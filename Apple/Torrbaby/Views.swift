@@ -161,6 +161,21 @@ private struct TorrentDraft: Identifiable {
     var magnet = ""
 }
 
+/// The connection status at the foot of a sidebar.
+struct SidebarConnectionStatus: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    var body: some View {
+        HStack(spacing: 7) {
+            Circle().fill(store.connectionColor).frame(width: 7, height: 7)
+            Text(LocalizedStringKey(store.connectionLabel))
+                .font(.caption.weight(.semibold))
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.horizontal, 18).padding(.vertical, 6)
+    }
+}
+
 struct RootView: View {
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -349,7 +364,22 @@ struct RootView: View {
     struct DebugScreen: Identifiable { let id: String }
     @State private var debugScreen: DebugScreen?
     #endif
-    var body: some View {
+    #if os(iOS)
+    /// iPad: Settings takes the whole screen, its own categories becoming the sidebar, as in
+    /// iOS Settings; the library sidebar is gone until Done returns to the previous page.
+    private var settingsFullScreen: Bool { sizeClass == .regular && selection == .settings }
+    private func leaveSettings() {
+        if past.isEmpty { navigate(Location(section: .library)) } else { back() }
+    }
+    #endif
+    @ViewBuilder private var rootContent: some View {
+        #if os(iOS)
+        if settingsFullScreen { PadSettingsView(showConnect: $showConnect, done: leaveSettings) } else { librarySplit }
+        #else
+        librarySplit
+        #endif
+    }
+    private var librarySplit: some View {
         NavigationSplitView(preferredCompactColumn: $preferredColumn) {
             VStack(alignment: .leading, spacing: sidebarSpacing) {
                 // On iPad the wordmark shares the bar row with the sidebar button instead.
@@ -359,13 +389,7 @@ struct RootView: View {
                 #else
                 sidebarMenu
                 #endif
-                HStack(spacing: 7) {
-                    Circle().fill(store.connectionColor).frame(width: 7, height: 7)
-                    Text(LocalizedStringKey(store.connectionLabel))
-                        .font(.caption.weight(.semibold))
-                }
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.horizontal, 18).padding(.vertical, 6)
+                SidebarConnectionStatus()
                 #if os(iOS)
                 // iPhone: the status sits low, beside the home indicator, leaving the list the room.
                 .padding(.bottom, sizeClass == .compact ? -22 : 0)
@@ -441,6 +465,9 @@ struct RootView: View {
                 }
             }
         }
+    }
+    var body: some View {
+        rootContent
         #if os(macOS)
         .focusedSceneValue(\.addTorrent, { torrentDraft = TorrentDraft() })
         .focusedSceneValue(\.goBack, past.isEmpty ? nil : { back() })
@@ -466,6 +493,16 @@ struct RootView: View {
                 try? await Task.sleep(for: .seconds(3)); debugScreen = DebugScreen(id: screen)
             }
         }
+        #if os(iOS)
+        // Simulator layout checks without input: TORRBABY_DEBUG_LEAVE_SETTINGS=<seconds> presses
+        // Settings' Done on iPad.
+        .task {
+            if let delay = ProcessInfo.processInfo.environment["TORRBABY_DEBUG_LEAVE_SETTINGS"].flatMap(Double.init) {
+                try? await Task.sleep(for: .seconds(delay))
+                if settingsFullScreen { leaveSettings() }
+            }
+        }
+        #endif
         #endif
         .sheet(item: $torrentDraft) { draft in
              LocalizedInterface { AddTorrentView(initialMagnet: draft.magnet).id(draft.id) } }

@@ -226,20 +226,7 @@ struct SettingsView: View {
                         NavigationLink {
                             SettingsPageView(page: page, showConnect: $showConnect)
                                 .navigationTitle(L10n.text(page == .user ? (store.activeProfile?.name ?? "User") : page.rawValue))
-                        } label: {
-                            if page == .user {
-                                HStack(spacing: 14) {
-                                    if let profile = store.activeProfile { ProfileAvatar(profile: profile, size: 48) }
-                                    else { Image(systemName: page.symbol).font(.system(size: 44)).foregroundStyle(page.tint).accessibilityHidden(true) }
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(verbatim: store.activeProfile?.name ?? L10n.text("Choose a user")).font(.title3.weight(.semibold))
-                                        Text("Switch user").font(.subheadline).foregroundStyle(.secondary)
-                                    }
-                                }.padding(.vertical, 4)
-                            } else {
-                                Label { Text(LocalizedStringKey(page.rawValue)) } icon: { SettingsIcon(page: page) }
-                            }
-                        }
+                        } label: { SettingsRowLabel(page: page) }
                     }
                 } header: { if let header = group.header { Text(LocalizedStringKey(header)) } }
                   footer: { if let footer = group.footer { Text(LocalizedStringKey(footer)) } }
@@ -252,6 +239,85 @@ struct SettingsView: View {
         #endif
     }
 }
+
+#if !os(macOS)
+/// A category row in the iPhone/iPad list: the user row shows who is using the app.
+private struct SettingsRowLabel: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    let page: SettingsPage
+    var body: some View {
+        if page == .user {
+            HStack(spacing: 14) {
+                if let profile = store.activeProfile { ProfileAvatar(profile: profile, size: 48) }
+                else { Image(systemName: page.symbol).font(.system(size: 44)).foregroundStyle(page.tint).accessibilityHidden(true) }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: store.activeProfile?.name ?? L10n.text("Choose a user")).font(.title3.weight(.semibold))
+                    Text("Switch user").font(.subheadline).foregroundStyle(.secondary)
+                }
+            }.padding(.vertical, 4)
+        } else {
+            Label { Text(LocalizedStringKey(page.rawValue)) } icon: { SettingsIcon(page: page) }
+        }
+    }
+}
+#endif
+
+#if os(iOS)
+/// iPad (regular width): Settings fills the screen like iOS Settings. Its categories are the
+/// sidebar, beside the chosen page in both orientations, and Done returns to the library.
+struct PadSettingsView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    @Binding var showConnect: Bool
+    let done: () -> Void
+    @State private var selected: SettingsPage? = PadSettingsView.initialPage
+    @State private var columns = NavigationSplitViewVisibility.all
+    private static var initialPage: SettingsPage {
+        #if DEBUG
+        // UI checks open one page directly: -initialSettingsPage Connection.
+        if let name = UserDefaults.standard.string(forKey: "initialSettingsPage"), let page = SettingsPage(rawValue: name) { return page }
+        #endif
+        return .general
+    }
+    private func title(_ page: SettingsPage) -> String {
+        page == .user ? (store.activeProfile?.name ?? L10n.text("User")) : L10n.text(page.rawValue)
+    }
+    var body: some View {
+        NavigationSplitView(columnVisibility: $columns) {
+            List(selection: $selected) {
+                SwiftUI.Section { SettingsQuickRows() }
+                ForEach(Array(SettingsPage.groups.enumerated()), id: \.offset) { _, group in
+                    SwiftUI.Section {
+                        ForEach(group.pages) { page in SettingsRowLabel(page: page).tag(page) }
+                    } header: { if let header = group.header { Text(LocalizedStringKey(header)) } }
+                      footer: { if let footer = group.footer { Text(LocalizedStringKey(footer)) } }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .canvasBackground()
+            .safeAreaInset(edge: .bottom) { SidebarConnectionStatus().background(Theme.canvas) }
+            .navigationTitle(L10n.text("Settings"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(removing: .sidebarToggle)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("Done", action: done).fontWeight(.semibold) }
+            }
+        } detail: {
+            NavigationStack {
+                SettingsPageView(page: selected ?? .general, showConnect: $showConnect)
+                    .id(selected)
+                    .navigationTitle(title(selected ?? .general))
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbarBackground(Theme.canvas, for: .navigationBar)
+            }
+        }
+        .navigationSplitViewStyle(.balanced)
+        // The categories stay beside the page; nothing collapses them.
+        .onChange(of: columns) { if columns != .all { columns = .all } }
+    }
+}
+#endif
 
 /// One settings page. Changes take effect at once, as in iOS Settings, except where a page
 /// edits server folders or seeding, which need an explicit Save because they move files.
