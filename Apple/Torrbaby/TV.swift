@@ -106,6 +106,8 @@ struct TVRootView: View {
     @State private var section = "Home"
     @State private var path = NavigationPath()
     @State private var pendingShelfURL: URL?
+    /// Opened by the home hero's Play, over everything; the title's page goes beneath it.
+    @State private var heroPlayback: Playback?
     /// The focused section tab, or nil while focus is in the page below.
     @FocusState private var focusedTab: String?
     @State private var homeReset = UUID()
@@ -138,7 +140,7 @@ struct TVRootView: View {
             // switch at the far right lands in the page even when nothing sits right below it.
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .focusSection()
-            .navigationDestination(for: LibraryDestination.self) { route in TVMediaDetail(titleID: route.id, autoPlay: route.play) }
+            .navigationDestination(for: LibraryDestination.self) { route in TVMediaDetail(titleID: route.id) }
             .navigationDestination(for: TVShelfDestination.self) { route in TVMediaDetail(titleID: route.id, autoPlay: route.play) }
         }
         .ignoresSafeArea(.container, edges: [.top, .horizontal])
@@ -174,6 +176,19 @@ struct TVRootView: View {
         .tint(.white)
         .ignoresSafeArea(.container, edges: [.top, .horizontal])
         .onExitCommand(perform: returnHome)
+        .environment(\.tvPlayFromHero, { heroPlayback = $0 })
+        // No exit handler of our own here, as on the title's page: the system player takes Back
+        // first. Once the player covers the screen, the title's page is put beneath it without
+        // animation, so closing the player lands there, as if Play had been chosen on that page.
+        .fullScreenCover(item: $heroPlayback) { playback in
+            PlayerScreen(playback: playback, store: store)
+                .background(TVPresentationSettled {
+                    guard let id = playback.libraryTitleID, path.isEmpty else { return }
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) { path.append(LibraryDestination(id: id)) }
+                })
+        }
         .overlay(alignment: .bottom) { ContinueWatchingUndoBanner() }
         .task(id: phase) {
             if phase == .active { store.refreshFullyNext() }
@@ -383,11 +398,39 @@ private struct TVLanguagePicker: View {
     }
 }
 
+private struct TVPlayFromHeroKey: EnvironmentKey { static let defaultValue: (Playback) -> Void = { _ in } }
+private extension EnvironmentValues {
+    /// Opens the player over the whole app (see TVRootView's heroPlayback).
+    var tvPlayFromHero: (Playback) -> Void {
+        get { self[TVPlayFromHeroKey.self] }
+        set { self[TVPlayFromHeroKey.self] = newValue }
+    }
+}
+/// Calls `action` once the screen it sits in has finished appearing: after a full-screen
+/// cover's transition, when nothing beneath can be seen.
+private struct TVPresentationSettled: UIViewControllerRepresentable {
+    let action: () -> Void
+    final class Host: UIViewController {
+        var action: (() -> Void)?
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            action?(); action = nil
+        }
+    }
+    func makeUIViewController(context: Context) -> Host { let host = Host(); host.action = action; return host }
+    func updateUIViewController(_ host: Host, context: Context) {}
+}
+
 private struct TVFeaturedHero: View {
     /// Play's label, the time left and the title's name are worked out in the interface language.
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
+    @Environment(\.tvPlayFromHero) private var playFromHero
     let title: LibraryTitle
+    /// Play prepares the file here, its spinner on this button, and opens the player at once:
+    /// no trip through the title's page and its own Play.
+    @State private var preparing: String?
+    @State private var playbackTask: Task<Void, Never>?
     @FocusState private var focused: Bool
     @FocusState private var exploreFocused: Bool
     var body: some View {
@@ -402,9 +445,14 @@ private struct TVFeaturedHero: View {
                 HStack(alignment: .top, spacing: 30) {
                     if let asset = store.preferredLibraryAsset(title), asset.offline != true {
                         VStack(spacing: 12) {
-                            NavigationLink(value: LibraryDestination(id: title.id, play: true)) {
-                                Label(asset.playbackActionTitle(television: title.kind == "tv", brief: true), systemImage: "play.fill")
+                            Button { playOrCancel(asset) } label: {
+                                Label {
+                                    Text(asset.playbackActionTitle(television: title.kind == "tv", brief: true))
+                                } icon: {
+                                    if preparing == asset.id { PlaybackSpinner() } else { Image(systemName: "play.fill") }
+                                }
                             }.buttonStyle(TVMonochromeButtonStyle(resting: true)).focused($focused)
+                            .modifier(PreparingPlayback(active: preparing == asset.id))
                             if let left = asset.timeLeft {
                                 Text(verbatim: left).font(.system(size: 24)).foregroundStyle(.white.opacity(0.7))
                             }
@@ -422,6 +470,23 @@ private struct TVFeaturedHero: View {
             .animation(.easeOut(duration: 0.15), value: focused || exploreFocused)
             .defaultFocus($focused, true)
             .task { if store.preferredLibraryAsset(title).map({ $0.offline != true }) == true { focused = true } else { exploreFocused = true } }
+            // Leaving Home (Explore, a shelf, another section) gives up a Play still preparing.
+            .onDisappear { playbackTask?.cancel() }
+    }
+    private func playOrCancel(_ asset: LibraryAsset) {
+        if preparing == asset.id { playbackTask?.cancel(); return }
+        guard preparing == nil, asset.offline != true else { return }
+        preparing = asset.id
+        playbackTask = Task {
+            defer { preparing = nil; playbackTask = nil }
+            do {
+                // Named as on the title's page, so the player reads the same either way.
+                let name = asset.episode == nil ? title.title : title.title + " · " + (asset.ownName ?? L10n.format("Ep %d", asset.episode!))
+                let item = try await store.libraryPlayback(asset, titleID: title.id, name: name)
+                guard !Task.isCancelled else { return }
+                playFromHero(item)
+            } catch { if !Task.isCancelled { store.actionError = error.localizedDescription } }
+        }
     }
 }
 

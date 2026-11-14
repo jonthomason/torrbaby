@@ -113,6 +113,8 @@ extension LibraryAsset {
         guard !brief, let left = timeLeft else { return action }
         return "\(action) · \(left)"
     }
+    /// The player's heading: the title, and an episode's or extra's own name after it.
+    func playerName(title: String) -> String { season == nil ? title : title + " · " + (name ?? "") }
     /// "40m left" or "1h 5m left" for a title partly watched; nil otherwise.
     var timeLeft: String? {
         guard position > 0, !watched, duration > position else { return nil }
@@ -123,8 +125,6 @@ extension LibraryAsset {
 
 struct LibraryDestination: Hashable {
     let id: String
-    /// Opened from the home hero's Play: the page starts the next file to watch at once.
-    var play = false
 }
 
 /// What changes as people watch, sent apart from the list: each played file's position and
@@ -664,6 +664,19 @@ struct LibraryBrowser: View {
     @EnvironmentObject var store: Store
     var kind: String? = nil
     var showDownloads: () -> Void = {}
+    /// Puts a title's page on the navigation stack without animation, beneath a player that
+    /// the hero's Play has just opened, so closing the player lands on that page.
+    var openTitleBeneathPlayer: (String) -> Void = { _ in }
+    #if os(macOS)
+    @Environment(\.openWindow) private var openWindow
+    #endif
+    /// The hero's Play prepares the file here, with its spinner on the hero's own button, and
+    /// opens the player straight away: no trip through the title's page and its Play.
+    @State private var heroPreparing: String?
+    @State private var heroTask: Task<Void, Never>?
+    #if os(iOS)
+    @State private var heroPlayback: Playback?
+    #endif
     @State private var search = ""
     #if os(macOS)
     @FocusState private var searchFocused: Bool
@@ -762,10 +775,15 @@ struct LibraryBrowser: View {
                             HStack(alignment: .top, spacing: 12) {
                                 if let asset = store.preferredLibraryAsset(featured), store.canPlay(asset) {
                                     VStack(spacing: 5) {
-                                        NavigationLink(value: LibraryDestination(id: featured.id, play: true)) {
-                                            Label(asset.playbackActionTitle(television: featured.kind == "tv", brief: true), systemImage: "play.fill")
-                                                .font(.headline).frame(minHeight: 44)
+                                        Button { heroPlayOrCancel(asset, title: featured) } label: {
+                                            Label {
+                                                Text(asset.playbackActionTitle(television: featured.kind == "tv", brief: true))
+                                            } icon: {
+                                                if heroPreparing == asset.id { PlaybackSpinner(color: Theme.onAccent) }
+                                                else { Image(systemName: "play.fill") }
+                                            }.font(.headline).frame(minHeight: 44)
                                         }.libraryActionStyle(prominent: true)
+                                        .modifier(PreparingPlayback(active: heroPreparing == asset.id))
                                         if let left = asset.timeLeft { Text(verbatim: left).font(.caption).foregroundStyle(.white.opacity(0.75)) }
                                     }
                                 }
@@ -816,6 +834,13 @@ struct LibraryBrowser: View {
         }
         #endif
         }
+        // Leaving the page (the hero's artwork, Explore, a shelf) gives up a Play still preparing.
+        .onDisappear { heroTask?.cancel() }
+        #if os(iOS)
+        .background(MobilePlayerPresentation(playback: $heroPlayback, store: store, presented: { playback in
+            if let id = playback.libraryTitleID { openTitleBeneathPlayer(id) }
+        }).frame(width: 0, height: 0))
+        #endif
         #if os(macOS)
         .toolbar {
             MacSearchToolbar(text: $search, focus: $searchFocused, prompt: "Search movies and TV shows")
@@ -824,6 +849,29 @@ struct LibraryBrowser: View {
         #elseif os(tvOS)
         .searchable(text: $search, prompt: "Search movies and TV shows")
         #endif
+    }
+    private func heroPlayOrCancel(_ asset: LibraryAsset, title: LibraryTitle) {
+        if heroPreparing == asset.id { heroTask?.cancel(); return }
+        guard heroPreparing == nil, store.canPlay(asset) else { return }
+        heroPreparing = asset.id
+        heroTask = Task {
+            defer { heroPreparing = nil; heroTask = nil }
+            do {
+                var item = try await store.libraryPlayback(asset, titleID: title.id, name: asset.playerName(title: title.title))
+                guard !Task.isCancelled else { return }
+                // A copy on this device may not carry its title; the page beneath needs it.
+                if item.libraryTitleID == nil { item.libraryTitleID = title.id }
+                #if os(macOS)
+                // The player is a window of its own; the library window moves to the title's
+                // page behind it, which is where closing the player's window returns.
+                MacPlaybackWindows.open(item, with: openWindow)
+                openTitleBeneathPlayer(title.id)
+                #elseif os(iOS)
+                // The page goes beneath once the player covers the screen (see `presented`).
+                heroPlayback = item
+                #endif
+            } catch { if !Task.isCancelled { store.actionError = error.localizedDescription } }
+        }
     }
     @ViewBuilder func shelf(_ name: String, _ items: [LibraryTitle]) -> some View {
         if !items.isEmpty {
@@ -906,9 +954,6 @@ struct LibraryDetail: View {
     @Environment(\.openWindow) private var openWindow
     #endif
     let titleID: String
-    /// Start the next file to watch as soon as the page opens (the home hero's Play).
-    var autoPlay = false
-    @State private var didAutoPlay = false
     @State private var season: Int = -1
     @State private var playback: Playback?
     @State private var loading = false
@@ -1031,10 +1076,6 @@ struct LibraryDetail: View {
         .onDisappear { playbackTask?.cancel() }
         // Cast and each file's tracks come with the page, not the list.
         .task(id: titleID) { await store.loadDetails(titleID) }
-        .task(id: title?.id) {
-            guard autoPlay, !didAutoPlay, let title, let asset = store.preferredLibraryAsset(title) else { return }
-            didAutoPlay = true; play(asset, title: title.title)
-        }
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .background(MobilePlayerPresentation(playback: $playback, store: store).frame(width: 0, height: 0))
@@ -1083,23 +1124,8 @@ struct LibraryDetail: View {
         playbackTask = Task {
             defer { loading = false; preparing = nil; playbackTask = nil }
             do {
-                #if !os(tvOS)
-                let downloads = DownloadQueue.shared
-                if let id = downloads.readyDownload(assetID: asset.id, server: store.libraryKey),
-                   let local = await downloads.preparePlayback(id) {
-                    #if os(macOS)
-                    MacPlaybackWindows.open(local, with: openWindow)
-                    #else
-                    playback = local
-                    #endif
-                    return
-                }
-                #endif
-                try store.requireStreamingConnection()
-                await store.flushProgress()
-                try await store.registerClient()
-                let link = try await store.mediaPlaybackLink(asset: asset, titleID: titleID)
-                let item = Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0, url: try store.endpoint(link.path), name: asset.season == nil ? title : title + " · " + (asset.name ?? ""), libraryAssetID: asset.id, libraryTitleID: titleID)
+                let item = try await store.libraryPlayback(asset, titleID: titleID, name: asset.playerName(title: title))
+                guard !Task.isCancelled else { return }
                 #if os(macOS)
                 MacPlaybackWindows.open(item, with: openWindow)
                 #else
@@ -1107,6 +1133,25 @@ struct LibraryDetail: View {
                 #endif
             } catch { if !Task.isCancelled { store.actionError = error.localizedDescription } }
         }
+    }
+}
+
+extension Store {
+    /// What Play hands the player for a library file: this device's own copy when it has a
+    /// finished one, otherwise a stream from the server. Shared by the title page and the home hero.
+    func libraryPlayback(_ asset: LibraryAsset, titleID: String, name: String) async throws -> Playback {
+        #if !os(tvOS)
+        let downloads = DownloadQueue.shared
+        if let id = downloads.readyDownload(assetID: asset.id, server: libraryKey),
+           let local = await downloads.preparePlayback(id) { return local }
+        #endif
+        try requireStreamingConnection()
+        await flushProgress()
+        try await registerClient()
+        let link = try await mediaPlaybackLink(asset: asset, titleID: titleID)
+        try Task.checkCancellation()
+        return Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0, url: try endpoint(link.path),
+                        name: name, libraryAssetID: asset.id, libraryTitleID: titleID)
     }
 }
 

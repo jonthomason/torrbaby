@@ -25,6 +25,8 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @Binding var playback: Playback?
     let store: Store
+    /// Once the player covers the screen: the home hero puts the title's page beneath it here.
+    var presented: ((Playback) -> Void)? = nil
 
     final class Host: UIViewController {
         var appeared: (() -> Void)?
@@ -347,7 +349,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
             // episode is measured again, and a double tap still switches back.
             fillObservation = model.$title.sink { [weak self] _ in DispatchQueue.main.async { self?.fitPictureToScreen() } }
             controller.sizeChanged = { [weak self] in self?.fitPictureToScreen() }
-            host.present(controller, animated: true)
+            host.present(controller, animated: true) { [weak self] in self?.parent.presented?(playback) }
         }
         private func fitPictureToScreen() {
             guard let controller, let model, UIDevice.current.userInterfaceIdiom == .phone else { return }
