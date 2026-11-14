@@ -105,11 +105,14 @@ impl Stack {
                 let superseded = superseded.clone();
                 tokio::spawn(async move {
                     let started = tokio::time::Instant::now();
+                    // Counted while waiting: a dormant tunnel (idle, no keepalives) wakes for it.
+                    stats::add(&stats::FLOWS_WAITING, 1);
                     let route = loop {
                         if let Some(route) = carrier() { break Some(route) }
                         if started.elapsed() >= wait { break None }
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     };
+                    stats::FLOWS_WAITING.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                     let Some(route) = route else { return uncarried(tcp).await };
                     // A better route open at two checks a second apart: this one makes way.
                     let moved = {
@@ -269,6 +272,8 @@ pub mod stats {
     /// TCP connections from iOS: opened, open now, given up (abandoned or stalled).
     pub static FLOWS_OPENED: AtomicU64 = AtomicU64::new(0);
     pub static FLOWS_OPEN: AtomicU64 = AtomicU64::new(0);
+    /// Connections waiting for a route (the paths are opening, or the tunnel is dormant).
+    pub static FLOWS_WAITING: AtomicU64 = AtomicU64::new(0);
     pub static FLOWS_ABANDONED: AtomicU64 = AtomicU64::new(0);
     /// Connections carried to Diamond on this network (at home).
     pub static FLOWS_LAN: AtomicU64 = AtomicU64::new(0);

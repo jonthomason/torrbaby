@@ -10,6 +10,8 @@ import os
 @_silgen_name("tbtunnel_alive") private func tbtunnel_alive() -> Bool
 @_silgen_name("tbdirect_identity") private func tbdirect_identity(_ fingerprint: UnsafePointer<CChar>)
 @_silgen_name("tbdirect_client") private func tbdirect_client(_ id: UnsafePointer<CChar>)
+@_silgen_name("tbtunnel_open_flows") private func tbtunnel_open_flows() -> UInt64
+@_silgen_name("tbtunnel_waiting_flows") private func tbtunnel_waiting_flows() -> UInt64
 @_silgen_name("tbtunnel_home") private func tbtunnel_home(_ address: UnsafePointer<CChar>)
 @_silgen_name("tbtunnel_stats") private func tbtunnel_stats(_ buffer: UnsafeMutablePointer<CChar>, _ capacity: Int) -> Int32
 @_silgen_name("tbdirect_alive") private func tbdirect_alive() -> Bool
@@ -45,6 +47,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// until the network changes. The tunnel's address works at home too, so a background
     /// download keeps one address whether the phone is at home or away.
     private var atHome = false
+    /// Away from home and idle: no paths, no keepalives, until a connection waits.
+    private var dormant = false
+    private var lastBusy = Date()
     /// Diamond on this network ("ip:port") while at home, and when it was last looked up.
     private var homeAddress = ""
     private var homeLookedUp = Date.distantPast
@@ -201,6 +206,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let info = Bundle.main.infoDictionary
         let version = "version \(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))"
         let state = atHome ? version + "\nAt home: connections go straight to Diamond on this network (\(homeAddress))"
+            : dormant ? version + "\nDormant: idle, nothing sent until the next connection (it wakes in about a second)"
             : version + "\n" + direct + "\nRelay via bronze: " + (tbdirect_relay_alive() ? "open" : "closed")
                 + (identity.count == 64 ? ", encrypted end to end to Diamond" : ", not encrypted end to end yet (Diamond's identity is learned at home or from pairing)")
         completionHandler?(state.data(using: .utf8))
@@ -289,18 +295,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         keeper = Task.detached { [weak self] in
             var ticks = 0
             var lastStats = ""
+            // Each second (local work only): the paths are looked after every 3 s, and at once
+            // when a connection is waiting for one (a dormant tunnel wakes within a second).
             while !Task.isCancelled {
-                await self?.maintain()
+                if ticks % 3 == 0 || tbtunnel_waiting_flows() > 0 { await self?.maintain() }
                 ticks += 1
-                // Every ~9 s while traffic flows (the counters moved), every 30 s otherwise.
+                // Every ~9 s while traffic flows (the counters moved), every 30 s otherwise, and
+                // every 5 minutes while dormant.
                 var buffer = [CChar](repeating: 0, count: 768)
                 let stats = tbtunnel_stats(&buffer, buffer.count) > 0 ? String(cString: buffer) : ""
                 let counters = stats.components(separatedBy: "; ").first ?? ""
-                if (ticks % 3 == 0 && counters != lastStats) || ticks % 10 == 0 {
+                let dormant = self?.dormant ?? false
+                if (ticks % 9 == 0 && counters != lastStats) || ticks % (dormant ? 300 : 30) == 0 {
                     lastStats = counters
-                    self?.note("memory \(String(format: "%.1f", Self.memoryMB())) MB, direct \(tbdirect_alive() ? "open" : "closed"), relay \(tbdirect_relay_alive() ? "open" : "closed"); \(stats)")
+                    self?.note("memory \(String(format: "%.1f", Self.memoryMB())) MB, direct \(tbdirect_alive() ? "open" : "closed"), relay \(tbdirect_relay_alive() ? "open" : "closed")\(dormant ? ", dormant" : ""); \(stats)")
                 }
-                try? await Task.sleep(for: .seconds(3))
+                try? await Task.sleep(for: .seconds(1))
             }
         }
     }
@@ -332,6 +342,24 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         if !tbtunnel_alive(), Date().timeIntervalSince(started) > 5 {
             note("TCP stack stopped: starting it again")
             _ = startStack()
+        }
+        // Battery: away from home, the paths' keepalives (every 5 s) keep the radio awake. With
+        // nothing open for 2 minutes the paths are let go; the next connection wakes them (the
+        // relay opens in about a second while it waits, then the direct path is punched).
+        if !atHome {
+            let open = tbtunnel_open_flows(), waiting = tbtunnel_waiting_flows()
+            if open > 0 || waiting > 0 { lastBusy = Date() }
+            if dormant {
+                guard waiting > 0 else { return }
+                dormant = false; lastBusy = Date(); lastAttempt = .distantPast
+                note("a connection is waiting: waking (opening the relay)")
+            } else if Date().timeIntervalSince(lastBusy) > 120 {
+                dormant = true
+                tbdirect_stop(); tbdirect_relay_stop(); punchedFrom = nil
+                status = "dormant: idle, nothing sent until the next connection"
+                note("idle for 2 minutes: paths let go, no keepalives, until the next connection")
+                return
+            }
         }
         if atHome {
             // Diamond's address here is looked up again each minute (it may have changed).

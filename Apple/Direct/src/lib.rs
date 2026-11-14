@@ -276,6 +276,14 @@ pub extern "C" fn tbdirect_identity(fingerprint: *const c_char) {
     e2e::pin(&text(fingerprint).unwrap_or_default());
 }
 
+/// Connections open now, and connections waiting for a route: the extension lets the paths go
+/// when nothing has been open for a while (no keepalives, the radio can sleep), and opens
+/// them again when a connection waits.
+#[unsafe(no_mangle)]
+pub extern "C" fn tbtunnel_open_flows() -> u64 { packet::stats::get(&packet::stats::FLOWS_OPEN) }
+#[unsafe(no_mangle)]
+pub extern "C" fn tbtunnel_waiting_flows() -> u64 { packet::stats::get(&packet::stats::FLOWS_WAITING) }
+
 /// Diamond on this network ("ip:port"), or empty when away from home.
 #[unsafe(no_mangle)]
 pub extern "C" fn tbtunnel_home(address: *const c_char) {
