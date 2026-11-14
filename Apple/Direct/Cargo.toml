@@ -26,7 +26,9 @@ tbrendezvous = { path = "../../rendezvous" }
 opt-level = "s"
 lto = true
 codegen-units = 1
-panic = "abort"
+# A panic ends only the task it happens in (one connection), not the packet tunnel
+# extension: with "abort" any panic killed the whole extension (iOS: pluginFailed).
+panic = "unwind"
 strip = true
 
 [workspace]

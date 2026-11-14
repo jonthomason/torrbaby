@@ -474,7 +474,10 @@ final class Store: ObservableObject {
             self.refreshFullyNext()
             Task { await self.refresh(polling: true) }
         }
-        Task { await PacketTunnel.shared.load() }
+        Task { [weak self] in
+            await PacketTunnel.shared.load()
+            self?.autoConnectTunnel()
+        }
         #endif
         #endif
         #if DEBUG
@@ -847,6 +850,7 @@ final class Store: ObservableObject {
     /// way and the path is punched again at once, instead of each request failing first.
     func checkPathsOnReturn() {
         PacketTunnel.shared.refresh()
+        autoConnectTunnel()
         var dropped = false
         if directTunnel != nil, directTunnel?.alive != true { dropDirect("closed while the app was in the background"); dropped = true }
         if relayTunnel != nil, relayTunnel?.alive != true { dropRelay("closed while the app was in the background"); dropped = true }
@@ -854,6 +858,11 @@ final class Store: ObservableObject {
             refreshFullyNext()
             Task { await refresh(polling: true) }
         }
+    }
+    /// Torrbaby's tunnel connects by itself where it may (see PacketTunnel.autoConnect).
+    func autoConnectTunnel() {
+        let relay = relayAddress, fingerprint = relayFingerprint, stun = stunServer ?? "", token = token
+        Task { await PacketTunnel.shared.autoConnect(relay: relay, relayFingerprint: fingerprint, stun: stun, token: token) }
     }
     func dropDirect(_ reason: String) {
         guard directTunnel != nil || directRoute != nil else { return }

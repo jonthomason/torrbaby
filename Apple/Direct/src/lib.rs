@@ -240,6 +240,12 @@ pub extern "C" fn tbtunnel_input(packet: *const u8, length: usize) -> bool {
     packet::STACK.lock().ok().and_then(|held| held.as_ref().map(|stack| stack.input(bytes))).unwrap_or(false)
 }
 
+/// Whether the packet tunnel's TCP stack is running (false after a panic inside it).
+#[unsafe(no_mangle)]
+pub extern "C" fn tbtunnel_alive() -> bool {
+    packet::STACK.lock().ok().is_some_and(|held| held.is_some()) && packet::RUNNING.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// Stop the packet tunnel's TCP stack.
 #[unsafe(no_mangle)]
 pub extern "C" fn tbtunnel_stop() {

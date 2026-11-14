@@ -72,6 +72,7 @@ impl Stack {
             let mut config = ipstack::IpStackConfig::default();
             config.mtu_unchecked(mtu);
             let mut stack = ipstack::IpStack::new(config, Packets { incoming, outgoing });
+            RUNNING.store(true, std::sync::atomic::Ordering::SeqCst);
             while let Ok(stream) = stack.accept().await {
                 let ipstack::IpStackStream::Tcp(tcp) = stream else { continue };
                 let carrier = carrier.clone();
@@ -85,19 +86,64 @@ impl Stack {
                     let Some(connection) = connection else { return };
                     let Ok((mut send, mut recv)) = connection.open_bi().await else { return };
                     let (mut from_ios, mut to_ios) = tokio::io::split(tcp);
-                    let up = async { let _ = tokio::io::copy(&mut from_ios, &mut send).await; let _ = send.finish(); };
+                    let complete = {
+                    // ipstack marks a connection closed when iOS resets it (a player cutting a
+                    // request short) but wakes nothing waiting on it, so reads and writes toward
+                    // iOS are attempted in 1 s slices: each new attempt sees the close at once.
+                    let up = async {
+                        let mut buffer = vec![0u8; 16 * 1024];
+                        loop {
+                            use tokio::io::AsyncReadExt;
+                            match tokio::time::timeout(Duration::from_secs(1), from_ios.read(&mut buffer)).await {
+                                Err(_) => continue,
+                                Ok(Ok(0)) => { let _ = send.finish(); return false }
+                                Ok(Ok(n)) => { if send.write_all(&buffer[..n]).await.is_err() { return true } }
+                                Ok(Err(_)) => { let _ = send.finish(); return true }
+                            }
+                        }
+                    };
                     let down = async {
-                        let _ = tokio::io::copy(&mut recv, &mut to_ios).await;
+                        use tokio::io::AsyncWriteExt;
+                        let mut buffer = vec![0u8; 16 * 1024];
+                        loop {
+                            // Diamond quiet for 2 minutes: the stream is given up.
+                            let n = match tokio::time::timeout(Duration::from_secs(120), recv.read(&mut buffer)).await {
+                                Ok(Ok(Some(n))) => n,
+                                Ok(Ok(None)) => break,
+                                _ => return false,
+                            };
+                            let (mut written, mut idle) = (0, 0);
+                            while written < n {
+                                match tokio::time::timeout(Duration::from_secs(1), to_ios.write(&buffer[written..n])).await {
+                                    Ok(Ok(0)) | Ok(Err(_)) => return false,
+                                    Ok(Ok(m)) => { written += m; idle = 0 }
+                                    // iOS taking nothing for a minute: the connection is dead.
+                                    Err(_) => { idle += 1; if idle >= 60 { return false } }
+                                }
+                            }
+                        }
                         // ipstack sends the FIN only if nothing is in flight when asked and is
                         // not woken when that clears, so ask again until it goes (up to 30 s).
-                        use tokio::io::AsyncWriteExt;
                         for _ in 0..600 {
                             if tokio::time::timeout(Duration::from_millis(50), to_ios.shutdown()).await.is_ok() { break }
                         }
+                        true
                     };
-                    tokio::join!(up, down);
+                    tokio::pin!(down);
+                    tokio::pin!(up);
+                    tokio::select! {
+                        delivered = &mut down => { if delivered { let _ = up.await; } delivered }
+                        failed = &mut up => if failed { false } else { down.await },
+                    }
+                    };
+                    // A connection abandoned midway: tell QUIC to discard what it holds for
+                    // this stream, or that data keeps the connection's receive allowance and,
+                    // added up over many abandoned requests (video seeks), stalls every stream.
+                    if !complete { let _ = recv.stop(0u32.into()); }
                 });
             }
+            // The stack's own task ended (a panic inside it): the extension restarts it.
+            RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
         });
         Some((Stack { runtime, input }, output))
     }
@@ -105,6 +151,9 @@ impl Stack {
     /// One packet from the extension. Dropped when the stack is this far behind (TCP resends).
     pub fn input(&self, packet: Vec<u8>) -> bool { self.input.try_send(packet).is_ok() }
 }
+
+/// Whether the stack is accepting connections.
+pub static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The stack the extension runs, if started.
 pub static STACK: Mutex<Option<Stack>> = Mutex::new(None);

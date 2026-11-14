@@ -39,6 +39,7 @@ import NetworkExtension
     /// On demand belongs to devices that use only this tunnel (the coming Automatic setting).
     func turnOn(relay: String, relayFingerprint: String, stun: String, token: String) async {
         lastError = nil
+        heldOff = false
         let manager = self.manager ?? NETunnelProviderManager()
         let configuration = NETunnelProviderProtocol()
         configuration.providerBundleIdentifier = Self.extensionID
@@ -62,7 +63,47 @@ import NetworkExtension
     }
 
     /// Disconnect, keeping the configuration (another VPN, such as Tailscale, can connect).
-    func disconnect() { manager?.connection.stopVPNTunnel() }
+    /// It stays off until Connect: Torrbaby does not connect it again by itself.
+    func disconnect() { heldOff = true; manager?.connection.stopVPNTunnel() }
+
+    /// Whether the user disconnected it on the Connection page (it stays off until Connect).
+    var heldOff: Bool {
+        get { UserDefaults.standard.bool(forKey: "tunnelHeldOff") }
+        set { UserDefaults.standard.set(newValue, forKey: "tunnelHeldOff") }
+    }
+    /// Settings: connect even while another VPN (such as Tailscale) is connected, which
+    /// disconnects it (iOS connects one VPN at a time). Off by default.
+    static let replacesOtherVPNKey = "tunnelReplacesOtherVPN"
+
+    /// Another VPN's interface is up: a utun with an IPv4 address other than this tunnel's
+    /// (iOS's own utun interfaces carry only IPv6 link-local addresses). Tailscale's is 100.x.
+    static func otherVPN() -> String? {
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return nil }
+        defer { freeifaddrs(list) }
+        var found: String?
+        for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            let entry = pointer.pointee
+            guard let address = entry.ifa_addr, address.pointee.sa_family == UInt8(AF_INET) else { continue }
+            let name = String(cString: entry.ifa_name)
+            guard name.hasPrefix("utun") || name.hasPrefix("ipsec") || name.hasPrefix("ppp") else { continue }
+            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            getnameinfo(address, socklen_t(address.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST)
+            let ip = String(cString: host)
+            if ip == "10.233.0.2" || ip.isEmpty { continue }
+            found = ip.hasPrefix("100.") ? "Tailscale" : "a VPN (\(ip))"
+        }
+        return found
+    }
+
+    /// Connect automatically (at launch and on returning to the foreground): always when no
+    /// other VPN is connected, and over another VPN only when Settings says so. Not after the
+    /// user disconnected it, and not before the app knows bronze and has its credentials.
+    func autoConnect(relay: String, relayFingerprint: String, stun: String, token: String) async {
+        guard !connected, status != .connecting, !heldOff, !relay.isEmpty, relayFingerprint.count == 64, !token.isEmpty else { return }
+        if Self.otherVPN() != nil && !UserDefaults.standard.bool(forKey: Self.replacesOtherVPNKey) { return }
+        await turnOn(relay: relay, relayFingerprint: relayFingerprint, stun: stun, token: token)
+    }
 
     func turnOff() async {
         guard let manager else { return }
@@ -132,7 +173,7 @@ import NetworkExtension
         case .connecting: "connecting"
         case .disconnecting: "disconnecting"
         case .reasserting: "reconnecting"
-        case .disconnected: "VPN off (another VPN, such as Tailscale, may be connected instead)"
+        case .disconnected: "VPN off" + (heldOff ? ", disconnected here" : "") + (Self.otherVPN().map { "; \($0) is connected" } ?? "")
         case .invalid: installed ? "not configured" : "not installed"
         @unknown default: "unknown"
         }

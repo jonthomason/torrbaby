@@ -7,6 +7,7 @@ import os
 @_silgen_name("tbtunnel_start") private func tbtunnel_start(_ mtu: UInt16, _ write: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<UInt8>?, Int) -> Void, _ context: UnsafeMutableRawPointer?) -> Bool
 @_silgen_name("tbtunnel_input") private func tbtunnel_input(_ packet: UnsafePointer<UInt8>?, _ length: Int) -> Bool
 @_silgen_name("tbtunnel_stop") private func tbtunnel_stop()
+@_silgen_name("tbtunnel_alive") private func tbtunnel_alive() -> Bool
 @_silgen_name("tbdirect_start_lean") private func tbdirect_start(_ fd: Int32, _ server: UnsafePointer<CChar>, _ fingerprint: UnsafePointer<CChar>) -> UInt16
 @_silgen_name("tbdirect_alive") private func tbdirect_alive() -> Bool
 @_silgen_name("tbdirect_stop") private func tbdirect_stop()
@@ -31,6 +32,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// Public addresses a predicted spray failed from: the next attempt there sprays random ports.
     private var windowFailedFrom: Set<String> = []
     private var lastAttempt = Date.distantPast
+    private let started = Date()
     private var attempting = false
 
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
@@ -50,12 +52,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         setTunnelNetworkSettings(settings) { [weak self] error in
             guard let self else { return }
             if let error { completionHandler(error); return }
-            let context = Unmanaged.passUnretained(self).toOpaque()
-            guard tbtunnel_start(1280, { context, packet, length in
-                guard let context, let packet else { return }
-                let provider = Unmanaged<PacketTunnelProvider>.fromOpaque(context).takeUnretainedValue()
-                provider.packetFlow.writePackets([Data(bytes: packet, count: length)], withProtocols: [NSNumber(value: AF_INET)])
-            }, context) else { completionHandler(NEVPNError(.configurationUnknown)); return }
+            guard self.startStack() else { completionHandler(NEVPNError(.configurationUnknown)); return }
             self.readPackets()
             self.watchNetwork()
             self.keep()
@@ -124,7 +121,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         }
     }
 
+    /// The TCP stack that turns the tunnel's packets into streams (Rust).
+    private func startStack() -> Bool {
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        return tbtunnel_start(1280, { context, packet, length in
+            guard let context, let packet else { return }
+            let provider = Unmanaged<PacketTunnelProvider>.fromOpaque(context).takeUnretainedValue()
+            provider.packetFlow.writePackets([Data(bytes: packet, count: length)], withProtocols: [NSNumber(value: AF_INET)])
+        }, context)
+    }
+
     private func maintain() async {
+        // Started a moment ago, the stack's task may not have marked itself running yet.
+        if !tbtunnel_alive(), Date().timeIntervalSince(started) > 5 {
+            log.error("TCP stack stopped: starting it again")
+            _ = startStack()
+        }
         if !tbdirect_relay_alive() { await openRelay() }
         guard !tbdirect_alive(), !attempting, tbdirect_relay_alive() else { return }
         // A failure waits a minute before the next try; a path that dropped is tried at once.
