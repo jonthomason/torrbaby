@@ -12,6 +12,10 @@ import AppKit
 struct ConnectionStatusSections: View {
     @EnvironmentObject var store: Store
     @State private var measuring = false
+    /// Diamond's record of punches by carrier and connection kind (GET /v1/punch-results).
+    @State private var punchResults: [PunchResult] = []
+    struct PunchResult: Decodable, Hashable { let carrier: String; let kind: String; let punched: Int; let failed: Int; let medianMs: Int?; let failedBySpread: [String: Int]? }
+    private struct PunchResults: Decodable { let results: [PunchResult] }
     @AppStorage(ClientLogs.automaticKey) private var automaticLogs = false
     @State private var sendingLogs = false
     /// What became of the last "Send logs to Diamond": the file's name there, or why it failed.
@@ -34,12 +38,14 @@ struct ConnectionStatusSections: View {
             nowSection
             pathSections
             actionsSection
+            punchResultsSection
             #if os(iOS)
             tunnelSection
             directSection
             eventsSection
             #endif
         }
+        .task { await loadPunchResults() }
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
@@ -246,11 +252,28 @@ struct ConnectionStatusSections: View {
     }
     #endif
 
+    /// How reliably each carrier punches, from Diamond's record of every attempt (30 days).
+    @ViewBuilder private var punchResultsSection: some View {
+        if !punchResults.isEmpty {
+            SwiftUI.Section {
+                ForEach(punchResults, id: \.self) { r in
+                    let total = r.punched + r.failed
+                    let failures = (r.failedBySpread ?? [:]).sorted { $0.key < $1.key }.map { "\($0.value) \($0.key)" }.joined(separator: ", ")
+                    labeled("\(r.carrier) · \(r.kind)", "\(r.punched) of \(total) punched" + (total > 0 ? " (\(Int((Double(r.punched) / Double(total) * 100).rounded()))%)" : "")
+                        + (r.medianMs.map { ", median \($0) ms" } ?? "") + (failures.isEmpty ? "" : "; failed: \(failures)"))
+                }
+            } header: { Text(verbatim: "Punch results (last 30 days)") }
+        }
+    }
+    private func loadPunchResults() async {
+        if let loaded: PunchResults = try? await store.request("GET", "/v1/punch-results", timeout: 15) { punchResults = loaded.results }
+    }
+
     private var actionsSection: some View {
         SwiftUI.Section {
             Button {
                 measuring = true
-                Task { await store.measurePaths(); measuring = false }
+                Task { await store.measurePaths(); await loadPunchResults(); measuring = false }
             } label: {
                 HStack { Text(verbatim: measuring ? "Testing every way…" : "Test all ways now"); if measuring { Spacer(); ProgressView() } }
             }.disabled(measuring)

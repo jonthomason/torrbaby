@@ -131,7 +131,9 @@ pub fn punch(plan: &Plan, mut report: impl FnMut(&Report)) -> Result<Punched, Fa
         _ => format!("{low}–{high} (STUN saw {first}–{last})"),
     });
     step(&mut r, "asking Diamond to start".into());
-    let mut body = json!({"ip": ip, "low": low, "high": high, "diagnosis": diagnosis, "ports": ports});
+    // The kind of connection, for Diamond's punch results: Wi-Fi (phone hotspots included) or cellular.
+    let kind = match plan.interface.as_deref() { Some(i) if i.starts_with("pdp") || i.starts_with("rmnet") => "cellular", Some(i) if i.starts_with("en") || i.starts_with("wlan") => "wifi", _ => "unknown" };
+    let mut body = json!({"ip": ip, "low": low, "high": high, "diagnosis": diagnosis, "ports": ports, "kind": kind});
     if spread != "window" { body["spread"] = json!(spread) }
     let started = post(&plan.signal, &plan.token, "/v1/direct", &body).map_err(|e| fail(format!("Could not ask Diamond to start: {e}")))?;
     let (Some(id), Some(server), Some(fingerprint)) = (started["id"].as_str(), started["server"].as_str(), started["fingerprint"].as_str()) else {

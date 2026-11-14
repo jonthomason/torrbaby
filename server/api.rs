@@ -1619,7 +1619,8 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         // Settings → Connection → Send logs to Diamond: saved under client-logs/ for debugging.
         ("POST","/v1/diagnostics/logs") => { drop(db); return crate::diagnostics::receive(&s.data_dir, &body); }
         ("POST","/v1/punch") => { drop(db); return crate::punch::TESTS.start(&body).await; }
-        ("POST","/v1/direct") => { drop(db); return crate::direct::DIRECT.start(&body, s.config.listen_port).await; }
+        ("POST","/v1/direct") => { drop(db); return crate::direct::DIRECT.start(&body, s.config.listen_port, &s.data_dir).await; }
+        ("GET","/v1/punch-results") => { drop(db); return Ok(json!({"results": crate::direct::results::summary(&s.data_dir)})); }
         ("GET","/v1/events") => Ok(db.state()?["events"].take()),
         ("GET","/v1/clients") => Ok(json!(db.rows("SELECT clients.*, EXISTS(SELECT 1 FROM device_credentials WHERE client_id=clients.id) AS paired_credential FROM clients ORDER BY last_seen DESC",[])?)),
         ("POST","/v1/clients") => db.register(text(&body,"client_id")?,text(&body,"name")?,text(&body,"platform")?),

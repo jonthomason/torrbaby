@@ -40,6 +40,98 @@ const ALPN: &[u8] = b"tbdirect";
 
 pub static DIRECT: std::sync::LazyLock<Direct> = std::sync::LazyLock::new(Direct::default);
 
+/// Every punch's outcome, one JSON line each in the data directory, for the punch results in
+/// /v1/status and Settings → Connection: how reliably each carrier punches, and how.
+pub mod results {
+    use serde_json::{Value, json};
+    use std::io::Write;
+    use std::path::{Path, PathBuf};
+    fn file(data: &Path) -> PathBuf { data.join("direct-punches.jsonl") }
+
+    /// A carrier's name from the public IP's first two parts, where known.
+    pub fn carrier(ip: &str) -> String {
+        let prefix: String = ip.split('.').take(2).collect::<Vec<_>>().join(".");
+        let name = match prefix.as_str() {
+            "223.104" | "223.105" | "117.136" | "112.96" | "111.0" => "China Mobile",
+            "183.39" | "113.84" | "14.155" | "116.30" | "59.37" => "China Telecom",
+            "112.97" | "120.229" | "58.250" => "China Unicom",
+            "172.56" | "172.58" | "172.59" => "T-Mobile US",
+            _ => "",
+        };
+        if name.is_empty() { format!("{prefix}.x") } else { format!("{name} ({prefix}.x)") }
+    }
+
+    pub fn record(data: &Path, ip: &str, kind: &str, spread: &str, punched_ms: Option<u64>) {
+        if !file(data).exists() { backfill(data) }
+        let line = json!({"at": crate::storage::now(), "carrier": carrier(ip), "kind": kind, "spread": spread, "ok": punched_ms.is_some(), "ms": punched_ms});
+        if let Ok(mut out) = std::fs::OpenOptions::new().create(true).append(true).open(file(data)) { let _ = writeln!(out, "{line}"); }
+    }
+
+    /// Per carrier and connection kind over the last 30 days: punched, failed, median time, and
+    /// the failures by spray method. The first call fills the file from the server log's
+    /// earlier "Direct …" lines (kind unknown) so the history starts with what is already known.
+    pub fn summary(data: &Path) -> Value {
+        if !file(data).exists() { backfill(data) }
+        let text = std::fs::read_to_string(file(data)).unwrap_or_default();
+        let since = crate::storage::now() - 30.0 * 86400.0;
+        let mut groups: std::collections::BTreeMap<(String, String), (u64, u64, Vec<u64>, std::collections::BTreeMap<String, u64>)> = Default::default();
+        for line in text.lines() {
+            let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+            if v["at"].as_f64().unwrap_or(0.0) < since && v["at"].as_f64().unwrap_or(0.0) > 0.0 { continue }
+            let entry = groups.entry((v["carrier"].as_str().unwrap_or("?").into(), v["kind"].as_str().unwrap_or("unknown").into())).or_default();
+            if v["ok"] == true { entry.0 += 1; if let Some(ms) = v["ms"].as_u64() { entry.2.push(ms) } }
+            else { entry.1 += 1; *entry.3.entry(v["spread"].as_str().unwrap_or("?").into()).or_default() += 1 }
+        }
+        Value::Array(groups.into_iter().map(|((carrier, kind), (ok, failed, mut ms, by))| {
+            ms.sort_unstable();
+            json!({"carrier": carrier, "kind": kind, "punched": ok, "failed": failed, "median_ms": ms.get(ms.len() / 2), "failed_by_spread": by})
+        }).collect())
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn carriers_are_named_and_results_are_summed() {
+        let dir = std::env::temp_dir().join(format!("torrbaby-punch-results-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(carrier("223.104.80.68"), "China Mobile (223.104.x)");
+        assert_eq!(carrier("8.8.8.8"), "8.8.x");
+        record(&dir, "223.104.80.68", "cellular", "random", Some(70));
+        record(&dir, "223.104.1.2", "cellular", "random", Some(90));
+        record(&dir, "223.104.1.2", "wifi", "random", None);
+        let summary = summary(&dir);
+        let rows = summary.as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        let cellular = rows.iter().find(|r| r["kind"] == "cellular").unwrap();
+        assert_eq!((cellular["punched"].as_u64(), cellular["failed"].as_u64(), cellular["median_ms"].as_u64()), (Some(2), Some(0), Some(90)));
+        let wifi = rows.iter().find(|r| r["kind"] == "wifi").unwrap();
+        assert_eq!(wifi["failed_by_spread"]["random"], 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn backfill(data: &Path) {
+        let Ok(log) = std::fs::read_to_string(data.join("rust-server.log")) else { return };
+        let mut sessions: Vec<(String, String, String, Option<u64>)> = Vec::new();
+        let mut index = std::collections::HashMap::new();
+        for line in log.lines() {
+            let Some(rest) = line.strip_prefix("Direct ") else { continue };
+            let Some((id, text)) = rest.split_once(": ") else { continue };
+            if let Some(after) = text.strip_prefix("requested by ") {
+                let ip = after.split(',').next().unwrap_or("").to_owned();
+                let spread = if text.contains("random ports") { "random" } else if text.contains("known ports") { "exact" } else { "window" };
+                index.insert(id.to_owned(), sessions.len());
+                sessions.push((id.to_owned(), ip, spread.into(), None));
+            } else if let Some(after) = text.strip_prefix("punched from ") {
+                let ms = after.split(" after ").nth(1).and_then(|t| t.split(" ms").next()).and_then(|t| t.parse().ok());
+                if let Some(&i) = index.get(id) { sessions[i].3 = ms }
+            }
+        }
+        let Ok(mut out) = std::fs::OpenOptions::new().create(true).append(true).open(file(data)) else { return };
+        for (_, ip, spread, ms) in sessions {
+            let _ = writeln!(out, "{}", json!({"at": 0, "carrier": carrier(&ip), "kind": "unknown", "spread": spread, "ok": ms.is_some(), "ms": ms}));
+        }
+    }
+}
+
 struct Identity { cert: rustls::pki_types::CertificateDer<'static>, key: Vec<u8>, fingerprint: String }
 
 #[derive(Default)]
@@ -61,7 +153,7 @@ impl Direct {
     }
 
     /// Start a direct connection for the device at `ip`, spraying ports `low..=high`.
-    pub async fn start(&self, body: &Value, http_port: u16) -> Result<Value> {
+    pub async fn start(&self, body: &Value, http_port: u16, data: &std::path::Path) -> Result<Value> {
         let ip: IpAddr = body["ip"].as_str().context("ip is required")?.parse().context("ip must be an address")?;
         let low = body["low"].as_u64().context("low is required")? as u32;
         let high = body["high"].as_u64().context("high is required")? as u32;
@@ -101,10 +193,14 @@ impl Direct {
         }
         let fingerprint = identity.fingerprint.clone();
         let session = id.clone();
+        // The outcome goes to the punch results once the punch is decided (in run, or here on failure).
+        let outcome = (data.to_owned(), ip.to_string(), body["kind"].as_str().unwrap_or("unknown").to_owned(), spread.to_owned());
         tokio::spawn(async move {
             let logged = session.clone();
-            if let Err(error) = run(socket, ip, ports, session, identity, http_port, state.clone()).await {
+            if let Err(error) = run(socket, ip, ports, session, identity, http_port, state.clone(), outcome.clone()).await {
                 eprintln!("Direct {logged}: {error}");
+                let punched = state.lock().map(|s| s["punched_after_ms"].is_u64()).unwrap_or(true);
+                if !punched { results::record(&outcome.0, &outcome.1, &outcome.2, &outcome.3, None) }
                 if let Ok(mut s) = state.lock() { s["state"] = json!("failed"); s["error"] = json!(error.to_string()); }
             }
         });
@@ -118,7 +214,7 @@ impl Direct {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn run(socket: UdpSocket, ip: IpAddr, ports: Arc<Vec<u16>>, id: String, identity: Arc<Identity>, http_port: u16, state: Arc<Mutex<Value>>) -> Result<()> {
+async fn run(socket: UdpSocket, ip: IpAddr, ports: Arc<Vec<u16>>, id: String, identity: Arc<Identity>, http_port: u16, state: Arc<Mutex<Value>>, outcome: (std::path::PathBuf, String, String, String)) -> Result<()> {
     // Punch: open China Telecom's filter for the device's likely ports until one gets through.
     let started = Instant::now();
     let spray = format!("TBDIRECT1 {id} spray").into_bytes();
@@ -177,6 +273,7 @@ async fn run(socket: UdpSocket, ip: IpAddr, ports: Arc<Vec<u16>>, id: String, id
     if let Ok(mut s) = state.lock() {
         s["state"] = json!("punched");
         s["device"] = json!(device.to_string());
+        results::record(&outcome.0, &outcome.1, &outcome.2, &outcome.3, Some(started.elapsed().as_millis() as u64));
         s["punched_after_ms"] = json!(started.elapsed().as_millis() as u64);
     }
     // The same socket, and so the same hole, becomes a QUIC endpoint for that device only.
@@ -289,7 +386,7 @@ mod tests {
         let run_state = state.clone();
         let run_identity = identity.clone();
         tokio::spawn(async move {
-            run(server, "127.0.0.1".parse().unwrap(), Arc::new((device_port.saturating_sub(5).max(1)..=device_port + 5).map(|p| p as u16).collect()), "t".into(), run_identity, http_port, run_state).await
+            run(server, "127.0.0.1".parse().unwrap(), Arc::new((device_port.saturating_sub(5).max(1)..=device_port + 5).map(|p| p as u16).collect()), "t".into(), run_identity, http_port, run_state, (std::env::temp_dir(), "127.0.0.1".into(), "test".into(), "window".into())).await
         });
         device.send_to(b"TBDIRECT1 t 0 hello", server_address).await?;
         let mut buffer = [0u8; 256];
