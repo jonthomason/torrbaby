@@ -493,6 +493,11 @@ final class Store: ObservableObject {
             Task { await self.refresh(polling: true) }
         }
         if !diamondIdentity.isEmpty { DirectTunnel.pin(identity: diamondIdentity) }
+        // The launch is when the app first becomes active: while it starts, iOS reports it as
+        // in the background, and a cold launch brings no scene-phase change to catch.
+        NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.autoConnectTunnel() }
+        }
         DirectTunnel.name(client: clientId)
         Task { [weak self] in
             await PacketTunnel.shared.load()
@@ -905,11 +910,21 @@ final class Store: ObservableObject {
     }
     /// Torrbaby's tunnel connects by itself where it may (see PacketTunnel.autoConnect).
     func autoConnectTunnel() {
-        let relay = relayAddress, fingerprint = relayFingerprint, stun = stunServer ?? "", token = token
+        let settings = tunnelSettings
+        Task { await PacketTunnel.shared.autoConnect(relay: settings.relay, relayFingerprint: settings.fingerprint, stun: settings.stun, token: settings.token, home: settings.home, identity: settings.identity, client: settings.client) }
+    }
+    /// Connect the tunnel now (the Connection page's Connect), with everything it needs.
+    func connectTunnel() async {
+        let settings = tunnelSettings
+        await PacketTunnel.shared.turnOn(relay: settings.relay, relayFingerprint: settings.fingerprint, stun: settings.stun, token: settings.token, home: settings.home, identity: settings.identity, client: settings.client)
+    }
+    /// Everything the tunnel extension is given, in one place: every way of connecting it must
+    /// pass all of it, or the extension's copy loses what was left out (Diamond's home name, its
+    /// identity: the Connect button once left the relay unencrypted and home unknown).
+    private var tunnelSettings: (relay: String, fingerprint: String, stun: String, token: String, home: String?, identity: String, client: String) {
         // Diamond's home name and port, for the tunnel to reach it directly at home.
         let home = URL(string: primaryAddress).flatMap { url in url.host.map { "\($0):\(url.port ?? 80)" } }
-        let identity = diamondIdentity, client = clientId
-        Task { await PacketTunnel.shared.autoConnect(relay: relay, relayFingerprint: fingerprint, stun: stun, token: token, home: home, identity: identity, client: client) }
+        return (relayAddress, relayFingerprint, stunServer ?? "", token, home, diamondIdentity, clientId)
     }
     func dropDirect(_ reason: String) {
         guard directTunnel != nil || directRoute != nil else { return }

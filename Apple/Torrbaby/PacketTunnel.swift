@@ -40,6 +40,8 @@ import UIKit
     func turnOn(relay: String, relayFingerprint: String, stun: String, token: String, home: String? = nil, identity: String? = nil, client: String? = nil) async {
         lastError = nil
         heldOff = false
+        // Connected on purpose: whatever took over before is no longer in charge.
+        TunnelYield.yielded = false
         let manager = self.manager ?? NETunnelProviderManager()
         // The token goes to the shared keychain, not the VPN configuration.
         TunnelShared(relay: relay, relayFingerprint: relayFingerprint, stun: stun, token: token, home: home, identity: identity, client: client).save()
@@ -120,7 +122,7 @@ import UIKit
         // the background for downloads; that is not the user launching Torrbaby.
         let launching = !launched && ready && UIApplication.shared.applicationState != .background
         if launching { launched = true; TunnelYield.yielded = false }
-        else if TunnelYield.yielded || (!connected && status != .connecting && Self.otherVPN() != nil) {
+        else if !connected, status != .connecting, TunnelYield.yielded || Self.otherVPN() != nil {
             await yield()
             return
         }

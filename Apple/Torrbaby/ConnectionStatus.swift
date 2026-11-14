@@ -244,15 +244,11 @@ struct ConnectionStatusSections: View {
                     Button { Task { _ = await tunnel.ask("punch") } } label: { Text(verbatim: "Punch the direct path again") }
                     Button { tunnel.disconnect() } label: { Text(verbatim: "Disconnect") }
                 } else {
-                    Button {
-                        Task { await tunnel.turnOn(relay: store.relayAddress, relayFingerprint: store.relayFingerprint, stun: store.stunServer ?? "", token: store.token) }
-                    } label: { Text(verbatim: "Connect") }
+                    Button { Task { await store.connectTunnel() } } label: { Text(verbatim: "Connect") }
                 }
                 Button(role: .destructive) { Task { await tunnel.turnOff() } } label: { Text(verbatim: "Remove Torrbaby tunnel") }
             } else {
-                Button {
-                    Task { await tunnel.turnOn(relay: store.relayAddress, relayFingerprint: store.relayFingerprint, stun: store.stunServer ?? "", token: store.token) }
-                } label: { Text(verbatim: "Turn on Torrbaby tunnel") }
+                Button { Task { await store.connectTunnel() } } label: { Text(verbatim: "Turn on Torrbaby tunnel") }
                 .disabled(store.relayAddress.isEmpty || store.relayFingerprint.count != 64 || store.token.isEmpty)
             }
         } header: { Text(verbatim: "Torrbaby tunnel: details") }
