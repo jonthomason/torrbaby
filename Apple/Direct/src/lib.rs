@@ -64,8 +64,27 @@ pub extern "C" fn tbdirect_start(fd: i32, server: *const c_char, fingerprint: *c
     // the keepalives) usually finds the path still open. A path that died meanwhile (a
     // carrier switch behind a hotspot) is caught by the app's public-address check over the
     // relay and by reads retried over the relay, not by this limit.
-    open(&TUNNEL, fd, server, fingerprint, b"tbdirect", "torrbaby-direct", 8, (5, 45))
+    open(&TUNNEL, fd, server, fingerprint, b"tbdirect", "torrbaby-direct", 8, (5, 45), APP_WINDOWS)
 }
+
+/// As `tbdirect_start`, for the packet tunnel extension: iOS ends an extension that uses more
+/// than 50 MB, so the connection buffers less (4 MB still covers 200 Mbit/s at 150 ms).
+#[unsafe(no_mangle)]
+pub extern "C" fn tbdirect_start_lean(fd: i32, server: *const c_char, fingerprint: *const c_char) -> u16 {
+    tbdirect_stop();
+    open(&TUNNEL, fd, server, fingerprint, b"tbdirect", "torrbaby-direct", 8, (5, 45), LEAN_WINDOWS)
+}
+
+/// As `tbdirect_relay_start`, with the extension's smaller buffers.
+#[unsafe(no_mangle)]
+pub extern "C" fn tbdirect_relay_start_lean(fd: i32, server: *const c_char, fingerprint: *const c_char) -> u16 {
+    tbdirect_relay_stop();
+    open(&RELAY, fd, server, fingerprint, b"tbrelay", "torrbaby-rendezvous", 5, (10, 45), LEAN_WINDOWS)
+}
+
+/// QUIC receive windows (per stream, per connection).
+const APP_WINDOWS: (u32, u32) = (8 << 20, 32 << 20);
+const LEAN_WINDOWS: (u32, u32) = (2 << 20, 4 << 20);
 
 /// Open the relay: QUIC from socket `fd` (ownership passes here) to Torrbaby's rendezvous on
 /// bronze at `server` ("ip:port"), pinned to `fingerprint`. Each loopback connection becomes
@@ -74,10 +93,10 @@ pub extern "C" fn tbdirect_start(fd: i32, server: *const c_char, fingerprint: *c
 #[unsafe(no_mangle)]
 pub extern "C" fn tbdirect_relay_start(fd: i32, server: *const c_char, fingerprint: *const c_char) -> u16 {
     tbdirect_relay_stop();
-    open(&RELAY, fd, server, fingerprint, b"tbrelay", "torrbaby-rendezvous", 5, (10, 45))
+    open(&RELAY, fd, server, fingerprint, b"tbrelay", "torrbaby-rendezvous", 5, (10, 45), APP_WINDOWS)
 }
 
-fn open(slot: &Mutex<Option<Tunnel>>, fd: i32, server: *const c_char, fingerprint: *const c_char, alpn: &[u8], name: &str, seconds: u64, (keepalive, idle): (u64, u64)) -> u16 {
+fn open(slot: &Mutex<Option<Tunnel>>, fd: i32, server: *const c_char, fingerprint: *const c_char, alpn: &[u8], name: &str, seconds: u64, (keepalive, idle): (u64, u64), (stream_window, window): (u32, u32)) -> u16 {
     let socket = if fd >= 0 { Some(unsafe { std::net::UdpSocket::from_raw_fd(fd) }) } else { None };
     let (Some(socket), Some(server), Some(fingerprint)) = (socket, text(server), text(fingerprint)) else { return 0 };
     let Ok(server): Result<SocketAddr, _> = server.parse() else { return 0 };
@@ -94,8 +113,8 @@ fn open(slot: &Mutex<Option<Tunnel>>, fd: i32, server: *const c_char, fingerprin
         let mut transport = quinn::TransportConfig::default();
         transport.keep_alive_interval(Some(Duration::from_secs(keepalive)));
         transport.max_idle_timeout(Some(Duration::from_secs(idle).try_into().ok()?));
-        transport.stream_receive_window((8u32 << 20).into());
-        transport.receive_window((32u32 << 20).into());
+        transport.stream_receive_window(stream_window.into());
+        transport.receive_window(window.into());
         client.transport_config(Arc::new(transport));
         let mut endpoint = quinn::Endpoint::new(quinn::EndpointConfig::default(), None, socket, Arc::new(quinn::TokioRuntime)).ok()?;
         endpoint.set_default_client_config(client);

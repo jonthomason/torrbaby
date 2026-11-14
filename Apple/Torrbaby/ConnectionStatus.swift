@@ -12,6 +12,11 @@ import AppKit
 struct ConnectionStatusSections: View {
     @EnvironmentObject var store: Store
     @State private var measuring = false
+    #if os(iOS)
+    @ObservedObject private var tunnel = PacketTunnel.shared
+    /// The extension's own account of its paths, asked each second while the page is open.
+    @State private var tunnelState: String?
+    #endif
 
     /// Ticks every second so times and countdowns stay current. (A TimelineView around the
     /// sections merged them into one in a Form.)
@@ -25,6 +30,7 @@ struct ConnectionStatusSections: View {
             nowSection
             pathSections
             #if os(iOS)
+            tunnelSection
             directSection
             eventsSection
             #endif
@@ -34,6 +40,9 @@ struct ConnectionStatusSections: View {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 tick &+= 1
+                #if os(iOS)
+                tunnelState = await tunnel.ask()
+                #endif
             }
         }
     }
@@ -56,6 +65,7 @@ struct ConnectionStatusSections: View {
     private var summary: String {
         switch store.path {
         case .home: return "On the same network as \(server)" + ms("home")
+        case .tunnel: return "Torrbaby's own tunnel to \(server) (10.233.0.1), held open in the background" + ms("tunnel")
         case .direct:
             #if os(iOS)
             return "Straight to \(server) through both NATs, no server in between" + ms("direct") + (store.directOpenedAt.map { ", since \(clock($0))" } ?? "")
@@ -72,6 +82,7 @@ struct ConnectionStatusSections: View {
         SwiftUI.Section {
             row("Home network", kind: "home", inUse: store.path == .home, detail: store.homeRoute.isEmpty ? store.primaryAddress : store.homeRoute)
             #if os(iOS)
+            row("Torrbaby tunnel", kind: "tunnel", inUse: store.path == .tunnel, detail: tunnel.installed ? "\(tunnel.statusText)" + (tunnelState.map { " · \($0)" } ?? "") : "not installed")
             row("Direct (hole punch)", kind: "direct", inUse: store.path == .direct, detail: store.directRoute == nil ? (store.directWhyNot ?? "") : "open, QUIC on the punched socket")
             row("Relay via bronze", kind: "relay", inUse: store.path == .relay, detail: relayDetail)
             #endif
@@ -142,6 +153,27 @@ struct ConnectionStatusSections: View {
         }
     }
 
+    /// Torrbaby's packet tunnel: for devices without Tailscale (iOS connects one VPN at a time,
+    /// so turning this on disconnects Tailscale). It holds the direct path while the app is
+    /// suspended, so background downloads keep going.
+    @ViewBuilder private var tunnelSection: some View {
+        SwiftUI.Section {
+            labeled("State", tunnel.statusText + (tunnelState.map { " · \($0)" } ?? ""))
+            if let error = tunnel.lastError { labeled("Last error", error) }
+            if tunnel.installed {
+                Button { Task { _ = await tunnel.ask("punch") } } label: { Text(verbatim: "Punch the direct path again") }.disabled(!tunnel.connected)
+                Button(role: .destructive) { Task { await tunnel.turnOff() } } label: { Text(verbatim: "Turn off and remove") }
+            } else {
+                Button {
+                    Task { await tunnel.turnOn(relay: store.relayAddress, relayFingerprint: store.relayFingerprint, stun: store.stunServer ?? "", token: store.token) }
+                } label: { Text(verbatim: "Turn on Torrbaby tunnel") }
+                .disabled(store.relayAddress.isEmpty || store.relayFingerprint.count != 64 || store.token.isEmpty)
+            }
+        } header: { Text(verbatim: "Torrbaby tunnel (test)") } footer: {
+            Text(verbatim: "A VPN that only reaches \(server) (10.233.0.1), straight through both NATs, kept open by iOS while Torrbaby is in the background so downloads continue. Only for a device without Tailscale: iOS connects one VPN at a time, so turning this on disconnects Tailscale.")
+        }
+    }
+
     @ViewBuilder private var eventsSection: some View {
         if !store.directEvents.isEmpty {
             SwiftUI.Section {
@@ -177,17 +209,17 @@ struct ConnectionStatusSections: View {
     private func ms(_ kind: String) -> String { store.routeChecks[kind]?.ms.map { ", \($0) ms round trip" } ?? "" }
     private func clock(_ date: Date) -> String { date.formatted(date: .omitted, time: .standard) }
     private func symbol(_ path: Store.Path) -> String {
-        switch path { case .home: "house.fill"; case .direct: "bolt.horizontal.fill"; case .relay: "arrow.triangle.branch"; case .tailscale: "network.badge.shield.half.filled"; case .offline: "wifi.slash" }
+        switch path { case .home: "house.fill"; case .tunnel: "lock.shield.fill"; case .direct: "bolt.horizontal.fill"; case .relay: "arrow.triangle.branch"; case .tailscale: "network.badge.shield.half.filled"; case .offline: "wifi.slash" }
     }
     private func color(_ path: Store.Path) -> Color {
-        switch path { case .home, .direct: .green; case .relay: .blue; case .tailscale: .orange; case .offline: .red }
+        switch path { case .home, .tunnel, .direct: .green; case .relay: .blue; case .tailscale: .orange; case .offline: .red }
     }
 
     /// Everything on the page as plain text, to paste into a message.
     private var report: String {
         var lines = ["Torrbaby connection report \(Date().formatted(date: .abbreviated, time: .standard))", AppRelease.description,
                      "Connected by: \(store.path.rawValue) — \(summary)", "Route: \(store.activeServer ?? "none")"]
-        for (kind, title) in [("home", "Home network"), ("direct", "Direct"), ("relay", "Relay"), ("tailscale", "Tailscale")] {
+        for (kind, title) in [("home", "Home network"), ("tunnel", "Torrbaby tunnel"), ("direct", "Direct"), ("relay", "Relay"), ("tailscale", "Tailscale")] {
             if let check = store.routeChecks[kind] { lines.append("\(title): \(check.ok ? "ok" : "failed") at \(clock(check.at)), \(check.detail)\(check.ms.map { ", \($0) ms" } ?? "")") }
         }
         #if os(iOS)

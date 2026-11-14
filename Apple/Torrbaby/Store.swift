@@ -464,6 +464,16 @@ final class Store: ObservableObject {
         networkMonitor.start(queue: DispatchQueue(label: "org.torrbaby.connectivity"))
         #if !os(tvOS)
         DownloadQueue.shared.attach(self)
+        #if os(iOS)
+        // Torrbaby's packet tunnel connecting or dropping changes the best route at once.
+        PacketTunnel.shared.onChange = { [weak self] in
+            guard let self else { return }
+            self.directEvent("Torrbaby tunnel \(PacketTunnel.shared.statusText)")
+            self.refreshFullyNext()
+            Task { await self.refresh(polling: true) }
+        }
+        Task { await PacketTunnel.shared.load() }
+        #endif
         #endif
         #if DEBUG
         // UI checks can open the user chooser directly: -initialChooser YES.
@@ -573,6 +583,9 @@ final class Store: ObservableObject {
     @Published private(set) var routeChecks: [String: RouteCheck] = [:]
     func noteRoute(_ kind: String, _ check: RouteCheck) { routeChecks[kind] = check }
     private func routeKind(_ address: String) -> String {
+        #if os(iOS)
+        if address == PacketTunnel.route { return "tunnel" }
+        #endif
         if address == Self.relayCandidate || (relayRoute != nil && address == relayRoute) { return "relay" }
         if directRoute != nil && address == directRoute { return "direct" }
         return ServerRoutes.normalized(address) == ServerRoutes.normalized(primaryAddress) ? "home" : "tailscale"
@@ -593,7 +606,7 @@ final class Store: ObservableObject {
     }
     /// A route's name for people: "home network", "relay via bronze", "Tailscale", "direct".
     func routeLabel(_ address: String) -> String {
-        switch routeKind(address) { case "relay": "relay via bronze"; case "direct": "direct"; case "home": "home network"; default: "Tailscale" }
+        switch routeKind(address) { case "relay": "relay via bronze"; case "direct": "direct"; case "home": "home network"; case "tunnel": "Torrbaby tunnel"; default: "Tailscale" }
     }
     /// Whether this device still uses Tailscale: only where the relay through bronze is not
     /// known (Mac and Apple TV are at home; iPhone and iPad use the relay instead).
@@ -605,10 +618,11 @@ final class Store: ObservableObject {
         #endif
     }
     /// How this device reaches the server now.
-    enum Path: String { case home = "Home network", direct = "Direct (hole punch)", relay = "Relay via bronze", tailscale = "Tailscale", offline = "Offline" }
+    enum Path: String { case home = "Home network", tunnel = "Torrbaby tunnel", direct = "Direct (hole punch)", relay = "Relay via bronze", tailscale = "Tailscale", offline = "Offline" }
     var path: Path {
         guard connected, let active = activeServer else { return .offline }
         #if os(iOS)
+        if active == PacketTunnel.route { return .tunnel }
         if directRoute != nil { return .direct }
         if relayRoute != nil && active == relayRoute { return .relay }
         #endif
@@ -793,6 +807,8 @@ final class Store: ObservableObject {
     func tryDirectNow() { lastDirectAttempt = .distantPast; startDirectIfUseful() }
     /// Away from home, try for a direct path every few minutes until one holds.
     private func startDirectIfUseful() {
+        // The packet tunnel holds its own direct path: the app's would be a second one.
+        guard activeServer != PacketTunnel.route else { directNote = "not needed: the Torrbaby tunnel is in use"; return }
         guard connected, usingFallback, directRoute == nil, !directAttempting,
               Date().timeIntervalSince(lastDirectAttempt) > 180, let signal = activeServer else {
             let note = !connected ? "not tried: offline" : !usingFallback ? "not tried: at home" : directAttempting ? "trying…" : directNote
@@ -848,6 +864,11 @@ final class Store: ObservableObject {
         // Tailscale is retired on iPhone and iPad once the relay is known: home, direct and
         // the relay are the only ways.
         if !tailscaleInUse { addresses.removeAll { $0 != Self.relayCandidate && ServerRoutes.normalized($0) != ServerRoutes.normalized(primary) } }
+        // Torrbaby's packet tunnel, when connected, replaces the app's relay and direct path.
+        if PacketTunnel.shared.connected {
+            addresses.removeAll { $0 == Self.relayCandidate }
+            addresses.append(PacketTunnel.route)
+        }
         #if DEBUG
         // Simulator checks of the relay from home: -relayOnly YES leaves home and Tailscale out.
         if UserDefaults.standard.bool(forKey: "relayOnly") { addresses = [Self.relayCandidate] }
