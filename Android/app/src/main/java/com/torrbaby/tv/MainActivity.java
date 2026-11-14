@@ -598,7 +598,7 @@ public class MainActivity extends Activity {
       // TV shows keep the episode guide directly below the hero, so their secondary
       // actions live in one compact menu beside Play.
       if (t.kind.equals("tv") && asset != null) {
-        Ui.gap(buttons, 10);
+        Ui.gap(buttons, 20);
         Button more = Ui.button(this, L10n.t("More…"), () -> moreActions(t));
         more.setTextSize(13);
         more.setTag("more");

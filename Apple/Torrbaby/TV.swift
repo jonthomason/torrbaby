@@ -437,7 +437,7 @@ private struct TVMediaDetail: View {
                             if let asset = store.preferredLibraryAsset(title) {
                                 // TV shows keep the episode guide directly below the hero, so their
                                 // secondary actions live in one compact menu beside Play.
-                                HStack(spacing: 14) {
+                                HStack(spacing: 30) {
                                     Button { play(asset, title: title) } label: {
                                         if asset.offline == true {
                                             Label("Drive not connected", systemImage: "externaldrive.badge.xmark").font(TVHeroAction.font)
