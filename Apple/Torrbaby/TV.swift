@@ -871,7 +871,7 @@ private struct TVSearchView: View {
     @State private var query = ""
     private var results: [LibraryTitle] {
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
-        return (store.library?.titles ?? []).filter { $0.title.localizedCaseInsensitiveContains(query) }
+        return (store.library?.titles ?? []).filter { $0.searchNames.contains { $0.localizedCaseInsensitiveContains(query) } }
     }
     var body: some View {
         ScrollView {

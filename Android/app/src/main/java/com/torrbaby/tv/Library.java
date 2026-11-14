@@ -40,7 +40,7 @@ public final class Library {
       if (!kind.isEmpty() && !kind.equals(t.kind)) continue;
       if (!genre.isEmpty() && !t.genres.contains(genre)) continue;
       if (!q.isEmpty()
-          && !(t.title + " " + String.join(" ", t.genres) + " " + t.year)
+          && !(t.englishTitle + " " + t.chineseTitle + " " + String.join(" ", t.genres) + " " + t.year)
               .toLowerCase(Locale.ROOT)
               .contains(q)) continue;
       result.add(t);
@@ -71,6 +71,8 @@ public final class Library {
 
   public static final class Title {
     public final String id, kind, title, year, endYear, summary, rating, poster, backdrop;
+    /** The English name and the Chinese one ("" when none); `title` is whichever the interface uses. */
+    public final String englishTitle, chineseTitle;
     /** Whether a series is still running; null when the server does not know. */
     public final Boolean ongoing;
     public final double added, minutes;
@@ -95,7 +97,10 @@ public final class Library {
       cast=j.optJSONArray("cast");
       id = string(j, "id");
       kind = string(j, "kind");
-      title = string(j, "title");
+      englishTitle = string(j, "title");
+      chineseTitle = string(j, "title_zh");
+      // Chosen when the library is read: switching language recreates the screen and reads it again.
+      title = !chineseTitle.isEmpty() && L10n.locale().getLanguage().equals("zh") ? chineseTitle : englishTitle;
       year = string(j, "year");
       endYear = string(j, "end_year");
       ongoing = j.isNull("ongoing") ? null : (Boolean) j.optBoolean("ongoing");

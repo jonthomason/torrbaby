@@ -205,7 +205,21 @@ struct EpisodeNumber: Codable, Hashable {
 struct LibraryTitle: Decodable, Identifiable {
     let id: String
     let kind: String
-    let title: String
+    /// The name from TMDB in English.
+    let englishTitle: String
+    /// Its Chinese name (TMDB's Simplified Chinese name, or a Chinese original); nil when none.
+    var titleZh: String? = nil
+    /// The name shown everywhere: the Chinese name while the interface is in Chinese.
+    var title: String {
+        if L10n.code.hasPrefix("zh"), let titleZh, !titleZh.isEmpty { return titleZh }
+        return englishTitle
+    }
+    /// Both names, for search: a title is found by either.
+    var searchNames: [String] { [englishTitle, titleZh].compactMap { $0 }.filter { !$0.isEmpty } }
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, englishTitle = "title", titleZh, year, endYear, ongoing, genres, summary, contentRating, durationMinutes
+        case poster, backdrop, addedAt, assets, continueWatchingHidden, cast, offline
+    }
     let year: String?
     /// The year a finished series last aired, and whether it is still running, when known.
     var endYear: String? = nil
@@ -629,7 +643,7 @@ struct LibraryBrowser: View {
     var titles: [LibraryTitle] {
         let result = store.library?.titles.filter { title in
             (kind == nil || title.kind == kind) && (genre == "All genres" || title.genres.contains(genre)) &&
-            (search.isEmpty || title.title.localizedCaseInsensitiveContains(search) || title.genres.contains { $0.localizedCaseInsensitiveContains(search) })
+            (search.isEmpty || title.searchNames.contains { $0.localizedCaseInsensitiveContains(search) } || title.genres.contains { $0.localizedCaseInsensitiveContains(search) })
         } ?? []
         return result.sorted {
             if order == "Release date" { return ($0.year ?? "", $0.title) > ($1.year ?? "", $1.title) }

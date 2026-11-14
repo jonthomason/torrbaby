@@ -1528,7 +1528,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
     }
     if method == Method::GET {
         if let Some(title) = path.strip_prefix("/v1/library/titles/").and_then(|p| p.strip_suffix("/missing-episodes")) {
-            return db.missing_episodes(title);
+            return db.missing_episodes(&title_segment(title));
         }
         if let Some(id) = path.strip_prefix("/v1/punch/") {
             return crate::punch::TESTS.status(id);
@@ -1537,13 +1537,14 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             return crate::direct::DIRECT.status(id);
         }
         if let Some(title) = path.strip_prefix("/v1/library/titles/").and_then(|p| p.strip_suffix("/details")) {
-            return db.catalog_details(profile, title);
+            return db.catalog_details(profile, &title_segment(title));
         }
     }
     if let Some(title) = path
         .strip_prefix("/v1/library/titles/")
         .and_then(|p| p.strip_suffix("/subtitle-preferences"))
     {
+        let title = &title_segment(title);
         return match method.as_str() {
             "GET" => db.subtitle_preferences(Some(title)),
             "PUT" => db.save_subtitle_preferences(Some(title), body),
@@ -1640,6 +1641,26 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
     }
 }
 
+/// A title ID taken from a path, percent-decoded: the Apple apps send tmdb%3Atv%3A1 for tmdb:tv:1.
+fn title_segment(segment: &str) -> String {
+    let bytes = segment.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() && segment.is_char_boundary(i + 3) {
+            if let Ok(value) = u8::from_str_radix(&segment[i + 1..i + 3], 16) { out.push(value); i += 3; continue; }
+        }
+        out.push(bytes[i]); i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| segment.to_owned())
+}
+#[cfg(test)]
+#[test]
+fn title_ids_in_paths_are_percent_decoded() {
+    assert_eq!(title_segment("tmdb%3Atv%3A286171"), "tmdb:tv:286171");
+    assert_eq!(title_segment("tmdb:movie:1:copy:abc"), "tmdb:movie:1:copy:abc");
+    assert_eq!(title_segment("bad%zz%4"), "bad%zz%4");
+}
 fn signature(token: &str, hash: &str, index: u64, expires: u64) -> String {
     use hmac::{Hmac, Mac};
     let mut mac =
