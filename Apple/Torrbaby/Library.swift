@@ -359,6 +359,8 @@ struct MediaTrackInfo: Decodable {
 struct MediaLanguagesView: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let info: MediaTrackInfo?
+    /// Why the title's details could not be loaded, shown instead of a check that never ends.
+    var problem: String? = nil
     private func name(_ code: String?) -> String {
         guard let raw = code?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return "" }
         let code = raw.lowercased().replacingOccurrences(of: "_", with: "-")
@@ -412,7 +414,10 @@ struct MediaLanguagesView: View {
                     }
                 }
             } else {
-                Label(LocalizedStringKey(info?.state == "failed" ? "Languages unavailable" : "Checking languages…"), systemImage: "captions.bubble")
+                Label(LocalizedStringKey(info?.state == "failed" || (info == nil && problem != nil) ? "Languages unavailable" : "Checking languages…"), systemImage: "captions.bubble")
+                if info == nil, let problem { Text(verbatim: problem).font(.caption2).lineLimit(3) }
+                else if info == nil { Text(verbatim: "no details").font(.caption2) }
+                else if let info { Text(verbatim: info.state).font(.caption2) }
             }
         }.font(.callout).foregroundStyle(.secondary)
     }
@@ -934,7 +939,7 @@ struct LibraryDetail: View {
                     }
                     if let asset = preferred {
                         LibraryAssetActions(asset: asset, showsDownload: false, castTitle: title)
-                        MediaLanguagesView(info: asset.mediaInfo)
+                        MediaLanguagesView(info: asset.mediaInfo, problem: store.detailsProblem[title.id])
                     }
                     // Extras are their own tab after the last season, not a tail on every season.
                     if title.kind == "tv" {

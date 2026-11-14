@@ -492,7 +492,7 @@ private struct TVMediaDetail: View {
                                 .animation(.easeOut(duration: 0.15), value: summaryFocused)
                         }
                         if let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
-                            MediaLanguagesView(info: asset.mediaInfo)
+                            MediaLanguagesView(info: asset.mediaInfo, problem: store.detailsProblem[title.id])
                         }
                         if title.kind != "tv", let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
                             VStack(alignment: .leading, spacing: 8) {

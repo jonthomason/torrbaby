@@ -997,11 +997,25 @@ final class Store: ObservableObject {
         return result
     }
     /// A title's page loads its cast and each file's tracks (the list leaves them out).
+    /// Why a title's details last failed to load, shown where its languages would be.
+    @Published private(set) var detailsProblem: [String: String] = [:]
     func loadDetails(_ titleID: String) async {
         let identity = profileIdentity
         let encoded = titleID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? titleID
-        guard let details: LibraryTitleDetails = try? await request("GET", "/v1/library/titles/\(encoded)/details", timeout: 30),
-              identity == profileIdentity else { return }
+        var details: LibraryTitleDetails?
+        // Once more after a failure: a page opened while the connection settles.
+        for attempt in 0..<2 where details == nil && !Task.isCancelled {
+            do {
+                details = try await request("GET", "/v1/library/titles/\(encoded)/details", timeout: 30)
+                detailsProblem[titleID] = nil
+            } catch is CancellationError { return
+            } catch {
+                detailsProblem[titleID] = String(describing: error)
+                Logger(subsystem: "org.torrbaby", category: "library").error("Title details \(titleID, privacy: .public) failed (attempt \(attempt + 1)): \(String(describing: error), privacy: .public)")
+                if attempt == 0 { try? await Task.sleep(for: .seconds(2)) }
+            }
+        }
+        guard let details, identity == profileIdentity else { return }
         titleDetails[titleID] = details
         if var current = library { current.apply(details, to: titleID); library = current }
     }

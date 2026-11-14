@@ -243,7 +243,7 @@ impl Database {
             };
             let entity_id = entity_id.as_str();
             let title=titles.entry(entity_id.to_owned()).or_insert_with(||json!({
-                "id":entity_id,"copy_of":if entity_id != movie_id { json!(movie_id) } else { Value::Null },"continue_watching_hidden":hidden.contains(entity_id),"kind":kind,"title":name,"original_title":entity["original_title"],
+                "id":entity_id,"copy_of":if entity_id != movie_id { json!(movie_id) } else { Value::Null },"continue_watching_hidden":hidden.contains(entity_id),"kind":kind,"title":name,"original_title":entity["original_title"],"title_zh":entity["title_zh"],
                 "year":title_year(&entity,file),"end_year":series_end_year(&entity),"ongoing":series_ongoing(&entity),"release_date":entity["release_date"],"genres":entity.get("genres").unwrap_or(&json!([])),
                 "summary":entity["summary"].as_str().unwrap_or(""),"content_rating":entity["content_rating"],"duration_minutes":entity["duration_minutes"],
                 "poster":entity["thumbnail"],"backdrop":entity["backdrop"],"logo":entity["logo"],"cast":entity["cast"],"provider":entity["provider"],"source_url":entity["source_url"],

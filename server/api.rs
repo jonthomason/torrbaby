@@ -2618,6 +2618,25 @@ async fn collect_metadata(s: &Service) -> Result<()> {
             Err(error)=>{eprintln!("Series run metadata: {error}");s.metadata.record_failure(key).await;}
         }
     }
+    // Titles saved before Chinese names were kept pick them up here.
+    let mut lookups=0;
+    for entity in entities.iter().filter(|entity| entity["provider"]=="TMDB" && entity.get("title_zh").is_none()) {
+        let key=entity["id"].as_str().unwrap_or_default();
+        if lookups>=20 || s.metadata.recently_failed(key).await {continue;}
+        lookups+=1;
+        match s.metadata.chinese_title(entity).await {
+            Ok(chinese) => {
+                let id=text(entity,"id")?;
+                let db=s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+                if let Some(row)=db.rows("SELECT document FROM library_entities WHERE id=?",[id])?.first() {
+                    let mut current:Value=serde_json::from_str(text(row,"document")?)?;
+                    current["title_zh"]=json!(chinese);
+                    db.connection.execute("UPDATE library_entities SET document=? WHERE id=?",[current.to_string(),id.to_string()])?;
+                }
+            }
+            Err(error)=>{eprintln!("Chinese title metadata: {error}");s.metadata.record_failure(key).await;}
+        }
+    }
     if let Ok(torrents) = crate::organizer::torrents(s).await {
         for torrent in torrents {
             let hash = text(&torrent, "hash_string")?;
