@@ -902,17 +902,18 @@ struct LibraryDetail: View {
         return title.resume?.season ?? title.playable.first(where: { !$0.watched && ($0.season ?? 0) > 0 })?.season ?? seasons.first(where: { $0 > 0 }) ?? seasons.first
     }
     @ViewBuilder private func playbackActions(_ asset: LibraryAsset, title: LibraryTitle, selectedSeason: Int?) -> some View {
-        // The time left sits centred beneath Play, so the button stays a short label.
+        // The time left sits centred beneath Play, so the button stays a short label; on a
+        // phone, where Play spans the page, it stays in the button ("Resume · 1h 55m left").
         VStack(spacing: 5) {
             Button { play(asset, title: title.title) } label: {
                 Label {
                     if store.canPlay(asset) {
-                        Text(asset.playbackActionTitle(television: title.kind == "tv", brief: true)).lineLimit(2)
+                        Text(asset.playbackActionTitle(television: title.kind == "tv", brief: !stacksActions)).lineLimit(2)
                     } else { Text(LocalizedStringKey(store.onMissingDrive(asset) ? "Drive not connected" : "Not downloaded")) }
                 } icon: { Image(systemName: store.canPlay(asset) ? "play.fill" : store.onMissingDrive(asset) ? "externaldrive.badge.xmark" : "wifi.slash") }
                     .font(.headline).frame(minWidth: title.kind == "tv" && !stacksActions ? 120 : nil, alignment: .leading).frame(minHeight: 44)
             }.libraryActionStyle(prominent: true).disabled(loading || store.onMissingDrive(asset))
-            if store.canPlay(asset), let left = asset.timeLeft {
+            if store.canPlay(asset), !stacksActions, let left = asset.timeLeft {
                 Text(verbatim: left).font(.caption).foregroundStyle(.white.opacity(0.75))
             }
         }
