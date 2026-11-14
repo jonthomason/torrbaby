@@ -23,5 +23,7 @@
 		<key>NSExtensionPrincipalClass</key>
 		<string>$(PRODUCT_MODULE_NAME).PacketTunnelProvider</string>
 	</dict>
+	<key>TorrbabySharedKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)com.jonthomason.torrbaby.shared</string>
 </dict>
 </plist>

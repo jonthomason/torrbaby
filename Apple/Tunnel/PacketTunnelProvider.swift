@@ -35,15 +35,29 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private let started = Date()
     private var attempting = false
 
+    /// Logged to the system and to the App Group log the app shows on Settings → Connection.
+    private func note(_ line: String) { log.notice("\(line, privacy: .public)"); TunnelLog.write(line) }
+
+    /// Memory in use (iOS ends a packet tunnel extension above 50 MB).
+    private static func memoryMB() -> Double {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) } }
+        return result == KERN_SUCCESS ? Double(info.phys_footprint) / 1_048_576 : -1
+    }
+
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
+        note("starting (memory \(String(format: "%.1f", Self.memoryMB())) MB)")
         let configuration = (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration ?? [:]
         relay = configuration["relay"] as? String ?? ""
         relayFingerprint = configuration["relayFingerprint"] as? String ?? ""
         stun = configuration["stun"] as? String ?? ""
         token = configuration["token"] as? String ?? ""
         guard !relay.isEmpty, relayFingerprint.count == 64, !token.isEmpty else {
+            note("cannot start: configuration incomplete (relay \(relay.isEmpty ? "missing" : relay), fingerprint \(relayFingerprint.count) chars, token \(token.isEmpty ? "missing" : "present"))")
             completionHandler(NEVPNError(.configurationInvalid)); return
         }
+        note("configuration: relay \(relay), STUN \(stun)")
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: String(relay.split(separator: ":").first ?? ""))
         let ipv4 = NEIPv4Settings(addresses: ["10.233.0.2"], subnetMasks: ["255.255.255.255"])
         ipv4.includedRoutes = [NEIPv4Route(destinationAddress: Self.diamond, subnetMask: "255.255.255.255")]
@@ -51,18 +65,19 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         settings.mtu = 1280
         setTunnelNetworkSettings(settings) { [weak self] error in
             guard let self else { return }
-            if let error { completionHandler(error); return }
-            guard self.startStack() else { completionHandler(NEVPNError(.configurationUnknown)); return }
+            if let error { self.note("network settings refused: \(error.localizedDescription)"); completionHandler(error); return }
+            self.note("network settings applied; starting the TCP stack")
+            guard self.startStack() else { self.note("TCP stack did not start"); completionHandler(NEVPNError(.configurationUnknown)); return }
             self.readPackets()
             self.watchNetwork()
             self.keep()
-            self.log.notice("tunnel up: Diamond at \(Self.diamond, privacy: .public)")
+            self.note("up: Diamond at \(Self.diamond)")
             completionHandler(nil)
         }
     }
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
-        log.notice("tunnel stopping: \(reason.rawValue)")
+        note("stopping: reason \(reason.rawValue) (\(Self.describe(reason)))")
         keeper?.cancel(); monitor?.cancel()
         tbtunnel_stop(); tbdirect_stop(); tbdirect_relay_stop()
         completionHandler()
@@ -83,6 +98,26 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// How the open direct path was made ("punched from … in … ms (window)").
     private var punched = ""
 
+    private static func describe(_ reason: NEProviderStopReason) -> String {
+        switch reason {
+        case .userInitiated: "disconnected by the user or the app"
+        case .providerFailed: "the extension failed"
+        case .noNetworkAvailable: "no network"
+        case .unrecoverableNetworkChange: "unrecoverable network change"
+        case .providerDisabled: "configuration disabled"
+        case .configurationDisabled: "configuration disabled"
+        case .configurationRemoved: "configuration removed"
+        case .superceded: "another VPN connected"
+        case .userLogout: "user logged out"
+        case .userSwitch: "user switched"
+        case .connectionFailed: "connection failed"
+        case .sleep: "device asleep"
+        case .appUpdate: "app updated"
+        case .idleTimeout: "idle timeout"
+        default: "other"
+        }
+    }
+
     private func readPackets() {
         packetFlow.readPackets { [weak self] packets, _ in
             for packet in packets { packet.withUnsafeBytes { _ = tbtunnel_input($0.bindMemory(to: UInt8.self).baseAddress, packet.count) } }
@@ -100,7 +135,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             let signature = PunchProbe.networkSignature()
             if signature != self.networkSignature {
                 if !self.networkSignature.isEmpty {
-                    self.log.notice("network changed: dropping both paths")
+                    self.note("network changed (\(self.networkSignature) → \(signature)): dropping both paths")
                     tbdirect_stop(); tbdirect_relay_stop()
                     self.lastAttempt = .distantPast
                 }
@@ -114,8 +149,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// Keep the relay and the direct path open: check every few seconds, open what is closed.
     private func keep() {
         keeper = Task.detached { [weak self] in
+            var ticks = 0
             while !Task.isCancelled {
                 await self?.maintain()
+                ticks += 1
+                if ticks % 10 == 0 { self?.note("memory \(String(format: "%.1f", Self.memoryMB())) MB, direct \(tbdirect_alive() ? "open" : "closed"), relay \(tbdirect_relay_alive() ? "open" : "closed")") }
                 try? await Task.sleep(for: .seconds(3))
             }
         }
@@ -134,7 +172,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private func maintain() async {
         // Started a moment ago, the stack's task may not have marked itself running yet.
         if !tbtunnel_alive(), Date().timeIntervalSince(started) > 5 {
-            log.error("TCP stack stopped: starting it again")
+            note("TCP stack stopped: starting it again")
             _ = startStack()
         }
         if !tbdirect_relay_alive() { await openRelay() }
@@ -142,33 +180,36 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         // A failure waits a minute before the next try; a path that dropped is tried at once.
         guard Date().timeIntervalSince(lastAttempt) > 60 else { return }
         attempting = true; lastAttempt = Date()
+        note("punching a direct path (memory \(String(format: "%.1f", Self.memoryMB())) MB)")
         defer { attempting = false }
         do {
             let port = relayPort, token = token
             let punched = try await DirectPunch.run(stun: stun, randomFrom: windowFailedFrom, start: { body in
                 try await Self.post(port: port, token: token, path: "/v1/direct", body: body)
-            }, report: { [log] in log.info("direct: \($0.step, privacy: .public)") })
+            }, report: { [weak self] in self?.note("direct: \($0.step)") })
+            note("punched: \(punched.summary); opening QUIC")
             let opened = punched.server.withCString { s in punched.fingerprint.withCString { f in tbdirect_start(punched.fd, s, f) } }
             if opened == 0 { throw DirectPunch.Failure(message: "QUIC did not open on the punched socket") }
             status = ""
             self.punched = punched.summary
-            log.notice("direct open: \(punched.summary, privacy: .public)")
+            note("direct open (memory \(String(format: "%.1f", Self.memoryMB())) MB)")
         } catch {
             if let address = (error as? DirectPunch.Failure)?.windowFailedAt { windowFailedFrom.insert(address) }
             status = "last try failed: \(error.localizedDescription)"
-            log.error("direct failed: \(error.localizedDescription, privacy: .public)")
+            note("direct failed: \(error.localizedDescription)")
         }
     }
 
     private func openRelay() async {
         let probe = PunchProbe(count: 1)
         defer { probe.close() }
-        guard probe.ready, let fd = probe.take(0) else { return }
+        guard probe.ready, let fd = probe.take(0) else { note("relay: no socket"); return }
+        note("relay: connecting to \(relay) via \(probe.interface ?? "default")")
         let relay = relay, fingerprint = relayFingerprint
         let port = await Task.detached { relay.withCString { a in fingerprint.withCString { f in tbdirect_relay_start(fd, a, f) } } }.value
         relayPort = port
-        if port == 0 { status = "relay: could not reach \(relay)"; log.error("relay: could not reach \(relay, privacy: .public)") }
-        else { log.notice("relay open on \(port)") }
+        if port == 0 { status = "relay: could not reach \(relay)"; note("relay: could not reach \(relay)") }
+        else { note("relay open (loopback port \(port))") }
     }
 
     /// A request to Diamond over the relay's loopback port, with the device's credentials.

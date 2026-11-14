@@ -471,6 +471,8 @@ final class Store: ObservableObject {
             self.directEvent("Torrbaby tunnel \(PacketTunnel.shared.statusText)")
             // Connected: it is the way to Diamond; the app's own paths would only compete.
             if PacketTunnel.shared.connected { self.dropDirect("the Torrbaby tunnel is connected"); self.dropRelay("the Torrbaby tunnel is connected") }
+            // Gone: requests must stop going to its address at once, not at the next check.
+            else if self.activeServer == PacketTunnel.route { self.activeServer = nil; self.lastDirectAttempt = .distantPast }
             self.refreshFullyNext()
             Task { await self.refresh(polling: true) }
         }

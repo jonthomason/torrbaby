@@ -368,6 +368,7 @@
 				<string>4268A3D2288591D99424B302</string>
 				<string>B1685E0CCD38E8D5A571E148</string>
 				<string>B068CADCB26AF9BEDBB8684A</string>
+				<string>63F70F60DCBE7B2EF4EE1C15</string>
 			</array>
 			<key>isa</key>
 			<string>PBXSourcesBuildPhase</string>
@@ -502,6 +503,7 @@
 				<string>14AA278053B528996F2CD4DA</string>
 				<string>D30CD61CA83866619391CEF3</string>
 				<string>AD502992EE81FA26E6DFF6D1</string>
+				<string>9E6F28336073016EFCEAF590</string>
 			</array>
 			<key>isa</key>
 			<string>PBXGroup</string>
@@ -717,6 +719,13 @@
 			<key>isa</key>
 			<string>PBXBuildFile</string>
 		</dict>
+		<key>63F70F60DCBE7B2EF4EE1C15</key>
+		<dict>
+			<key>fileRef</key>
+			<string>9E6F28336073016EFCEAF590</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+		</dict>
 		<key>64463EEC2E6BF10EF78EE456</key>
 		<dict>
 			<key>isa</key>
@@ -844,6 +853,13 @@
 			<string>Tunnel</string>
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
+		</dict>
+		<key>753C64C41933675C4F8A9676</key>
+		<dict>
+			<key>fileRef</key>
+			<string>9E6F28336073016EFCEAF590</string>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
 		</dict>
 		<key>7561BFB015D8F536760CB671</key>
 		<dict>
@@ -1047,6 +1063,17 @@
 				<string>34707FBDC7A651A37FDEF0AB</string>
 			</array>
 		</dict>
+		<key>9E6F28336073016EFCEAF590</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>TunnelLog.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
 		<key>A0D375590C844C0C01DB88A8</key>
 		<dict>
 			<key>isa</key>
@@ -1227,6 +1254,7 @@
 				<string>BE3C9A29B34FF17B11B8A632</string>
 				<string>2D15D2CC3F869F7CBDDF301A</string>
 				<string>6F11C3C5B7A11BE391C07FD2</string>
+				<string>753C64C41933675C4F8A9676</string>
 			</array>
 			<key>isa</key>
 			<string>PBXSourcesBuildPhase</string>

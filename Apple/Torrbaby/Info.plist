@@ -77,6 +77,8 @@
 	<string>Connect to your Torrbaby server and stream your own media.</string>
 	<key>TopShelfKeychainGroup</key>
 	<string>$(AppIdentifierPrefix)org.torrbaby.tv</string>
+	<key>TorrbabySharedKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)com.jonthomason.torrbaby.shared</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

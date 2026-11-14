@@ -163,6 +163,17 @@ struct ConnectionStatusSections: View {
             if tunnel.connected, let report = tunnelState { labeled("Paths", report) }
             if let error = tunnel.lastError { labeled("Last error", error) }
             if !tunnel.connected, let why = tunnel.lastDisconnect { labeled("Why it last disconnected (iOS)", why) }
+            // The extension's own log (App Group), newest last: what it did, including just
+            // before it stopped.
+            let lines = TunnelLog.read(15)
+            if !lines.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: "Tunnel log").font(.caption).foregroundStyle(.secondary)
+                    ForEach(Array(lines.enumerated()), id: \.offset) { Text(verbatim: $0.element).font(.caption2.monospaced()).foregroundStyle(.secondary) }
+                }.selectableText()
+            } else if !TunnelLog.available {
+                labeled("Tunnel log", "not available (shared keychain group missing)")
+            }
             if tunnel.installed {
                 if tunnel.connected {
                     Button { Task { _ = await tunnel.ask("punch") } } label: { Text(verbatim: "Punch the direct path again") }
@@ -242,6 +253,9 @@ struct ConnectionStatusSections: View {
             if let view = attempt.serverView { lines.append("  Diamond saw: \(view)") }
         }
         lines.append(store.directDiagnostics)
+        lines.append("Torrbaby tunnel: \(tunnel.statusText)" + (tunnel.lastDisconnect.map { ", last disconnect: \($0)" } ?? ""))
+        lines.append("Tunnel log:")
+        lines += TunnelLog.read(60).map { "  \($0)" }
         lines.append("Events:")
         lines += store.directEvents.map { "  \($0)" }
         #endif

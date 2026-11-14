@@ -500,8 +500,32 @@ struct NativePlayer: NSViewRepresentable {
     static func dismantleNSView(_ view: AVPlayerView, coordinator: Coordinator) { coordinator.stop(); view.player = nil }
 }
 #else
-class KeyboardPlayerController: AVPlayerViewController {
+class KeyboardPlayerController: AVPlayerViewController, AVPlayerViewControllerDelegate {
     var close: (() -> Void)?
+    #if os(iOS)
+    /// iOS pauses a video whose player is on screen when the app leaves the foreground, so the
+    /// player is taken off the view then (it keeps playing: the sound goes on with the phone
+    /// locked) and put back on return. Not while Picture in Picture shows it.
+    private var detached: AVPlayer?
+    private var pictureInPicture = false
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        delegate = self
+        NotificationCenter.default.addObserver(self, selector: #selector(leftForeground), name: UIApplication.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(returned), name: UIApplication.willEnterForegroundNotification, object: nil)
+    }
+    @objc private func leftForeground() {
+        guard !pictureInPicture, let player, player.timeControlStatus != .paused else { return }
+        detached = player
+        self.player = nil
+    }
+    @objc private func returned() {
+        if let detached, player == nil { player = detached }
+        detached = nil
+    }
+    func playerViewControllerWillStartPictureInPicture(_ playerViewController: AVPlayerViewController) { pictureInPicture = true }
+    func playerViewControllerDidStopPictureInPicture(_ playerViewController: AVPlayerViewController) { pictureInPicture = false }
+    #endif
     override var canBecomeFirstResponder: Bool { true }
     override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); becomeFirstResponder() }
     override var keyCommands: [UIKeyCommand]? {
@@ -553,7 +577,13 @@ struct NativePlayer: UIViewControllerRepresentable {
         return view
     }
     func updateUIViewController(_ view: KeyboardPlayerController, context: Context) {
-        view.player = player; view.close = close
+        // Not while the app is in the background: the player is off the view on purpose then.
+        #if os(iOS)
+        if UIApplication.shared.applicationState != .background { view.player = player }
+        #else
+        view.player = player
+        #endif
+        view.close = close
         #if os(tvOS)
         view.transportBarCustomMenuItems = canAdvance
             ? [UIAction(title: L10n.text("Next episode"), image: UIImage(systemName: "forward.end.fill")) { _ in advance() }] : []

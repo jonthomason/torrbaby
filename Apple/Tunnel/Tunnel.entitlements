@@ -6,5 +6,10 @@
 	<array>
 		<string>packet-tunnel-provider</string>
 	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)com.jonthomason.torrbaby.ios</string>
+		<string>$(AppIdentifierPrefix)com.jonthomason.torrbaby.shared</string>
+	</array>
 </dict>
 </plist>
