@@ -9,9 +9,15 @@ use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr, Ipv4Address};
 use std::{ffi::CString, os::fd::IntoRawFd, sync::{Arc, Mutex, mpsc}, time::{Duration, Instant}};
 
 static FROM_STACK: Mutex<Option<mpsc::Sender<Vec<u8>>>> = Mutex::new(None);
-extern "C" fn written(_: *mut std::ffi::c_void, packet: *const u8, length: usize) {
-    let bytes = unsafe { std::slice::from_raw_parts(packet, length) }.to_vec();
-    if let Some(sender) = FROM_STACK.lock().unwrap().as_ref() { let _ = sender.send(bytes); }
+extern "C" fn written(_: *mut std::ffi::c_void, data: *const u8, lengths: *const usize, count: usize) {
+    let lengths = unsafe { std::slice::from_raw_parts(lengths, count) };
+    let total: usize = lengths.iter().sum();
+    let data = unsafe { std::slice::from_raw_parts(data, total) };
+    let mut at = 0;
+    for &length in lengths {
+        if let Some(sender) = FROM_STACK.lock().unwrap().as_ref() { let _ = sender.send(data[at..at + length].to_vec()); }
+        at += length;
+    }
 }
 
 struct Wire { incoming: mpsc::Receiver<Vec<u8>>, outgoing: Vec<Vec<u8>> }

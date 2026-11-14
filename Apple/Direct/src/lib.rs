@@ -211,8 +211,9 @@ fn carrier() -> Option<quinn::Connection> {
     None
 }
 
-/// Packets the stack sends back to the extension, one call each.
-pub type PacketWriter = extern "C" fn(context: *mut std::ffi::c_void, packet: *const u8, length: usize);
+/// Packets the stack sends back to the extension, in batches: `count` packets laid end to end
+/// in `data`, with their lengths in `lengths`. (One call per packet was too slow for video.)
+pub type PacketWriter = extern "C" fn(context: *mut std::ffi::c_void, data: *const u8, lengths: *const usize, count: usize);
 struct Context(*mut std::ffi::c_void);
 unsafe impl Send for Context {}
 
@@ -226,7 +227,14 @@ pub extern "C" fn tbtunnel_start(mtu: u16, write: PacketWriter, context: *mut st
     let context = Context(context);
     stack.runtime.spawn(async move {
         let context = context;
-        while let Some(packet) = output.recv().await { write(context.0, packet.as_ptr(), packet.len()) }
+        let (mut data, mut lengths) = (Vec::with_capacity(64 * 1500), Vec::with_capacity(64));
+        while let Some(packet) = output.recv().await {
+            data.clear(); lengths.clear();
+            data.extend_from_slice(&packet); lengths.push(packet.len());
+            // Whatever else is already waiting goes in the same call (up to 64 packets).
+            while lengths.len() < 64 { let Ok(more) = output.try_recv() else { break }; data.extend_from_slice(&more); lengths.push(more.len()); }
+            write(context.0, data.as_ptr(), lengths.as_ptr(), lengths.len());
+        }
     });
     if let Ok(mut held) = packet::STACK.lock() { *held = Some(stack) }
     true

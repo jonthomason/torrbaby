@@ -101,7 +101,8 @@ import NetworkExtension
             var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
             getnameinfo(address, socklen_t(address.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST)
             let ip = String(cString: host)
-            if ip == "10.233.0.2" || ip.isEmpty { continue }
+            // Ours, and iOS's own 192.0.0.x (464XLAT on IPv6-only cellular), are not other VPNs.
+            if ip == "10.233.0.2" || ip.isEmpty || ip.hasPrefix("192.0.0.") { continue }
             found = ip.hasPrefix("100.") ? "Tailscale" : "a VPN (\(ip))"
         }
         return found

@@ -4,7 +4,7 @@ import NetworkExtension
 import os
 
 // Apple/Direct (Rust), linked statically: the TCP stack and the QUIC paths.
-@_silgen_name("tbtunnel_start") private func tbtunnel_start(_ mtu: UInt16, _ write: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<UInt8>?, Int) -> Void, _ context: UnsafeMutableRawPointer?) -> Bool
+@_silgen_name("tbtunnel_start") private func tbtunnel_start(_ mtu: UInt16, _ write: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<UInt8>?, UnsafePointer<Int>?, Int) -> Void, _ context: UnsafeMutableRawPointer?) -> Bool
 @_silgen_name("tbtunnel_input") private func tbtunnel_input(_ packet: UnsafePointer<UInt8>?, _ length: Int) -> Bool
 @_silgen_name("tbtunnel_stop") private func tbtunnel_stop()
 @_silgen_name("tbtunnel_alive") private func tbtunnel_alive() -> Bool
@@ -196,10 +196,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// The TCP stack that turns the tunnel's packets into streams (Rust).
     private func startStack() -> Bool {
         let context = Unmanaged.passUnretained(self).toOpaque()
-        return tbtunnel_start(1280, { context, packet, length in
-            guard let context, let packet else { return }
-            let provider = Unmanaged<PacketTunnelProvider>.fromOpaque(context).takeUnretainedValue()
-            provider.packetFlow.writePackets([Data(bytes: packet, count: length)], withProtocols: [NSNumber(value: AF_INET)])
+        return tbtunnel_start(1280, { context, data, lengths, count in
+            guard let context, let data, let lengths, count > 0 else { return }
+            // Called on the Rust library's own threads, which have no autorelease pool: without
+            // this one, the objects each packet's hand-off to iOS creates were never released
+            // (about 40 MB in two minutes of video, and iOS ends the extension at 50 MB).
+            autoreleasepool {
+                let provider = Unmanaged<PacketTunnelProvider>.fromOpaque(context).takeUnretainedValue()
+                var packets: [Data] = []
+                packets.reserveCapacity(count)
+                var at = 0
+                for index in 0..<count {
+                    packets.append(Data(bytes: data + at, count: lengths[index]))
+                    at += lengths[index]
+                }
+                provider.packetFlow.writePackets(packets, withProtocols: Array(repeating: NSNumber(value: AF_INET), count: count))
+            }
         }, context)
     }
 

@@ -71,6 +71,13 @@ impl Stack {
         runtime.spawn(async move {
             let mut config = ipstack::IpStackConfig::default();
             config.mtu_unchecked(mtu);
+            // 64 KB in flight per connection toward iOS (ipstack's default 16 KB made video too
+            // slow to play; without window scaling 64 KB is TCP's ceiling), and segments sized
+            // to the tunnel's MTU.
+            let mut tcp = ipstack::TcpConfig::default();
+            tcp.max_unacked_bytes = 65535;
+            tcp.options = Some(vec![ipstack::TcpOptions::MaximumSegmentSize(mtu.saturating_sub(40))]);
+            config.with_tcp_config(tcp);
             let mut stack = ipstack::IpStack::new(config, Packets { incoming, outgoing });
             RUNNING.store(true, std::sync::atomic::Ordering::SeqCst);
             while let Ok(stream) = stack.accept().await {
