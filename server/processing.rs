@@ -38,7 +38,16 @@ fn enroll(db:&Database,id:&str,revision:&str)->Result<()> {
     Ok(())
 }
 /// Helper errors that a fresh attempt resolves on its own.
-fn transient(error:&str)->bool { error.contains("Text recognition models changed") }
+/// "Media is unavailable or changed": the file was replaced and the scan has not caught up.
+fn transient(error:&str)->bool { error.contains("Text recognition models changed") || error.contains(MEDIA_CHANGED) }
+const MEDIA_CHANGED:&str="Media is unavailable or changed";
+/// Files whose subtitle stage was skipped because the file had just been replaced (that was
+/// not retried before), so no language inventory was ever saved: do the stage again.
+fn reopen_replaced(db:&Database)->Result<usize> {
+    Ok(db.connection.execute("UPDATE media_processing SET subtitles_state='pending',stage='subtitles',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=?1 \
+        WHERE state!='running' AND subtitles_state='skipped' AND json_extract(detail,'$.error')=?2 \
+        AND NOT EXISTS(SELECT 1 FROM media_inventory i WHERE i.asset_id=media_processing.asset_id AND i.revision=media_processing.revision)",rusqlite::params![now(),MEDIA_CHANGED])?)
+}
 /// `skipped`: credits analysis failed. It is optional, so the file finishes without it.
 fn finished(value:&str)->bool {matches!(value,"ready"|"not_applicable"|"skipped")}
 fn sign_off(db:&Database,id:&str,revision:&str)->Result<bool> {
@@ -274,6 +283,7 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
                 not_video(&db,id,&revision)?;
             }
             reopen_outdated(&db)?;
+            reopen_replaced(&db)?;
             retire_obsolete_failures(&db)?;
             reopen_untranscribed(&db,&s.data_dir)?;
             reopen_line_translated(&db,&s.subtitle_jobs.line_translated())?;
@@ -541,6 +551,21 @@ mod tests {
         assert!(!db.rows("SELECT resolved_at FROM processing_failures",[])?[0]["resolved_at"].is_null());
         Ok(())
     }
+    #[test]
+    fn a_file_skipped_because_it_was_just_replaced_is_done_again()->Result<()> {
+        let db=database()?;
+        assert!(transient("Media is unavailable or changed"));
+        for id in ["replaced","unreadable"] {
+            enroll(&db,id,"r2")?;
+            let error=if id=="replaced" {MEDIA_CHANGED} else {"integers can be at most 8 bytes"};
+            db.connection.execute("UPDATE media_processing SET state='ready',stage='complete',inventory_state='ready',subtitles_state='skipped',credits_state='skipped',detail=? WHERE asset_id=?",
+                rusqlite::params![json!({"state":"failed","error":error}).to_string(),id])?;
+        }
+        assert_eq!(reopen_replaced(&db)?,1);
+        assert_eq!(db.rows("SELECT state,subtitles_state FROM media_processing WHERE asset_id='replaced'",[])?[0]["subtitles_state"],"pending");
+        Ok(())
+    }
+
     #[test]
     fn skipped_credits_and_subtitles_still_let_the_file_finish()->Result<()> {
         let db=database()?;enroll(&db,"episode","r1")?;
