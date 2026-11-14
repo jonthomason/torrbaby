@@ -377,12 +377,13 @@ struct MediaLanguagesView: View {
     var problem: String? = nil
     /// Smaller than the summary above them; on Apple TV the text styles (callout, caption) are
     /// larger than the summary's 27 pt, so sizes are set there.
+    /// Headings a little larger than the details beneath them, both below the summary.
     #if os(tvOS)
     static let detailFont = Font.system(size: 21)
-    static let headingFont = Font.system(size: 19, weight: .semibold)
+    static let headingFont = Font.system(size: 24, weight: .semibold)
     #else
-    static let detailFont = Font.callout
-    static let headingFont = Font.caption.weight(.semibold)
+    static let detailFont = Font.footnote
+    static let headingFont = Font.subheadline.weight(.semibold)
     #endif
     private func name(_ code: String?) -> String {
         guard let raw = code?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return "" }
