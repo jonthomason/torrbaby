@@ -947,3 +947,4 @@ Direct connection works	直连可用
 Direct connection failed	直连失败
 Details	详细信息
 Checks whether this device can reach your server directly instead of through Tailscale’s relay. Nothing else uses it.	检查这台设备能否不经 Tailscale 中继、直接连接到你的服务器。其他功能不会使用这条连接。
+This drive is not connected. If you remove it, its titles stay in the library as offline, so they can be downloaded again.	这块硬盘未连接。移除后，其中的影片仍以离线状态保留在媒体库中，以便重新下载。

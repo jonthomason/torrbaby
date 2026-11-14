@@ -771,6 +771,7 @@ final class L10n {
     IDS.put("This device could not decode the video or audio format.", R.string.ui_6aacdc553205);
     IDS.put("This download can't be updated in place. Delete it and download it again.", R.string.ui_63f0d417cbbf);
     IDS.put("This drive is already in use", R.string.ui_9e9f1ebdec89);
+    IDS.put("This drive is not connected. If you remove it, its titles stay in the library as offline, so they can be downloaded again.", R.string.ui_be4dda23e02a);
     IDS.put("This drive is read-only", R.string.ui_9f9b021c3d1c);
     IDS.put("This episode is not yet available on the server.", R.string.ui_f85d694d9581);
     IDS.put("This file couldn’t play", R.string.ui_f71f96454e21);

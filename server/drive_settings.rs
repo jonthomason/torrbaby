@@ -176,13 +176,29 @@ async fn remove(s: &Service, id: &str) -> Result<Value> {
     let drive = drives.all().iter().find(|d| d.id == id).context("Unknown drive")?;
     ensure!(drives.all().len() > 1, "The library needs at least one drive");
     let assets = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.documents("assets")?;
-    if holdings(&drives, &assets).get(id).is_some_and(|(files, _)| *files > 0) {
+    // A connected drive is emptied first. One that is not (dead, lost) can go with its titles
+    // on it: they stay listed as offline, to be downloaded again.
+    let dead = !drive.online();
+    if !dead && holdings(&drives, &assets).get(id).is_some_and(|(files, _)| *files > 0) {
         bail!("Move this drive's titles to another drive first");
     }
     ensure!(!crate::drive_moves::moving_to(s, id) && !crate::drive_moves::moving_under(s, &drive.media), "Wait until moves to this drive have finished");
     let torrents = crate::organizer::torrents(s).await?;
     let on_drive = |dir: &str| drives.drive_of(Path::new(dir)).is_some_and(|d| d.id == id) || Path::new(dir).starts_with(&drive.media);
-    ensure!(!torrents.iter().any(|t| t["download_dir"].as_str().is_some_and(on_drive)), "Torrents are still using this drive");
+    let using: Vec<&str> = torrents.iter().filter(|t| t["download_dir"].as_str().is_some_and(on_drive)).filter_map(|t| t["hash_string"].as_str()).collect();
+    if dead {
+        // Their data went with the drive. Left in Transmission, a start would write into an
+        // empty folder of that name on the startup disk.
+        if !using.is_empty() { s.rpc.call("torrent_remove", json!({"ids":using,"delete_local_data":false})).await?; s.invalidate_torrents(); }
+        let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+        for asset in assets.iter().filter(|a| a["path"].as_str().and_then(|p| drives.drive_of(Path::new(p))).is_some_and(|d| d.id == id)) {
+            let Some(asset_id) = asset["id"].as_str() else { continue };
+            db.connection.execute("UPDATE library_assets SET document=json_set(document,'$.offline',json('true'),'$.available',json('false'),'$.removed_drive',?) WHERE id=?",
+                rusqlite::params![id, asset_id])?;
+        }
+    } else {
+        ensure!(using.is_empty(), "Torrents are still using this drive");
+    }
     let list = configs(&drives).into_iter().filter(|d| d.id != id).collect();
     save(s, list)?;
     Ok(json!({"removed":id}))

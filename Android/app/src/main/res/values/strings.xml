@@ -760,6 +760,7 @@
     <string name="ui_6aacdc553205" formatted="false">This device could not decode the video or audio format.</string>
     <string name="ui_63f0d417cbbf" formatted="false">This download can\'t be updated in place. Delete it and download it again.</string>
     <string name="ui_9e9f1ebdec89" formatted="false">This drive is already in use</string>
+    <string name="ui_be4dda23e02a" formatted="false">This drive is not connected. If you remove it, its titles stay in the library as offline, so they can be downloaded again.</string>
     <string name="ui_9f9b021c3d1c" formatted="false">This drive is read-only</string>
     <string name="ui_f85d694d9581" formatted="false">This episode is not yet available on the server.</string>
     <string name="ui_f71f96454e21" formatted="false">This file couldn’t play</string>

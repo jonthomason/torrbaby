@@ -138,6 +138,12 @@ private struct DriveDetailView: View {
             await changed()
         }
     }
+    /// What removing this drive does, or what it needs first.
+    private var removalNote: String {
+        if drive.files == 0 { return "Its files stay on the drive. Torrbaby stops using it." }
+        if drive.connected { return "To remove this drive, first move everything on it to another drive." }
+        return "This drive is not connected. If you remove it, its titles stay in the library as offline, so they can be downloaded again."
+    }
     var body: some View {
         NavigationStack {
             Form {
@@ -165,9 +171,9 @@ private struct DriveDetailView: View {
                 }
                 SwiftUI.Section {
                     Button("Remove Drive", role: .destructive) { confirmRemove = true }
-                        .disabled(store.busy || drive.files > 0 || count < 2)
+                        .disabled(store.busy || (drive.connected && drive.files > 0) || count < 2)
                 } footer: {
-                    Text(LocalizedStringKey(drive.files > 0 ? "To remove this drive, first move everything on it to another drive." : "Its files stay on the drive. Torrbaby stops using it."))
+                    Text(LocalizedStringKey(removalNote))
                 }
                 if let error { Text(L10n.text(error)).foregroundStyle(.orange) }
             }.formStyle(.grouped)
@@ -199,7 +205,7 @@ private struct DriveDetailView: View {
                     }
                 }
                 Button("Cancel", role: .cancel) {}
-            }
+            } message: { Text(LocalizedStringKey(removalNote)) }
         }
         .onAppear { name = drive.name }
         #if os(macOS)

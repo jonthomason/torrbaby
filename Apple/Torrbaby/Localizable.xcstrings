@@ -16596,6 +16596,23 @@
           }
         }
       }
+    },
+    "This drive is not connected. If you remove it, its titles stay in the library as offline, so they can be downloaded again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This drive is not connected. If you remove it, its titles stay in the library as offline, so they can be downloaded again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这块硬盘未连接。移除后，其中的影片仍以离线状态保留在媒体库中，以便重新下载。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

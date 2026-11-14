@@ -760,6 +760,7 @@
     <string name="ui_6aacdc553205" formatted="false">此设备无法解码该视频或音频格式。</string>
     <string name="ui_63f0d417cbbf" formatted="false">此下载无法就地更新。请删除后重新下载。</string>
     <string name="ui_9e9f1ebdec89" formatted="false">这块硬盘已在使用中</string>
+    <string name="ui_be4dda23e02a" formatted="false">这块硬盘未连接。移除后，其中的影片仍以离线状态保留在媒体库中，以便重新下载。</string>
     <string name="ui_9f9b021c3d1c" formatted="false">这块硬盘是只读的</string>
     <string name="ui_f85d694d9581" formatted="false">服务器上的此集尚不可用。</string>
     <string name="ui_f71f96454e21" formatted="false">无法播放此文件</string>

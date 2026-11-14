@@ -653,15 +653,12 @@ async fn advance(s: &Service, unit: &Unit) -> std::result::Result<String, Stop> 
     }
 }
 
-/// Playing or processing files wait; nothing is moved underneath an open file.
+/// Files being processed wait. Playback does not: a player reading the original keeps
+/// reading it after it is removed, and its next request opens the copy.
 fn busy(s: &Service, assets: &[Value]) -> std::result::Result<(), Stop> {
     let db = s.db.lock().map_err(|_| Fail(anyhow::anyhow!("Database unavailable")))?;
-    let playing: Vec<String> = db.rows("SELECT DISTINCT s.media_id FROM playback_sessions s JOIN profile_playback p ON p.active_session=s.id WHERE s.ended=0 AND p.last_played>?", [now() - 90.0])?
-        .into_iter().filter_map(|v| v["media_id"].as_str().map(str::to_owned)).collect();
     for asset in assets {
         let id = asset["id"].as_str().unwrap_or_default();
-        let media = format!("{}:{}", asset["torrent_hash"].as_str().unwrap_or(id), asset["file_index"].as_u64().unwrap_or(0));
-        if playing.iter().any(|p| *p == id || *p == media) { return Err(Wait("Waiting for playback to stop".into())); }
         let running: bool = db.connection.query_row("SELECT EXISTS(SELECT 1 FROM media_processing WHERE asset_id=? AND state='running')", [id], |r| r.get(0))?;
         if running { return Err(Wait("Waiting for processing to finish".into())); }
     }
@@ -761,6 +758,7 @@ async fn switch(s: &Service, unit: &Unit, assets: &[Value]) -> Result<()> {
                 crate::processing::follow(&db, id, revision)?;
             }
         }
+        if let Some(was) = asset["path"].as_str() { s.hls.relocate(id, Path::new(was), &path); }
     }
     Ok(())
 }

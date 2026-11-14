@@ -430,6 +430,7 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
         }
         asset["path"] = json!(name);
         asset.as_object_mut().unwrap().remove("offline");
+        asset.as_object_mut().unwrap().remove("removed_drive");
         asset["library_ready"] = json!(drives.in_library(&path));
         asset["inode"] = json!(inode);
         asset["available"] = json!(metadata.is_some());
@@ -503,8 +504,9 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
         if seen.contains(asset["id"].as_str().unwrap_or("")) {
             continue;
         }
-        // On a drive that is not connected: kept exactly as last seen, only marked away.
-        if asset["path"].as_str().is_some_and(|path| drives.offline(Path::new(path), &online)) {
+        // On a drive that is not connected, or one taken off the list while it was lost:
+        // kept exactly as last seen, only marked away.
+        if asset["removed_drive"].is_string() || asset["path"].as_str().is_some_and(|path| drives.offline(Path::new(path), &online)) {
             asset["available"] = json!(false);
             asset["offline"] = json!(true);
             assets.push(asset);
@@ -540,6 +542,29 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn titles_of_a_dead_drive_taken_off_the_list_stay_offline_until_their_file_returns() {
+        let root = std::env::temp_dir().join(format!("torrbaby-dead-{}",uuid::Uuid::new_v4()));
+        let media = root.join("Beta/Media");
+        for folder in ["Downloads", "Movies", "TV"] { fs::create_dir_all(media.join(folder)).unwrap(); }
+        let config: Config = serde_json::from_value(json!({
+            "listen_host":"127.0.0.1","listen_port":8765,"token_file":"unused","state_file":"unused",
+            "transmission_url":"http://127.0.0.1:9091","transmission_auth_file":null,"poll_seconds":30,
+            "drives":[{"id":"beta","media":media}]})).unwrap();
+        let lost = json!({"id":"asset-lost","path":root.join("Alpha/Media/Movies/Film.mkv"),"status":"matched","entity_id":"tmdb:movie:1",
+            "available":false,"offline":true,"removed_drive":"alpha","complete":true,"torrent_hash":"film","file_index":0,"role":"main"});
+        let after = inventory(&config, vec![lost.clone()], vec![]);
+        let kept = after.assets.iter().find(|a| a["id"] == "asset-lost").unwrap();
+        assert_eq!((kept["offline"].clone(), kept["available"].clone(), kept["entity_id"].clone()), (json!(true), json!(false), json!("tmdb:movie:1")));
+        // Found again where it was (a drive restored there): an ordinary record once more.
+        let mut moved = lost; moved["path"] = json!(media.join("Movies/Film.mkv"));
+        fs::write(media.join("Movies/Film.mkv"), vec![0u8; 10]).unwrap();
+        let back = inventory(&config, vec![moved], vec![]);
+        let found = back.assets.iter().find(|a| a["id"] == "asset-lost").unwrap();
+        assert_eq!((found["offline"].clone(), found["available"].clone(), found["removed_drive"].clone()), (Value::Null, json!(true), Value::Null));
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn a_drive_that_goes_away_keeps_its_files_and_returns_without_any_action() {
         let root = std::env::temp_dir().join(format!("torrbaby-drives-{}",uuid::Uuid::new_v4()));

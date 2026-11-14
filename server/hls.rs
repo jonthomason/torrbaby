@@ -83,6 +83,16 @@ impl Manager {
         );
         Ok(job)
     }
+    /// A file moved to another drive, its copy verified: its packages read the copy, so
+    /// playback under way goes on.
+    pub fn relocate(&self, asset: &str, from: &Path, to: &Path) {
+        let Ok(revision) = revision(to) else { return };
+        let Ok(mut jobs) = self.jobs.lock() else { return };
+        for job in jobs.values_mut().filter(|j| j.asset == asset && j.input == from) {
+            job.input = to.to_path_buf();
+            job.revision = revision.clone();
+        }
+    }
     pub fn purge_assets(&self, assets: &std::collections::BTreeSet<String>) -> Result<()> {
         let mut jobs = self.jobs.lock().map_err(|_| anyhow::anyhow!("HLS cache unavailable"))?;
         ensure!(!jobs.values().any(|j| assets.contains(&j.asset) && j.state == "preparing"), "Waiting for playback preparation to finish");
