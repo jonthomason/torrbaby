@@ -178,9 +178,12 @@ import NetworkExtension
         let now = manager?.connection.status ?? .invalid
         guard now != status else { return }
         let wasConnected = status == .connected
+        // Only a disconnect seen happening: iOS keeps the last error indefinitely, and reading
+        // it on the first check after launch reported an old error as new.
+        let wasUp = [.connected, .connecting, .reasserting, .disconnecting].contains(status)
         status = now
         if (now == .connected) != wasConnected { onChange?() }
-        if now == .disconnected, let connection = manager?.connection {
+        if now == .disconnected, wasUp, let connection = manager?.connection {
             connection.fetchLastDisconnectError { [weak self] error in
                 let text = error.map { ($0 as NSError).localizedDescription + " (\(($0 as NSError).domain) \(($0 as NSError).code))" }
                 Task { @MainActor in self?.lastDisconnect = text }
