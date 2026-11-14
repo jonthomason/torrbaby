@@ -669,6 +669,8 @@ final class Store: ObservableObject {
     /// This device's public address as bronze sees it, asked every 5 s over the open relay.
     @Published private(set) var relayPublicAddress: String?
     private var relayWatcher: Task<Void, Never>?
+    /// See the address check in watchRelay: the relay was reconnected to compare like with like.
+    private var relayReopenedForMismatch = false
     /// Behind a hotspot the phone cannot see its carrier change (CT ↔ CM): the Wi-Fi and its
     /// local address stay the same. Bronze sees the public address move; when it does, the
     /// direct path (whose hole was opened for the old address) is dropped and tried again.
@@ -688,10 +690,22 @@ final class Store: ObservableObject {
                         self.refreshFullyNext()
                         Task { await self.refresh(polling: true) }
                     } else if self.directRoute != nil, let punched = self.directAttempt?.publicAddress, punched != ip {
+                        // The relay may still be on the old network (a data-SIM switch keeps the
+                        // interface): reconnect it first and compare again, or this re-punches forever.
+                        if !self.relayReopenedForMismatch {
+                            self.relayReopenedForMismatch = true
+                            self.directEvent("bronze sees \(ip), the direct path is from \(punched): reconnecting the relay first")
+                            self.dropRelay("checking which network is current")
+                            Task { _ = await self.ensureRelay() }
+                            return
+                        }
+                        self.relayReopenedForMismatch = false
                         self.directEvent("direct path was punched from \(punched), now \(ip)")
                         self.dropDirect("public address changed")
                         self.refreshFullyNext()
                         Task { await self.refresh(polling: true) }
+                    } else {
+                        self.relayReopenedForMismatch = false
                     }
                 }
                 try? await Task.sleep(for: .seconds(5))

@@ -43,6 +43,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// The public IP the direct path was punched from, and when bronze was last asked.
     private var punchedFrom: String?
     private var lastInfo = Date.distantPast
+    /// Bronze saw another address than the direct path's, and the relay was reconnected over
+    /// the current network to compare like with like (a relay left on the old carrier after a
+    /// data-SIM switch reports the old carrier's address: re-punching on that looped forever).
+    private var relayReopenedForMismatch = false
 
     /// Bronze, the token and STUN: from the shared keychain the app writes (current), else the
     /// VPN configuration (tunnels set up by earlier builds).
@@ -248,8 +252,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                     return
                 }
                 if let from = punchedFrom, tbdirect_alive(), from != info.ip {
+                    if !relayReopenedForMismatch {
+                        note("bronze sees \(info.ip), the direct path is from \(from): reconnecting the relay over the current network first")
+                        tbdirect_relay_stop(); relayReopenedForMismatch = true
+                        return
+                    }
                     note("public address changed (\(from) → \(info.ip)): punching again")
-                    tbdirect_stop(); punchedFrom = nil; lastAttempt = .distantPast
+                    tbdirect_stop(); punchedFrom = nil; lastAttempt = .distantPast; relayReopenedForMismatch = false
+                } else {
+                    relayReopenedForMismatch = false
                 }
             }
         }
