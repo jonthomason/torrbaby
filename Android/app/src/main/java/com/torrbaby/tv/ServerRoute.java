@@ -36,14 +36,15 @@ final class ServerRoute {
   }
 
   /**
-   * Diamond on this network first; when it is not here, Torrbaby's relay (for a TV that knows
-   * Diamond's identity, so every relayed stream is encrypted end to end). "" when neither.
+   * Diamond on this network first; when it is not here, the way away from home (Relay: a direct
+   * path when one is punched, else the relay; for a TV that knows Diamond's identity, so both
+   * are encrypted end to end). "" when neither.
    * Call off the main thread.
    */
-  static String locate(android.content.Context context, String client, long millis) {
+  static String locate(android.content.Context context, String client, String token, long millis) {
     String home = find(context, millis);
     if (!home.isEmpty()) return home;
-    String relay = Relay.base(context, client);
+    String relay = Relay.base(context, client, token);
     if (!relay.isEmpty()) found = relay;
     return relay;
   }

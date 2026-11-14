@@ -23,9 +23,10 @@ use tokio::io::AsyncWriteExt;
 
 pub mod e2e;
 pub mod packet;
+pub mod proxy;
 pub mod punch;
 
-struct Tunnel {
+pub(crate) struct Tunnel {
     runtime: tokio::runtime::Runtime,
     connection: quinn::Connection,
     /// Kept to move the connection to another socket (a new network) without reconnecting.
@@ -34,8 +35,8 @@ struct Tunnel {
 
 /// The direct tunnel (punched, to Diamond) and the relay (to bronze), held independently:
 /// the relay stays up underneath while the direct path comes and goes.
-static TUNNEL: Mutex<Option<Tunnel>> = Mutex::new(None);
-static RELAY: Mutex<Option<Tunnel>> = Mutex::new(None);
+pub(crate) static TUNNEL: Mutex<Option<Tunnel>> = Mutex::new(None);
+pub(crate) static RELAY: Mutex<Option<Tunnel>> = Mutex::new(None);
 
 #[derive(Debug)]
 struct Pinned(String, Arc<rustls::crypto::CryptoProvider>);
@@ -89,13 +90,13 @@ pub extern "C" fn tbdirect_relay_start_lean(fd: i32, server: *const c_char, fing
 /// Keepalive and idle limit (s) in the packet tunnel extension, which iOS never suspends: a
 /// path silent for 15 s (three keepalives lost) is dead, and its requests fail over at once,
 /// not after 45 s. (The app keeps 45 s: its keepalives stop while iOS suspends it.)
-const LEAN_TIMING: (u64, u64) = (5, 15);
+pub(crate) const LEAN_TIMING: (u64, u64) = (5, 15);
 /// The extension's relay gets longer: a punch's spray can swamp a phone hotspot for its 20 s,
 /// and the relay must not be dropped meanwhile (it carries everything while there is no path).
-const RELAY_TIMING: (u64, u64) = (5, 30);
+pub(crate) const RELAY_TIMING: (u64, u64) = (5, 30);
 
 /// QUIC receive windows (per stream, per connection).
-const APP_WINDOWS: (u32, u32) = (8 << 20, 32 << 20);
+pub(crate) const APP_WINDOWS: (u32, u32) = (8 << 20, 32 << 20);
 const LEAN_WINDOWS: (u32, u32) = (2 << 20, 4 << 20);
 
 /// Open the relay: QUIC from socket `fd` (ownership passes here) to Torrbaby's rendezvous on
@@ -116,7 +117,7 @@ fn open(slot: &Mutex<Option<Tunnel>>, fd: i32, server: *const c_char, fingerprin
 }
 
 #[allow(clippy::too_many_arguments)]
-fn open_on(slot: &Mutex<Option<Tunnel>>, socket: std::net::UdpSocket, server: SocketAddr, fingerprint: String, alpn: &[u8], name: &str, seconds: u64, (keepalive, idle): (u64, u64), (stream_window, window): (u32, u32)) -> u16 {
+pub(crate) fn open_on(slot: &Mutex<Option<Tunnel>>, socket: std::net::UdpSocket, server: SocketAddr, fingerprint: String, alpn: &[u8], name: &str, seconds: u64, (keepalive, idle): (u64, u64), (stream_window, window): (u32, u32)) -> u16 {
     let Ok(runtime) = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build() else { return 0 };
     let opened = runtime.block_on(async move {
         socket.set_nonblocking(true).ok()?;
@@ -186,11 +187,11 @@ async fn pipe<W: tokio::io::AsyncWrite + Unpin, R: tokio::io::AsyncRead + Unpin>
     tokio::join!(up, down);
 }
 
-fn alive(slot: &Mutex<Option<Tunnel>>) -> bool {
+pub(crate) fn alive(slot: &Mutex<Option<Tunnel>>) -> bool {
     slot.lock().ok().and_then(|held| held.as_ref().map(|t| t.connection.close_reason().is_none())).unwrap_or(false)
 }
 
-fn stop(slot: &Mutex<Option<Tunnel>>) {
+pub(crate) fn stop(slot: &Mutex<Option<Tunnel>>) {
     let tunnel = slot.lock().ok().and_then(|mut held| held.take());
     if let Some(tunnel) = tunnel {
         tunnel.connection.close(0u32.into(), b"done");
@@ -213,7 +214,11 @@ pub extern "C" fn tbdirect_stop() { stop(&TUNNEL) }
 #[unsafe(no_mangle)]
 pub extern "C" fn tbdirect_relay_rebind(fd: i32) -> bool {
     if fd < 0 { return false }
-    let socket = unsafe { std::net::UdpSocket::from_raw_fd(fd) };
+    relay_rebind(unsafe { std::net::UdpSocket::from_raw_fd(fd) })
+}
+
+/// Move the open relay onto `socket` (see `tbdirect_relay_rebind`).
+pub(crate) fn relay_rebind(socket: std::net::UdpSocket) -> bool {
     if socket.set_nonblocking(true).is_err() { return false }
     let held = RELAY.lock().ok().and_then(|held| held.as_ref().map(|t| (t.runtime.handle().clone(), t.endpoint.clone(), t.connection.clone())));
     let Some((handle, endpoint, connection)) = held else { return false };
@@ -236,23 +241,28 @@ pub extern "C" fn tbdirect_relay_stop() { stop(&RELAY) }
 #[unsafe(no_mangle)]
 pub extern "C" fn tbdirect_relay_info(buffer: *mut c_char, capacity: usize) -> i32 {
     if buffer.is_null() || capacity == 0 { return -1 }
-    let held = RELAY.lock().ok().and_then(|held| held.as_ref().map(|t| (t.runtime.handle().clone(), t.connection.clone())));
-    let Some((handle, connection)) = held else { return -1 };
-    let reply = handle.block_on(async move {
-        tokio::time::timeout(Duration::from_secs(3), async move {
-            let (mut send, mut recv) = connection.open_bi().await.ok()?;
-            send.write_all(b"TBINFO1\n").await.ok()?;
-            send.finish().ok()?;
-            recv.read_to_end(256).await.ok()
-        }).await.ok().flatten()
-    });
-    let Some(reply) = reply else { return -1 };
+    let Some(reply) = relay_info() else { return -1 };
     let length = reply.len().min(capacity - 1);
     unsafe {
         std::ptr::copy_nonoverlapping(reply.as_ptr() as *const c_char, buffer, length);
         *buffer.add(length) = 0;
     }
     length as i32
+}
+
+/// bronze's TBINFO reply over the open relay (see `tbdirect_relay_info`). Blocks up to 3 s;
+/// not to be called from inside an async task (use spawn_blocking).
+pub(crate) fn relay_info() -> Option<Vec<u8>> {
+    let held = RELAY.lock().ok().and_then(|held| held.as_ref().map(|t| (t.runtime.handle().clone(), t.connection.clone())));
+    let (handle, connection) = held?;
+    handle.block_on(async move {
+        tokio::time::timeout(Duration::from_secs(3), async move {
+            let (mut send, mut recv) = connection.open_bi().await.ok()?;
+            send.write_all(b"TBINFO1\n").await.ok()?;
+            send.finish().ok()?;
+            recv.read_to_end(256).await.ok()
+        }).await.ok().flatten()
+    })
 }
 
 /// Diamond's address on this network while the device is at home (set by the extension):
@@ -303,19 +313,19 @@ pub extern "C" fn tbtunnel_home(address: *const c_char) {
     if let Ok(mut held) = HOME.lock() { *held = address }
 }
 
-fn open_connection(slot: &Mutex<Option<Tunnel>>) -> Option<quinn::Connection> {
+pub(crate) fn open_connection(slot: &Mutex<Option<Tunnel>>) -> Option<quinn::Connection> {
     slot.lock().ok().and_then(|held| held.as_ref().map(|t| t.connection.clone())).filter(|c| c.close_reason().is_none())
 }
 
 /// The route a tunnel connection should take: Diamond on this network at home, else the
 /// direct path while it is open, else the relay.
-fn carrier() -> Option<packet::Route> {
+pub(crate) fn carrier() -> Option<packet::Route> {
     if let Some(address) = HOME.lock().ok().and_then(|held| *held) { return Some(packet::Route::Lan(address)) }
     open_connection(&TUNNEL).map(packet::Route::Quic).or_else(|| open_connection(&RELAY).map(packet::Route::Relay))
 }
 
 /// A connection on the relay makes way once Diamond on this network or the direct path is open.
-fn superseded(route: &packet::Route) -> bool {
+pub(crate) fn superseded(route: &packet::Route) -> bool {
     matches!(route, packet::Route::Relay(_)) && (HOME.lock().ok().is_some_and(|held| held.is_some()) || open_connection(&TUNNEL).is_some())
 }
 
@@ -369,6 +379,19 @@ pub extern "C" fn tbtunnel_stats(buffer: *mut c_char, capacity: usize) -> i32 {
         "in {} pkts/{} KB, out {} pkts/{} KB, dropped in {}, streams down {} KB up {} KB, flows open {} (opened {}, abandoned {}, uncarried {}, moved to a better route {}, at home {})",
         get(&PACKETS_IN), get(&BYTES_IN) / 1024, get(&PACKETS_OUT), get(&BYTES_OUT) / 1024, get(&DROPPED_IN),
         get(&STREAM_DOWN) / 1024, get(&STREAM_UP) / 1024, get(&FLOWS_OPEN), get(&FLOWS_OPENED), get(&FLOWS_ABANDONED), get(&FLOWS_UNCARRIED), get(&FLOWS_MOVED), get(&FLOWS_LAN));
+    line.push_str(&paths_line());
+    let bytes = line.as_bytes();
+    let length = bytes.len().min(capacity - 1);
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, buffer, length);
+        *buffer.add(length) = 0;
+    }
+    length as i32
+}
+
+/// Each open QUIC path's round trip, congestion window, loss and bytes ("; direct rtt …").
+pub(crate) fn paths_line() -> String {
+    let mut line = String::new();
     for (name, slot) in [("direct", &TUNNEL), ("relay", &RELAY)] {
         let connection = slot.lock().ok().and_then(|held| held.as_ref().map(|t| t.connection.clone()));
         if let Some(connection) = connection.filter(|c| c.close_reason().is_none()) {
@@ -378,13 +401,7 @@ pub extern "C" fn tbtunnel_stats(buffer: *mut c_char, capacity: usize) -> i32 {
                 stats.udp_tx.bytes / 1024, stats.udp_rx.bytes / 1024));
         }
     }
-    let bytes = line.as_bytes();
-    let length = bytes.len().min(capacity - 1);
-    unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, buffer, length);
-        *buffer.add(length) = 0;
-    }
-    length as i32
+    line
 }
 
 /// Whether the packet tunnel's TCP stack is running (false after a panic inside it).

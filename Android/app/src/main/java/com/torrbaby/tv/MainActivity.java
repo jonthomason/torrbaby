@@ -79,6 +79,7 @@ public class MainActivity extends Activity {
     super.onCreate(state);
     StartupTrace.start(this);
     store = new SecureStore(this);
+    Relay.watchNetwork(this);
     if (state != null) {
       section = state.getString("section", "Home");
       detailId = state.getString("detail", "");
@@ -2364,7 +2365,7 @@ public class MainActivity extends Activity {
     Runnable tryRelay = () -> {
       if (!refinding || api != requested) return;
       new Thread(() -> {
-        String relay = Relay.base(this, requested.client);
+        String relay = Relay.base(this, requested.client, requested.token);
         runOnUiThread(() -> {
           if (!refinding || api != requested || isDestroyed() || relay.isEmpty()) return;
           onRelay[0] = true;
@@ -2382,7 +2383,7 @@ public class MainActivity extends Activity {
       if (api != requested || onRelay[0]) return;
       // The relay was not ready in time (or this TV has no relay): one last try, then load.
       new Thread(() -> {
-        String relay = Relay.base(this, requested.client);
+        String relay = Relay.base(this, requested.client, requested.token);
         runOnUiThread(() -> {
           if (api != requested || isDestroyed()) return;
           if (!relay.isEmpty()) moveTo(requested, relay);
@@ -2658,7 +2659,7 @@ public class MainActivity extends Activity {
     new Thread(() -> {
       long deadline = System.currentTimeMillis() + Pairing.LIFETIME_MILLIS;
       // Nothing to pin yet: the claim goes plain through bronze, and its reply is sealed.
-      String relay = Relay.base(Relay.DEFAULT_ADDRESS, Relay.DEFAULT_FINGERPRINT, "", "");
+      String relay = Relay.base(Relay.DEFAULT_ADDRESS, Relay.DEFAULT_FINGERPRINT, "", "", "");
       if (relay.isEmpty()) {
         say.accept(L10n.t("Could not reach Torrbaby’s relay. Check this TV’s internet connection, then choose New setup code."));
         return;
@@ -2677,7 +2678,7 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
           android.util.Log.w("TorrbabyPairing", "Claim failed: " + e);
           say.accept(L10n.t("Your server is not answering through the relay yet. Still trying…"));
-          String reopened = Relay.base(Relay.DEFAULT_ADDRESS, Relay.DEFAULT_FINGERPRINT, "", "");
+          String reopened = Relay.base(Relay.DEFAULT_ADDRESS, Relay.DEFAULT_FINGERPRINT, "", "", "");
           if (!reopened.isEmpty()) relay = reopened;
         }
         try { Thread.sleep(2000); } catch (InterruptedException e) { return; }
@@ -2701,7 +2702,7 @@ public class MainActivity extends Activity {
     }
     remote.save(this);
     String client = setup.optString("client_id");
-    String base = Relay.base(remote.relayAddress, remote.relayFingerprint, remote.identity, client);
+    String base = Relay.base(remote.relayAddress, remote.relayFingerprint, remote.identity, client, setup.optString("token"));
     if (base.isEmpty()) {
       say.accept(L10n.t("Could not reach Torrbaby’s relay. Check this TV’s internet connection, then choose New setup code."));
       return;

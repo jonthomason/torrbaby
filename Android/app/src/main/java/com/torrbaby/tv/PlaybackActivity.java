@@ -65,6 +65,7 @@ public class PlaybackActivity extends Activity {
   @Override
   public void onCreate(Bundle state) {
     super.onCreate(state);
+    Relay.watchNetwork(this);
     getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     if (state != null) localPosition = state.getLong("position");
     start();
@@ -90,7 +91,7 @@ public class PlaybackActivity extends Activity {
             // Opened straight into playback (Android restarted the app): find the server on
             // the home network first, as the library does, then the relay; no address is saved.
             if (ServerRoute.found.isEmpty()) {
-              String found = ServerRoute.locate(this, api.client, 8000);
+              String found = ServerRoute.locate(this, api.client, api.token, 8000);
               if (!found.isEmpty()) {
                 Api located = new Api(found, api.token, api.client, api.profile, api.profileName);
                 located.profileAppearance = api.profileAppearance;
