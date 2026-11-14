@@ -403,6 +403,9 @@ final class PlaybackModel: ObservableObject {
         ClientDiagnostics.note(String(format: "Closed at %.1f s: %@ received, watched %.0f s, %d stalls, observed %.1f Mb/s (file %.1f Mb/s), startup %.1f s%@",
                                       player.currentTime().seconds, ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file), watched, stalls,
                                       observed, indicated, events.first?.startupTime ?? 0, played ? "" : ", never played"))
+        // A file that never played, or kept stalling, is worth having on Diamond at once.
+        if !played && Date().timeIntervalSince(openedAt) > 8 { ClientLogs.failed("Playback never started (waited \(Int(Date().timeIntervalSince(openedAt))) s)") }
+        else if stalls >= 2 { ClientLogs.failed("Playback stalled \(stalls) times in \(Int(watched)) s") }
     }
     @discardableResult
     func report(ended: Bool = false, reachedEnd: Bool = false) -> Bool {
