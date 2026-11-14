@@ -294,7 +294,7 @@ impl Database {
                 "id":id,"media_info":crate::media_inventory::cached(self,id)?,"role":"main","name":if asset["season"] == 0 { extra_name(asset) }
                     else if let Some(title) = part.and(asset["path"].as_str()).and_then(crate::scanner::part_title) { title }
                     else { episode["title"].as_str().unwrap_or(if kind=="movie"{name}else{&fallback}).to_owned() },
-                "season":asset["season"],"episode":asset["episode"],"part":part,"summary":episode["summary"].as_str().unwrap_or(""),
+                "season":asset["season"],"episode":asset["episode"],"part":part,"summary":episode["summary"].as_str().unwrap_or(""),"summary_zh":episode["summary_zh"].as_str().unwrap_or(""),
                 "airdate":episode["airdate"],"thumbnail":episode["thumbnail"],"duration_minutes":episode.get("duration_minutes").unwrap_or(&entity["duration_minutes"]),
                 "complete":asset["complete"],"size":asset["size"],"position":progress["position"].as_f64().unwrap_or(0.0),
                 "duration":progress["duration"].as_f64().unwrap_or(0.0),"watched":progress["watched"].as_bool().unwrap_or(false),

@@ -216,7 +216,9 @@ public final class Library {
     Asset(JSONObject j) {
       id = string(j, "id");
       name = string(j, "name");
-      summary = string(j, "summary");
+      // TMDB's Chinese description, or one translated on Diamond; English when there is none yet.
+      String chineseSummary = string(j, "summary_zh");
+      summary = !chineseSummary.isEmpty() && L10n.locale().getLanguage().equals("zh") ? chineseSummary : string(j, "summary");
       role = string(j, "role");
       thumbnail = string(j, "thumbnail");
       mediaInfo = j.optJSONObject("media_info");

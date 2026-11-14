@@ -306,12 +306,24 @@ extension LibraryAsset {
     }
 }
 struct LibraryAsset: Decodable, Identifiable {
+    private enum CodingKeys: String, CodingKey {
+        case id, name, role, season, episode, englishSummary = "summary", summaryZh, thumbnail, complete
+        case position, duration, watched, lastPlayed, mediaInfo, offline
+    }
     let id: String
     let name: String?
     let role: String?
     let season: Int?
     let episode: Int?
-    let summary: String
+    /// The episode's description from TMDB, in English.
+    let englishSummary: String
+    /// Its Simplified Chinese description: TMDB's, or translated on Diamond; empty when none yet.
+    var summaryZh: String? = nil
+    /// The description shown: the Chinese one while the interface is in Chinese.
+    var summary: String {
+        if L10n.code.hasPrefix("zh"), let summaryZh, !summaryZh.isEmpty { return summaryZh }
+        return englishSummary
+    }
     let thumbnail: String?
     let complete: Bool
     /// Progress arrives on its own (it changes far more often than the list).

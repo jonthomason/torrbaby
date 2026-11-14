@@ -591,6 +591,14 @@ impl Metadata {
         let detail=self.request(&format!("{kind}/{id}"), &[("language","zh-CN")]).await?;
         Ok((chinese_name(&detail, entity), chinese_summary(&detail)))
     }
+    /// TMDB's Simplified Chinese episode descriptions for one season of a series, by episode
+    /// number; empty text where TMDB has none.
+    pub async fn chinese_season(&self, entity: &Value, season: u64) -> Result<Vec<(u64, String)>> {
+        anyhow::ensure!(entity["kind"] == "tv", "Not a series");
+        let id=entity["provider_id"].as_str().context("Missing metadata ID")?.parse::<u64>()?;
+        let data=self.request(&format!("tv/{id}/season/{season}"), &[("language","zh-CN")]).await?;
+        Ok(array(&data["episodes"]).iter().filter_map(|episode| Some((episode["episode_number"].as_u64()?, chinese_summary(episode)))).collect())
+    }
     /// A series' production status and last air date, for entities saved before these were kept.
     pub async fn series_run(&self, entity: &Value) -> Result<Value> {
         let id=entity["provider_id"].as_str().context("Missing metadata ID")?.parse::<u64>()?;
