@@ -2556,9 +2556,16 @@ fn keep_backfilled(connection: &rusqlite::Connection, id: &str, mut entity: Valu
             let known = !(stored[field].is_null() || stored[field].as_str() == Some(""));
             if missing && known && entity.is_object() { entity[field] = stored[field].clone(); }
         }
-        // A Chinese description translated on Diamond stays until TMDB has its own.
-        if stored["summary_zh_source"] == "machine" && entity["summary_zh_source"] != "tmdb" && entity.is_object() {
-            for field in ["summary_zh", "summary_zh_source", "summary_zh_checked"] { entity[field] = stored[field].clone(); }
+        // The Chinese description (and what TMDB said about it) stays when the new copy has
+        // none of its own; a translation made on Diamond stays until TMDB has its own. Match
+        // snapshots and cached metadata rewrite these documents often, without these fields.
+        let fresh_has_none = entity["summary_zh_source"].is_null();
+        let stored_machine = stored["summary_zh_source"] == "machine" && entity["summary_zh_source"] != "tmdb";
+        if entity.is_object() && !stored["summary_zh_source"].is_null() && (fresh_has_none || stored_machine) {
+            for field in CHINESE_SUMMARY_FIELDS { entity[field] = stored[field].clone(); }
+        }
+        if entity.is_object() && entity.get("title_zh").is_none() && stored.get("title_zh").is_some() {
+            entity["title_zh"] = stored["title_zh"].clone();
         }
         keep_episode_summaries(&stored, &mut entity);
     }
@@ -3092,6 +3099,11 @@ mod backfill_tests {
         assert_eq!((none["summary_zh"].as_str(), none["summary_zh_source"].as_str()), (Some("机器翻译"), Some("machine")));
         let tmdb = keep_backfilled(&connection, "tmdb:tv:1", json!({"id":"tmdb:tv:1","summary_zh":"官方简介","summary_zh_source":"tmdb"}))?;
         assert_eq!((tmdb["summary_zh"].as_str(), tmdb["summary_zh_source"].as_str()), (Some("官方简介"), Some("tmdb")));
+        // A snapshot without the fields (cached metadata, an old match) keeps what was found.
+        connection.execute("UPDATE library_entities SET document=? WHERE id='tmdb:tv:1'",
+            [json!({"id":"tmdb:tv:1","title_zh":"古战场传奇","summary_zh":"官方简介","summary_zh_source":"tmdb","summary_zh_checked":5.0}).to_string()])?;
+        let bare = keep_backfilled(&connection, "tmdb:tv:1", json!({"id":"tmdb:tv:1","title":"Outlander"}))?;
+        assert_eq!((bare["summary_zh"].as_str(), bare["summary_zh_source"].as_str(), bare["title_zh"].as_str()), (Some("官方简介"), Some("tmdb"), Some("古战场传奇")));
         Ok(())
     }
 }
