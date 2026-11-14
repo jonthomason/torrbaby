@@ -628,19 +628,33 @@ class KeyboardPlayerController: AVPlayerViewController, AVPlayerViewControllerDe
     /// player is taken off the view then (it keeps playing: the sound goes on with the phone
     /// locked) and put back on return. Not while Picture in Picture shows it.
     private var detached: AVPlayer?
-    private var pictureInPicture = false
+    /// Picture in Picture is showing the video. Kept by whoever is the delegate: this
+    /// controller, or the presenter that set its own (iPhone/iPad full-screen playback).
+    var pictureInPicture = false
     override func viewDidLoad() {
         super.viewDidLoad()
-        delegate = self
+        // A presenter that set itself as delegate keeps it: taking it over here hid Picture in
+        // Picture from the presenter, which took the player leaving the screen for the end of
+        // playback and closed Picture in Picture as soon as it opened.
+        if delegate == nil { delegate = self }
         NotificationCenter.default.addObserver(self, selector: #selector(leftForeground), name: UIApplication.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(returned), name: UIApplication.willEnterForegroundNotification, object: nil)
     }
     @objc private func leftForeground() {
         guard !pictureInPicture, let player, player.timeControlStatus != .paused else { return }
-        detached = player
-        self.player = nil
-        // Off the view, AVKit no longer fills the lock screen: Torrbaby does.
-        NowPlaying.shared.begin(player)
+        // Leaving the app starts Picture in Picture, but iOS may say the app is in the
+        // background first: taking the player away then would close Picture in Picture. So
+        // this waits a moment; only if Picture in Picture did not start (the device was
+        // locked) is the player taken off the view, and resumed if iOS paused it meanwhile.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, !self.pictureInPicture, UIApplication.shared.applicationState == .background,
+                  self.player === player, self.detached == nil else { return }
+            self.detached = player
+            self.player = nil
+            player.play()
+            // Off the view, AVKit no longer fills the lock screen: Torrbaby does.
+            NowPlaying.shared.begin(player)
+        }
     }
     @objc private func returned() {
         NowPlaying.shared.end()

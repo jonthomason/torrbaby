@@ -131,7 +131,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
         private var lastSize = CGSize.zero
         var advanceEpisode: (() -> Void)?
         var nextEpisodeAvailable = false { didSet { updateNextButton() } }
-        var inPictureInPicture = false { didSet { updateNextButton() } }
+        var inPictureInPicture = false { didSet { pictureInPicture = inPictureInPicture; updateNextButton() } }
         /// During the closing credits the button shows without a tap.
         var creditsPrompt = false { didSet { updateNextButton() } }
         private let nextButton = UIButton(type: .system)
