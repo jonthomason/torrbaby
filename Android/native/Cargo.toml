@@ -2,7 +2,7 @@
 name = "tbandroid"
 version = "0.1.0"
 edition = "2024"
-description = "Torrbaby's relay to bronze in the Android TV app: a JNI shim over Apple/Direct (tbdirect)"
+description = "Torrbaby away from home in the Android TV app (direct path or relay): a JNI shim over Apple/Direct (tbdirect)"
 license = "MIT"
 publish = false
 

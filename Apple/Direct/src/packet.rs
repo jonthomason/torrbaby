@@ -103,65 +103,7 @@ impl Stack {
                 let ipstack::IpStackStream::Tcp(tcp) = stream else { continue };
                 let carrier = carrier.clone();
                 let superseded = superseded.clone();
-                tokio::spawn(async move {
-                    let started = tokio::time::Instant::now();
-                    // Counted while waiting: a dormant tunnel (idle, no keepalives) wakes for it.
-                    stats::add(&stats::FLOWS_WAITING, 1);
-                    let route = loop {
-                        if let Some(route) = carrier() { break Some(route) }
-                        if started.elapsed() >= wait { break None }
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    };
-                    stats::FLOWS_WAITING.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-                    let Some(route) = route else { return uncarried(tcp).await };
-                    // A better route open at two checks a second apart: this one makes way.
-                    let moved = {
-                        let route = route.clone();
-                        async move {
-                            let mut seen = 0;
-                            loop {
-                                tokio::time::sleep(Duration::from_secs(1)).await;
-                                seen = if superseded(&route) { seen + 1 } else { 0 };
-                                if seen >= 2 { return }
-                            }
-                        }
-                    };
-                    match route {
-                        Route::Quic(connection) => {
-                            let Ok((mut send, mut recv)) = connection.open_bi().await else { return uncarried(tcp).await };
-                            let complete = carry(tcp, &mut send, &mut recv, moved).await;
-                            // A connection abandoned midway: tell QUIC to discard what it holds
-                            // for this stream, or that data keeps the connection's receive
-                            // allowance and, added up over many abandoned requests (video
-                            // seeks), stalls every stream.
-                            if !complete { let _ = recv.stop(0u32.into()); }
-                        }
-                        Route::Relay(connection) => {
-                            let Ok((send, recv)) = connection.open_bi().await else { return uncarried(tcp).await };
-                            match crate::e2e::wrap(send, recv).await {
-                                crate::e2e::Wrapped::Encrypted(stream) => {
-                                    let (mut from_diamond, mut to_diamond) = tokio::io::split(stream);
-                                    carry(tcp, &mut to_diamond, &mut from_diamond, moved).await;
-                                }
-                                crate::e2e::Wrapped::Plain(mut send, mut recv) => {
-                                    // Plain only until Diamond's identity is pinned (crate::e2e).
-                                    let moved = async { tokio::select! { _ = moved => {}, _ = crate::e2e::pinned_now() => {} } };
-                                    let complete = carry(tcp, &mut send, &mut recv, moved).await;
-                                    if !complete { let _ = recv.stop(0u32.into()); }
-                                }
-                                crate::e2e::Wrapped::Failed => uncarried(tcp).await,
-                            }
-                        }
-                        Route::Lan(address) => {
-                            let connected = tokio::time::timeout(Duration::from_secs(3), tokio::net::TcpStream::connect(address)).await;
-                            let Ok(Ok(diamond)) = connected else { return uncarried(tcp).await };
-                            let _ = diamond.set_nodelay(true);
-                            stats::add(&stats::FLOWS_LAN, 1);
-                            let (mut from_diamond, mut to_diamond) = diamond.into_split();
-                            carry(tcp, &mut to_diamond, &mut from_diamond, moved).await;
-                        }
-                    }
-                });
+                tokio::spawn(route(tcp, carrier, superseded, wait));
             }
             // The stack's own task ended (a panic inside it): the extension restarts it.
             RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -178,9 +120,75 @@ impl Stack {
     }
 }
 
+/// A client's connection to Diamond, wherever it came from (the packet tunnel's TCP stack, or a
+/// loopback proxy's listener): `carrier` is asked for a route, waiting up to `wait` while there
+/// is none (the paths are opening, or dormant), and the connection is carried on it. A
+/// connection on the relay makes way (is closed toward the client, which reconnects) once
+/// `superseded` says a better route has been open for 2 s.
+pub async fn route<C>(tcp: C, carrier: std::sync::Arc<Carrier>, superseded: std::sync::Arc<Superseded>, wait: Duration)
+where C: AsyncRead + AsyncWrite + Unpin + Send + 'static {
+    let started = tokio::time::Instant::now();
+    // Counted while waiting: a dormant tunnel (idle, no keepalives) wakes for it.
+    stats::add(&stats::FLOWS_WAITING, 1);
+    let route = loop {
+        if let Some(route) = carrier() { break Some(route) }
+        if started.elapsed() >= wait { break None }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    stats::FLOWS_WAITING.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    let Some(route) = route else { return uncarried(tcp).await };
+    // A better route open at two checks a second apart: this one makes way.
+    let moved = {
+        let route = route.clone();
+        async move {
+            let mut seen = 0;
+            loop {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                seen = if superseded(&route) { seen + 1 } else { 0 };
+                if seen >= 2 { return }
+            }
+        }
+    };
+    match route {
+        Route::Quic(connection) => {
+            let Ok((mut send, mut recv)) = connection.open_bi().await else { return uncarried(tcp).await };
+            let complete = carry(tcp, &mut send, &mut recv, moved).await;
+            // A connection abandoned midway: tell QUIC to discard what it holds
+            // for this stream, or that data keeps the connection's receive
+            // allowance and, added up over many abandoned requests (video
+            // seeks), stalls every stream.
+            if !complete { let _ = recv.stop(0u32.into()); }
+        }
+        Route::Relay(connection) => {
+            let Ok((send, recv)) = connection.open_bi().await else { return uncarried(tcp).await };
+            match crate::e2e::wrap(send, recv).await {
+                crate::e2e::Wrapped::Encrypted(stream) => {
+                    let (mut from_diamond, mut to_diamond) = tokio::io::split(stream);
+                    carry(tcp, &mut to_diamond, &mut from_diamond, moved).await;
+                }
+                crate::e2e::Wrapped::Plain(mut send, mut recv) => {
+                    // Plain only until Diamond's identity is pinned (crate::e2e).
+                    let moved = async { tokio::select! { _ = moved => {}, _ = crate::e2e::pinned_now() => {} } };
+                    let complete = carry(tcp, &mut send, &mut recv, moved).await;
+                    if !complete { let _ = recv.stop(0u32.into()); }
+                }
+                crate::e2e::Wrapped::Failed => uncarried(tcp).await,
+            }
+        }
+        Route::Lan(address) => {
+            let connected = tokio::time::timeout(Duration::from_secs(3), tokio::net::TcpStream::connect(address)).await;
+            let Ok(Ok(diamond)) = connected else { return uncarried(tcp).await };
+            let _ = diamond.set_nodelay(true);
+            stats::add(&stats::FLOWS_LAN, 1);
+            let (mut from_diamond, mut to_diamond) = diamond.into_split();
+            carry(tcp, &mut to_diamond, &mut from_diamond, moved).await;
+        }
+    }
+}
+
 /// A connection nothing could carry: closed toward iOS at once (dropping it tells iOS
 /// nothing), so the client fails over or retries instead of waiting.
-async fn uncarried(tcp: ipstack::IpStackTcpStream) {
+async fn uncarried<C: AsyncWrite + Unpin>(tcp: C) {
     use tokio::io::AsyncWriteExt;
     stats::add(&stats::FLOWS_UNCARRIED, 1);
     let mut tcp = tcp;
@@ -191,8 +199,8 @@ async fn uncarried(tcp: ipstack::IpStackTcpStream) {
 
 /// Carry one TCP connection from iOS to Diamond (`up`) and back (`down`) until either side
 /// ends it or `moved` fires. True when Diamond's reply was delivered whole.
-async fn carry<W, R>(tcp: ipstack::IpStackTcpStream, up_to: &mut W, down_from: &mut R, moved: impl std::future::Future<Output = ()>) -> bool
-where W: tokio::io::AsyncWrite + Unpin, R: tokio::io::AsyncRead + Unpin {
+async fn carry<C, W, R>(tcp: C, up_to: &mut W, down_from: &mut R, moved: impl std::future::Future<Output = ()>) -> bool
+where C: AsyncRead + AsyncWrite + Unpin, W: tokio::io::AsyncWrite + Unpin, R: tokio::io::AsyncRead + Unpin {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     stats::add(&stats::FLOWS_OPENED, 1);
     stats::add(&stats::FLOWS_OPEN, 1);
