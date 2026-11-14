@@ -27,6 +27,8 @@ pub mod punch;
 struct Tunnel {
     runtime: tokio::runtime::Runtime,
     connection: quinn::Connection,
+    /// Kept to move the connection to another socket (a new network) without reconnecting.
+    endpoint: quinn::Endpoint,
 }
 
 /// The direct tunnel (punched, to Diamond) and the relay (to bronze), held independently:
@@ -137,6 +139,7 @@ fn open_on(slot: &Mutex<Option<Tunnel>>, socket: std::net::UdpSocket, server: So
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.ok()?;
         let port = listener.local_addr().ok()?.port();
         let carrier = connection.clone();
+        let kept = endpoint.clone();
         tokio::spawn(async move {
             let _endpoint = endpoint;
             while let Ok((tcp, _)) = listener.accept().await {
@@ -148,10 +151,10 @@ fn open_on(slot: &Mutex<Option<Tunnel>>, socket: std::net::UdpSocket, server: So
                 if carrier.close_reason().is_some() { break }
             }
         });
-        Some((connection, port))
+        Some((connection, port, kept))
     });
-    let Some((connection, port)) = opened else { runtime.shutdown_background(); return 0 };
-    if let Ok(mut held) = slot.lock() { *held = Some(Tunnel { runtime, connection }) }
+    let Some((connection, port, endpoint)) = opened else { runtime.shutdown_background(); return 0 };
+    if let Ok(mut held) = slot.lock() { *held = Some(Tunnel { runtime, connection, endpoint }) }
     port
 }
 
@@ -182,6 +185,22 @@ pub extern "C" fn tbdirect_alive() -> bool { alive(&TUNNEL) }
 /// Close the tunnel, if any.
 #[unsafe(no_mangle)]
 pub extern "C" fn tbdirect_stop() { stop(&TUNNEL) }
+
+/// Move the open relay onto socket `fd` (ownership passes here), bound to the new network:
+/// QUIC migrates the same connection to the new address, so the relay keeps carrying traffic
+/// across a change of network instead of being dropped and opened again (bronze has a public
+/// address, so it simply answers the new one). True when it was moved.
+#[unsafe(no_mangle)]
+pub extern "C" fn tbdirect_relay_rebind(fd: i32) -> bool {
+    if fd < 0 { return false }
+    let socket = unsafe { std::net::UdpSocket::from_raw_fd(fd) };
+    if socket.set_nonblocking(true).is_err() { return false }
+    let held = RELAY.lock().ok().and_then(|held| held.as_ref().map(|t| (t.runtime.handle().clone(), t.endpoint.clone(), t.connection.clone())));
+    let Some((handle, endpoint, connection)) = held else { return false };
+    if connection.close_reason().is_some() { return false }
+    let _guard = handle.enter();
+    endpoint.rebind(socket).is_ok()
+}
 
 /// Whether the relay is open.
 #[unsafe(no_mangle)]

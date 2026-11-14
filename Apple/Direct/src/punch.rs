@@ -201,12 +201,19 @@ fn discover_some(sockets: &[UdpSocket], which: &[usize], stun: SocketAddr) -> Ha
     let mut found = HashMap::new();
     let deadline = Instant::now() + Duration::from_millis(2500);
     let mut buffer = [0u8; 1500];
-    while Instant::now() < deadline && found.len() < which.len() {
+    let mut last_answer = Instant::now();
+    // On a lossy network a request or two never comes back: once half have answered (at least
+    // three) and nothing new has come for 300 ms, that is enough (waiting out 2.5 s for the
+    // rest made every punch on a poor network slower).
+    let enough = (which.len() / 2).max(3).min(which.len());
+    while Instant::now() < deadline && found.len() < which.len() && !(found.len() >= enough && last_answer.elapsed() > Duration::from_millis(300)) {
         for &index in which {
             while let Ok((n, _)) = sockets[index].recv_from(&mut buffer) {
                 if n < 20 { continue }
                 let Ok(id): Result<[u8; 12], _> = buffer[8..20].try_into() else { continue };
-                if let (Some(&owner), Some(mapped)) = (transactions.get(&id), mapped(&buffer[..n])) { found.insert(owner, mapped); }
+                if let (Some(&owner), Some(mapped)) = (transactions.get(&id), mapped(&buffer[..n])) {
+                    if found.insert(owner, mapped).is_none() { last_answer = Instant::now() }
+                }
             }
         }
         std::thread::sleep(Duration::from_millis(10));

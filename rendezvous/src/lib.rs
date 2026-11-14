@@ -279,7 +279,8 @@ async fn device(connection: quinn::Connection, hub: Arc<Hub>) {
     while let Ok((send, recv)) = connection.accept_bi().await {
         streams += 1;
         hub.streams.fetch_add(1, Ordering::Relaxed);
-        tokio::spawn(splice(send, recv, hub.clone(), from, id));
+        // The address now, not at connect: a device that moved networks migrated its connection.
+        tokio::spawn(splice(send, recv, hub.clone(), connection.remote_address(), id));
     }
     hub.devices.fetch_sub(1, Ordering::Relaxed);
     eprintln!("Device {id} {from}: closed after {} s, {streams} streams ({})", started.elapsed().as_secs(),

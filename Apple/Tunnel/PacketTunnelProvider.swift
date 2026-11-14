@@ -14,6 +14,7 @@ import os
 @_silgen_name("tbdirect_relay_start_lean") private func tbdirect_relay_start(_ fd: Int32, _ server: UnsafePointer<CChar>, _ fingerprint: UnsafePointer<CChar>) -> UInt16
 @_silgen_name("tbdirect_relay_alive") private func tbdirect_relay_alive() -> Bool
 @_silgen_name("tbdirect_relay_stop") private func tbdirect_relay_stop()
+@_silgen_name("tbdirect_relay_rebind") private func tbdirect_relay_rebind(_ fd: Int32) -> Bool
 @_silgen_name("tbdirect_relay_info") private func tbdirect_relay_info(_ buffer: UnsafeMutablePointer<CChar>, _ capacity: Int) -> Int32
 
 /// Torrbaby's packet tunnel: Diamond at 10.233.0.1, reached straight through both NATs.
@@ -197,8 +198,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             let signature = PunchProbe.networkSignature()
             if signature != self.networkSignature {
                 if !self.networkSignature.isEmpty {
-                    self.note("network changed (\(self.networkSignature) → \(signature)): dropping both paths")
-                    tbdirect_stop(); tbdirect_relay_stop()
+                    // The direct path's hole was for the old network: punched again. The relay
+                    // moves with QUIC to the new network and keeps bridging meanwhile (bronze has a
+                    // public address); only if it cannot move is it opened again.
+                    tbdirect_stop()
+                    let probe = PunchProbe(count: 1)
+                    let moved = probe.ready && tbdirect_relay_alive() && probe.take(0).map { tbdirect_relay_rebind($0) } == true
+                    probe.close()
+                    if !moved { tbdirect_relay_stop() }
+                    self.note("network changed (\(self.networkSignature) → \(signature)): direct path dropped, relay " + (moved ? "moved to the new network" : "reopening"))
                     self.lastAttempt = .distantPast
                     self.atHome = false; self.punchedFrom = nil
                     self.punchFailures = 0; self.nextPunch = .distantPast; self.punchedOnThisNetwork = false; self.publicIP = nil
