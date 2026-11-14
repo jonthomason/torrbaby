@@ -1969,6 +1969,7 @@ dependencies = [
  "sha2",
  "tl",
  "tokio",
+ "tokio-rustls",
  "tracing",
  "tracing-subscriber",
  "unicode-normalization",

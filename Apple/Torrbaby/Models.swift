@@ -301,6 +301,8 @@ struct ServerIdentity: Codable {
     /// whether the server is connected to it now.
     struct Relay: Codable { let address: String?; let fingerprint: String?; let connected: Bool? }
     let name: String?; let id: String?; var routes: Routes? = nil; var relay: Relay? = nil
+    /// The fingerprint of Diamond's own certificate (end-to-end encryption through bronze).
+    var identity: String? = nil
 }
 /// The online check's answer.
 struct ServerPing: Codable { var version: String? = nil; var server: ServerIdentity? = nil }

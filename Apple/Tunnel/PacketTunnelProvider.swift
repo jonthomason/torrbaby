@@ -8,6 +8,7 @@ import os
 @_silgen_name("tbtunnel_input") private func tbtunnel_input(_ packet: UnsafePointer<UInt8>?, _ length: Int) -> Bool
 @_silgen_name("tbtunnel_stop") private func tbtunnel_stop()
 @_silgen_name("tbtunnel_alive") private func tbtunnel_alive() -> Bool
+@_silgen_name("tbdirect_identity") private func tbdirect_identity(_ fingerprint: UnsafePointer<CChar>)
 @_silgen_name("tbtunnel_home") private func tbtunnel_home(_ address: UnsafePointer<CChar>)
 @_silgen_name("tbtunnel_stats") private func tbtunnel_stats(_ buffer: UnsafeMutablePointer<CChar>, _ capacity: Int) -> Int32
 @_silgen_name("tbdirect_alive") private func tbdirect_alive() -> Bool
@@ -27,7 +28,7 @@ import os
 final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     static let diamond = "10.233.0.1"
     private let log = Logger(subsystem: "org.torrbaby", category: "tunnel")
-    private var relay = "", relayFingerprint = "", stun = "", token = "", home = ""
+    private var relay = "", relayFingerprint = "", stun = "", token = "", home = "", identity = ""
     private var relayPort: UInt16 = 0
     private var monitor: NWPathMonitor?
     private var keeper: Task<Void, Never>?
@@ -125,6 +126,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         stun = shared?.stun ?? configuration["stun"] as? String ?? ""
         token = shared?.token ?? configuration["token"] as? String ?? ""
         home = shared?.home ?? ""
+        identity = shared?.identity ?? ""
+        identity.withCString { tbdirect_identity($0) }
     }
 
     /// Bronze's view over the relay: this device's public IP and Diamond's.
@@ -197,6 +200,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let version = "version \(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))"
         let state = atHome ? version + "\nAt home: connections go straight to Diamond on this network (\(homeAddress))"
             : version + "\n" + direct + "\nRelay via bronze: " + (tbdirect_relay_alive() ? "open" : "closed")
+                + (identity.count == 64 ? ", encrypted end to end to Diamond" : ", not encrypted end to end yet (Diamond's identity is learned at home or from pairing)")
         completionHandler?(state.data(using: .utf8))
     }
 

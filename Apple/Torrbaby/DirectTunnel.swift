@@ -7,6 +7,7 @@ import Foundation
 @_silgen_name("tbdirect_relay_start") private func tbdirect_relay_start(_ fd: Int32, _ server: UnsafePointer<CChar>, _ fingerprint: UnsafePointer<CChar>) -> UInt16
 @_silgen_name("tbdirect_relay_alive") private func tbdirect_relay_alive() -> Bool
 @_silgen_name("tbdirect_relay_stop") private func tbdirect_relay_stop()
+@_silgen_name("tbdirect_identity") private func tbdirect_identity(_ fingerprint: UnsafePointer<CChar>)
 @_silgen_name("tbdirect_relay_info") private func tbdirect_relay_info(_ buffer: UnsafeMutablePointer<CChar>, _ capacity: Int) -> Int32
 
 /// The relay through Torrbaby's rendezvous on bronze, for when this device has no home
@@ -86,6 +87,9 @@ final class RelayTunnel: @unchecked Sendable {
 /// network, so a Tailscale exit node does not carry it abroad. If the path fails, the app
 /// falls back to Tailscale and tries again later.
 final class DirectTunnel: @unchecked Sendable {
+    /// Pin Diamond's identity in the app's own paths (relay streams encrypted end to end to it,
+    /// the direct path required to present it).
+    static func pin(identity: String) { identity.withCString { tbdirect_identity($0) } }
     private(set) var port: UInt16 = 0
     /// How the tunnel came up, for the test screen.
     var how = ""

@@ -54,7 +54,10 @@ impl AsyncWrite for Packets {
 /// path or the relay), or, at home, a plain TCP connection to Diamond on this network.
 #[derive(Clone)]
 pub enum Route {
+    /// The direct path: QUIC to Diamond's own identity.
     Quic(quinn::Connection),
+    /// The relay through bronze: each stream is wrapped in TLS to Diamond (crate::e2e).
+    Relay(quinn::Connection),
     Lan(std::net::SocketAddr),
 }
 pub type Carrier = Box<dyn Fn() -> Option<Route> + Send + Sync>;
@@ -107,7 +110,7 @@ impl Stack {
                         if started.elapsed() >= wait { break None }
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     };
-                    let Some(route) = route else { stats::add(&stats::FLOWS_UNCARRIED, 1); return };
+                    let Some(route) = route else { return uncarried(tcp).await };
                     // A better route open at two checks a second apart: this one makes way.
                     let moved = {
                         let route = route.clone();
@@ -122,7 +125,7 @@ impl Stack {
                     };
                     match route {
                         Route::Quic(connection) => {
-                            let Ok((mut send, mut recv)) = connection.open_bi().await else { stats::add(&stats::FLOWS_UNCARRIED, 1); return };
+                            let Ok((mut send, mut recv)) = connection.open_bi().await else { return uncarried(tcp).await };
                             let complete = carry(tcp, &mut send, &mut recv, moved).await;
                             // A connection abandoned midway: tell QUIC to discard what it holds
                             // for this stream, or that data keeps the connection's receive
@@ -130,9 +133,23 @@ impl Stack {
                             // seeks), stalls every stream.
                             if !complete { let _ = recv.stop(0u32.into()); }
                         }
+                        Route::Relay(connection) => {
+                            let Ok((send, recv)) = connection.open_bi().await else { return uncarried(tcp).await };
+                            match crate::e2e::wrap(send, recv).await {
+                                crate::e2e::Wrapped::Encrypted(stream) => {
+                                    let (mut from_diamond, mut to_diamond) = tokio::io::split(stream);
+                                    carry(tcp, &mut to_diamond, &mut from_diamond, moved).await;
+                                }
+                                crate::e2e::Wrapped::Plain(mut send, mut recv) => {
+                                    let complete = carry(tcp, &mut send, &mut recv, moved).await;
+                                    if !complete { let _ = recv.stop(0u32.into()); }
+                                }
+                                crate::e2e::Wrapped::Failed => uncarried(tcp).await,
+                            }
+                        }
                         Route::Lan(address) => {
                             let connected = tokio::time::timeout(Duration::from_secs(3), tokio::net::TcpStream::connect(address)).await;
-                            let Ok(Ok(diamond)) = connected else { stats::add(&stats::FLOWS_UNCARRIED, 1); return };
+                            let Ok(Ok(diamond)) = connected else { return uncarried(tcp).await };
                             let _ = diamond.set_nodelay(true);
                             stats::add(&stats::FLOWS_LAN, 1);
                             let (mut from_diamond, mut to_diamond) = diamond.into_split();
@@ -153,6 +170,17 @@ impl Stack {
         let accepted = self.input.try_send(packet).is_ok();
         if accepted { stats::add(&stats::PACKETS_IN, 1); stats::add(&stats::BYTES_IN, length) } else { stats::add(&stats::DROPPED_IN, 1) }
         accepted
+    }
+}
+
+/// A connection nothing could carry: closed toward iOS at once (dropping it tells iOS
+/// nothing), so the client fails over or retries instead of waiting.
+async fn uncarried(tcp: ipstack::IpStackTcpStream) {
+    use tokio::io::AsyncWriteExt;
+    stats::add(&stats::FLOWS_UNCARRIED, 1);
+    let mut tcp = tcp;
+    for _ in 0..20 {
+        if tokio::time::timeout(Duration::from_millis(50), tcp.shutdown()).await.is_ok() { break }
     }
 }
 

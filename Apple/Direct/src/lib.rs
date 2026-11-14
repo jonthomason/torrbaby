@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
+pub mod e2e;
 pub mod packet;
 pub mod punch;
 
@@ -120,6 +121,10 @@ fn open_on(slot: &Mutex<Option<Tunnel>>, socket: std::net::UdpSocket, server: So
     let opened = runtime.block_on(async move {
         socket.set_nonblocking(true).ok()?;
         let provider = Arc::new(rustls::crypto::ring::default_provider());
+        // The direct path is QUIC to Diamond's own identity: once the app has pinned it, that is
+        // the certificate required, whatever the signalling (through bronze) said.
+        let relayed = alpn == b"tbrelay";
+        let fingerprint = if relayed { fingerprint } else { e2e::pinned().unwrap_or(fingerprint) };
         let mut tls = rustls::ClientConfig::builder_with_provider(provider.clone())
             .with_protocol_versions(&[&rustls::version::TLS13]).ok()?
             .dangerous().with_custom_certificate_verifier(Arc::new(Pinned(fingerprint.to_lowercase(), provider)))
@@ -146,7 +151,12 @@ fn open_on(slot: &Mutex<Option<Tunnel>>, socket: std::net::UdpSocket, server: So
                 let stream_carrier = carrier.clone();
                 tokio::spawn(async move {
                     let Ok((send, recv)) = stream_carrier.open_bi().await else { return };
-                    pipe(tcp, send, recv).await;
+                    if !relayed { return pipe(tcp, send, recv).await }
+                    match e2e::wrap(send, recv).await {
+                        e2e::Wrapped::Encrypted(stream) => { let (from, to) = tokio::io::split(stream); pipe(tcp, to, from).await }
+                        e2e::Wrapped::Plain(send, recv) => pipe(tcp, send, recv).await,
+                        e2e::Wrapped::Failed => {}
+                    }
                 });
                 if carrier.close_reason().is_some() { break }
             }
@@ -158,10 +168,10 @@ fn open_on(slot: &Mutex<Option<Tunnel>>, socket: std::net::UdpSocket, server: So
     port
 }
 
-async fn pipe(tcp: tokio::net::TcpStream, mut send: quinn::SendStream, mut recv: quinn::RecvStream) {
+async fn pipe<W: tokio::io::AsyncWrite + Unpin, R: tokio::io::AsyncRead + Unpin>(tcp: tokio::net::TcpStream, mut send: W, mut recv: R) {
     let _ = tcp.set_nodelay(true);
     let (mut from_app, mut to_app) = tcp.into_split();
-    let up = async { let _ = tokio::io::copy(&mut from_app, &mut send).await; let _ = send.finish(); };
+    let up = async { let _ = tokio::io::copy(&mut from_app, &mut send).await; let _ = send.shutdown().await; };
     let down = async { let _ = tokio::io::copy(&mut recv, &mut to_app).await; let _ = to_app.shutdown().await; };
     tokio::join!(up, down);
 }
@@ -241,6 +251,13 @@ pub extern "C" fn tbdirect_relay_info(buffer: *mut c_char, capacity: usize) -> i
 /// the phone is at home or away.
 static HOME: Mutex<Option<SocketAddr>> = Mutex::new(None);
 
+/// Diamond's identity fingerprint, learned from pairing or from Diamond at home: relayed
+/// streams are encrypted end to end to it, and the direct path must present it. Empty forgets it.
+#[unsafe(no_mangle)]
+pub extern "C" fn tbdirect_identity(fingerprint: *const c_char) {
+    e2e::pin(&text(fingerprint).unwrap_or_default());
+}
+
 /// Diamond on this network ("ip:port"), or empty when away from home.
 #[unsafe(no_mangle)]
 pub extern "C" fn tbtunnel_home(address: *const c_char) {
@@ -256,14 +273,12 @@ fn open_connection(slot: &Mutex<Option<Tunnel>>) -> Option<quinn::Connection> {
 /// direct path while it is open, else the relay.
 fn carrier() -> Option<packet::Route> {
     if let Some(address) = HOME.lock().ok().and_then(|held| *held) { return Some(packet::Route::Lan(address)) }
-    open_connection(&TUNNEL).or_else(|| open_connection(&RELAY)).map(packet::Route::Quic)
+    open_connection(&TUNNEL).map(packet::Route::Quic).or_else(|| open_connection(&RELAY).map(packet::Route::Relay))
 }
 
 /// A connection on the relay makes way once Diamond on this network or the direct path is open.
 fn superseded(route: &packet::Route) -> bool {
-    let packet::Route::Quic(connection) = route else { return false };
-    let on_relay = open_connection(&TUNNEL).is_none_or(|direct| direct.stable_id() != connection.stable_id());
-    on_relay && (HOME.lock().ok().is_some_and(|held| held.is_some()) || open_connection(&TUNNEL).is_some())
+    matches!(route, packet::Route::Relay(_)) && (HOME.lock().ok().is_some_and(|held| held.is_some()) || open_connection(&TUNNEL).is_some())
 }
 
 /// Packets the stack sends back to the extension, in batches: `count` packets laid end to end

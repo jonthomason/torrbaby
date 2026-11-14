@@ -15,6 +15,9 @@ private struct PairingPayload: Codable {
     /// with neither the home network nor Tailscale pairs through the relay.
     var relay: String? = nil
     var relayFingerprint: String? = nil
+    /// Diamond's identity fingerprint (end-to-end encryption through bronze), from a device
+    /// that learned it at home.
+    var identity: String? = nil
 }
 
 struct PairingCodeView: View {
@@ -28,7 +31,7 @@ struct PairingCodeView: View {
     private struct Grant: Decodable { let id: String; let code: String; let expires: Double }
     private struct Status: Decodable { let paired: Bool }
     private var qr: CGImage? {
-        guard let grant, let data = try? JSONEncoder().encode(PairingPayload(app: "torrbaby", version: 1, server: store.server, code: grant.code, fallbackServer: store.fallbackServer.isEmpty ? nil : store.fallbackServer, relay: store.relayAddress.isEmpty ? nil : store.relayAddress, relayFingerprint: store.relayFingerprint.isEmpty ? nil : store.relayFingerprint)) else { return nil }
+        guard let grant, let data = try? JSONEncoder().encode(PairingPayload(app: "torrbaby", version: 1, server: store.server, code: grant.code, fallbackServer: store.fallbackServer.isEmpty ? nil : store.fallbackServer, relay: store.relayAddress.isEmpty ? nil : store.relayAddress, relayFingerprint: store.relayFingerprint.isEmpty ? nil : store.relayFingerprint, identity: store.diamondIdentity.isEmpty ? nil : store.diamondIdentity)) else { return nil }
         let filter = CIFilter.qrCodeGenerator()
         filter.message = data
         filter.correctionLevel = "M"
@@ -154,6 +157,7 @@ struct PairingScannerView: View {
             // away from home reaches it by the second, or else through the relay on bronze.
             var routes = [payload.server, payload.fallbackServer ?? ""].map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }.filter { !$0.isEmpty }
             store.learnRelay(address: payload.relay, fingerprint: payload.relayFingerprint)
+            store.learnIdentity(payload.identity)
             if payload.relay != nil, let relay = await store.ensureRelay() {
                 // With the relay, Tailscale is not used: home first, then the relay.
                 routes = Array(routes.prefix(1)) + [relay]

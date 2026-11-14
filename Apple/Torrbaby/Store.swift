@@ -318,8 +318,22 @@ final class Store: ObservableObject {
     @Published private(set) var awayRoute = UserDefaults.standard.string(forKey: "route-away") ?? ""
     private var routePort: Int { URLComponents(string: server)?.port ?? 8765 }
     private func address(_ host: String) -> String { host.isEmpty ? "" : "http://\(host):\(routePort)" }
-    private func adopt(_ identity: ServerIdentity?) {
+    /// Diamond's own identity: relayed traffic is encrypted end to end to it, and the direct
+    /// path must present it. Learned only where bronze cannot interfere: from pairing, or from
+    /// Diamond itself on the home network (which also replaces it, should Diamond's change).
+    @Published private(set) var diamondIdentity = UserDefaults.standard.string(forKey: "diamond-identity") ?? ""
+    func learnIdentity(_ fingerprint: String?) {
+        guard let fingerprint = fingerprint?.lowercased(), fingerprint.count == 64, fingerprint != diamondIdentity else { return }
+        diamondIdentity = fingerprint
+        UserDefaults.standard.set(fingerprint, forKey: "diamond-identity")
+        #if os(iOS)
+        DirectTunnel.pin(identity: fingerprint)
+        autoConnectTunnel()
+        #endif
+    }
+    private func adopt(_ identity: ServerIdentity?, atHome: Bool = false) {
         guard let identity else { return }
+        if atHome { learnIdentity(identity.identity) }
         let defaults = UserDefaults.standard
         if let name = identity.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty, name != serverName {
             serverName = name; defaults.set(name, forKey: "server-name")
@@ -478,6 +492,7 @@ final class Store: ObservableObject {
             self.refreshFullyNext()
             Task { await self.refresh(polling: true) }
         }
+        if !diamondIdentity.isEmpty { DirectTunnel.pin(identity: diamondIdentity) }
         Task { [weak self] in
             await PacketTunnel.shared.load()
             self?.autoConnectTunnel()
@@ -892,7 +907,8 @@ final class Store: ObservableObject {
         let relay = relayAddress, fingerprint = relayFingerprint, stun = stunServer ?? "", token = token
         // Diamond's home name and port, for the tunnel to reach it directly at home.
         let home = URL(string: primaryAddress).flatMap { url in url.host.map { "\($0):\(url.port ?? 80)" } }
-        Task { await PacketTunnel.shared.autoConnect(relay: relay, relayFingerprint: fingerprint, stun: stun, token: token, home: home) }
+        let identity = diamondIdentity
+        Task { await PacketTunnel.shared.autoConnect(relay: relay, relayFingerprint: fingerprint, stun: stun, token: token, home: home, identity: identity) }
     }
     func dropDirect(_ reason: String) {
         guard directTunnel != nil || directRoute != nil else { return }
@@ -977,7 +993,7 @@ final class Store: ObservableObject {
             #if os(iOS)
             if ServerRoutes.normalized(route) == ServerRoutes.normalized(primary) && !probed.1 { self.dropRelay("home") }
             #endif
-            self.adopt(probed.0.server)
+            self.adopt(probed.0.server, atHome: ServerRoutes.normalized(route) == ServerRoutes.normalized(primary) && !probed.1)
             if !self.reachable { self.reachable = true }
             self.activeRouteTunnelled = probed.1
             return probed.0

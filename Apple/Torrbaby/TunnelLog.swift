@@ -62,6 +62,8 @@ struct TunnelShared: Codable, Equatable {
     /// Diamond at home ("diamond.local:8765"): at home the tunnel carries connections straight
     /// to it. Looked up by name each time; no address is kept.
     var home: String? = nil
+    /// Diamond's identity fingerprint: relayed traffic is encrypted end to end to it.
+    var identity: String? = nil
 
     private static var group: String? { Bundle.main.object(forInfoDictionaryKey: "TorrbabySharedKeychainGroup") as? String }
     private static func query(_ group: String) -> [String: Any] {

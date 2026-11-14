@@ -15,7 +15,7 @@ use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{collections::HashMap, net::{IpAddr, SocketAddr}, sync::{Arc, Mutex}, time::{Duration, Instant}};
-use tokio::{io::AsyncWriteExt, net::{TcpStream, UdpSocket}};
+use tokio::{io::{AsyncReadExt as _, AsyncWriteExt}, net::{TcpStream, UdpSocket}};
 
 const SPRAY_SECONDS: u64 = 25;
 const MAX_WINDOW: u32 = 8192;
@@ -132,7 +132,37 @@ pub mod results {
     }
 }
 
-struct Identity { cert: rustls::pki_types::CertificateDer<'static>, key: Vec<u8>, fingerprint: String }
+pub(crate) struct Identity { cert: rustls::pki_types::CertificateDer<'static>, key: Vec<u8>, pub(crate) fingerprint: String }
+
+/// Diamond's own identity: one certificate, kept, for the direct path's QUIC and for the TLS
+/// that devices wrap each relayed stream in. Devices learn its fingerprint only from pairing
+/// or from Diamond on the home network, never through bronze, so bronze (which splices relay
+/// streams and passes the direct path's signalling) can neither read the traffic nor stand in
+/// for Diamond.
+static IDENTITY: std::sync::OnceLock<Arc<Identity>> = std::sync::OnceLock::new();
+
+/// Load Diamond's identity from `data_dir` (identity.der and identity.key), creating it once.
+pub fn load_identity(data_dir: &std::path::Path) -> Result<()> {
+    let (cert_path, key_path) = (data_dir.join("identity.der"), data_dir.join("identity.key"));
+    let (cert, key) = match (std::fs::read(&cert_path), std::fs::read(&key_path)) {
+        (Ok(cert), Ok(key)) => (cert, key),
+        _ => {
+            let made = rcgen::generate_simple_self_signed(vec!["torrbaby-diamond".to_owned()])?;
+            let (cert, key) = (made.cert.der().to_vec(), made.key_pair.serialize_der());
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&key_path)?;
+            std::io::Write::write_all(&mut file, &key)?;
+            std::fs::write(&cert_path, &cert)?;
+            (cert, key)
+        }
+    };
+    let fingerprint = Sha256::digest(&cert).iter().map(|b| format!("{b:02x}")).collect();
+    let _ = IDENTITY.set(Arc::new(Identity { cert: rustls::pki_types::CertificateDer::from(cert), key, fingerprint }));
+    Ok(())
+}
+
+/// The fingerprint devices pin (null before the identity is loaded).
+pub fn fingerprint() -> Option<String> { IDENTITY.get().map(|identity| identity.fingerprint.clone()) }
 
 #[derive(Default)]
 pub struct Direct {
@@ -144,6 +174,7 @@ impl Direct {
     fn identity(&self) -> Result<Arc<Identity>> {
         let mut held = self.identity.lock().map_err(|_| anyhow::anyhow!("Direct connection unavailable"))?;
         if let Some(identity) = held.as_ref() { return Ok(identity.clone()) }
+        if let Some(identity) = IDENTITY.get() { *held = Some(identity.clone()); return Ok(identity.clone()) }
         let made = rcgen::generate_simple_self_signed(vec!["torrbaby-direct".to_owned()])?;
         let cert = made.cert.der().clone();
         let fingerprint = Sha256::digest(cert.as_ref()).iter().map(|b| format!("{b:02x}")).collect();
@@ -337,19 +368,53 @@ async fn run(socket: UdpSocket, ip: IpAddr, ports: Arc<Vec<u16>>, id: String, id
     Ok(())
 }
 
-/// One stream is one connection to the server's own HTTP port, both ways. The first request
-/// line (method and path, never the query, which can carry signatures) goes to the log.
+/// ALPN of the TLS a device wraps a relayed stream in (end to end, to Diamond's identity).
+pub(crate) const E2E_ALPN: &[u8] = b"tbe2e";
+
+/// One stream is one connection to the server's own HTTP port, both ways. A stream that opens
+/// with a TLS handshake is a device's end-to-end encryption through bronze: it is decrypted
+/// here with Diamond's identity. Others (older clients, and the direct path, already QUIC to
+/// this identity) are plain. The first request line (method and path, never the query, which
+/// can carry signatures) goes to the log.
 pub(crate) async fn pipe(mut send: quinn::SendStream, mut recv: quinn::RecvStream, http_port: u16, label: String) {
-    let Ok(tcp) = TcpStream::connect(("127.0.0.1", http_port)).await else { let _ = send.reset(1u32.into()); return };
+    let mut first = vec![0u8; 2048];
+    let n = match recv.read(&mut first).await { Ok(Some(n)) => n, _ => 0 };
+    first.truncate(n);
+    // 0x16: a TLS handshake record. No HTTP request starts with it.
+    if first.first() == Some(&0x16) {
+        let Some(identity) = IDENTITY.get().cloned() else { let _ = send.reset(1u32.into()); return };
+        let stream = tokio::io::join(std::io::Cursor::new(first).chain(recv), send);
+        let Ok(acceptor) = acceptor(&identity) else { return };
+        let Ok(Ok(mut tls)) = tokio::time::timeout(Duration::from_secs(20), acceptor.accept(stream)).await else { return };
+        let mut first = vec![0u8; 2048];
+        let n = tls.read(&mut first).await.unwrap_or(0);
+        first.truncate(n);
+        serve(tls, first, http_port, label + " (end to end)").await;
+    } else {
+        serve(tokio::io::join(recv, send), first, http_port, label).await;
+    }
+}
+
+fn acceptor(identity: &Identity) -> Result<tokio_rustls::TlsAcceptor> {
+    let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_protocol_versions(&[&rustls::version::TLS13])?
+        .with_no_client_auth()
+        .with_single_cert(vec![identity.cert.clone()], rustls::pki_types::PrivateKeyDer::Pkcs8(identity.key.clone().into()))?;
+    tls.alpn_protocols = vec![E2E_ALPN.to_vec()];
+    Ok(tokio_rustls::TlsAcceptor::from(Arc::new(tls)))
+}
+
+/// Pipe `stream` (whose first bytes, already read, are `first`) to the HTTP port and back.
+async fn serve<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(stream: S, first: Vec<u8>, http_port: u16, label: String) {
+    let (mut from_device, mut to_device) = tokio::io::split(stream);
+    let Ok(tcp) = TcpStream::connect(("127.0.0.1", http_port)).await else { return };
     let _ = tcp.set_nodelay(true);
     let started = Instant::now();
     let (mut from_server, mut to_server) = tcp.into_split();
-    let mut first = vec![0u8; 2048];
-    let n = match recv.read(&mut first).await { Ok(Some(n)) => n, _ => 0 };
-    let line = String::from_utf8_lossy(&first[..n]).lines().next().unwrap_or("").split('?').next().unwrap_or("").to_owned();
-    if n > 0 && to_server.write_all(&first[..n]).await.is_err() { return }
-    let up = async { let sent = tokio::io::copy(&mut recv, &mut to_server).await.unwrap_or(0); let _ = to_server.shutdown().await; sent };
-    let down = async { let got = tokio::io::copy(&mut from_server, &mut send).await.unwrap_or(0); let _ = send.finish(); got };
+    let line = String::from_utf8_lossy(&first).lines().next().unwrap_or("").split('?').next().unwrap_or("").to_owned();
+    if !first.is_empty() && to_server.write_all(&first).await.is_err() { return }
+    let up = async { let sent = tokio::io::copy(&mut from_device, &mut to_server).await.unwrap_or(0); let _ = to_server.shutdown().await; sent };
+    let down = async { let got = tokio::io::copy(&mut from_server, &mut to_device).await.unwrap_or(0); let _ = to_device.shutdown().await; got };
     let (_, down_bytes) = tokio::join!(up, down);
     eprintln!("{label}: stream {line} → {down_bytes} bytes in {} ms", started.elapsed().as_millis());
 }
@@ -411,5 +476,80 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&reply), "HTTP/1.1 200 OK\r\n\r\nheard GET /v1/ping HTTP/1.1");
         assert_eq!(state.lock().unwrap()["state"], "open");
         Ok(())
+    }
+
+    /// Through bronze: a device's stream wrapped in TLS to Diamond's identity reaches the HTTP
+    /// port decrypted, and a plain stream (an older client) still works beside it.
+    #[tokio::test]
+    async fn a_relayed_stream_is_decrypted_end_to_end_and_plain_ones_still_work() -> Result<()> {
+        let http = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let http_port = http.local_addr()?.port();
+        tokio::spawn(async move {
+            while let Ok((mut tcp, _)) = http.accept().await {
+                tokio::spawn(async move {
+                    let mut request = [0u8; 256];
+                    let n = tcp.read(&mut request).await.unwrap_or(0);
+                    let _ = tcp.write_all(format!("HTTP/1.1 200 OK\r\n\r\nheard {}", String::from_utf8_lossy(&request[..n]).lines().next().unwrap_or("")).as_bytes()).await;
+                });
+            }
+        });
+        let dir = std::env::temp_dir().join(format!("tb-identity-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        load_identity(&dir)?;
+        let pinned = fingerprint().unwrap();
+        // bronze's leg, as a QUIC connection whose streams are piped here.
+        let made = rcgen::generate_simple_self_signed(vec!["bronze".into()])?;
+        let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+            .with_protocol_versions(&[&rustls::version::TLS13])?.with_no_client_auth()
+            .with_single_cert(vec![made.cert.der().clone()], rustls::pki_types::PrivateKeyDer::Pkcs8(made.key_pair.serialize_der().into()))?;
+        tls.alpn_protocols = vec![b"t".to_vec()];
+        let server = quinn::Endpoint::server(quinn::ServerConfig::with_crypto(Arc::new(quinn::crypto::rustls::QuicServerConfig::try_from(tls)?)), "127.0.0.1:0".parse()?)?;
+        let address = server.local_addr()?;
+        tokio::spawn(async move {
+            let connection = server.accept().await.unwrap().await.unwrap();
+            while let Ok((send, recv)) = connection.accept_bi().await { tokio::spawn(pipe(send, recv, http_port, "Relay".into())); }
+        });
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(made.cert.der().clone())?;
+        let mut tls = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+            .with_protocol_versions(&[&rustls::version::TLS13])?.with_root_certificates(roots).with_no_client_auth();
+        tls.alpn_protocols = vec![b"t".to_vec()];
+        let mut client = quinn::Endpoint::client("127.0.0.1:0".parse()?)?;
+        client.set_default_client_config(quinn::ClientConfig::new(Arc::new(quinn::crypto::rustls::QuicClientConfig::try_from(tls)?)));
+        let connection = client.connect(address, "bronze")?.await?;
+
+        // End to end: TLS inside the stream, Diamond's certificate checked by its fingerprint.
+        let (send, recv) = connection.open_bi().await?;
+        let mut e2e = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+            .with_protocol_versions(&[&rustls::version::TLS13])?
+            .dangerous().with_custom_certificate_verifier(Arc::new(FingerprintOnly(pinned, Arc::new(rustls::crypto::ring::default_provider())))).with_no_client_auth();
+        e2e.alpn_protocols = vec![E2E_ALPN.to_vec()];
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(e2e));
+        let mut stream = connector.connect(rustls::pki_types::ServerName::try_from("torrbaby-diamond")?, tokio::io::join(recv, send)).await?;
+        stream.write_all(b"GET /v1/ping HTTP/1.1\r\n\r\n").await?;
+        let mut reply = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut reply)).await??;
+        assert_eq!(String::from_utf8_lossy(&reply), "HTTP/1.1 200 OK\r\n\r\nheard GET /v1/ping HTTP/1.1");
+
+        // Plain, as before.
+        let (mut send, mut recv) = connection.open_bi().await?;
+        send.write_all(b"GET /v1/status HTTP/1.1\r\n\r\n").await?;
+        send.finish()?;
+        let reply = tokio::time::timeout(Duration::from_secs(5), recv.read_to_end(4096)).await??;
+        assert_eq!(String::from_utf8_lossy(&reply), "HTTP/1.1 200 OK\r\n\r\nheard GET /v1/status HTTP/1.1");
+        let _ = std::fs::remove_dir_all(dir);
+        Ok(())
+    }
+
+    #[derive(Debug)]
+    struct FingerprintOnly(String, Arc<rustls::crypto::CryptoProvider>);
+    impl rustls::client::danger::ServerCertVerifier for FingerprintOnly {
+        fn verify_server_cert(&self, cert: &rustls::pki_types::CertificateDer<'_>, _: &[rustls::pki_types::CertificateDer<'_>], _: &rustls::pki_types::ServerName<'_>, _: &[u8], _: rustls::pki_types::UnixTime) -> std::result::Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+            let digest: String = Sha256::digest(cert.as_ref()).iter().map(|b| format!("{b:02x}")).collect();
+            if digest == self.0 { Ok(rustls::client::danger::ServerCertVerified::assertion()) } else { Err(rustls::Error::General("not Diamond".into())) }
+        }
+        fn verify_tls12_signature(&self, m: &[u8], c: &rustls::pki_types::CertificateDer<'_>, d: &rustls::DigitallySignedStruct) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> { rustls::crypto::verify_tls12_signature(m, c, d, &self.1.signature_verification_algorithms) }
+        fn verify_tls13_signature(&self, m: &[u8], c: &rustls::pki_types::CertificateDer<'_>, d: &rustls::DigitallySignedStruct) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> { rustls::crypto::verify_tls13_signature(m, c, d, &self.1.signature_verification_algorithms) }
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> { self.1.signature_verification_algorithms.supported_schemes() }
     }
 }

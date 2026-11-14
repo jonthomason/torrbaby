@@ -215,6 +215,7 @@ pub async fn serve(
             tokio::time::sleep(std::time::Duration::from_secs(600)).await;
         }
     });
+    if let Err(error) = crate::direct::load_identity(&service.data_dir) { eprintln!("Identity: {error:#}") }
     // Off in previews and tests: only the live server holds the connection to bronze.
     let rendezvous_task = (!preview).then(|| service.config.rendezvous.clone()).flatten()
         .map(|config| crate::rendezvous::spawn(config, service.config.listen_port));
@@ -1596,7 +1597,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         // /v1/status (with the whole processing queue) is for the screens that show it.
         ("GET","/v1/ping") => {
             let state = db.state()?;
-            Ok(json!({"version":env!("CARGO_PKG_VERSION"),"server":{"name":state["server"]["name"],"id":state["server"]["id"],"routes":ROUTES.read().map(|r|r.clone()).unwrap_or_default(),"relay":crate::rendezvous::advertised()}}))
+            Ok(json!({"version":env!("CARGO_PKG_VERSION"),"server":{"name":state["server"]["name"],"id":state["server"]["id"],"routes":ROUTES.read().map(|r|r.clone()).unwrap_or_default(),"relay":crate::rendezvous::advertised(),"identity":crate::direct::fingerprint()}}))
         }
         ("GET","/v1/status") => {
             let state = db.state()?;
