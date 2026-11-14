@@ -256,7 +256,8 @@ unsafe impl Send for Context {}
 #[unsafe(no_mangle)]
 pub extern "C" fn tbtunnel_start(mtu: u16, write: PacketWriter, context: *mut std::ffi::c_void) -> bool {
     tbtunnel_stop();
-    let Some((stack, mut output)) = packet::Stack::start(mtu, Box::new(carrier), Duration::from_secs(20)) else { return false };
+    let direct = || TUNNEL.lock().ok().and_then(|held| held.as_ref().map(|t| t.connection.clone())).filter(|c| c.close_reason().is_none());
+    let Some((stack, mut output)) = packet::Stack::start(mtu, Box::new(carrier), Box::new(direct), Duration::from_secs(20)) else { return false };
     let context = Context(context);
     stack.runtime.spawn(async move {
         let context = context;
@@ -291,9 +292,9 @@ pub extern "C" fn tbtunnel_stats(buffer: *mut c_char, capacity: usize) -> i32 {
     use packet::stats::*;
     if buffer.is_null() || capacity == 0 { return -1 }
     let mut line = format!(
-        "in {} pkts/{} KB, out {} pkts/{} KB, dropped in {}, streams down {} KB up {} KB, flows open {} (opened {}, abandoned {}, uncarried {})",
+        "in {} pkts/{} KB, out {} pkts/{} KB, dropped in {}, streams down {} KB up {} KB, flows open {} (opened {}, abandoned {}, uncarried {}, moved to direct {})",
         get(&PACKETS_IN), get(&BYTES_IN) / 1024, get(&PACKETS_OUT), get(&BYTES_OUT) / 1024, get(&DROPPED_IN),
-        get(&STREAM_DOWN) / 1024, get(&STREAM_UP) / 1024, get(&FLOWS_OPEN), get(&FLOWS_OPENED), get(&FLOWS_ABANDONED), get(&FLOWS_UNCARRIED));
+        get(&STREAM_DOWN) / 1024, get(&STREAM_UP) / 1024, get(&FLOWS_OPEN), get(&FLOWS_OPENED), get(&FLOWS_ABANDONED), get(&FLOWS_UNCARRIED), get(&FLOWS_MOVED));
     for (name, slot) in [("direct", &TUNNEL), ("relay", &RELAY)] {
         let connection = slot.lock().ok().and_then(|held| held.as_ref().map(|t| t.connection.clone()));
         if let Some(connection) = connection.filter(|c| c.close_reason().is_none()) {

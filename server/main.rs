@@ -1,4 +1,21 @@
 //! Native server and CLI. Production cutover follows API and data parity checks.
+
+/// Every line the server writes to its log (stderr, which launchd keeps in rust-server.log)
+/// starts with the local date and time, so it can be lined up with a device's own log.
+/// Defined before the modules so `eprintln!` in all of them is this one.
+macro_rules! eprintln {
+    () => { ::std::eprintln!("{}", $crate::log_stamp()) };
+    ($($arg:tt)*) => { ::std::eprintln!("{} {}", $crate::log_stamp(), format_args!($($arg)*)) };
+}
+
+/// "2026-11-14 14:22:30.123", in the server's local time.
+pub fn log_stamp() -> String {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let moment = now.as_secs() as libc::time_t;
+    let mut parts: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { libc::localtime_r(&moment, &mut parts) };
+    format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}", parts.tm_year + 1900, parts.tm_mon + 1, parts.tm_mday, parts.tm_hour, parts.tm_min, parts.tm_sec, now.subsec_millis())
+}
 mod trials;
 mod punch;
 mod direct;

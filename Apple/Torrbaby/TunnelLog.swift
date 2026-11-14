@@ -88,3 +88,36 @@ struct TunnelShared: Codable, Equatable {
     }
 }
 #endif
+
+#if os(iOS)
+/// Another VPN took over (iOS runs one at a time). The extension records it as it stops, so the
+/// app knows even if it was suspended then; the tunnel then stays off until Torrbaby is next
+/// launched, when it takes over again. Kept in the shared keychain group, like the log.
+enum TunnelYield {
+    private static var group: String? { Bundle.main.object(forInfoDictionaryKey: "TorrbabySharedKeychainGroup") as? String }
+    private static func query(_ group: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "org.torrbaby.tunnel-yield",
+         kSecAttrAccount as String: "yielded", kSecAttrAccessGroup as String: group]
+    }
+
+    static var yielded: Bool {
+        get {
+            guard let group else { return false }
+            var request = query(group)
+            request[kSecReturnData as String] = true
+            var result: CFTypeRef?
+            return SecItemCopyMatching(request as CFDictionary, &result) == errSecSuccess && (result as? Data) == Data([1])
+        }
+        set {
+            guard let group else { return }
+            let data = Data([newValue ? 1 : 0])
+            if SecItemUpdate(query(group) as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecItemNotFound {
+                var add = query(group)
+                add[kSecValueData as String] = data
+                add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+                SecItemAdd(add as CFDictionary, nil)
+            }
+        }
+    }
+}
+#endif

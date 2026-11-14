@@ -37,10 +37,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private let started = Date()
     private var attempting = false
     /// Behind the same NAT as Diamond (bronze sees the same public IP for both): the home
-    /// network reaches Diamond, so the tunnel stands down (no relay, no direct path, no
-    /// keepalives) until the network changes or 5 minutes pass.
+    /// network reaches Diamond, so the tunnel goes quiet (no relay, no direct path, no
+    /// keepalives, nothing to bronze) until the network changes.
     private var atHome = false
-    private var lastHomeCheck = Date.distantPast
     /// The public IP the direct path was punched from, and when bronze was last asked.
     private var punchedFrom: String?
     private var lastInfo = Date.distantPast
@@ -137,6 +136,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         note("stopping: reason \(reason.rawValue) (\(Self.describe(reason)))")
+        // Another VPN took over: Torrbaby leaves it alone until it is next launched.
+        if reason == .superceded { TunnelYield.yielded = true }
         keeper?.cancel(); monitor?.cancel()
         tbtunnel_stop(); tbdirect_stop(); tbdirect_relay_stop()
         completionHandler()
@@ -189,33 +190,47 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
     /// A different network (Wi-Fi joined or left, another carrier): both paths were opened
     /// from the old one, so they are dropped and opened again from here.
+    ///
+    /// A change is acted on once it has held for 3 s: Wi-Fi and cellular often swap back and forth
+    /// for a moment (Wi-Fi joined, lost, joined again), and a flap that ends where it started
+    /// leaves both paths as they were.
     private func watchNetwork() {
         let monitor = NWPathMonitor()
+        let queue = DispatchQueue(label: "org.torrbaby.tunnel.path")
         monitor.pathUpdateHandler = { [weak self] path in
             guard let self else { return }
             PunchProbe.preferredInterface = path.availableInterfaces.first { $0.type == .wifi || $0.type == .cellular }?.name
             PunchProbe.gateways = path.gateways.compactMap { if case .hostPort(.ipv4(let address), _) = $0 { "\(address)" } else { nil } }.sorted().joined(separator: ",")
             let signature = PunchProbe.networkSignature()
-            if signature != self.networkSignature {
-                if !self.networkSignature.isEmpty {
-                    // The direct path's hole was for the old network: punched again. The relay
-                    // moves with QUIC to the new network and keeps bridging meanwhile (bronze has a
-                    // public address); only if it cannot move is it opened again.
-                    tbdirect_stop()
-                    let probe = PunchProbe(count: 1)
-                    let moved = probe.ready && tbdirect_relay_alive() && probe.take(0).map { tbdirect_relay_rebind($0) } == true
-                    probe.close()
-                    if !moved { tbdirect_relay_stop() }
-                    self.note("network changed (\(self.networkSignature) → \(signature)): direct path dropped, relay " + (moved ? "moved to the new network" : "reopening"))
-                    self.lastAttempt = .distantPast
-                    self.atHome = false; self.punchedFrom = nil
-                    self.punchFailures = 0; self.nextPunch = .distantPast; self.punchedOnThisNetwork = false; self.publicIP = nil
-                }
-                self.networkSignature = signature
+            if self.networkSignature.isEmpty { self.networkSignature = signature; return }
+            self.settling?.cancel()
+            guard signature != self.networkSignature else { return }
+            let settle = DispatchWorkItem { [weak self] in
+                guard let self, PunchProbe.networkSignature() == signature, signature != self.networkSignature else { return }
+                self.networkChanged(to: signature)
             }
+            self.settling = settle
+            queue.asyncAfter(deadline: .now() + 3, execute: settle)
         }
-        monitor.start(queue: DispatchQueue(label: "org.torrbaby.tunnel.path"))
+        monitor.start(queue: queue)
         self.monitor = monitor
+    }
+    private var settling: DispatchWorkItem?
+
+    /// A different network has held for 3 s: the direct path's hole was for the old one, so it
+    /// is punched again. The relay moves with QUIC to the new network and keeps bridging
+    /// meanwhile (bronze has a public address); only if it cannot move is it opened again.
+    private func networkChanged(to signature: String) {
+        tbdirect_stop()
+        let probe = PunchProbe(count: 1)
+        let moved = probe.ready && tbdirect_relay_alive() && probe.take(0).map { tbdirect_relay_rebind($0) } == true
+        probe.close()
+        if !moved { tbdirect_relay_stop() }
+        note("network changed (\(networkSignature) → \(signature)): direct path dropped, relay " + (moved ? "moved to the new network" : "reopening"))
+        networkSignature = signature
+        lastAttempt = .distantPast
+        atHome = false; punchedFrom = nil
+        punchFailures = 0; nextPunch = .distantPast; punchedOnThisNetwork = false; publicIP = nil
     }
 
     /// Keep the relay and the direct path open: check every few seconds, open what is closed.
@@ -267,11 +282,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             note("TCP stack stopped: starting it again")
             _ = startStack()
         }
-        if atHome {
-            guard Date().timeIntervalSince(lastHomeCheck) > 300 else { return }
-            atHome = false
-            note("checking whether this is still the home network")
-        }
+        if atHome { return }
         if !tbdirect_relay_alive() { loadConfiguration(); await openRelay() }
         // Every 6 s, bronze's view: at home, or the public address moved (a carrier switch
         // behind a hotspot, invisible from here) and the direct path's hole is for the old one.
@@ -282,7 +293,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 if let home = info.homeIP, home == info.ip {
                     note("at home (same public address as Diamond, \(home)): standing down")
                     tbdirect_stop(); tbdirect_relay_stop()
-                    atHome = true; lastHomeCheck = Date(); punchedFrom = nil
+                    atHome = true; punchedFrom = nil
                     status = "at home: Diamond is on this network"
                     return
                 }

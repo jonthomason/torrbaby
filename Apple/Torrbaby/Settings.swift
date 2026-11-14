@@ -395,9 +395,6 @@ private struct ConnectionSettings: View {
             LabeledContent { Text(LocalizedStringKey(store.connectionLabel)) } label: { Text("Status") }
             LabeledContent("Server", value: store.server.isEmpty ? L10n.text("Not configured") : store.serverName.isEmpty ? store.primaryAddress : store.serverName)
         }
-        #if os(iOS)
-        TunnelSettingSection()
-        #endif
         ConnectionStatusSections()
         SwiftUI.Section { Button("Edit connection") { showConnect = true } }
     }
@@ -943,18 +940,3 @@ struct ProcessingAttention: View {
 }
 #endif
 
-#if os(iOS)
-/// Whether Torrbaby's tunnel may disconnect another VPN to connect. Without another VPN it
-/// always connects by itself.
-struct TunnelSettingSection: View {
-    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
-    @EnvironmentObject var store: Store
-    @AppStorage(PacketTunnel.replacesOtherVPNKey) private var replaces = false
-    var body: some View {
-        SwiftUI.Section {
-            Toggle("Turn off another VPN to connect", isOn: $replaces)
-                .onChange(of: replaces) { _, on in if on { store.autoConnectTunnel() } }
-        } header: { Text("Torrbaby tunnel") }
-    }
-}
-#endif

@@ -834,7 +834,6 @@ final class L10n {
     IDS.put("Try a shorter title or another source.", R.string.ui_bcabdf3a5848);
     IDS.put("Try again", R.string.ui_042c862e4467);
     IDS.put("Try reconnecting", R.string.ui_8310b022d173);
-    IDS.put("Turn off another VPN to connect", R.string.ui_ff0e1dd8df35);
     IDS.put("UPLOAD", R.string.ui_3c45be13a1a6);
     IDS.put("UPLOAD HISTORY", R.string.ui_9241930fa68d);
     IDS.put("UPLOADING", R.string.ui_c096eba0f2ba);

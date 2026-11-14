@@ -1,6 +1,7 @@
 #if os(iOS)
 import Foundation
 import NetworkExtension
+import UIKit
 
 /// The app's side of Torrbaby's packet tunnel (the extension is Apple/Tunnel): install it,
 /// turn it on or off, and say whether it is up. While it is connected, Diamond is
@@ -34,9 +35,8 @@ import NetworkExtension
         update()
     }
 
-    /// Install (iOS asks once) or update the configuration, and connect. Not on demand yet:
-    /// on a device that also runs Tailscale, iOS reconnecting this would knock Tailscale off.
-    /// On demand belongs to devices that use only this tunnel (the coming Automatic setting).
+    /// Install (iOS asks once) or update the configuration, and connect (on demand, so iOS keeps
+    /// it connected, after a restart too, until another VPN takes over).
     func turnOn(relay: String, relayFingerprint: String, stun: String, token: String) async {
         lastError = nil
         heldOff = false
@@ -50,11 +50,8 @@ import NetworkExtension
         manager.protocolConfiguration = configuration
         manager.localizedDescription = "Torrbaby"
         manager.isEnabled = true
-        // On demand (iOS keeps it connected, after a restart too) only where it cannot fight
-        // another VPN: none is connected, or Settings lets this one replace it.
-        let onDemand = Self.otherVPN() == nil || UserDefaults.standard.bool(forKey: Self.replacesOtherVPNKey)
         manager.onDemandRules = [NEOnDemandRuleConnect()]
-        manager.isOnDemandEnabled = onDemand
+        manager.isOnDemandEnabled = true
         do {
             try await manager.saveToPreferences()
             try await manager.loadFromPreferences()
@@ -82,9 +79,8 @@ import NetworkExtension
         get { UserDefaults.standard.bool(forKey: "tunnelHeldOff") }
         set { UserDefaults.standard.set(newValue, forKey: "tunnelHeldOff") }
     }
-    /// Settings: connect even while another VPN (such as Tailscale) is connected, which
-    /// disconnects it (iOS connects one VPN at a time). Off by default.
-    static let replacesOtherVPNKey = "tunnelReplacesOtherVPN"
+    /// This launch has been handled (the tunnel taken back from another VPN if need be).
+    private var launched = false
 
     /// Another VPN's interface is up: a utun with an IPv4 address other than this tunnel's
     /// (iOS's own utun interfaces carry only IPv6 link-local addresses). Tailscale's is 100.x.
@@ -108,22 +104,38 @@ import NetworkExtension
         return found
     }
 
-    /// Connect automatically (at launch and on returning to the foreground): always when no
-    /// other VPN is connected, and over another VPN only when Settings says so. Not after the
-    /// user disconnected it, and not before the app knows bronze and has its credentials.
+    /// Connect automatically. At launch it connects even over another VPN (iOS runs one at a
+    /// time, so that one is disconnected). Once another VPN has taken over, or was started while
+    /// this was off, it stays off, on demand too, until Torrbaby is next launched: returning to
+    /// the foreground does not take the connection back. Never after the user disconnected it
+    /// on the Connection page, and not before the app knows bronze and has its credentials.
     func autoConnect(relay: String, relayFingerprint: String, stun: String, token: String) async {
         // Keep the extension's copy current (a new token, a new bronze) even while connected.
         if installed, !relay.isEmpty, relayFingerprint.count == 64, !token.isEmpty {
             TunnelShared(relay: relay, relayFingerprint: relayFingerprint, stun: stun, token: token).save()
         }
-        // Another VPN turned up and may not be replaced: on demand off, so iOS does not fight it.
-        if let manager, manager.isOnDemandEnabled, Self.otherVPN() != nil, !UserDefaults.standard.bool(forKey: Self.replacesOtherVPNKey) {
+        let ready = !relay.isEmpty && relayFingerprint.count == 64 && !token.isEmpty
+        // The launch: the first call of this process with the credentials known (on a first
+        // launch they come after pairing), with the app on screen. iOS also starts the app in
+        // the background for downloads; that is not the user launching Torrbaby.
+        let launching = !launched && ready && UIApplication.shared.applicationState != .background
+        if launching { launched = true; TunnelYield.yielded = false }
+        else if TunnelYield.yielded || (!connected && status != .connecting && Self.otherVPN() != nil) {
+            await yield()
+            return
+        }
+        guard !connected, status != .connecting, !heldOff, ready else { return }
+        await turnOn(relay: relay, relayFingerprint: relayFingerprint, stun: stun, token: token)
+    }
+
+    /// Another VPN has the device: stay off until the next launch. On demand goes off, or iOS
+    /// would reconnect this and knock the other VPN off.
+    private func yield() async {
+        TunnelYield.yielded = true
+        if let manager, manager.isOnDemandEnabled {
             manager.isOnDemandEnabled = false
             try? await manager.saveToPreferences()
         }
-        guard !connected, status != .connecting, !heldOff, !relay.isEmpty, relayFingerprint.count == 64, !token.isEmpty else { return }
-        if Self.otherVPN() != nil && !UserDefaults.standard.bool(forKey: Self.replacesOtherVPNKey) { return }
-        await turnOn(relay: relay, relayFingerprint: relayFingerprint, stun: stun, token: token)
     }
 
     func turnOff() async {
@@ -183,6 +195,8 @@ import NetworkExtension
         let wasUp = [.connected, .connecting, .reasserting, .disconnecting].contains(status)
         status = now
         if (now == .connected) != wasConnected { onChange?() }
+        // Disconnected with another VPN up: that VPN took over.
+        if now == .disconnected, Self.otherVPN() != nil, wasUp || manager?.isOnDemandEnabled == true { Task { await yield() } }
         if now == .disconnected, wasUp, let connection = manager?.connection {
             connection.fetchLastDisconnectError { [weak self] error in
                 let text = error.map { ($0 as NSError).localizedDescription + " (\(($0 as NSError).domain) \(($0 as NSError).code))" }
@@ -197,7 +211,7 @@ import NetworkExtension
         case .connecting: "connecting"
         case .disconnecting: "disconnecting"
         case .reasserting: "reconnecting"
-        case .disconnected: "VPN off" + (heldOff ? ", disconnected here" : "") + (Self.otherVPN().map { "; \($0) is connected" } ?? "")
+        case .disconnected: "VPN off" + (heldOff ? ", disconnected here" : TunnelYield.yielded ? ", another VPN took over (back at the next launch)" : "") + (Self.otherVPN().map { "; \($0) is connected" } ?? "")
         case .invalid: installed ? "not configured" : "not installed"
         @unknown default: "unknown"
         }

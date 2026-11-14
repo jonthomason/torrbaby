@@ -52,6 +52,9 @@ impl AsyncWrite for Packets {
 
 /// Where a TCP connection from the tunnel goes: a QUIC connection to open a stream on.
 pub type Carrier = Box<dyn Fn() -> Option<quinn::Connection> + Send + Sync>;
+/// The direct path's connection while it is open (a connection carried by anything else is on
+/// the relay).
+pub type Direct = Box<dyn Fn() -> Option<quinn::Connection> + Send + Sync>;
 
 /// The running stack: packets in through `input`, packets out through the receiver given to
 /// `start`'s caller.
@@ -63,11 +66,18 @@ pub struct Stack {
 impl Stack {
     /// Start the stack. `carrier` is asked for a connection whenever a TCP connection arrives;
     /// while it has none (the path is being punched) the connection waits up to `wait`.
-    pub fn start(mtu: u16, carrier: Carrier, wait: Duration) -> Option<(Stack, mpsc::UnboundedReceiver<Vec<u8>>)> {
+    ///
+    /// A connection carried by the relay is closed once the direct path has been open for 2 s,
+    /// so the player's next request takes the direct path. Players hold one connection for as
+    /// long as they can: video started while the path was being punched (just back from the
+    /// background, a new network) otherwise stayed on the relay to the end, at the relay's
+    /// speed, with the direct path open and unused.
+    pub fn start(mtu: u16, carrier: Carrier, direct: Direct, wait: Duration) -> Option<(Stack, mpsc::UnboundedReceiver<Vec<u8>>)> {
         let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().ok()?;
         let (input, incoming) = mpsc::channel(1024);
         let (outgoing, output) = mpsc::unbounded_channel();
         let carrier = std::sync::Arc::new(carrier);
+        let direct = std::sync::Arc::new(direct);
         runtime.spawn(async move {
             let mut config = ipstack::IpStackConfig::default();
             config.mtu_unchecked(mtu);
@@ -83,6 +93,7 @@ impl Stack {
             while let Ok(stream) = stack.accept().await {
                 let ipstack::IpStackStream::Tcp(tcp) = stream else { continue };
                 let carrier = carrier.clone();
+                let direct = direct.clone();
                 tokio::spawn(async move {
                     let started = tokio::time::Instant::now();
                     let connection = loop {
@@ -91,6 +102,7 @@ impl Stack {
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     };
                     let Some(connection) = connection else { stats::add(&stats::FLOWS_UNCARRIED, 1); return };
+                    let on_relay = direct().is_none_or(|d| d.stable_id() != connection.stable_id());
                     let Ok((mut send, mut recv)) = connection.open_bi().await else { stats::add(&stats::FLOWS_UNCARRIED, 1); return };
                     stats::add(&stats::FLOWS_OPENED, 1);
                     stats::add(&stats::FLOWS_OPEN, 1);
@@ -141,11 +153,23 @@ impl Stack {
                         }
                         true
                     };
+                    // On the relay: watch for the direct path (open at two checks a second apart).
+                    let moved = async {
+                        if !on_relay { return std::future::pending::<()>().await }
+                        let mut seen = 0;
+                        loop {
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            seen = if direct().is_some() { seen + 1 } else { 0 };
+                            if seen >= 2 { return }
+                        }
+                    };
                     tokio::pin!(down);
                     tokio::pin!(up);
+                    tokio::pin!(moved);
                     tokio::select! {
                         delivered = &mut down => { if delivered { let _ = up.await; } delivered }
                         failed = &mut up => if failed { false } else { down.await },
+                        _ = &mut moved => { stats::add(&stats::FLOWS_MOVED, 1); false }
                     }
                     };
                     // A connection abandoned midway: tell QUIC to discard what it holds for
@@ -182,6 +206,8 @@ pub mod stats {
     pub static FLOWS_OPENED: AtomicU64 = AtomicU64::new(0);
     pub static FLOWS_OPEN: AtomicU64 = AtomicU64::new(0);
     pub static FLOWS_ABANDONED: AtomicU64 = AtomicU64::new(0);
+    /// Connections closed on the relay so their next request takes the direct path.
+    pub static FLOWS_MOVED: AtomicU64 = AtomicU64::new(0);
     /// Connections that found no direct path or relay to carry them.
     pub static FLOWS_UNCARRIED: AtomicU64 = AtomicU64::new(0);
     /// Bytes delivered from Diamond to iOS, and from iOS to Diamond, through streams.
