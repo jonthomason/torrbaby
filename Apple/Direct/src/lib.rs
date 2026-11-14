@@ -73,15 +73,20 @@ pub extern "C" fn tbdirect_start(fd: i32, server: *const c_char, fingerprint: *c
 #[unsafe(no_mangle)]
 pub extern "C" fn tbdirect_start_lean(fd: i32, server: *const c_char, fingerprint: *const c_char) -> u16 {
     tbdirect_stop();
-    open(&TUNNEL, fd, server, fingerprint, b"tbdirect", "torrbaby-direct", 8, (5, 45), LEAN_WINDOWS)
+    open(&TUNNEL, fd, server, fingerprint, b"tbdirect", "torrbaby-direct", 8, LEAN_TIMING, LEAN_WINDOWS)
 }
 
 /// As `tbdirect_relay_start`, with the extension's smaller buffers.
 #[unsafe(no_mangle)]
 pub extern "C" fn tbdirect_relay_start_lean(fd: i32, server: *const c_char, fingerprint: *const c_char) -> u16 {
     tbdirect_relay_stop();
-    open(&RELAY, fd, server, fingerprint, b"tbrelay", "torrbaby-rendezvous", 5, (10, 45), LEAN_WINDOWS)
+    open(&RELAY, fd, server, fingerprint, b"tbrelay", "torrbaby-rendezvous", 5, LEAN_TIMING, LEAN_WINDOWS)
 }
+
+/// Keepalive and idle limit (s) in the packet tunnel extension, which iOS never suspends: a
+/// path silent for 15 s (three keepalives lost) is dead, and its requests fail over at once,
+/// not after 45 s. (The app keeps 45 s: its keepalives stop while iOS suspends it.)
+const LEAN_TIMING: (u64, u64) = (5, 15);
 
 /// QUIC receive windows (per stream, per connection).
 const APP_WINDOWS: (u32, u32) = (8 << 20, 32 << 20);
@@ -340,8 +345,8 @@ pub fn punch_json(request: String, mut report: impl FnMut(&punch::Report)) -> se
         Ok(punched) => {
             tbdirect_stop();
             let started = std::time::Instant::now();
-            let port = open_on(&TUNNEL, punched.socket, punched.server, punched.fingerprint, b"tbdirect", "torrbaby-direct", 8, (5, 45),
-                if lean { LEAN_WINDOWS } else { APP_WINDOWS });
+            let port = open_on(&TUNNEL, punched.socket, punched.server, punched.fingerprint, b"tbdirect", "torrbaby-direct", 8,
+                if lean { LEAN_TIMING } else { (5, 45) }, if lean { LEAN_WINDOWS } else { APP_WINDOWS });
             if port == 0 {
                 json!({"ok": false, "failure": "Punched, but QUIC did not open on the punched socket within 8 s", "session": last.session, "window_failed_at": null, "report": last.json()})
             } else {
