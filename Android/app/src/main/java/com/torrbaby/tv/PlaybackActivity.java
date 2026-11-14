@@ -42,6 +42,7 @@ public class PlaybackActivity extends Activity {
    */
   private LinearLayout heading;
   private boolean controlsVisible, advancingEpisode;
+  private boolean navigatingControls;
   /** Start of the closing credits (ms) that Diamond detected, or -1. */
   private volatile long creditsStart = -1;
   private int progressTicks;
@@ -207,8 +208,8 @@ public class PlaybackActivity extends Activity {
         new ExoPlayer.Builder(this)
             .setMediaSourceFactory(
                 new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(factory))
-            .setSeekBackIncrementMs(10000)
-            .setSeekForwardIncrementMs(30000)
+            .setSeekBackIncrementMs(15000)
+            .setSeekForwardIncrementMs(15000)
             .build();
     player.setAudioAttributes(
         new AudioAttributes.Builder()
@@ -281,6 +282,7 @@ public class PlaybackActivity extends Activity {
     addHeading();
     view.setControllerVisibilityListener((PlayerView.ControllerVisibilityListener) visibility -> {
       controlsVisible = visibility == View.VISIBLE;
+      if (!controlsVisible) navigatingControls = false;
       heading.setVisibility(controlsVisible ? View.VISIBLE : View.GONE);
       updateNextEpisodeButton();
     });
@@ -603,6 +605,26 @@ public class PlaybackActivity extends Activity {
   public boolean dispatchKeyEvent(KeyEvent e) {
     if (view != null && player != null) {
       int key = e.getKeyCode();
+      // Revealing the controls after a skip does not enter control navigation.
+      // Up/Down explicitly enters it; hiding the controls restores direct skipping.
+      if ((key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN)
+          && !navigatingControls) {
+        if (e.getAction() == KeyEvent.ACTION_DOWN) {
+          navigatingControls = true;
+          view.showController();
+          view.findViewById(androidx.media3.ui.R.id.exo_play_pause).requestFocus();
+        }
+        return true;
+      }
+      if (!navigatingControls
+          && (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT)) {
+        if (e.getAction() == KeyEvent.ACTION_DOWN) {
+          if (key == KeyEvent.KEYCODE_DPAD_LEFT) player.seekBack();
+          else player.seekForward();
+          view.showController();
+        }
+        return true;
+      }
       if (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
         if (nextEpisodeButton != null && nextEpisodeButton.getVisibility() == View.VISIBLE
             && nextEpisodeButton.hasFocus() && !view.isControllerFullyVisible()) {
