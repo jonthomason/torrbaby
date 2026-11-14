@@ -793,8 +793,10 @@ final class L10n {
     IDS.put("Title A–Z", R.string.ui_44a4597b5507);
     IDS.put("To remove this drive, first move everything on it to another drive.", R.string.ui_476e06db8f10);
     IDS.put("To remove this drive, first move its titles to another drive from each title’s Manage Files.", R.string.ui_eafdcec8c9d0);
+    IDS.put("Torrbaby connects its own tunnel to your server, so playback and downloads go straight there, even in the background. iPhone and iPad allow one VPN at a time: with this on, another VPN such as Tailscale is disconnected.", R.string.ui_1c2e42cdb880);
     IDS.put("Torrbaby makes a Media folder on the drive, with Downloads, Movies and TV inside, and keeps a small file there to recognise the drive.", R.string.ui_7fc3a24d77a0);
     IDS.put("Torrbaby transfer rates", R.string.ui_625fdd6c399e);
+    IDS.put("Torrbaby tunnel", R.string.ui_fecc14ee3002);
     IDS.put("Torrent CSV", R.string.ui_7b518ca84399);
     IDS.put("Torrent action", R.string.ui_0dcf2b602af0);
     IDS.put("Torrent added", R.string.ui_cb6d24a29606);
@@ -826,6 +828,7 @@ final class L10n {
     IDS.put("Try a shorter title or another source.", R.string.ui_bcabdf3a5848);
     IDS.put("Try again", R.string.ui_042c862e4467);
     IDS.put("Try reconnecting", R.string.ui_8310b022d173);
+    IDS.put("Turn off another VPN to connect", R.string.ui_ff0e1dd8df35);
     IDS.put("UPLOAD", R.string.ui_3c45be13a1a6);
     IDS.put("UPLOAD HISTORY", R.string.ui_9241930fa68d);
     IDS.put("UPLOADING", R.string.ui_c096eba0f2ba);

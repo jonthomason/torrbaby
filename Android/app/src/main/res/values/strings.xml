@@ -782,8 +782,10 @@
     <string name="ui_44a4597b5507" formatted="false">Title A–Z</string>
     <string name="ui_476e06db8f10" formatted="false">To remove this drive, first move everything on it to another drive.</string>
     <string name="ui_eafdcec8c9d0" formatted="false">To remove this drive, first move its titles to another drive from each title’s Manage Files.</string>
+    <string name="ui_1c2e42cdb880" formatted="false">Torrbaby connects its own tunnel to your server, so playback and downloads go straight there, even in the background. iPhone and iPad allow one VPN at a time: with this on, another VPN such as Tailscale is disconnected.</string>
     <string name="ui_7fc3a24d77a0" formatted="false">Torrbaby makes a Media folder on the drive, with Downloads, Movies and TV inside, and keeps a small file there to recognise the drive.</string>
     <string name="ui_625fdd6c399e" formatted="false">Torrbaby transfer rates</string>
+    <string name="ui_fecc14ee3002" formatted="false">Torrbaby tunnel</string>
     <string name="ui_7b518ca84399" formatted="false">Torrent CSV</string>
     <string name="ui_0dcf2b602af0" formatted="false">Torrent action</string>
     <string name="ui_cb6d24a29606" formatted="false">Torrent added</string>
@@ -815,6 +817,7 @@
     <string name="ui_bcabdf3a5848" formatted="false">Try a shorter title or another source.</string>
     <string name="ui_042c862e4467" formatted="false">Try again</string>
     <string name="ui_8310b022d173" formatted="false">Try reconnecting</string>
+    <string name="ui_ff0e1dd8df35" formatted="false">Turn off another VPN to connect</string>
     <string name="ui_3c45be13a1a6" formatted="false">UPLOAD</string>
     <string name="ui_9241930fa68d" formatted="false">UPLOAD HISTORY</string>
     <string name="ui_c096eba0f2ba" formatted="false">UPLOADING</string>
