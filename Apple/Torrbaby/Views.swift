@@ -203,6 +203,15 @@ struct RootView: View {
         future.removeAll()
         location = next
     }
+    /// The home hero's Play: the title's page goes on the stack with no animation while the
+    /// player covers the screen, so closing the player lands there (and Back returns home).
+    private func openTitleBeneathPlayer(_ id: String) {
+        var next = location
+        next.path.append(LibraryDestination(id: id))
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { navigate(next) }
+    }
     private func back() {
         guard let previous = past.popLast() else { return }
         future.append(location)
@@ -397,7 +406,7 @@ struct RootView: View {
                     else if selection == .subtitles { SubtitleQueueView() }
                     else if selection == .automation { AutomationView() }
                     else if selection == .settings { SettingsView(showConnect: $showConnect) }
-                    else if selection == .library || selection == nil { LibraryBrowser(showDownloads: { navigate(Location(section: .downloads)) }) }
+                    else if selection == .library || selection == nil { LibraryBrowser(showDownloads: { navigate(Location(section: .downloads)) }, openTitleBeneathPlayer: openTitleBeneathPlayer) }
                     else if selection == .movies { LibraryBrowser(kind: "movie", showDownloads: { navigate(Location(section: .downloads)) }).id("movies") }
                     else if selection == .shows { LibraryBrowser(kind: "tv", showDownloads: { navigate(Location(section: .downloads)) }).id("shows") }
                     else { TorrentListView(section: selection ?? .active) }
@@ -426,7 +435,7 @@ struct RootView: View {
                     if !pageOwnsLanguageControl { languageControls }
                 }
                 .navigationDestination(for: String.self) { hash in TorrentDetail(hash: hash).navigationBarBackButtonHidden(ownsHistoryButtons).toolbar { historyControls; languageControls } }
-                .navigationDestination(for: LibraryDestination.self) { route in LibraryDetail(titleID: route.id, autoPlay: route.play).navigationBarBackButtonHidden(ownsHistoryButtons).toolbar { historyControls; languageControls } }
+                .navigationDestination(for: LibraryDestination.self) { route in LibraryDetail(titleID: route.id).navigationBarBackButtonHidden(ownsHistoryButtons).toolbar { historyControls; languageControls } }
                 .safeAreaInset(edge: .top) {
                     if store.offline {
                         HStack {
