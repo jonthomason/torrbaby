@@ -169,7 +169,7 @@ struct ConnectionStatusSections: View {
                 } label: { Text(verbatim: "Turn on Torrbaby tunnel") }
                 .disabled(store.relayAddress.isEmpty || store.relayFingerprint.count != 64 || store.token.isEmpty)
             }
-        } header: { Text(verbatim: "Torrbaby tunnel (test)") } footer: {
+        } header: { Text(verbatim: "Torrbaby tunnel") } footer: {
             Text(verbatim: "A VPN that only reaches \(server) (10.233.0.1), straight through both NATs, kept open by iOS while Torrbaby is in the background so downloads continue. Only for a device without Tailscale: iOS connects one VPN at a time, so turning this on disconnects Tailscale.")
         }
     }
