@@ -949,4 +949,3 @@ Details	详细信息
 Checks whether this device can reach your server directly instead of through Tailscale’s relay. Nothing else uses it.	检查这台设备能否不经 Tailscale 中继、直接连接到你的服务器。其他功能不会使用这条连接。
 Turn off another VPN to connect	连接时关闭其他 VPN
 Torrbaby tunnel	Torrbaby 隧道
-Torrbaby connects its own tunnel to your server, so playback and downloads go straight there, even in the background. iPhone and iPad allow one VPN at a time: with this on, another VPN such as Tailscale is disconnected.	Torrbaby 会建立自己的隧道直连你的服务器，播放和下载都直接到达服务器，在后台也一样。iPhone 和 iPad 同时只能连接一个 VPN：打开此项后，Tailscale 等其他 VPN 会被断开。

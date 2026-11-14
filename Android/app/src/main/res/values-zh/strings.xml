@@ -782,7 +782,6 @@
     <string name="ui_44a4597b5507" formatted="false">片名 A–Z</string>
     <string name="ui_476e06db8f10" formatted="false">要移除这块硬盘，请先将其中的全部内容移到另一块硬盘。</string>
     <string name="ui_eafdcec8c9d0" formatted="false">要移除此硬盘，请先在各影片的“管理文件”中将其移到另一块硬盘。</string>
-    <string name="ui_1c2e42cdb880" formatted="false">Torrbaby 会建立自己的隧道直连你的服务器，播放和下载都直接到达服务器，在后台也一样。iPhone 和 iPad 同时只能连接一个 VPN：打开此项后，Tailscale 等其他 VPN 会被断开。</string>
     <string name="ui_7fc3a24d77a0" formatted="false">Torrbaby 会在硬盘上创建 Media 文件夹，内含 Downloads、Movies 和 TV，并保存一个小文件用于识别这块硬盘。</string>
     <string name="ui_625fdd6c399e" formatted="false">Torrbaby 传输速度</string>
     <string name="ui_fecc14ee3002" formatted="false">Torrbaby 隧道</string>

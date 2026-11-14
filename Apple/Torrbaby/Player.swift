@@ -1,6 +1,9 @@
 import SwiftUI
 import AVKit
 import OSLog
+#if os(iOS)
+import MediaPlayer
+#endif
 
 @MainActor
 private enum PlaybackSpeeds {
@@ -165,6 +168,19 @@ final class PlaybackModel: ObservableObject {
         }
         item.externalMetadata = [metadata(.commonIdentifierTitle, heading.title)]
             + (heading.context.map { [metadata(.iTunesMetadataTrackSubTitle, $0)] } ?? [])
+        // The title's poster, for Now Playing (the lock screen) when it is in the artwork cache.
+        if let titleID = playback.libraryTitleID {
+            let key = ArtworkImages.key(server: store.libraryKey, id: titleID, variant: "poster", revision: store.artworkRevision(id: titleID, variant: "poster"))
+            Task { @MainActor [weak item] in
+                guard let image = await ArtworkImages.prepare(key, variant: "poster"), let data = image.jpegData(compressionQuality: 0.85), let item else { return }
+                let artwork = AVMutableMetadataItem()
+                artwork.identifier = .commonIdentifierArtwork
+                artwork.value = data as NSData
+                artwork.dataType = kCMMetadataBaseDataType_JPEG as String
+                artwork.extendedLanguageTag = "und"
+                item.externalMetadata.append(artwork)
+            }
+        }
         #endif
         player.replaceCurrentItem(with: item)
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
@@ -518,8 +534,11 @@ class KeyboardPlayerController: AVPlayerViewController, AVPlayerViewControllerDe
         guard !pictureInPicture, let player, player.timeControlStatus != .paused else { return }
         detached = player
         self.player = nil
+        // Off the view, AVKit no longer fills the lock screen: Torrbaby does.
+        NowPlaying.shared.begin(player)
     }
     @objc private func returned() {
+        NowPlaying.shared.end()
         if let detached, player == nil { player = detached }
         detached = nil
     }
@@ -866,3 +885,78 @@ struct SubtitlePreferencesView: View {
         }
     }
 }
+
+#if os(iOS)
+/// The lock screen while a video plays with the phone locked (its player off the view, so
+/// AVKit no longer publishes it): the title, the show and episode, the poster and the time,
+/// from the item's own metadata, with play/pause, 15 s skips and scrubbing.
+@MainActor final class NowPlaying {
+    static let shared = NowPlaying()
+    private weak var player: AVPlayer?
+    private var targets: [(MPRemoteCommand, Any)] = []
+    private var observation: NSKeyValueObservation?
+
+    func begin(_ player: AVPlayer) {
+        end()
+        self.player = player
+        let center = MPRemoteCommandCenter.shared()
+        func on(_ command: MPRemoteCommand, _ action: @escaping (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus) {
+            command.isEnabled = true
+            targets.append((command, command.addTarget(handler: action)))
+        }
+        on(center.playCommand) { [weak self] _ in self?.player?.play(); self?.publish(); return .success }
+        on(center.pauseCommand) { [weak self] _ in self?.player?.pause(); self?.publish(); return .success }
+        on(center.togglePlayPauseCommand) { [weak self] _ in
+            guard let player = self?.player else { return .commandFailed }
+            if player.timeControlStatus == .paused { player.play() } else { player.pause() }
+            self?.publish(); return .success
+        }
+        center.skipForwardCommand.preferredIntervals = [15]
+        center.skipBackwardCommand.preferredIntervals = [15]
+        on(center.skipForwardCommand) { [weak self] _ in self?.skip(15); return .success }
+        on(center.skipBackwardCommand) { [weak self] _ in self?.skip(-15); return .success }
+        on(center.changePlaybackPositionCommand) { [weak self] event in
+            guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            self?.player?.seek(to: CMTime(seconds: event.positionTime, preferredTimescale: 600)) { _ in Task { @MainActor in self?.publish() } }
+            return .success
+        }
+        observation = player.observe(\.timeControlStatus) { [weak self] _, _ in Task { @MainActor in self?.publish() } }
+        publish()
+    }
+
+    func end() {
+        for (command, target) in targets { command.removeTarget(target) }
+        targets = []
+        observation = nil
+        player = nil
+    }
+
+    private func skip(_ seconds: Double) {
+        guard let player else { return }
+        let target = max(0, player.currentTime().seconds + seconds)
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600)) { _ in Task { @MainActor in self.publish() } }
+    }
+
+    private func publish() {
+        guard let player, let item = player.currentItem else { return }
+        var info: [String: Any] = [:]
+        for entry in item.externalMetadata {
+            switch entry.identifier {
+            case .commonIdentifierTitle?: info[MPMediaItemPropertyTitle] = entry.stringValue
+            case .iTunesMetadataTrackSubTitle?: info[MPMediaItemPropertyArtist] = entry.stringValue
+            case .commonIdentifierArtwork?:
+                if let data = entry.dataValue, let image = UIImage(data: data) {
+                    info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+                }
+            default: break
+            }
+        }
+        let duration = item.duration.seconds
+        if duration.isFinite { info[MPMediaItemPropertyPlaybackDuration] = duration }
+        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = player.currentTime().seconds
+        info[MPNowPlayingInfoPropertyPlaybackRate] = player.timeControlStatus == .paused ? 0.0 : Double(player.rate)
+        info[MPNowPlayingInfoPropertyMediaType] = MPNowPlayingInfoMediaType.video.rawValue
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+}
+#endif

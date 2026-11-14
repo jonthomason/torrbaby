@@ -954,9 +954,7 @@ struct TunnelSettingSection: View {
         SwiftUI.Section {
             Toggle("Turn off another VPN to connect", isOn: $replaces)
                 .onChange(of: replaces) { _, on in if on { store.autoConnectTunnel() } }
-        } header: { Text("Torrbaby tunnel") } footer: {
-            Text("Torrbaby connects its own tunnel to your server, so playback and downloads go straight there, even in the background. iPhone and iPad allow one VPN at a time: with this on, another VPN such as Tailscale is disconnected.")
-        }
+        } header: { Text("Torrbaby tunnel") }
     }
 }
 #endif

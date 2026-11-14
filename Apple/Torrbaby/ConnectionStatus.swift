@@ -29,12 +29,12 @@ struct ConnectionStatusSections: View {
         Group {
             nowSection
             pathSections
+            actionsSection
             #if os(iOS)
             tunnelSection
             directSection
             eventsSection
             #endif
-            actionsSection
         }
         .task {
             while !Task.isCancelled {
@@ -53,28 +53,57 @@ struct ConnectionStatusSections: View {
                 Image(systemName: symbol(store.path)).font(.title2).foregroundStyle(color(store.path)).frame(width: 32)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(verbatim: store.path.rawValue).font(.title3.weight(.semibold))
-                    Text(verbatim: summary).font(.subheadline).foregroundStyle(.secondary)
+                    if !summary.isEmpty { Text(verbatim: summary).font(.subheadline).foregroundStyle(.secondary) }
                 }
             }.padding(.vertical, 4)
+            #if os(iOS)
+            LabeledContent { Text(verbatim: relayReachable) } label: { Text(verbatim: "Relay") }
+            #endif
         } header: { Text(verbatim: "Connected by") } footer: {
-            // Which build is being tested: the first thing to know when reading this page.
-            Text(verbatim: AppRelease.description).font(.caption.monospaced())
+            // Which builds are running: the first thing to know when reading a screenshot.
+            Text(verbatim: versions).font(.caption.monospaced())
         }
     }
 
+    /// "App 1.0 (275) · Tunnel 1.0 (275)": the tunnel's own, as it reports it (a tunnel left
+    /// running from before an update is still the older build).
+    private var versions: String {
+        var text = "App " + AppRelease.short
+        #if os(iOS)
+        if let version = tunnelVersion { text += " · Tunnel \(version)" }
+        else if tunnel.installed { text += " · Tunnel not running" }
+        #endif
+        return text
+    }
+
+    #if os(iOS)
+    private var tunnelVersion: String? {
+        tunnelState?.split(separator: "\n").first.flatMap { $0.hasPrefix("version ") ? String($0.dropFirst(8)) : nil }
+    }
+    private var tunnelPaths: String? {
+        tunnelState.map { $0.split(separator: "\n").filter { !$0.hasPrefix("version ") }.joined(separator: "\n") }
+    }
+    private var relayReachable: String {
+        if let connected = store.relayServerConnected {
+            return (store.relayRoute != nil || tunnel.connected ? "reachable" : "closed") + (connected ? ", \(server) connected" : ", \(server) NOT connected")
+        }
+        return store.relayAddress.isEmpty ? "unknown" : "not checked yet"
+    }
+    #endif
+
     private var summary: String {
         switch store.path {
-        case .home: return "On the same network as \(server)" + ms("home")
-        case .tunnel: return "Torrbaby's own tunnel to \(server) (10.233.0.1), held open in the background" + ms("tunnel")
+        case .home: return ms("home")
+        case .tunnel: return ms("tunnel")
         case .direct:
             #if os(iOS)
-            return "Straight to \(server) through both NATs, no server in between" + ms("direct") + (store.directOpenedAt.map { ", since \(clock($0))" } ?? "")
+            return ms("direct") + (store.directOpenedAt.map { " · since \(clock($0))" } ?? "")
             #else
             return ""
             #endif
-        case .relay: return "Through bronze (\(store.relayAddress)), which passes requests to \(server)" + ms("relay")
-        case .tailscale: return "Through Tailscale" + ms("tailscale")
-        case .offline: return store.connectionError ?? "No way to \(server) answered"
+        case .relay: return ms("relay")
+        case .tailscale: return ms("tailscale")
+        case .offline: return store.connectionError ?? ""
         }
     }
 
@@ -82,14 +111,14 @@ struct ConnectionStatusSections: View {
         SwiftUI.Section {
             row("Home network", kind: "home", inUse: store.path == .home, detail: store.homeRoute.isEmpty ? store.primaryAddress : store.homeRoute)
             #if os(iOS)
-            row("Torrbaby tunnel", kind: "tunnel", inUse: store.path == .tunnel, detail: tunnel.installed ? tunnel.statusText + (tunnel.connected ? (tunnelState.map { "\n\($0)" } ?? "") : "") : "not installed")
-            row("Direct (hole punch)", kind: "direct", inUse: store.path == .direct, detail: store.directRoute == nil ? (store.directWhyNot ?? "") : "open, QUIC on the punched socket")
+            row("Torrbaby tunnel", kind: "tunnel", inUse: store.path == .tunnel, detail: tunnel.installed ? tunnel.statusText + (tunnel.connected ? (tunnelPaths.map { "\n\($0)" } ?? "") : "") : "not installed")
+            row("Direct (in the app)", kind: "direct", inUse: store.path == .direct, detail: store.directRoute == nil ? (store.directWhyNot ?? "") : "open" + (store.directOpenedAt.map { " since \(clock($0))" } ?? ""))
             row("Relay via bronze", kind: "relay", inUse: store.path == .relay, detail: relayDetail)
             #endif
-            row("Tailscale", kind: "tailscale", inUse: store.path == .tailscale, detail: !store.tailscaleInUse ? "not used: the relay through bronze replaces it" : store.awayRoute.isEmpty ? (store.fallbackServer.isEmpty ? "not set up" : store.fallbackServer) : "\(store.awayRoute) (to be retired)")
-        } header: { Text(verbatim: "Ways to \(server)") } footer: {
-            Text(verbatim: store.tailscaleInUse ? "Preference: home network, then direct, then the relay, then Tailscale. Each line shows its last check." : "Preference: home network, then direct, then the relay. Each line shows its last check.")
-        }
+            if store.tailscaleInUse {
+                row("Tailscale", kind: "tailscale", inUse: store.path == .tailscale, detail: store.awayRoute.isEmpty ? (store.fallbackServer.isEmpty ? "not set up" : store.fallbackServer) : store.awayRoute)
+            }
+        } header: { Text(verbatim: "Ways to \(server)") }
     }
 
     private var relayDetail: String {
@@ -148,9 +177,7 @@ struct ConnectionStatusSections: View {
                 if store.directRoute != nil { store.dropDirect("reconnect requested") }
                 store.tryDirectNow()
             }.disabled(!store.connected || !store.usingFallback)
-        } header: { Text(verbatim: "Direct connection") } footer: {
-            Text(verbatim: "Away from home, the app punches through this network's NAT and China Telecom's at the same moment, so traffic goes straight to \(server). It is tried as soon as the online check succeeds, after a drop, and every 3 minutes after a failure.")
-        }
+        } header: { Text(verbatim: "Direct (in the app): details") }
     }
 
     /// Torrbaby's packet tunnel: for devices without Tailscale (iOS connects one VPN at a time,
@@ -160,7 +187,7 @@ struct ConnectionStatusSections: View {
         SwiftUI.Section {
             labeled("State", tunnel.statusText)
             // The extension's report only while it runs: its last one would be stale.
-            if tunnel.connected, let report = tunnelState { labeled("Paths", report) }
+            if tunnel.connected, let report = tunnelPaths { labeled("Paths", report) }
             if let error = tunnel.lastError { labeled("Last error", error) }
             if !tunnel.connected, let why = tunnel.lastDisconnect { labeled("Why it last disconnected (iOS)", why) }
             // The extension's own log (App Group), newest last: what it did, including just
@@ -177,11 +204,11 @@ struct ConnectionStatusSections: View {
             if tunnel.installed {
                 if tunnel.connected {
                     Button { Task { _ = await tunnel.ask("punch") } } label: { Text(verbatim: "Punch the direct path again") }
-                    Button { tunnel.disconnect() } label: { Text(verbatim: "Disconnect (Tailscale can connect again)") }
+                    Button { tunnel.disconnect() } label: { Text(verbatim: "Disconnect") }
                 } else {
                     Button {
                         Task { await tunnel.turnOn(relay: store.relayAddress, relayFingerprint: store.relayFingerprint, stun: store.stunServer ?? "", token: store.token) }
-                    } label: { Text(verbatim: "Connect (disconnects Tailscale)") }
+                    } label: { Text(verbatim: "Connect") }
                 }
                 Button(role: .destructive) { Task { await tunnel.turnOff() } } label: { Text(verbatim: "Remove Torrbaby tunnel") }
             } else {
@@ -190,9 +217,7 @@ struct ConnectionStatusSections: View {
                 } label: { Text(verbatim: "Turn on Torrbaby tunnel") }
                 .disabled(store.relayAddress.isEmpty || store.relayFingerprint.count != 64 || store.token.isEmpty)
             }
-        } header: { Text(verbatim: "Torrbaby tunnel") } footer: {
-            Text(verbatim: "A VPN that only reaches \(server) (10.233.0.1), straight through both NATs, kept open by iOS while Torrbaby is in the background so downloads continue. Only for a device without Tailscale: iOS connects one VPN at a time, so turning this on disconnects Tailscale.")
-        }
+        } header: { Text(verbatim: "Torrbaby tunnel: details") }
     }
 
     @ViewBuilder private var eventsSection: some View {
@@ -227,7 +252,7 @@ struct ConnectionStatusSections: View {
     }
 
     private var server: String { store.serverName.isEmpty ? "the server" : store.serverName }
-    private func ms(_ kind: String) -> String { store.routeChecks[kind]?.ms.map { ", \($0) ms round trip" } ?? "" }
+    private func ms(_ kind: String) -> String { store.routeChecks[kind]?.ms.map { "\($0) ms" } ?? "" }
     private func clock(_ date: Date) -> String { date.formatted(date: .omitted, time: .standard) }
     private func symbol(_ path: Store.Path) -> String {
         switch path { case .home: "house.fill"; case .tunnel: "lock.shield.fill"; case .direct: "bolt.horizontal.fill"; case .relay: "arrow.triangle.branch"; case .tailscale: "network.badge.shield.half.filled"; case .offline: "wifi.slash" }
@@ -252,6 +277,7 @@ struct ConnectionStatusSections: View {
             lines.append("  network \(attempt.interface ?? "none"), public \(attempt.publicAddress ?? "?") (\(attempt.answered)/\(attempt.asked)), window \(attempt.window ?? "?"), Diamond \(attempt.server ?? "?"), punch \(attempt.punchMs.map(String.init) ?? "-") ms, QUIC \(attempt.quicMs.map(String.init) ?? "-") ms")
             if let view = attempt.serverView { lines.append("  Diamond saw: \(view)") }
         }
+        lines.append(versions)
         lines.append(store.directDiagnostics)
         lines.append("Torrbaby tunnel: \(tunnel.statusText)" + (tunnel.lastDisconnect.map { ", last disconnect: \($0)" } ?? ""))
         lines.append("Tunnel log:")

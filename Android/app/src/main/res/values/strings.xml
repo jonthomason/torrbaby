@@ -782,7 +782,6 @@
     <string name="ui_44a4597b5507" formatted="false">Title A–Z</string>
     <string name="ui_476e06db8f10" formatted="false">To remove this drive, first move everything on it to another drive.</string>
     <string name="ui_eafdcec8c9d0" formatted="false">To remove this drive, first move its titles to another drive from each title’s Manage Files.</string>
-    <string name="ui_1c2e42cdb880" formatted="false">Torrbaby connects its own tunnel to your server, so playback and downloads go straight there, even in the background. iPhone and iPad allow one VPN at a time: with this on, another VPN such as Tailscale is disconnected.</string>
     <string name="ui_7fc3a24d77a0" formatted="false">Torrbaby makes a Media folder on the drive, with Downloads, Movies and TV inside, and keeps a small file there to recognise the drive.</string>
     <string name="ui_625fdd6c399e" formatted="false">Torrbaby transfer rates</string>
     <string name="ui_fecc14ee3002" formatted="false">Torrbaby tunnel</string>

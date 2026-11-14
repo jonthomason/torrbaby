@@ -89,7 +89,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         if message == "punch" { lastAttempt = .distantPast }
         // One line per part, for Settings → Connection.
         let direct = tbdirect_alive() ? "Direct path: open, \(punched)" : "Direct path: not open" + (status.isEmpty ? "" : " (\(status))")
-        let state = direct + "\nRelay via bronze: " + (tbdirect_relay_alive() ? "open" : "closed")
+        let info = Bundle.main.infoDictionary
+        let version = "version \(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))"
+        let state = version + "\n" + direct + "\nRelay via bronze: " + (tbdirect_relay_alive() ? "open" : "closed")
         completionHandler?(state.data(using: .utf8))
     }
 
