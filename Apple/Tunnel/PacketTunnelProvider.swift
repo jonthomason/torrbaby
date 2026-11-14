@@ -47,11 +47,30 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// the current network to compare like with like (a relay left on the old carrier after a
     /// data-SIM switch reports the old carrier's address: re-punching on that looped forever).
     private var relayReopenedForMismatch = false
-    /// Failed punches on this network (its signature), and when the next may start: 1, 2, 5,
-    /// then 15 minutes apart. Forgotten when the network changes. (Every minute, each firing
-    /// for 20 s, swamped a China Mobile hotspot where punching never works.)
+    /// Failed punches on this network, and when the next may start. Bronze is a bridge, not a
+    /// way to watch: where punching works (it did on this network, or on this carrier before)
+    /// a failure is a bad moment and the next try comes soon (5 s, 15 s, 30 s, then every
+    /// minute); where it never has, the tries are expensive and back off (1, 2, 5, then 15 min,
+    /// with a gentler spray). Forgotten when the network changes.
     private var punchFailures = 0
     private var nextPunch = Date.distantPast
+    private var punchedOnThisNetwork = false
+    /// This network's public IP as bronze sees it (for the carrier check below).
+    private var publicIP: String?
+    /// Carriers where a punch has succeeded, kept across restarts: the kind of connection
+    /// (Wi-Fi, which includes phone hotspots, or cellular) and the public IP's first two parts.
+    /// The kind matters: China Mobile punches on the phone's own cellular, but a phone hotspot
+    /// on China Mobile (a NAT inside the carrier's) may never.
+    private static let punchableKey = "punchableCarriers"
+    private static func carrier(_ ip: String) -> String {
+        let kind = (PunchProbe.physicalInterface() ?? "").hasPrefix("pdp") ? "cellular" : "wifi"
+        return kind + " " + ip.split(separator: ".").prefix(2).joined(separator: ".")
+    }
+    /// Six failures in a row even here: treat it as a network that does not punch.
+    private var punchable: Bool {
+        guard punchFailures < 6 else { return false }
+        return punchedOnThisNetwork || publicIP.map { (UserDefaults.standard.stringArray(forKey: Self.punchableKey) ?? []).contains(Self.carrier($0)) } == true
+    }
 
     /// Bronze, the token and STUN: from the shared keychain the app writes (current), else the
     /// VPN configuration (tunnels set up by earlier builds).
@@ -182,7 +201,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                     tbdirect_stop(); tbdirect_relay_stop()
                     self.lastAttempt = .distantPast
                     self.atHome = false; self.punchedFrom = nil
-                    self.punchFailures = 0; self.nextPunch = .distantPast
+                    self.punchFailures = 0; self.nextPunch = .distantPast; self.punchedOnThisNetwork = false; self.publicIP = nil
                 }
                 self.networkSignature = signature
             }
@@ -251,6 +270,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         if tbdirect_relay_alive(), Date().timeIntervalSince(lastInfo) > 6 {
             lastInfo = Date()
             if let info = await Self.relayInfo() {
+                publicIP = info.ip
                 if let home = info.homeIP, home == info.ip {
                     note("at home (same public address as Diamond, \(home)): standing down")
                     tbdirect_stop(); tbdirect_relay_stop()
@@ -278,20 +298,23 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         note("punching a direct path (memory \(String(format: "%.1f", Self.memoryMB())) MB)")
         defer { attempting = false }
         do {
-            let punched = try await DirectPunch.run(stun: stun, signal: "http://127.0.0.1:\(relayPort)", token: token, randomFrom: windowFailedFrom, lean: true, gentle: punchFailures > 0) { [weak self] in
+            let punched = try await DirectPunch.run(stun: stun, signal: "http://127.0.0.1:\(relayPort)", token: token, randomFrom: windowFailedFrom, lean: true, gentle: punchFailures > 0 && !punchable) { [weak self] in
                 self?.note("direct: \($0.step)")
             }
             status = ""
             self.punched = punched.summary
             punchedFrom = punched.publicAddress
-            punchFailures = 0; nextPunch = .distantPast
+            punchFailures = 0; nextPunch = .distantPast; punchedOnThisNetwork = true
+            var carriers = UserDefaults.standard.stringArray(forKey: Self.punchableKey) ?? []
+            let carrier = Self.carrier(punched.publicAddress)
+            if !carriers.contains(carrier) { carriers.append(carrier); UserDefaults.standard.set(Array(carriers.suffix(64)), forKey: Self.punchableKey) }
             note("direct open: \(punched.summary), QUIC \(punched.quicMs.map { "\($0) ms" } ?? "?") (memory \(String(format: "%.1f", Self.memoryMB())) MB)")
         } catch {
             if let address = (error as? DirectPunch.Failure)?.windowFailedAt { windowFailedFrom.insert(address) }
             punchFailures += 1
-            let wait: TimeInterval = [60, 120, 300, 900][min(punchFailures, 4) - 1]
+            let wait: TimeInterval = punchable ? [5, 15, 30, 60][min(punchFailures, 4) - 1] : [60, 120, 300, 900][min(punchFailures, 4) - 1]
             nextPunch = Date().addingTimeInterval(wait)
-            note("next punch on this network in \(Int(wait / 60)) min (failure \(punchFailures))")
+            note("next punch in \(wait < 60 ? "\(Int(wait)) s" : "\(Int(wait / 60)) min") (failure \(punchFailures) on this network, " + (punchable ? "which punches: bronze only bridges)" : "which has not punched yet)"))
             status = "last try failed: \(error.localizedDescription)"
             note("direct failed: \(error.localizedDescription)")
         }
