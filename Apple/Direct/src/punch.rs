@@ -56,6 +56,9 @@ pub struct Plan {
     /// Public IPs a predicted spray failed from before: random ports from there.
     pub random_from: Vec<String>,
     pub sockets: usize,
+    /// How often every socket fires (200 ms; slower on a network where punching has failed,
+    /// so the spray does not swamp a phone hotspot and starve the relay).
+    pub interval: Duration,
 }
 
 /// A path that got through: the socket (ready for QUIC) and how it was made.
@@ -145,7 +148,7 @@ pub fn punch(plan: &Plan, mut report: impl FnMut(&Report)) -> Result<Punched, Fa
     r.session = Some(id.into());
     step(&mut r, format!("punching: firing from {} sockets at {server} while Diamond sprays {sprays}", sockets.len()));
     let began = Instant::now();
-    let Some(winner) = fire(&sockets, server_address, id, Duration::from_secs(20)) else {
+    let Some(winner) = fire(&sockets, server_address, id, Duration::from_secs(20), plan.interval) else {
         let message = if started_spread == "random" {
             "No packet got through both NATs in 20 s, even spraying random ports. This network may use a different public address toward Diamond, or block incoming UDP".to_owned()
         } else {
@@ -232,7 +235,7 @@ fn mapped(data: &[u8]) -> Option<SocketAddrV4> {
 }
 
 /// Fire from every socket until Diamond echoes one (both directions proven); its index.
-fn fire(sockets: &[UdpSocket], server: SocketAddr, id: &str, limit: Duration) -> Option<usize> {
+fn fire(sockets: &[UdpSocket], server: SocketAddr, id: &str, limit: Duration, interval: Duration) -> Option<usize> {
     let deadline = Instant::now() + limit;
     let mut next_send = Instant::now();
     let mut buffer = [0u8; 1500];
@@ -240,7 +243,7 @@ fn fire(sockets: &[UdpSocket], server: SocketAddr, id: &str, limit: Duration) ->
     while Instant::now() < deadline {
         if Instant::now() >= next_send {
             for (index, socket) in sockets.iter().enumerate() { let _ = socket.send_to(format!("TBDIRECT1 {id} {index}").as_bytes(), server); }
-            next_send = Instant::now() + Duration::from_millis(200);
+            next_send = Instant::now() + interval;
         }
         for (index, socket) in sockets.iter().enumerate() {
             while let Ok((n, from)) = socket.recv_from(&mut buffer) {

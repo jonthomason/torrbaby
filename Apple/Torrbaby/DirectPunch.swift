@@ -47,9 +47,11 @@ enum DirectPunch {
     /// ("http://host:port": the relay's loopback port, or Tailscale), with `token`;
     /// `randomFrom` public addresses a predicted spray failed from before; `lean` the packet
     /// tunnel's smaller buffers. `report` hears each step, on the punching thread.
-    static func run(stun: String, signal: String, token: String, randomFrom: Set<String>, lean: Bool, report: @escaping (Report) -> Void) async throws -> Punched {
+    /// `gentle`: fewer sockets firing less often (half the sockets, every 400 ms), for a
+    /// network where punching has already failed.
+    static func run(stun: String, signal: String, token: String, randomFrom: Set<String>, lean: Bool, gentle: Bool = false, report: @escaping (Report) -> Void) async throws -> Punched {
         let request: [String: Any] = ["stun": stun, "signal": signal, "token": token, "interface": PunchProbe.physicalInterface() ?? "",
-                                      "random_from": Array(randomFrom), "sockets": 192, "lean": lean]
+                                      "random_from": Array(randomFrom), "sockets": gentle ? 96 : 192, "interval_ms": gentle ? 400 : 200, "lean": lean]
         guard let json = try? JSONSerialization.data(withJSONObject: request), let text = String(data: json, encoding: .utf8) else {
             throw Failure(message: "Could not prepare the punch")
         }

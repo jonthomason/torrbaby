@@ -80,13 +80,16 @@ pub extern "C" fn tbdirect_start_lean(fd: i32, server: *const c_char, fingerprin
 #[unsafe(no_mangle)]
 pub extern "C" fn tbdirect_relay_start_lean(fd: i32, server: *const c_char, fingerprint: *const c_char) -> u16 {
     tbdirect_relay_stop();
-    open(&RELAY, fd, server, fingerprint, b"tbrelay", "torrbaby-rendezvous", 5, LEAN_TIMING, LEAN_WINDOWS)
+    open(&RELAY, fd, server, fingerprint, b"tbrelay", "torrbaby-rendezvous", 5, RELAY_TIMING, LEAN_WINDOWS)
 }
 
 /// Keepalive and idle limit (s) in the packet tunnel extension, which iOS never suspends: a
 /// path silent for 15 s (three keepalives lost) is dead, and its requests fail over at once,
 /// not after 45 s. (The app keeps 45 s: its keepalives stop while iOS suspends it.)
 const LEAN_TIMING: (u64, u64) = (5, 15);
+/// The extension's relay gets longer: a punch's spray can swamp a phone hotspot for its 20 s,
+/// and the relay must not be dropped meanwhile (it carries everything while there is no path).
+const RELAY_TIMING: (u64, u64) = (5, 30);
 
 /// QUIC receive windows (per stream, per connection).
 const APP_WINDOWS: (u32, u32) = (8 << 20, 32 << 20);
@@ -336,6 +339,7 @@ pub fn punch_json(request: String, mut report: impl FnMut(&punch::Report)) -> se
         interface: request["interface"].as_str().filter(|s| !s.is_empty()).map(str::to_owned),
         random_from: request["random_from"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect(),
         sockets: request["sockets"].as_u64().unwrap_or(192).clamp(1, 512) as usize,
+        interval: std::time::Duration::from_millis(request["interval_ms"].as_u64().unwrap_or(200).clamp(50, 2000)),
     };
     let lean = request["lean"].as_bool().unwrap_or(false);
     let mut last = punch::Report::default();

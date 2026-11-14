@@ -47,6 +47,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// the current network to compare like with like (a relay left on the old carrier after a
     /// data-SIM switch reports the old carrier's address: re-punching on that looped forever).
     private var relayReopenedForMismatch = false
+    /// Failed punches on this network (its signature), and when the next may start: 1, 2, 5,
+    /// then 15 minutes apart. Forgotten when the network changes. (Every minute, each firing
+    /// for 20 s, swamped a China Mobile hotspot where punching never works.)
+    private var punchFailures = 0
+    private var nextPunch = Date.distantPast
 
     /// Bronze, the token and STUN: from the shared keychain the app writes (current), else the
     /// VPN configuration (tunnels set up by earlier builds).
@@ -120,7 +125,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// The app asks for the tunnel's state ("status") or a fresh direct path ("punch").
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
         let message = String(data: messageData, encoding: .utf8) ?? ""
-        if message == "punch" { lastAttempt = .distantPast }
+        if message == "punch" { lastAttempt = .distantPast; nextPunch = .distantPast }
         // One line per part, for Settings → Connection.
         let direct = tbdirect_alive() ? "Direct path: open, \(punched)" : "Direct path: not open" + (status.isEmpty ? "" : " (\(status))")
         let info = Bundle.main.infoDictionary
@@ -177,6 +182,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                     tbdirect_stop(); tbdirect_relay_stop()
                     self.lastAttempt = .distantPast
                     self.atHome = false; self.punchedFrom = nil
+                    self.punchFailures = 0; self.nextPunch = .distantPast
                 }
                 self.networkSignature = signature
             }
@@ -259,7 +265,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                         return
                     }
                     note("public address changed (\(from) → \(info.ip)): punching again")
-                    tbdirect_stop(); punchedFrom = nil; lastAttempt = .distantPast; relayReopenedForMismatch = false
+                    tbdirect_stop(); punchedFrom = nil; lastAttempt = .distantPast; nextPunch = .distantPast; relayReopenedForMismatch = false
                 } else {
                     relayReopenedForMismatch = false
                 }
@@ -267,20 +273,25 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         }
         guard !tbdirect_alive(), !attempting, tbdirect_relay_alive() else { return }
         // A failure waits a minute before the next try; a path that dropped is tried at once.
-        guard Date().timeIntervalSince(lastAttempt) > 60 else { return }
+        guard Date() >= nextPunch else { return }
         attempting = true; lastAttempt = Date()
         note("punching a direct path (memory \(String(format: "%.1f", Self.memoryMB())) MB)")
         defer { attempting = false }
         do {
-            let punched = try await DirectPunch.run(stun: stun, signal: "http://127.0.0.1:\(relayPort)", token: token, randomFrom: windowFailedFrom, lean: true) { [weak self] in
+            let punched = try await DirectPunch.run(stun: stun, signal: "http://127.0.0.1:\(relayPort)", token: token, randomFrom: windowFailedFrom, lean: true, gentle: punchFailures > 0) { [weak self] in
                 self?.note("direct: \($0.step)")
             }
             status = ""
             self.punched = punched.summary
             punchedFrom = punched.publicAddress
+            punchFailures = 0; nextPunch = .distantPast
             note("direct open: \(punched.summary), QUIC \(punched.quicMs.map { "\($0) ms" } ?? "?") (memory \(String(format: "%.1f", Self.memoryMB())) MB)")
         } catch {
             if let address = (error as? DirectPunch.Failure)?.windowFailedAt { windowFailedFrom.insert(address) }
+            punchFailures += 1
+            let wait: TimeInterval = [60, 120, 300, 900][min(punchFailures, 4) - 1]
+            nextPunch = Date().addingTimeInterval(wait)
+            note("next punch on this network in \(Int(wait / 60)) min (failure \(punchFailures))")
             status = "last try failed: \(error.localizedDescription)"
             note("direct failed: \(error.localizedDescription)")
         }
