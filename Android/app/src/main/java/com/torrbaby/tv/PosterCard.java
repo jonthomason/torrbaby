@@ -27,7 +27,7 @@ final class PosterCard extends LinearLayout {
     setFocusableInTouchMode(true);
     setClipChildren(false);
     artwork = new FrameLayout(context);
-    poster = new ImageView(context);
+    poster = new ArtImageView(context);
     poster.setScaleType(ImageView.ScaleType.CENTER_CROP);
     poster.setBackgroundColor(Ui.PANEL);
     artwork.addView(poster, new FrameLayout.LayoutParams(-1, -1));

@@ -36,9 +36,27 @@ pub struct Sidecar {
 
 pub fn directory(data: &Path) -> PathBuf { data.join("converted-audio") }
 
+/// Keyed on the file's content (size and modification time), so a renamed or moved file
+/// keeps its copy.
 fn key(asset: &str, revision: &str) -> String {
     use sha2::{Digest, Sha256};
-    Sha256::digest(format!("{asset}\n{revision}").as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+    let content = crate::subtitle_jobs::content(revision).unwrap_or_else(|| revision.to_owned());
+    Sha256::digest(format!("{asset}\ncontent\n{content}").as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The folder holding this file's copy: its content key, or a copy made before copies were
+/// keyed on content (by path and full revision), found by its record. Earlier copies are
+/// not moved, because the indexes built with them name their paths.
+fn folder(data: &Path, asset: &str, revision: &str) -> PathBuf {
+    let root = directory(data);
+    let keyed = root.join(key(asset, revision));
+    if keyed.exists() { return keyed; }
+    let earlier = fs::read_dir(&root).into_iter().flatten().flatten()
+        .filter(|entry| !entry.file_name().to_string_lossy().ends_with(".building"))
+        .map(|entry| entry.path())
+        .find(|path| record(path).is_some_and(|value| value["asset_id"] == asset
+            && value["revision"].as_str().is_some_and(|r| crate::subtitle_jobs::same_content(r, revision))));
+    earlier.unwrap_or(keyed)
 }
 
 fn helper() -> Option<PathBuf> {
@@ -78,7 +96,7 @@ fn ready(folder: &Path, value: &Value) -> Option<Vec<Sidecar>> {
 /// the converter is installed and has not already failed on this revision.
 pub fn wanted(data: &Path, asset: &str, revision: &str) -> bool {
     helper().is_some()
-        && record(&directory(data).join(key(asset, revision))).is_none_or(|r| r["state"] != "failed")
+        && record(&folder(data, asset, revision)).is_none_or(|r| r["state"] != "failed")
 }
 
 /// Whether every audio copy an index was built with is still in place.
@@ -161,11 +179,16 @@ pub fn ensure(data: &Path, asset: &str, input: &Path, revision: &str) -> Vec<Sid
     let Some(helper) = helper() else { return Vec::new() };
     let Ok(_gate) = GATE.lock() else { return Vec::new() };
     let root = directory(data);
-    let folder = root.join(key(asset, revision));
-    if let Some(value) = record(&folder) {
-        if let Some(sidecars) = ready(&folder, &value) { return sidecars; }
+    let found = folder(data, asset, revision);
+    if let Some(value) = record(&found) {
+        if let Some(sidecars) = ready(&found, &value) {
+            // Last use, so the startup sweep keeps copies that are still played.
+            if let Ok(directory) = fs::File::open(&found) { let _ = directory.set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now())); }
+            return sidecars;
+        }
         if value["state"] == "failed" { return Vec::new(); }
     }
+    let folder = root.join(key(asset, revision));
     let plans = match plan(input) {
         Ok(None) => return Vec::new(),
         Ok(Some(plans)) if plans.is_empty() => { fail(data, asset, input, revision, "No convertible audio track"); return Vec::new(); }
@@ -197,7 +220,8 @@ pub fn ensure(data: &Path, asset: &str, input: &Path, revision: &str) -> Vec<Sid
         Ok(sidecars) => {
             tracing::info!(asset, ?codecs, seconds = started.elapsed().as_secs(), "Audio converted for Apple playback");
             // Copies made for an earlier revision of this file are no longer reachable.
-            remove_where(data, |folder_key, value| value["asset_id"] == asset && folder_key != key(asset, revision));
+            remove_where(data, |folder_key, value| value["asset_id"] == asset && folder_key != key(asset, revision)
+                && !value["revision"].as_str().is_some_and(|r| crate::subtitle_jobs::same_content(r, revision)));
             sidecars
         }
         Err(error) => {
@@ -232,14 +256,20 @@ pub fn purge_assets(data: &Path, assets: &BTreeSet<String>) {
     remove_where(data, |_, value| value["asset_id"].as_str().is_some_and(|id| assets.contains(id)));
 }
 
-/// At startup: unfinished conversions, and copies whose original was removed
-/// outside the app. A file on a disk that is merely unmounted is kept.
+/// At startup: unfinished conversions, and copies whose original was removed outside the
+/// app. The path a copy was made from is gone after a rename or a move too, and then the
+/// copy is still wanted, so such a copy is removed only after 30 days unused. A file on a
+/// disk that is merely unmounted is kept.
 pub fn sweep(data: &Path) {
     let Ok(entries) = fs::read_dir(directory(data)) else { return };
+    let mut stale = std::collections::HashSet::new();
     for entry in entries.flatten() {
-        if entry.file_name().to_string_lossy().ends_with(".building") { let _ = fs::remove_dir_all(entry.path()); }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.ends_with(".building") { let _ = fs::remove_dir_all(entry.path()); continue; }
+        let unused = entry.metadata().and_then(|m| m.modified()).ok().and_then(|at| at.elapsed().ok());
+        if unused.is_some_and(|age| age > Duration::from_secs(30 * 24 * 3600)) { stale.insert(name); }
     }
-    remove_where(data, |_, value| value["input"].as_str().is_some_and(|input| original_deleted(Path::new(input))));
+    remove_where(data, |name, value| stale.contains(name) && value["input"].as_str().is_some_and(|input| original_deleted(Path::new(input))));
 }
 
 fn original_deleted(input: &Path) -> bool {
@@ -313,9 +343,29 @@ mod tests {
         purge_assets(data.path(), &BTreeSet::from(["asset-a".to_owned()]));
         assert!(!folder.exists());
         assert!(directory(data.path()).join(key("asset-b", "r1")).exists());
-        // Originals removed outside the app take their copies with them at startup.
+        // A missing original may have been renamed or moved: its copy stays while recently used…
+        let b = directory(data.path()).join(key("asset-b", "r1"));
         sweep(data.path());
-        assert!(!directory(data.path()).join(key("asset-b", "r1")).exists());
+        assert!(b.exists());
+        // …and leaves at startup after 30 days unused.
+        fs::File::open(&b)?.set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now() - Duration::from_secs(31 * 24 * 3600)))?;
+        sweep(data.path());
+        assert!(!b.exists());
+        Ok(())
+    }
+    #[test]
+    fn a_renamed_file_finds_its_copy_made_under_the_earlier_key() -> Result<()> {
+        let data = Scratch::new()?;
+        let before = "16777232:100:5000:1700000000:5:1700000001:6";
+        let after = "16777233:200:5000:1700000000:0:1760000000:0"; // moved: new drive, inode, change time
+        let earlier = directory(data.path()).join("e".repeat(64));
+        fs::create_dir_all(&earlier)?;
+        fs::write(earlier.join("track-2.eac3"), [0u8; 10])?;
+        save(&earlier, &json!({"version":VERSION,"state":"ready","asset_id":"asset-a","input":"/Volumes/Alpha/a.mkv","revision":before,
+            "tracks":[{"track":2,"file":"track-2.eac3","bytes":10}]}))?;
+        assert_eq!(folder(data.path(), "asset-a", after), earlier);
+        assert_ne!(folder(data.path(), "asset-b", after), earlier);
+        assert_ne!(folder(data.path(), "asset-a", "16777233:200:5001:1700000000:0:1760000000:0"), earlier);
         Ok(())
     }
     #[test]

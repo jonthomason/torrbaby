@@ -16597,6 +16597,159 @@
         }
       }
     },
+    "Turn off another VPN to connect": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn off another VPN to connect"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接时关闭其他 VPN"
+          }
+        }
+      }
+    },
+    "Torrbaby tunnel": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Torrbaby tunnel"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Torrbaby 隧道"
+          }
+        }
+      }
+    },
+    "Torrbaby connects its own tunnel to your server, so playback and downloads go straight there, even in the background. iPhone and iPad allow one VPN at a time: with this on, another VPN such as Tailscale is disconnected.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Torrbaby connects its own tunnel to your server, so playback and downloads go straight there, even in the background. iPhone and iPad allow one VPN at a time: with this on, another VPN such as Tailscale is disconnected."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Torrbaby 会建立自己的隧道直连你的服务器，播放和下载都直接到达服务器，在后台也一样。iPhone 和 iPad 同时只能连接一个 VPN：打开此项后，Tailscale 等其他 VPN 会被断开。"
+          }
+        }
+      }
+    },
+    "Loading…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Loading…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在加载…"
+          }
+        }
+      }
+    },
+    "Send logs automatically": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send logs automatically"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动发送日志"
+          }
+        }
+      }
+    },
+    "Send logs now": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send logs now"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "立即发送日志"
+          }
+        }
+      }
+    },
+    "Sending logs…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sending logs…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在发送日志…"
+          }
+        }
+      }
+    },
+    "Logs sent": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Logs sent"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "日志已发送"
+          }
+        }
+      }
+    },
+    "Couldn’t send logs": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn’t send logs"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法发送日志"
+          }
+        }
+      }
+    },
     "This drive is not connected. If you remove it, its titles stay in the library as offline, so they can be downloaded again.": {
       "extractionState": "manual",
       "localizations": {

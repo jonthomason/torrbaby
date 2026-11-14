@@ -115,6 +115,46 @@ fn exact_candidates<'a>(query: &str, year: &str, candidates: &'a [Value]) -> Vec
 /// dropped one at a time. Each keeps a release year and is accepted only on an exact
 /// title and year match, so a shortened title cannot select a different film. Packs get
 /// no fallbacks; a file name without a year only tries a folder that has one.
+/// The Chinese name in a zh-CN TMDB response: its name when that is written in Chinese, else
+/// the original title when that is (a Chinese production TMDB has not translated).
+/// TMDB's Simplified Chinese overview. TMDB falls back to nothing (not to English) when a title
+/// has no translation, but an overview without a Chinese character is not one either.
+fn chinese_summary(detail: &Value) -> String {
+    let text = detail["overview"].as_str().unwrap_or("").trim();
+    if text.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)) { text.to_owned() } else { String::new() }
+}
+/// How long a machine translation (or TMDB having none) stands before TMDB is asked again.
+pub const CHINESE_SUMMARY_RECHECK_SECONDS: f64 = 30.0 * 86_400.0;
+/// Records what TMDB said: its Chinese description, or that it has none. A machine translation
+/// made earlier stays until TMDB has its own.
+pub fn set_chinese_summary(entity: &mut Value, tmdb: &str) {
+    if !tmdb.is_empty() {
+        entity["summary_zh"] = json!(tmdb);
+        entity["summary_zh_source"] = json!("tmdb");
+    } else if entity["summary_zh_source"] != "machine" {
+        entity["summary_zh"] = json!("");
+        entity["summary_zh_source"] = json!("none");
+    }
+    entity["summary_zh_checked"] = json!(crate::storage::now());
+}
+/// Whether TMDB should be asked for this title's Chinese description: never asked, or asked
+/// long enough ago that a machine translation (or nothing) may since have a TMDB one.
+pub fn wants_chinese_summary(entity: &Value, now: f64) -> bool {
+    match entity["summary_zh_source"].as_str() {
+        Some("tmdb") => false,
+        Some(_) => entity["summary_zh_checked"].as_f64().is_none_or(|at| now - at >= CHINESE_SUMMARY_RECHECK_SECONDS),
+        None => true,
+    }
+}
+/// Whether this title's English description still needs translating on Diamond.
+pub fn wants_summary_translation(entity: &Value) -> bool {
+    entity["summary_zh_source"] == "none" && entity["summary"].as_str().is_some_and(|s| !s.trim().is_empty())
+}
+fn chinese_name(detail: &Value, entity: &Value) -> String {
+    let chinese = |text: &str| text.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c));
+    [detail.get("title").or(detail.get("name")), detail.get("original_title").or(detail.get("original_name")), entity.get("original_title")]
+        .into_iter().flatten().filter_map(Value::as_str).map(str::trim).find(|t| chinese(t)).unwrap_or("").to_owned()
+}
 pub fn fallback_queries(query: &str, year: &str, name: &str, folder: Option<&str>) -> Vec<(String, String)> {
     static PACK: LazyLock<Regex> = LazyLock::new(|| Regex::new(
         r"(?i)\b(?:complete|collection|trilogy|anthology|box[ ._-]*set)\b").expect("valid regex"));
@@ -541,6 +581,24 @@ impl Metadata {
         Ok(cast_rows(&credits["cast"]))
     }
 
+    /// The title's Chinese name and description, shown when the apps are in Chinese: TMDB's
+    /// Simplified Chinese name (or the original title of a Chinese production) and its Simplified
+    /// Chinese overview. Each is empty when TMDB has none.
+    pub async fn chinese_details(&self, entity: &Value) -> Result<(String, String)> {
+        let kind=entity["kind"].as_str().context("Missing media kind")?;
+        anyhow::ensure!(["movie","tv"].contains(&kind), "Invalid media kind");
+        let id=entity["provider_id"].as_str().context("Missing metadata ID")?.parse::<u64>()?;
+        let detail=self.request(&format!("{kind}/{id}"), &[("language","zh-CN")]).await?;
+        Ok((chinese_name(&detail, entity), chinese_summary(&detail)))
+    }
+    /// TMDB's Simplified Chinese episode descriptions for one season of a series, by episode
+    /// number; empty text where TMDB has none.
+    pub async fn chinese_season(&self, entity: &Value, season: u64) -> Result<Vec<(u64, String)>> {
+        anyhow::ensure!(entity["kind"] == "tv", "Not a series");
+        let id=entity["provider_id"].as_str().context("Missing metadata ID")?.parse::<u64>()?;
+        let data=self.request(&format!("tv/{id}/season/{season}"), &[("language","zh-CN")]).await?;
+        Ok(array(&data["episodes"]).iter().filter_map(|episode| Some((episode["episode_number"].as_u64()?, chinese_summary(episode)))).collect())
+    }
     /// A series' production status and last air date, for entities saved before these were kept.
     pub async fn series_run(&self, entity: &Value) -> Result<Value> {
         let id=entity["provider_id"].as_str().context("Missing metadata ID")?.parse::<u64>()?;
@@ -614,6 +672,11 @@ impl Metadata {
             }
         }
         entity["summary"] = detail["overview"].clone();
+        // A missing Chinese name or description is filled in by the metadata backfill.
+        if let Ok((name, summary)) = self.chinese_details(&entity).await {
+            entity["title_zh"] = json!(name);
+            set_chinese_summary(&mut entity, &summary);
+        }
         entity["cast"] = cast_rows(&detail[if kind=="tv" {"aggregate_credits"} else {"credits"}]["cast"]);
         entity["thumbnail"] = image(&detail["poster_path"], "w500");
         entity["backdrop"] = image(&detail["backdrop_path"], "w1280");
@@ -690,7 +753,37 @@ fn cast_rows(value: &Value) -> Value {
 
 #[cfg(test)]
 mod cast_tests {
+    #[test]
+    fn chinese_name_prefers_a_chinese_translation_then_a_chinese_original() {
+        let show=json!({"original_title":"尚公主"});
+        assert_eq!(chinese_name(&json!({"name":"尚公主","original_name":"尚公主"}),&show),"尚公主");
+        assert_eq!(chinese_name(&json!({"title":"007：大战皇家赌场","original_title":"Casino Royale"}),&json!({})),"007：大战皇家赌场");
+        assert_eq!(chinese_name(&json!({"name":"Tigers Sniff the Rose"}),&show),"尚公主");
+        assert_eq!(chinese_name(&json!({"title":"Casino Royale","original_title":"Casino Royale"}),&json!({})),"");
+    }
+
     use super::*;
+    #[test]
+    fn chinese_summary_comes_from_tmdb_then_translation_and_rechecks() {
+        assert_eq!(chinese_summary(&json!({"overview":" 一位公主…  "})),"一位公主…");
+        assert_eq!(chinese_summary(&json!({"overview":"An English fallback"})),"");
+        let mut entity=json!({"summary":"A princess…"});
+        assert!(wants_chinese_summary(&entity, 0.0));
+        set_chinese_summary(&mut entity, "");
+        assert_eq!(entity["summary_zh_source"],"none");
+        assert!(wants_summary_translation(&entity));
+        let now=entity["summary_zh_checked"].as_f64().unwrap();
+        assert!(!wants_chinese_summary(&entity, now + 60.0));
+        assert!(wants_chinese_summary(&entity, now + CHINESE_SUMMARY_RECHECK_SECONDS));
+        entity["summary_zh"]=json!("一位公主…"); entity["summary_zh_source"]=json!("machine");
+        set_chinese_summary(&mut entity, "");
+        assert_eq!((entity["summary_zh"].as_str(), entity["summary_zh_source"].as_str()), (Some("一位公主…"), Some("machine")));
+        assert!(!wants_summary_translation(&entity));
+        set_chinese_summary(&mut entity, "TMDB 的简介");
+        assert_eq!((entity["summary_zh"].as_str(), entity["summary_zh_source"].as_str()), (Some("TMDB 的简介"), Some("tmdb")));
+        assert!(!wants_chinese_summary(&entity, f64::MAX));
+        assert!(!wants_summary_translation(&json!({"summary":"","summary_zh_source":"none"})));
+    }
     #[test]
     fn credits_preserve_supplied_roles_and_counts() {
         let rows=cast_rows(&json!([{"id":1,"name":"Actor","total_episode_count":23,"roles":[{"character":"First role","episode_count":20},{"character":"Second role","episode_count":8}]}]));

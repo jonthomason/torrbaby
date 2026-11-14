@@ -1,6 +1,9 @@
 import SwiftUI
 import AVKit
 import OSLog
+#if os(iOS)
+import MediaPlayer
+#endif
 
 @MainActor
 private enum PlaybackSpeeds {
@@ -19,6 +22,33 @@ private enum PlaybackSpeeds {
     }
 }
 
+/// What the player names: a movie's name, or the show's name above "Season 1 Ep 2 – Episode
+/// name" (an episode's number alone when it has no title of its own). iPhone, iPad and Apple TV
+/// show it natively above the scrubber; the Mac puts it in the window title.
+struct PlayerHeading: Equatable {
+    var title: String
+    /// The show (or movie) a special feature or episode belongs to, in smaller type above.
+    var context: String? = nil
+    @MainActor static func make(_ playback: Playback, library: MediaLibrary?) -> PlayerHeading {
+        guard let titleID = playback.libraryTitleID,
+              let title = library?.titles.first(where: { $0.id == titleID }) else { return PlayerHeading(title: playback.name) }
+        guard let asset = playback.libraryAssetID.flatMap({ id in title.assets.first { $0.id == id } }) else { return PlayerHeading(title: title.title) }
+        if asset.role == "extra" {
+            guard let name = asset.ownName, name != title.title else { return PlayerHeading(title: title.title) }
+            return PlayerHeading(title: name, context: title.title)
+        }
+        guard title.kind == "tv" else { return PlayerHeading(title: title.title) }
+        let number: String?
+        if let episode = asset.episode {
+            number = asset.season.map { L10n.format("Season %d Ep %d", $0, episode) } ?? L10n.format("Ep %d", episode)
+        } else { number = nil }
+        let line = [number, asset.ownName].compactMap { $0 }.joined(separator: " – ")
+        return line.isEmpty ? PlayerHeading(title: title.title) : PlayerHeading(title: line, context: title.title)
+    }
+    /// One line, for a window title or the system's Now Playing.
+    var joined: String { [context, title].compactMap { $0 }.joined(separator: " · ") }
+}
+
 @MainActor
 func skip(_ player: AVPlayer, seconds: Double) {
     let current = player.currentTime().seconds
@@ -33,7 +63,18 @@ final class PlaybackModel: ObservableObject {
     let player: AVPlayer
     @Published var error: String?
     @Published var title: String
+    /// The native players' title (the Mac's window title); follows the next episode.
+    private var heading: PlayerHeading
     @Published var endMessage: String?
+    /// The player has been waiting for data for more than a moment (starting, or a stall): a
+    /// spinner shows. AVKit shows none of its own, only a play or pause button over black.
+    @Published var waiting = false
+    private var waitingTask: Task<Void, Never>?
+    private var statusObservation: NSKeyValueObservation?
+    private var itemObservers: [NSObjectProtocol] = []
+    /// When the current file was opened, and whether it has played yet, for the logs.
+    private var openedAt = Date()
+    private var played = false
     /// A movie or special feature played to its end: nothing follows, so the player closes itself.
     @Published var closeRequested = false
     @Published var preparingNext = false
@@ -65,6 +106,7 @@ final class PlaybackModel: ObservableObject {
         self.store = store
         self.profileAtStart = store.activeProfile?.id ?? "profile-jon"
         self.title = playback.name
+        self.heading = PlayerHeading(title: playback.name)
         player = AVPlayer()
         player.defaultRate = PlaybackSpeeds.preferred
         load(playback)
@@ -89,16 +131,23 @@ final class PlaybackModel: ObservableObject {
         rateObservation = player.observe(\.rate, options: [.new]) { [weak self] _, _ in
             Task { @MainActor [weak self] in self?.report() }
         }
+        // .initial: the first file was opened (and asked to play) before this was set up.
+        statusObservation = player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in self?.timeControlChanged() }
+        }
         speedObservation = player.observe(\.defaultRate, options: [.new]) { player, _ in
             let rate = player.defaultRate
             Task { @MainActor in PlaybackSpeeds.remember(rate) }
         }
     }
     private func load(_ next: Playback) {
+        summarize()
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         observation = nil
         subtitleController?.stop(); subtitleController = nil
-        playback = next; title = next.name; error = nil; endMessage = nil
+        playback = next; error = nil; endMessage = nil
+        heading = PlayerHeading.make(next, library: store.library)
+        title = heading.joined
         sequence = 0; starting = false; resumed = false
         credits = nil; offerNextEpisode = false
         creditsTask?.cancel()
@@ -112,7 +161,7 @@ final class PlaybackModel: ObservableObject {
             }
         }
         let url = playback.url
-        let title = playback.name
+        let heading = self.heading
         // Also cover restored Mac playback windows and connection loss between
         // choosing a title and constructing the native player.
         guard url.isFileURL ? FileManager.default.fileExists(atPath: url.path) : store.canStream else {
@@ -123,13 +172,41 @@ final class PlaybackModel: ObservableObject {
         let item = AVPlayerItem(url: url)
         let playbackID = playback.id
         #if os(iOS) || os(tvOS)
-        let metadata = AVMutableMetadataItem()
-        metadata.identifier = .commonIdentifierTitle
-        metadata.value = title as NSString
-        metadata.extendedLanguageTag = "und"
-        item.externalMetadata = [metadata]
+        // Shown by AVKit above the scrubber (the show small, over the episode line) and in Now Playing.
+        func metadata(_ identifier: AVMetadataIdentifier, _ value: String) -> AVMetadataItem {
+            let item = AVMutableMetadataItem()
+            item.identifier = identifier
+            item.value = value as NSString
+            item.extendedLanguageTag = "und"
+            return item
+        }
+        item.externalMetadata = [metadata(.commonIdentifierTitle, heading.title)]
+            + (heading.context.map { [metadata(.iTunesMetadataTrackSubTitle, $0)] } ?? [])
+        // The title's poster, for Now Playing (the lock screen) when it is in the artwork cache.
+        if let titleID = playback.libraryTitleID {
+            let key = ArtworkImages.key(server: store.libraryKey, id: titleID, variant: "poster", revision: store.artworkRevision(id: titleID, variant: "poster"))
+            Task { @MainActor [weak item] in
+                guard let image = await ArtworkImages.prepare(key, variant: "poster"), let data = image.jpegData(compressionQuality: 0.85), let item else { return }
+                let artwork = AVMutableMetadataItem()
+                artwork.identifier = .commonIdentifierArtwork
+                artwork.value = data as NSData
+                artwork.dataType = kCMMetadataBaseDataType_JPEG as String
+                artwork.extendedLanguageTag = "und"
+                item.externalMetadata.append(artwork)
+            }
+        }
         #endif
         player.replaceCurrentItem(with: item)
+        openedAt = Date(); played = false
+        ClientDiagnostics.note("Play \(heading.joined) [\(playback.libraryAssetID ?? "local")] via \(url.isFileURL ? "this device" : store.path.rawValue): \(url.path), resume at \(Int(playback.resumePosition)) s")
+        observe(item)
+        // Start at once, asking for the resume point before the file is ready: AVKit then waits
+        // to play (pause button, our spinner) instead of sitting paused behind a play button.
+        // Where that point is not taken, start() puts it right once the file is ready.
+        if playback.resumePosition > 0 {
+            player.seek(to: CMTime(seconds: playback.resumePosition, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+        player.play()
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard self?.playback.id == playbackID else { return }
@@ -140,6 +217,7 @@ final class PlaybackModel: ObservableObject {
             if item.status == .readyToPlay {
                 Task { @MainActor [weak self] in
                     guard let self, self.player.currentItem === item else { return }
+                    ClientDiagnostics.note(String(format: "Ready after %.1f s at %.1f s", Date().timeIntervalSince(self.openedAt), self.player.currentTime().seconds))
                     if self.subtitleController == nil {
                         let info = self.playback.libraryAssetID.flatMap { id in self.store.library?.titles.lazy.flatMap(\.assets).first { $0.id == id }?.mediaInfo }
                         self.subtitleController = SubtitlePlaybackController(item: item, store: self.store, overPictureSubtitles: info?.hasPictureSubtitles == true)
@@ -149,6 +227,7 @@ final class PlaybackModel: ObservableObject {
             }
             if item.status == .failed {
                 let message = item.error?.localizedDescription ?? "Apple's player cannot open this file."
+                ClientLogs.failed("Playback: \((item.error as NSError?).map { "\($0.domain) \($0.code) \($0.localizedDescription) \($0.userInfo[NSUnderlyingErrorKey] ?? "")" } ?? message)")
                 Task { @MainActor [weak self] in self?.error = message }
             }
         }
@@ -252,18 +331,81 @@ final class PlaybackModel: ObservableObject {
         }
     }
     #endif
+    /// Once the file is ready. Playing began when it was opened; this confirms the resume point
+    /// was taken (else seeks to it) before any progress is reported, so a missed seek can never
+    /// save the start of the file over where the person had got to.
     private func start() {
         guard !starting, !finished else { return }
         starting = true
-        if playback.resumePosition > 0 {
-            player.seek(to: CMTime(seconds: playback.resumePosition, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+        let want = playback.resumePosition
+        let at = player.currentTime().seconds
+        if want > 0, !(at.isFinite && abs(at - want) < 2) {
+            ClientDiagnostics.note(String(format: "Resume point not taken early (at %.1f s); seeking to %.0f s", at, want))
+            let wasPlaying = player.rate > 0
+            player.seek(to: CMTime(seconds: want, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self, !self.finished else { return }
                     self.resumed = true
-                    self.player.play()
+                    if wasPlaying { self.player.play() }
                 }
             }
-        } else { resumed = true; player.play() }
+        } else { resumed = true }
+    }
+    /// Notes each change for the logs and shows the spinner after half a second of waiting.
+    private func timeControlChanged() {
+        let position = player.currentTime().seconds
+        waitingTask?.cancel()
+        switch player.timeControlStatus {
+        case .waitingToPlayAtSpecifiedRate:
+            ClientDiagnostics.note(String(format: "Waiting (%@) at %.1f s", player.reasonForWaitingToPlay?.rawValue ?? "?", position))
+            waitingTask = Task { @MainActor [weak self] in
+                do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+                guard let self, self.player.timeControlStatus == .waitingToPlayAtSpecifiedRate else { return }
+                self.waiting = true
+            }
+        case .playing:
+            if !played { played = true; ClientDiagnostics.note(String(format: "Playing after %.1f s at %.1f s", Date().timeIntervalSince(openedAt), position)) }
+            else { ClientDiagnostics.note(String(format: "Playing at %.1f s", position)) }
+            waiting = false
+        case .paused:
+            ClientDiagnostics.note(String(format: "Paused at %.1f s", position))
+            waiting = false
+        @unknown default: waiting = false
+        }
+    }
+    /// AVFoundation's own account of the file: stalls and errors as they happen.
+    private func observe(_ item: AVPlayerItem) {
+        for observer in itemObservers { NotificationCenter.default.removeObserver(observer) }
+        let center = NotificationCenter.default
+        itemObservers = [
+            center.addObserver(forName: .AVPlayerItemPlaybackStalled, object: item, queue: .main) { [weak item] _ in
+                ClientDiagnostics.note(String(format: "Stalled at %.1f s", item?.currentTime().seconds ?? -1))
+            },
+            center.addObserver(forName: .AVPlayerItemNewErrorLogEntry, object: item, queue: .main) { [weak item] _ in
+                guard let event = item?.errorLog()?.events.last else { return }
+                ClientDiagnostics.note("AVFoundation error \(event.errorStatusCode) \(event.errorDomain) \(event.errorComment ?? "") server \(event.serverAddress ?? "?")")
+            },
+            center.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main) { notification in
+                let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? NSError
+                ClientLogs.failed("Playback stopped before the end: \(error.map { "\($0.domain) \($0.code) \($0.localizedDescription)" } ?? "?")")
+            },
+        ]
+    }
+    /// The file's totals from AVFoundation's access log, when it closes or the next one starts.
+    private func summarize() {
+        guard let item = player.currentItem else { return }
+        let events = item.accessLog()?.events ?? []
+        let bytes = events.reduce(Int64(0)) { $0 + max(0, $1.numberOfBytesTransferred) }
+        let stalls = events.reduce(0) { $0 + max(0, $1.numberOfStalls) }
+        let watched = events.reduce(0.0) { $0 + max(0, $1.durationWatched) }
+        let observed = events.last.map { $0.observedBitrate / 1_000_000 } ?? 0
+        let indicated = events.last.map { $0.indicatedBitrate / 1_000_000 } ?? 0
+        ClientDiagnostics.note(String(format: "Closed at %.1f s: %@ received, watched %.0f s, %d stalls, observed %.1f Mb/s (file %.1f Mb/s), startup %.1f s%@",
+                                      player.currentTime().seconds, ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file), watched, stalls,
+                                      observed, indicated, events.first?.startupTime ?? 0, played ? "" : ", never played"))
+        // A file that never played, or kept stalling, is worth having on Diamond at once.
+        if !played && Date().timeIntervalSince(openedAt) > 8 { ClientLogs.failed("Playback never started (waited \(Int(Date().timeIntervalSince(openedAt))) s)") }
+        else if stalls >= 2 { ClientLogs.failed("Playback stalled \(stalls) times in \(Int(watched)) s") }
     }
     @discardableResult
     func report(ended: Bool = false, reachedEnd: Bool = false) -> Bool {
@@ -283,6 +425,10 @@ final class PlaybackModel: ObservableObject {
     }
     func stop() {
         guard !finished else { return }
+        summarize()
+        waitingTask?.cancel(); waiting = false
+        for observer in itemObservers { NotificationCenter.default.removeObserver(observer) }
+        itemObservers = []
         if let profileObserver { NotificationCenter.default.removeObserver(profileObserver); self.profileObserver = nil }
         nextEpisodeTask?.cancel(); nextEpisodeTask = nil
         creditsTask?.cancel(); creditsTask = nil
@@ -298,6 +444,7 @@ final class PlaybackModel: ObservableObject {
         player.replaceCurrentItem(with: nil)
         if let timeObserver { player.removeTimeObserver(timeObserver); self.timeObserver = nil }
         rateObservation = nil
+        statusObservation = nil
         speedObservation = nil
         observation = nil
         if let endObserver { NotificationCenter.default.removeObserver(endObserver); self.endObserver = nil }
@@ -332,6 +479,17 @@ struct EpisodeCredits: Equatable {
     /// Once offered, the prompt stays up until the file ends.
     static func prompting(_ credits: EpisodeCredits?, position: Double, duration: Double) -> Bool {
         position >= offerStart(credits, duration: duration)
+    }
+}
+
+/// A spinner over the picture while the player waits for the file.
+struct PlayerWaitingIndicator: View {
+    var body: some View {
+        ProgressView()
+            .controlSize(.large).tint(.white)
+            .padding(18).background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 14))
+            .allowsHitTesting(false)
+            .accessibilityLabel(Text("Loading…"))
     }
 }
 
@@ -463,8 +621,35 @@ struct NativePlayer: NSViewRepresentable {
     static func dismantleNSView(_ view: AVPlayerView, coordinator: Coordinator) { coordinator.stop(); view.player = nil }
 }
 #else
-class KeyboardPlayerController: AVPlayerViewController {
+class KeyboardPlayerController: AVPlayerViewController, AVPlayerViewControllerDelegate {
     var close: (() -> Void)?
+    #if os(iOS)
+    /// iOS pauses a video whose player is on screen when the app leaves the foreground, so the
+    /// player is taken off the view then (it keeps playing: the sound goes on with the phone
+    /// locked) and put back on return. Not while Picture in Picture shows it.
+    private var detached: AVPlayer?
+    private var pictureInPicture = false
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        delegate = self
+        NotificationCenter.default.addObserver(self, selector: #selector(leftForeground), name: UIApplication.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(returned), name: UIApplication.willEnterForegroundNotification, object: nil)
+    }
+    @objc private func leftForeground() {
+        guard !pictureInPicture, let player, player.timeControlStatus != .paused else { return }
+        detached = player
+        self.player = nil
+        // Off the view, AVKit no longer fills the lock screen: Torrbaby does.
+        NowPlaying.shared.begin(player)
+    }
+    @objc private func returned() {
+        NowPlaying.shared.end()
+        if let detached, player == nil { player = detached }
+        detached = nil
+    }
+    func playerViewControllerWillStartPictureInPicture(_ playerViewController: AVPlayerViewController) { pictureInPicture = true }
+    func playerViewControllerDidStopPictureInPicture(_ playerViewController: AVPlayerViewController) { pictureInPicture = false }
+    #endif
     override var canBecomeFirstResponder: Bool { true }
     override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); becomeFirstResponder() }
     override var keyCommands: [UIKeyCommand]? {
@@ -516,7 +701,13 @@ struct NativePlayer: UIViewControllerRepresentable {
         return view
     }
     func updateUIViewController(_ view: KeyboardPlayerController, context: Context) {
-        view.player = player; view.close = close
+        // Not while the app is in the background: the player is off the view on purpose then.
+        #if os(iOS)
+        if UIApplication.shared.applicationState != .background { view.player = player }
+        #else
+        view.player = player
+        #endif
+        view.close = close
         #if os(tvOS)
         view.transportBarCustomMenuItems = canAdvance
             ? [UIAction(title: L10n.text("Next episode"), image: UIImage(systemName: "forward.end.fill")) { _ in advance() }] : []
@@ -566,6 +757,14 @@ struct PlayerScreen: View {
                 #endif
             }
         }
+        // Waiting for the file (starting, or a stall): AVKit itself shows nothing here on the
+        // Mac or Apple TV. iPhone and iPad draw their own (MobilePlayerPresentation).
+        .overlay {
+            if model.waiting && !model.preparingNext && model.error == nil && model.endMessage == nil {
+                PlayerWaitingIndicator().transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: model.waiting)
         #if os(macOS)
         .overlay(alignment: .bottomTrailing) {
             if model.offerNextEpisode && !model.preparingNext && model.error == nil && model.endMessage == nil {
@@ -799,3 +998,78 @@ struct SubtitlePreferencesView: View {
         }
     }
 }
+
+#if os(iOS)
+/// The lock screen while a video plays with the phone locked (its player off the view, so
+/// AVKit no longer publishes it): the title, the show and episode, the poster and the time,
+/// from the item's own metadata, with play/pause, 15 s skips and scrubbing.
+@MainActor final class NowPlaying {
+    static let shared = NowPlaying()
+    private weak var player: AVPlayer?
+    private var targets: [(MPRemoteCommand, Any)] = []
+    private var observation: NSKeyValueObservation?
+
+    func begin(_ player: AVPlayer) {
+        end()
+        self.player = player
+        let center = MPRemoteCommandCenter.shared()
+        func on(_ command: MPRemoteCommand, _ action: @escaping (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus) {
+            command.isEnabled = true
+            targets.append((command, command.addTarget(handler: action)))
+        }
+        on(center.playCommand) { [weak self] _ in self?.player?.play(); self?.publish(); return .success }
+        on(center.pauseCommand) { [weak self] _ in self?.player?.pause(); self?.publish(); return .success }
+        on(center.togglePlayPauseCommand) { [weak self] _ in
+            guard let player = self?.player else { return .commandFailed }
+            if player.timeControlStatus == .paused { player.play() } else { player.pause() }
+            self?.publish(); return .success
+        }
+        center.skipForwardCommand.preferredIntervals = [15]
+        center.skipBackwardCommand.preferredIntervals = [15]
+        on(center.skipForwardCommand) { [weak self] _ in self?.skip(15); return .success }
+        on(center.skipBackwardCommand) { [weak self] _ in self?.skip(-15); return .success }
+        on(center.changePlaybackPositionCommand) { [weak self] event in
+            guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            self?.player?.seek(to: CMTime(seconds: event.positionTime, preferredTimescale: 600)) { _ in Task { @MainActor in self?.publish() } }
+            return .success
+        }
+        observation = player.observe(\.timeControlStatus) { [weak self] _, _ in Task { @MainActor in self?.publish() } }
+        publish()
+    }
+
+    func end() {
+        for (command, target) in targets { command.removeTarget(target) }
+        targets = []
+        observation = nil
+        player = nil
+    }
+
+    private func skip(_ seconds: Double) {
+        guard let player else { return }
+        let target = max(0, player.currentTime().seconds + seconds)
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600)) { _ in Task { @MainActor in self.publish() } }
+    }
+
+    private func publish() {
+        guard let player, let item = player.currentItem else { return }
+        var info: [String: Any] = [:]
+        for entry in item.externalMetadata {
+            switch entry.identifier {
+            case .commonIdentifierTitle?: info[MPMediaItemPropertyTitle] = entry.stringValue
+            case .iTunesMetadataTrackSubTitle?: info[MPMediaItemPropertyArtist] = entry.stringValue
+            case .commonIdentifierArtwork?:
+                if let data = entry.dataValue, let image = UIImage(data: data) {
+                    info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+                }
+            default: break
+            }
+        }
+        let duration = item.duration.seconds
+        if duration.isFinite { info[MPMediaItemPropertyPlaybackDuration] = duration }
+        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = player.currentTime().seconds
+        info[MPNowPlayingInfoPropertyPlaybackRate] = player.timeControlStatus == .paused ? 0.0 : Double(player.rate)
+        info[MPNowPlayingInfoPropertyMediaType] = MPNowPlayingInfoMediaType.video.rawValue
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+}
+#endif

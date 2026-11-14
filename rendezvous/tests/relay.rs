@@ -85,6 +85,8 @@ async fn device_streams_reach_diamond_and_back() {
     assert_eq!(ask(&device, INFO).await.unwrap().lines().next().unwrap(), "home offline");
     let _home = home(server, &secret).await.unwrap();
     assert_eq!(ask(&device, INFO).await.unwrap().lines().next().unwrap(), "home online");
+    // Diamond's public IP, for a device to tell whether it is behind the same NAT (at home).
+    assert!(ask(&device, INFO).await.unwrap().lines().any(|l| l == "homeip 127.0.0.1"));
     assert_eq!(ask(&device, b"GET /v1/ping?sig=x HTTP/1.1\r\n\r\n").await.unwrap(), "heard GET /v1/ping?sig=x HTTP/1.1 (31 bytes)");
     // A large body, in several reads, arrives whole; streams run side by side.
     let big = [b"POST /v1/x HTTP/1.1\r\n\r\n".as_slice(), &vec![b'a'; 300_000]].concat();

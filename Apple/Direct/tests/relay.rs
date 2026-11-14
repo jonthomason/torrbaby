@@ -67,6 +67,22 @@ fn a_loopback_request_reaches_diamond_through_the_relay() {
     assert!(length > 0);
     let text = unsafe { std::ffi::CStr::from_ptr(info.as_ptr()) }.to_str().unwrap().to_owned();
     assert!(text.starts_with("home online\nyou 127.0.0.1:"), "{text}");
+    // A new network: the relay moves to a new socket and carries on, and bronze sees the move.
+    let moved = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let new_port = moved.local_addr().unwrap().port();
+    assert!(tbdirect::tbdirect_relay_rebind(moved.into_raw_fd()));
+    let reply = runtime.block_on(async {
+        let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        tcp.write_all(b"GET /v1/library HTTP/1.1\r\n\r\n").await.unwrap();
+        let mut reply = String::new();
+        tokio::time::timeout(Duration::from_secs(5), tcp.read_to_string(&mut reply)).await.unwrap().unwrap();
+        reply
+    });
+    assert_eq!(reply, "HTTP/1.1 200 OK\r\n\r\nDiamond heard GET /v1/library HTTP/1.1");
+    let length = tbdirect::tbdirect_relay_info(info.as_mut_ptr(), info.len());
+    assert!(length > 0);
+    let text = unsafe { std::ffi::CStr::from_ptr(info.as_ptr()) }.to_str().unwrap().to_owned();
+    assert!(text.contains(&format!("you 127.0.0.1:{new_port}")), "bronze sees the new socket: {text}");
     tbdirect::tbdirect_relay_stop();
     assert!(!tbdirect::tbdirect_relay_alive());
 }

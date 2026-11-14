@@ -98,11 +98,18 @@ impl Database {
         for (table, condition) in [
             ("library_assets", "OLD.document IS NOT NEW.document"),
             ("library_entities", "OLD.document IS NOT NEW.document"),
-            ("media_inventory", "OLD.document IS NOT NEW.document"),
+            // A record pointed at a moved or renamed file changes only its revision; clients
+            // holding the library must still refetch, or they keep what they had meanwhile.
+            ("media_inventory", "OLD.document IS NOT NEW.document OR OLD.revision IS NOT NEW.revision"),
             ("profile_hidden_titles", "1"), ("profile_playback", "1"), ("playback", "1"), ("media", "1"),
             ("library_operations", "OLD.package_id IS NOT NEW.package_id"),
             ("library_operation_assets", "1"),
         ] {
+            // Made before its condition included the revision; replaced once.
+            if table == "media_inventory" {
+                let current: Option<String> = self.connection.query_row("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='catalog_revision_media_inventory_UPDATE'", [], |r| r.get(0)).ok();
+                if current.is_some_and(|sql| !sql.contains("OLD.revision")) { self.connection.execute_batch("DROP TRIGGER catalog_revision_media_inventory_UPDATE")?; }
+            }
             for event in ["INSERT", "UPDATE", "DELETE"] {
                 let when = if event == "UPDATE" { format!(" WHEN {condition}") } else { String::new() };
                 self.connection.execute_batch(&format!("CREATE TRIGGER IF NOT EXISTS catalog_revision_{table}_{event} AFTER {event} ON {table}{when} BEGIN UPDATE catalog_revision SET revision=revision+1 WHERE id=1; END;"))?;
@@ -236,9 +243,9 @@ impl Database {
             };
             let entity_id = entity_id.as_str();
             let title=titles.entry(entity_id.to_owned()).or_insert_with(||json!({
-                "id":entity_id,"copy_of":if entity_id != movie_id { json!(movie_id) } else { Value::Null },"continue_watching_hidden":hidden.contains(entity_id),"kind":kind,"title":name,"original_title":entity["original_title"],
+                "id":entity_id,"copy_of":if entity_id != movie_id { json!(movie_id) } else { Value::Null },"continue_watching_hidden":hidden.contains(entity_id),"kind":kind,"title":name,"original_title":entity["original_title"],"title_zh":entity["title_zh"],
                 "year":title_year(&entity,file),"end_year":series_end_year(&entity),"ongoing":series_ongoing(&entity),"release_date":entity["release_date"],"genres":entity.get("genres").unwrap_or(&json!([])),
-                "summary":entity["summary"].as_str().unwrap_or(""),"content_rating":entity["content_rating"],"duration_minutes":entity["duration_minutes"],
+                "summary":entity["summary"].as_str().unwrap_or(""),"summary_zh":entity["summary_zh"].as_str().unwrap_or(""),"content_rating":entity["content_rating"],"duration_minutes":entity["duration_minutes"],
                 "poster":entity["thumbnail"],"backdrop":entity["backdrop"],"logo":entity["logo"],"cast":entity["cast"],"provider":entity["provider"],"source_url":entity["source_url"],
                 "added_at":0.0,"status":asset["status"],"assets":[]
             }));
@@ -287,7 +294,7 @@ impl Database {
                 "id":id,"media_info":crate::media_inventory::cached(self,id)?,"role":"main","name":if asset["season"] == 0 { extra_name(asset) }
                     else if let Some(title) = part.and(asset["path"].as_str()).and_then(crate::scanner::part_title) { title }
                     else { episode["title"].as_str().unwrap_or(if kind=="movie"{name}else{&fallback}).to_owned() },
-                "season":asset["season"],"episode":asset["episode"],"part":part,"summary":episode["summary"].as_str().unwrap_or(""),
+                "season":asset["season"],"episode":asset["episode"],"part":part,"summary":episode["summary"].as_str().unwrap_or(""),"summary_zh":episode["summary_zh"].as_str().unwrap_or(""),
                 "airdate":episode["airdate"],"thumbnail":episode["thumbnail"],"duration_minutes":episode.get("duration_minutes").unwrap_or(&entity["duration_minutes"]),
                 "complete":asset["complete"],"size":asset["size"],"position":progress["position"].as_f64().unwrap_or(0.0),
                 "duration":progress["duration"].as_f64().unwrap_or(0.0),"watched":progress["watched"].as_bool().unwrap_or(false),
@@ -466,6 +473,13 @@ mod completion_tests {
         db.initialize_catalog_revision()?;
         db.connection.execute("INSERT INTO organizer_state VALUES(1,'{}')",[])?;
         let first=db.catalog_revision()?;
+        // A language record following a moved file changes the revision too.
+        db.connection.execute("INSERT INTO media_inventory VALUES('a','r1','{}',0)",[])?;
+        let inserted=db.catalog_revision()?;
+        db.connection.execute("UPDATE media_inventory SET revision='r2' WHERE asset_id='a'",[])?;
+        assert_ne!(db.catalog_revision()?,inserted);
+        db.connection.execute("DELETE FROM media_inventory",[])?;
+        let first=if first==db.catalog_revision()? {first} else {db.catalog_revision()?};
         db.connection.execute("UPDATE organizer_state SET document='{\"last_poll\":42}'",[])?;
         db.connection.execute("INSERT INTO clients VALUES('test','TV','other',0,0)",[])?;
         assert_eq!(first,db.catalog_revision()?);

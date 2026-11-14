@@ -13,7 +13,8 @@ pub fn cached_with(db: &Database, id: &str, jobs: Option<&crate::subtitle_jobs::
         "SELECT revision,document FROM media_inventory WHERE asset_id=?", [id], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
     if let Some((revision, text)) = row {
         let asset = db.asset(id)?;
-        if crate::scanner::work_path(&asset).and_then(|p| crate::subtitle_jobs::revision(&p).ok()).as_deref() == Some(&revision) {
+        // By content: a file moved or renamed keeps its languages while processing catches up.
+        if crate::scanner::work_path(&asset).and_then(|p| crate::subtitle_jobs::revision(&p).ok()).is_some_and(|now| crate::subtitle_jobs::same_content(&now, &revision)) {
             let mut info:Value=serde_json::from_str(&text)?;
             if let (Some(jobs),Some(prepared))=(jobs,info["prepared"].as_array_mut()) {
                 for job in prepared.iter_mut().filter(|j|j["state"]=="ready" && j["target"].is_null() && j["sdh"].is_null()) {

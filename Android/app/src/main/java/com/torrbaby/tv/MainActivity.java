@@ -309,6 +309,12 @@ public class MainActivity extends Activity {
                   if (api != requested || selectingProfile) return;
                   boolean firstScreen = library == null;
                   library = result;
+                  // Debug builds: `-e open_title <id>` opens that title's page, to check its layout.
+                  String debugTitle = BuildConfig.DEBUG ? getIntent().getStringExtra("open_title") : null;
+                  if (debugTitle != null) {
+                    getIntent().removeExtra("open_title");
+                    for (Library.Title candidate : library.titles) if (candidate.id.equals(debugTitle)) { open(candidate); return; }
+                  }
                   // Cached content is already usable. Refresh the model without tearing
                   // down the screen immediately before its first frame.
                   if (firstScreen || refreshingExistingScreen || !liveRaw.equals(librarySnapshot)) {
@@ -511,6 +517,8 @@ public class MainActivity extends Activity {
     if (hero != null && firstPoster != null) {
       if (firstPoster.getId() == View.NO_ID) firstPoster.setId(View.generateViewId());
       hero.setNextFocusDownId(firstPoster.getId());
+      View explore = page.findViewWithTag("explore");
+      if (explore != null) explore.setNextFocusDownId(firstPoster.getId());
     }
     restoreFocus(body);
   }
@@ -585,9 +593,20 @@ public class MainActivity extends Activity {
                 else play(t, asset, false);
               });
       Ui.primary(play);
+      Ui.resting(play);
       play.setTag("hero");
-      Ui.add(buttons, play, -2, 48);
-      Ui.add(info, buttons, -1, 52);
+      // The time left sits centred beneath Play, so the button stays a short label.
+      LinearLayout playColumn = Ui.column(this);
+      playColumn.setGravity(Gravity.CENTER_HORIZONTAL);
+      Ui.add(playColumn, play, -2, 48);
+      String left = timeLeft(asset);
+      if (!left.isEmpty()) {
+        Ui.gap(playColumn, 6);
+        Ui.add(playColumn, Ui.text(this, left, 12, Ui.MUTED), -2, -2);
+      }
+      Ui.add(buttons, playColumn, -2, -2);
+      buttons.setGravity(Gravity.TOP);
+      Ui.add(info, buttons, -1, -2);
       View.OnFocusChangeListener heroFocus = (v,f)-> {
         frame.setForeground(f ? Ui.shape(0,0x99ffffff,this) : null);
         frame.animate().scaleX(f?1.006f:1).scaleY(f?1.006f:1).setDuration(140).start();
@@ -596,20 +615,60 @@ public class MainActivity extends Activity {
       // TV shows keep the episode guide directly below the hero, so their secondary
       // actions live in one compact menu beside Play.
       if (t.kind.equals("tv") && asset != null) {
-        Ui.gap(buttons, 10);
+        Ui.gap(buttons, 20);
         Button more = Ui.button(this, L10n.t("More…"), () -> moreActions(t));
+        Ui.resting(more);
         more.setTag("more");
         more.setOnFocusChangeListener(heroFocus);
         Ui.add(buttons, more, -2, 48);
       }
       play.requestFocus();
     } else {
-      Button explore=Ui.button(this,L10n.t("▶  Explore"),()->open(t));
-      Ui.add(info,explore,-2,44);explore.setTag("hero");
-      explore.setOnFocusChangeListener((v,f)-> {
-        frame.setForeground(f ? Ui.shape(0,0x99ffffff,this) : null);
-        frame.animate().scaleX(f?1.006f:1).scaleY(f?1.006f:1).setDuration(140).start();
-      });
+      // Play exactly as on the title's page (time left beneath), then Explore for the page.
+      LinearLayout buttons = Ui.row(this);
+      buttons.setGravity(Gravity.TOP);
+      LinearLayout playColumn = Ui.column(this);
+      playColumn.setGravity(Gravity.CENTER_HORIZONTAL);
+      Button play = Ui.button(this, "", () -> {});
+      Ui.resting(play);
+      play.setTag("hero");
+      Ui.add(playColumn, play, -2, 44);
+      TextView left = Ui.text(this, "", 12, Ui.MUTED);
+      View leftGap = new View(this);
+      Ui.add(playColumn, leftGap, 1, 6);
+      Ui.add(playColumn, left, -2, -2);
+      Ui.add(buttons, playColumn, -2, -2);
+      Ui.gap(buttons, 20);
+      Button explore=Ui.button(this,L10n.t("Explore"),()->open(t));
+      Ui.resting(explore);
+      Ui.add(buttons,explore,-2,44);explore.setTag("explore");
+      Ui.add(info, buttons, -1, -2);
+      View.OnFocusChangeListener heroFocus = (v,f)-> {
+        boolean any = play.hasFocus() || explore.hasFocus();
+        frame.setForeground(any ? Ui.shape(0,0x99ffffff,this) : null);
+        frame.animate().scaleX(any?1.006f:1).scaleY(any?1.006f:1).setDuration(140).start();
+      };
+      play.setOnFocusChangeListener(heroFocus);
+      explore.setOnFocusChangeListener(heroFocus);
+      java.util.function.Consumer<Library.Title> bind = selected -> {
+        Library.Asset next = selected.preferred();
+        boolean playable = next != null && !next.offline;
+        playColumn.setVisibility(playable ? View.VISIBLE : View.GONE);
+        // The entry point from the top bar and the shelves is Play, or Explore without it.
+        play.setTag(playable ? "hero" : null);
+        explore.setTag(playable ? "explore" : "hero");
+        if (playable) {
+          play.setText(playbackLabel(selected, next));
+          play.setOnClickListener(v -> play(selected, next, false));
+          String remaining = timeLeft(next);
+          left.setText(remaining);
+          left.setVisibility(remaining.isEmpty() ? View.GONE : View.VISIBLE);
+          leftGap.setVisibility(remaining.isEmpty() ? View.GONE : View.VISIBLE);
+        }
+        explore.setContentDescription(L10n.t("Explore")+" "+selected.title);
+        explore.setOnClickListener(v -> open(selected));
+      };
+      bind.accept(t);
       onCatalogUpdate(() -> {
         Library.Title latest=null;
         for(Library.Title candidate:library.titles)
@@ -618,11 +677,10 @@ public class MainActivity extends Activity {
         final Library.Title selected=latest;
         name.setText(selected.title);
         ((TextView)info.getChildAt(2)).setText(selected.metadata());
-        explore.setContentDescription(L10n.t("Explore")+" "+selected.title);
-        explore.setOnClickListener(v -> open(selected));
+        bind.accept(selected);
         art.load(image,selected.id,selected.backdrop.isEmpty()?"poster":"backdrop",selected.backdrop.isEmpty()?selected.poster:selected.backdrop);
       });
-      if (restoreId.isEmpty()) explore.requestFocus();
+      if (restoreId.isEmpty()) (playColumn.getVisibility() == View.VISIBLE ? play : explore).requestFocus();
     }
   }
 
@@ -1647,11 +1705,12 @@ public class MainActivity extends Activity {
     if (asset == null) return;
     for (String line : MediaLanguages.lines(asset.mediaInfo)) {
       Ui.gap(parent, compact ? 4 : 7);
-      TextView text = Ui.text(this, line, compact ? 12 : 14, Ui.MUTED);
+      // Smaller than the summary (14) above them.
+      TextView text = Ui.text(this, line, compact ? 11 : 12, Ui.MUTED);
       android.text.SpannableString styled = new android.text.SpannableString(line);
       for (int i = 0; i < line.length(); i++) if (line.charAt(i) == '\uFFFC') {
         android.graphics.drawable.Drawable icon = getDrawable(R.drawable.torrbaby_mark);
-        int size = Ui.dp(this, compact ? 14 : 18);
+        int size = Ui.dp(this, compact ? 13 : 15);
         icon.setBounds(0, 0, size, size);
         styled.setSpan(new android.text.style.ImageSpan(icon, android.text.style.ImageSpan.ALIGN_BASELINE), i, i + 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
       }
@@ -1661,19 +1720,23 @@ public class MainActivity extends Activity {
     }
   }
 
+  /** "▶  Resume Season 1 Ep 2", "▶  Resume" or "▶  Play"; the time left is shown beneath (timeLeft). */
   private String playbackLabel(Library.Title title, Library.Asset asset) {
     if (asset == null) return "▶  Start";
     if (asset.offline) return L10n.t("Drive not connected");
     boolean resume = asset.position > 0 && !asset.watched;
-    int minutes = resume && asset.duration > asset.position ? (int) Math.ceil((asset.duration - asset.position) / 60) : 0;
-    if (!title.kind.equals("tv") || asset.episode <= 0) {
-      if (minutes <= 0) return L10n.t(resume ? "▶  Resume" : "▶  Play");
-      return "▶  " + (minutes >= 60
-          ? String.format(L10n.locale(), L10n.t("Resume (%d hr %d min left)"), minutes / 60, minutes % 60)
-          : String.format(L10n.locale(), L10n.t("Resume (%d min left)"), minutes));
-    }
-    String key = !resume ? "Start Season %d Ep %d" : minutes > 0 ? "Resume Season %d Ep %d (%d min remaining)" : "Resume Season %d Ep %d";
-    return "▶  " + String.format(L10n.locale(), L10n.t(key), asset.season, asset.episode, minutes);
+    if (!title.kind.equals("tv") || asset.episode <= 0) return L10n.t(resume ? "▶  Resume" : "▶  Play");
+    String key = resume ? "Resume Season %d Ep %d" : "Start Season %d Ep %d";
+    return "▶  " + String.format(L10n.locale(), L10n.t(key), asset.season, asset.episode);
+  }
+
+  /** "40m left" or "1h 5m left", worded as on the Apple apps; empty unless partly watched. */
+  static String timeLeft(Library.Asset asset) {
+    if (asset == null || asset.offline || asset.position <= 0 || asset.watched || asset.duration <= asset.position) return "";
+    int minutes = (int) Math.ceil((asset.duration - asset.position) / 60);
+    return minutes >= 60
+        ? String.format(L10n.locale(), L10n.t("%dh %dm left"), minutes / 60, minutes % 60)
+        : String.format(L10n.locale(), L10n.t("%dm left"), minutes);
   }
 
   private void castPage(Library.Title title) {
@@ -1925,7 +1988,7 @@ public class MainActivity extends Activity {
     row.setOnFocusChangeListener((v, focused) -> Ui.secondaryContrast(v, focused));
     Ui.pad(row, 14, 14);
     if (!a.thumbnail.isEmpty()) {
-      ImageView image = new ImageView(this);
+      ImageView image = new ArtImageView(this);
       image.setScaleType(ImageView.ScaleType.CENTER_CROP);
       Ui.round(image, 5);
       Ui.add(row, image, 125, 70);
@@ -2054,17 +2117,20 @@ public class MainActivity extends Activity {
     i.putExtra("title_id", t.id);
     i.putExtra("title", t.title);
     i.putExtra("name", a.label());
+    i.putExtra("heading", a.heading(t));
     i.putExtra("beginning", beginning);
-    ArrayList<String> ids = new ArrayList<>(), names = new ArrayList<>();
+    ArrayList<String> ids = new ArrayList<>(), names = new ArrayList<>(), headings = new ArrayList<>();
     Library.Asset next = t.next(a.id);
     Set<String> queued = new HashSet<>();
     while (next != null && queued.add(next.id)) {
       ids.add(next.id);
       names.add(next.label());
+      headings.add(next.heading(t));
       next = t.next(next.id);
     }
     i.putStringArrayListExtra("queue_ids", ids);
     i.putStringArrayListExtra("queue_names", names);
+    i.putStringArrayListExtra("queue_headings", headings);
     startActivity(i);
   }
 

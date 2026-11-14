@@ -102,21 +102,30 @@ struct LibraryCastLink: View {
     }
 }
 extension LibraryAsset {
-    /// `brief` leaves out the time remaining, for buttons with little room.
+    /// "Resume Season 1 Ep 2", "Resume" or "Play"; unless `brief`, followed by the time left
+    /// ("Resume Season 1 Ep 2 · 40m left"), worded as everywhere else in the app.
     func playbackActionTitle(television: Bool, brief: Bool = false) -> String {
         let resume = position > 0 && !watched
-        guard television, let season, let episode else {
-            guard resume, duration > position, !brief else { return L10n.text(resume ? "Resume" : "Play") }
-            let minutes = Int(ceil((duration - position) / 60))
-            return minutes >= 60 ? L10n.format("Resume (%d hr %d min left)", minutes / 60, minutes % 60) : L10n.format("Resume (%d min left)", minutes)
-        }
-        guard resume else { return L10n.format("Start Season %d Ep %d", season, episode) }
-        if duration > position && !brief { return L10n.format("Resume Season %d Ep %d (%d min remaining)", season, episode, Int(ceil((duration - position) / 60))) }
-        return L10n.format("Resume Season %d Ep %d", season, episode)
+        let action: String
+        if television, let season, let episode {
+            action = L10n.format(resume ? "Resume Season %d Ep %d" : "Start Season %d Ep %d", season, episode)
+        } else { action = L10n.text(resume ? "Resume" : "Play") }
+        guard !brief, let left = timeLeft else { return action }
+        return "\(action) · \(left)"
+    }
+    /// "40m left" or "1h 5m left" for a title partly watched; nil otherwise.
+    var timeLeft: String? {
+        guard position > 0, !watched, duration > position else { return nil }
+        let minutes = Int(ceil((duration - position) / 60))
+        return minutes >= 60 ? L10n.format("%dh %dm left", minutes / 60, minutes % 60) : L10n.format("%dm left", minutes)
     }
 }
 
-struct LibraryDestination: Hashable { let id: String }
+struct LibraryDestination: Hashable {
+    let id: String
+    /// Opened from the home hero's Play: the page starts the next file to watch at once.
+    var play = false
+}
 
 /// What changes as people watch, sent apart from the list: each played file's position and
 /// watched mark (a file not listed has none) and the titles hidden from Continue Watching.
@@ -196,7 +205,21 @@ struct EpisodeNumber: Codable, Hashable {
 struct LibraryTitle: Decodable, Identifiable {
     let id: String
     let kind: String
-    let title: String
+    /// The name from TMDB in English.
+    let englishTitle: String
+    /// Its Chinese name (TMDB's Simplified Chinese name, or a Chinese original); nil when none.
+    var titleZh: String? = nil
+    /// The name shown everywhere: the Chinese name while the interface is in Chinese.
+    var title: String {
+        if L10n.code.hasPrefix("zh"), let titleZh, !titleZh.isEmpty { return titleZh }
+        return englishTitle
+    }
+    /// Both names, for search: a title is found by either.
+    var searchNames: [String] { [englishTitle, titleZh].compactMap { $0 }.filter { !$0.isEmpty } }
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, englishTitle = "title", titleZh, year, endYear, ongoing, genres, englishSummary = "summary", summaryZh, contentRating, durationMinutes
+        case poster, backdrop, addedAt, assets, continueWatchingHidden, cast, offline
+    }
     let year: String?
     /// The year a finished series last aired, and whether it is still running, when known.
     var endYear: String? = nil
@@ -212,7 +235,15 @@ struct LibraryTitle: Decodable, Identifiable {
         return year
     }
     let genres: [String]
-    let summary: String
+    /// TMDB's description, in English.
+    let englishSummary: String
+    /// Its Simplified Chinese description: TMDB's, or translated on Diamond; empty when none yet.
+    var summaryZh: String? = nil
+    /// The description shown: the Chinese one while the interface is in Chinese.
+    var summary: String {
+        if L10n.code.hasPrefix("zh"), let summaryZh, !summaryZh.isEmpty { return summaryZh }
+        return englishSummary
+    }
     let contentRating: String?
     let durationMinutes: Double?
     let poster: String?
@@ -275,12 +306,24 @@ extension LibraryAsset {
     }
 }
 struct LibraryAsset: Decodable, Identifiable {
+    private enum CodingKeys: String, CodingKey {
+        case id, name, role, season, episode, englishSummary = "summary", summaryZh, thumbnail, complete
+        case position, duration, watched, lastPlayed, mediaInfo, offline
+    }
     let id: String
     let name: String?
     let role: String?
     let season: Int?
     let episode: Int?
-    let summary: String
+    /// The episode's description from TMDB, in English.
+    let englishSummary: String
+    /// Its Simplified Chinese description: TMDB's, or translated on Diamond; empty when none yet.
+    var summaryZh: String? = nil
+    /// The description shown: the Chinese one while the interface is in Chinese.
+    var summary: String {
+        if L10n.code.hasPrefix("zh"), let summaryZh, !summaryZh.isEmpty { return summaryZh }
+        return englishSummary
+    }
     let thumbnail: String?
     let complete: Bool
     /// Progress arrives on its own (it changes far more often than the list).
@@ -350,6 +393,18 @@ struct MediaTrackInfo: Decodable {
 struct MediaLanguagesView: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     let info: MediaTrackInfo?
+    /// Why the title's details could not be loaded, shown instead of a check that never ends.
+    var problem: String? = nil
+    /// Smaller than the summary above them; on Apple TV the text styles (callout, caption) are
+    /// larger than the summary's 27 pt, so sizes are set there.
+    /// Headings a little larger than the details beneath them, both below the summary.
+    #if os(tvOS)
+    static let detailFont = Font.system(size: 21)
+    static let headingFont = Font.system(size: 24, weight: .semibold)
+    #else
+    static let detailFont = Font.footnote
+    static let headingFont = Font.subheadline.weight(.semibold)
+    #endif
     private func name(_ code: String?) -> String {
         guard let raw = code?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return "" }
         let code = raw.lowercased().replacingOccurrences(of: "_", with: "-")
@@ -370,7 +425,7 @@ struct MediaLanguagesView: View {
             if let info, info.state == "ready" {
                 if let video = info.video, !videoSummary(video).isEmpty {
                     VStack(alignment: .leading, spacing: 3) {
-                        Label("Video", systemImage: "film").font(.caption.weight(.semibold))
+                        Label("Video", systemImage: "film").font(Self.headingFont)
                         Text(verbatim: videoSummary(video))
                     }
                 }
@@ -379,13 +434,13 @@ struct MediaLanguagesView: View {
                     languageRow("Audio", icon: "speaker.wave.2", languages: info.audioTracks.map { name($0.language) }.filter { !$0.isEmpty })
                 } else {
                     VStack(alignment: .leading, spacing: 3) {
-                        Label("Audio", systemImage: "speaker.wave.2").font(.caption.weight(.semibold))
+                        Label("Audio", systemImage: "speaker.wave.2").font(Self.headingFont)
                         // One line: several tracks sit side by side.
                         Text(verbatim: formats.joined(separator: "  /  ")).fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 VStack(alignment: .leading, spacing: 3) {
-                    Label("Subtitles", systemImage: "captions.bubble").font(.caption.weight(.semibold))
+                    Label("Subtitles", systemImage: "captions.bubble").font(Self.headingFont)
                     let original = Array(Set(
                         info.subtitleTracks.filter { $0.extractionSupported != false }.map { originalName($0.language, sdh: $0.sdh == true) }
                         + info.prepared.filter { !$0.generated && $0.state == "ready" }.map { originalName($0.language, sdh: $0.sdh == true) }
@@ -403,9 +458,12 @@ struct MediaLanguagesView: View {
                     }
                 }
             } else {
-                Label(LocalizedStringKey(info?.state == "failed" ? "Languages unavailable" : "Checking languages…"), systemImage: "captions.bubble")
+                Label(LocalizedStringKey(info?.state == "failed" || (info == nil && problem != nil) ? "Languages unavailable" : "Checking languages…"), systemImage: "captions.bubble")
+                if info == nil, let problem { Text(verbatim: problem).font(.caption2).lineLimit(3) }
+                else if info == nil { Text(verbatim: "no details").font(.caption2) }
+                else if let info { Text(verbatim: info.state).font(.caption2) }
             }
-        }.font(.callout).foregroundStyle(.secondary)
+        }.font(Self.detailFont).foregroundStyle(.secondary)
     }
     /// "1080p · Dolby Vision · H.265 · 12.0 Mb/s"
     private func videoSummary(_ video: MediaTrackInfo.Video) -> String {
@@ -425,7 +483,7 @@ struct MediaLanguagesView: View {
     }
     private func languageRow(_ title: String, icon: String, languages: [String]) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Label(LocalizedStringKey(title), systemImage: icon).font(.caption.weight(.semibold))
+            Label(LocalizedStringKey(title), systemImage: icon).font(Self.headingFont)
             Text(LocalizedStringKey(languages.isEmpty ? "Available" : Array(Set(languages)).sorted().joined(separator: " · ")))
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -615,7 +673,7 @@ struct LibraryBrowser: View {
     var titles: [LibraryTitle] {
         let result = store.library?.titles.filter { title in
             (kind == nil || title.kind == kind) && (genre == "All genres" || title.genres.contains(genre)) &&
-            (search.isEmpty || title.title.localizedCaseInsensitiveContains(search) || title.genres.contains { $0.localizedCaseInsensitiveContains(search) })
+            (search.isEmpty || title.searchNames.contains { $0.localizedCaseInsensitiveContains(search) } || title.genres.contains { $0.localizedCaseInsensitiveContains(search) })
         } ?? []
         return result.sorted {
             if order == "Release date" { return ($0.year ?? "", $0.title) > ($1.year ?? "", $1.title) }
@@ -688,22 +746,35 @@ struct LibraryBrowser: View {
             #endif
             LazyVStack(alignment: .leading, spacing: compactLibrary ? 18 : 28) {
                 if browsing, let featured = titles.homeHero {
+                    // The artwork opens the title; Play starts the next file to watch, exactly as the
+                    // title page's Play (time left beneath), and Explore opens the page.
                     NavigationLink(value: LibraryDestination(id: featured.id)) {
                         LibraryArtwork(id: featured.id, variant: "backdrop")
                             .frame(height: 360)
                             .overlay(LinearGradient(colors: [.clear, .black.opacity(0.92)], startPoint: .top, endPoint: .bottom))
-                            .overlay(alignment: .bottomLeading) {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text(featured.title).font(.system(size: 38, weight: .bold))
-                                    .lineLimit(3).minimumScaleFactor(0.7).multilineTextAlignment(.leading)
-                                Text(verbatim: ([featured.yearLabel] + featured.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · ")).font(.subheadline)
-                                Label("Explore", systemImage: "play.fill").font(.headline)
-                                    .padding(.horizontal, 16).padding(.vertical, 9)
-                                    .foregroundStyle(Theme.onAccent).background(Theme.accent, in: RoundedRectangle(cornerRadius: Theme.radius))
-                                    .padding(.top, 5)
-                            }.padding(28).foregroundStyle(.white)
-                        }.clipShape(RoundedRectangle(cornerRadius: 10))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
                     }.buttonStyle(.plain)
+                    .overlay(alignment: .bottomLeading) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(featured.title).font(.system(size: 38, weight: .bold))
+                                .lineLimit(3).minimumScaleFactor(0.7).multilineTextAlignment(.leading)
+                            Text(verbatim: ([featured.yearLabel] + featured.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · ")).font(.subheadline)
+                            HStack(alignment: .top, spacing: 12) {
+                                if let asset = store.preferredLibraryAsset(featured), store.canPlay(asset) {
+                                    VStack(spacing: 5) {
+                                        NavigationLink(value: LibraryDestination(id: featured.id, play: true)) {
+                                            Label(asset.playbackActionTitle(television: featured.kind == "tv", brief: true), systemImage: "play.fill")
+                                                .font(.headline).frame(minHeight: 44)
+                                        }.libraryActionStyle(prominent: true)
+                                        if let left = asset.timeLeft { Text(verbatim: left).font(.caption).foregroundStyle(.white.opacity(0.75)) }
+                                    }
+                                }
+                                NavigationLink(value: LibraryDestination(id: featured.id)) {
+                                    Text("Explore").font(.headline).frame(minHeight: 44)
+                                }.libraryActionStyle()
+                            }.padding(.top, 5)
+                        }.padding(28).foregroundStyle(.white)
+                    }
                 }
                 #if !os(iOS)
                 if !isHome && !titles.isEmpty { HStack(spacing: 10) { genreMenu; sortMenu; Spacer(minLength: 0) }.buttonStyle(MonoButtonStyle()).fixedSize(horizontal: false, vertical: true) }
@@ -835,10 +906,14 @@ struct LibraryDetail: View {
     @Environment(\.openWindow) private var openWindow
     #endif
     let titleID: String
+    /// Start the next file to watch as soon as the page opens (the home hero's Play).
+    var autoPlay = false
+    @State private var didAutoPlay = false
     @State private var season: Int = -1
     @State private var playback: Playback?
     @State private var loading = false
-    @State private var preparation = ""
+    /// The file being prepared to play: its Play button shows a spinner, and pressing it again cancels.
+    @State private var preparing: String?
     @State private var playbackTask: Task<Void, Never>?
     /// Worked out once per refresh from the title's seasons (it was recomputed for every
     /// season button and every row).
@@ -848,18 +923,27 @@ struct LibraryDetail: View {
         return title.resume?.season ?? title.playable.first(where: { !$0.watched && ($0.season ?? 0) > 0 })?.season ?? seasons.first(where: { $0 > 0 }) ?? seasons.first
     }
     @ViewBuilder private func playbackActions(_ asset: LibraryAsset, title: LibraryTitle, selectedSeason: Int?) -> some View {
-        Button { play(asset, title: title.title) } label: {
-            Label {
-                if store.canPlay(asset) {
-                    // The full label when it fits on one line; otherwise without the time remaining.
-                    ViewThatFits(in: .horizontal) {
-                        Text(asset.playbackActionTitle(television: title.kind == "tv")).lineLimit(1).fixedSize()
-                        Text(asset.playbackActionTitle(television: title.kind == "tv", brief: true)).lineLimit(2)
-                    }
-                } else { Text(LocalizedStringKey(store.onMissingDrive(asset) ? "Drive not connected" : "Not downloaded")) }
-            } icon: { Image(systemName: store.canPlay(asset) ? "play.fill" : store.onMissingDrive(asset) ? "externaldrive.badge.xmark" : "wifi.slash") }
-                .font(.headline).frame(minWidth: title.kind == "tv" && !stacksActions ? 120 : nil, alignment: .leading).frame(minHeight: 44)
-        }.libraryActionStyle(prominent: true).disabled(loading || store.onMissingDrive(asset))
+        // The time left sits centred beneath Play, so the button stays a short label; on a
+        // phone, where Play spans the page, it stays in the button ("Resume · 1h 55m left").
+        VStack(spacing: 5) {
+            Button { playOrCancel(asset, title: title.title) } label: {
+                Label {
+                    if store.canPlay(asset) {
+                        // Beside Download (Mac, iPad) Play keeps its one-line width; Download gives way.
+                        Text(asset.playbackActionTitle(television: title.kind == "tv", brief: !stacksActions))
+                            .lineLimit(stacksActions ? 2 : 1).fixedSize(horizontal: !stacksActions, vertical: false)
+                    } else { Text(LocalizedStringKey(store.onMissingDrive(asset) ? "Drive not connected" : "Not downloaded")) }
+                } icon: {
+                    if preparing == asset.id { PlaybackSpinner(color: Theme.onAccent) }
+                    else { Image(systemName: store.canPlay(asset) ? "play.fill" : store.onMissingDrive(asset) ? "externaldrive.badge.xmark" : "wifi.slash") }
+                }
+                    .font(.headline).frame(minWidth: title.kind == "tv" && !stacksActions ? 120 : nil, alignment: .leading).frame(minHeight: 44)
+            }.libraryActionStyle(prominent: true).disabled((loading && preparing != asset.id) || store.onMissingDrive(asset))
+            .modifier(PreparingPlayback(active: preparing == asset.id))
+            if store.canPlay(asset), !stacksActions, let left = asset.timeLeft {
+                Text(verbatim: left).font(.caption).foregroundStyle(.white.opacity(0.75))
+            }
+        }
         #if !os(tvOS)
         // Nothing can be downloaded to this device while the server's drive is away.
         if !store.onMissingDrive(asset) {
@@ -892,7 +976,7 @@ struct LibraryDetail: View {
                                     VStack(alignment: .leading, spacing: 10) { playbackActions(asset, title: title, selectedSeason: chosen) }
                                         .environment(\.libraryActionFullWidth, true)
                                 } else {
-                                    HStack(spacing: 12) { playbackActions(asset, title: title, selectedSeason: chosen) }
+                                    HStack(alignment: .top, spacing: 12) { playbackActions(asset, title: title, selectedSeason: chosen) }
                                 }
                             }
                         }.foregroundStyle(.white).padding(16).frame(minHeight: 380, alignment: .bottomLeading)
@@ -907,7 +991,7 @@ struct LibraryDetail: View {
                     }
                     if let asset = preferred {
                         LibraryAssetActions(asset: asset, showsDownload: false, castTitle: title)
-                        MediaLanguagesView(info: asset.mediaInfo)
+                        MediaLanguagesView(info: asset.mediaInfo, problem: store.detailsProblem[title.id])
                     }
                     // Extras are their own tab after the last season, not a tail on every season.
                     if title.kind == "tv" {
@@ -944,19 +1028,13 @@ struct LibraryDetail: View {
                 }.padding(contentPadding)
             }
         }.background(Theme.canvas).navigationTitle(title?.title ?? "Library")
-        .overlay(alignment: .bottom) {
-            if loading {
-                HStack(spacing: 12) {
-                    ProgressView().controlSize(.small)
-                    Text(LocalizedStringKey(preparation.isEmpty ? "Preparing playback…" : preparation)).font(.callout)
-                    Button("Cancel") { playbackTask?.cancel() }
-                }.padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-                    .padding(16)
-            }
-        }
         .onDisappear { playbackTask?.cancel() }
         // Cast and each file's tracks come with the page, not the list.
         .task(id: titleID) { await store.loadDetails(titleID) }
+        .task(id: title?.id) {
+            guard autoPlay, !didAutoPlay, let title, let asset = store.preferredLibraryAsset(title) else { return }
+            didAutoPlay = true; play(asset, title: title.title)
+        }
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .background(MobilePlayerPresentation(playback: $playback, store: store).frame(width: 0, height: 0))
@@ -966,9 +1044,12 @@ struct LibraryDetail: View {
     }
     private func episodeRow(_ asset: LibraryAsset, title: LibraryTitle) -> some View {
         HStack(spacing: 8) {
-            Button { play(asset, title: title.title) } label: {
+            Button { playOrCancel(asset, title: title.title) } label: {
                 HStack(spacing: 12) {
-                    Image(systemName: "play.circle.fill").font(.title).foregroundStyle(Theme.accent)
+                    Group {
+                        if preparing == asset.id { PlaybackSpinner(color: Theme.accent).frame(width: 28, height: 28) }
+                        else { Image(systemName: "play.circle.fill").font(.title).foregroundStyle(Theme.accent) }
+                    }
                     VStack(alignment: .leading, spacing: 5) {
                         // An episode with no title of its own is headed by its number, once.
                         if asset.season != nil, let e = asset.episode {
@@ -988,15 +1069,19 @@ struct LibraryDetail: View {
                     }
                     Spacer(minLength: 0)
                 }.contentShape(Rectangle())
-            }.buttonStyle(.plain).disabled(loading)
+            }.buttonStyle(.plain).disabled(loading && preparing != asset.id)
+            .modifier(PreparingPlayback(active: preparing == asset.id))
             LibraryEpisodeActions(asset: asset, title: title)
         }.padding(14).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
     }
+    private func playOrCancel(_ asset: LibraryAsset, title: String) {
+        if preparing == asset.id { playbackTask?.cancel() } else { play(asset, title: title) }
+    }
     func play(_ asset: LibraryAsset, title: String) {
         guard !loading, store.canPlay(asset) else { return }
-        loading = true; preparation = ""
+        loading = true; preparing = asset.id
         playbackTask = Task {
-            defer { loading = false; playbackTask = nil }
+            defer { loading = false; preparing = nil; playbackTask = nil }
             do {
                 #if !os(tvOS)
                 let downloads = DownloadQueue.shared
@@ -1013,7 +1098,7 @@ struct LibraryDetail: View {
                 try store.requireStreamingConnection()
                 await store.flushProgress()
                 try await store.registerClient()
-                let link = try await store.mediaPlaybackLink(asset: asset, titleID: titleID) { preparation = $0 }
+                let link = try await store.mediaPlaybackLink(asset: asset, titleID: titleID)
                 let item = Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0, url: try store.endpoint(link.path), name: asset.season == nil ? title : title + " · " + (asset.name ?? ""), libraryAssetID: asset.id, libraryTitleID: titleID)
                 #if os(macOS)
                 MacPlaybackWindows.open(item, with: openWindow)
@@ -1053,6 +1138,34 @@ extension EnvironmentValues {
 }
 
 // Shared geometry for every library detail action on Mac, iPhone and iPad.
+/// In place of a Play button's icon while the file is prepared to play.
+struct PlaybackSpinner: View {
+    /// The colour of the icon it stands in for (tvOS follows focus instead).
+    var color: Color = Theme.onAccent
+    #if os(tvOS)
+    /// A focused TV button is white, so the spinner turns dark with its text.
+    @Environment(\.isFocused) private var focused
+    #endif
+    var body: some View {
+        ProgressView()
+            #if os(tvOS)
+            .tint(focused ? .black : .white)
+            #else
+            .controlSize(.small).tint(color)
+            #endif
+            .accessibilityHidden(true)
+    }
+}
+/// A Play button preparing its file: says so, and pressing it again cancels.
+struct PreparingPlayback: ViewModifier {
+    let active: Bool
+    func body(content: Content) -> some View {
+        if active {
+            content.accessibilityValue(Text("Preparing playback…")).accessibilityHint(Text("Cancel"))
+        } else { content }
+    }
+}
+
 private struct LibraryActionButtonStyle: ButtonStyle {
     var prominent = false
     /// Secondary actions and season tabs are quieter than the main Play/Download row.

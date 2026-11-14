@@ -40,7 +40,7 @@ public final class Library {
       if (!kind.isEmpty() && !kind.equals(t.kind)) continue;
       if (!genre.isEmpty() && !t.genres.contains(genre)) continue;
       if (!q.isEmpty()
-          && !(t.title + " " + String.join(" ", t.genres) + " " + t.year)
+          && !(t.englishTitle + " " + t.chineseTitle + " " + String.join(" ", t.genres) + " " + t.year)
               .toLowerCase(Locale.ROOT)
               .contains(q)) continue;
       result.add(t);
@@ -71,6 +71,8 @@ public final class Library {
 
   public static final class Title {
     public final String id, kind, title, year, endYear, summary, rating, poster, backdrop;
+    /** The English name and the Chinese one ("" when none); `title` is whichever the interface uses. */
+    public final String englishTitle, chineseTitle;
     /** Whether a series is still running; null when the server does not know. */
     public final Boolean ongoing;
     public final double added, minutes;
@@ -95,11 +97,16 @@ public final class Library {
       cast=j.optJSONArray("cast");
       id = string(j, "id");
       kind = string(j, "kind");
-      title = string(j, "title");
+      englishTitle = string(j, "title");
+      chineseTitle = string(j, "title_zh");
+      // Chosen when the library is read: switching language recreates the screen and reads it again.
+      title = !chineseTitle.isEmpty() && L10n.locale().getLanguage().equals("zh") ? chineseTitle : englishTitle;
       year = string(j, "year");
       endYear = string(j, "end_year");
       ongoing = j.isNull("ongoing") ? null : (Boolean) j.optBoolean("ongoing");
-      summary = string(j, "summary");
+      // TMDB's Chinese description, or one translated on Diamond; English when there is none yet.
+      String chineseSummary = string(j, "summary_zh");
+      summary = !chineseSummary.isEmpty() && L10n.locale().getLanguage().equals("zh") ? chineseSummary : string(j, "summary");
       rating = string(j, "content_rating");
       poster = string(j, "poster");
       backdrop = string(j, "backdrop");
@@ -209,7 +216,9 @@ public final class Library {
     Asset(JSONObject j) {
       id = string(j, "id");
       name = string(j, "name");
-      summary = string(j, "summary");
+      // TMDB's Chinese description, or one translated on Diamond; English when there is none yet.
+      String chineseSummary = string(j, "summary_zh");
+      summary = !chineseSummary.isEmpty() && L10n.locale().getLanguage().equals("zh") ? chineseSummary : string(j, "summary");
       role = string(j, "role");
       thumbnail = string(j, "thumbnail");
       mediaInfo = j.optJSONObject("media_info");
@@ -226,6 +235,28 @@ public final class Library {
 
     public boolean extra() {
       return role.equals("extra");
+    }
+
+    /** The episode's own title, or "" when TMDB only repeats its number ("Episode 1", "第1集"). */
+    public String ownName() {
+      String n = name.trim();
+      if (episode > 0 && n.matches("(?i)^(episode|ep\\.?|第)\\s*#?\\d+(\\.\\d+)?\\s*[集话話期回]?$")) return "";
+      return n;
+    }
+
+    /**
+     * The player's line above its progress bar: "Season 1 Ep 2 – Name" for an episode, a special feature's
+     * own name, or the title's name for a movie.
+     */
+    public String heading(Title t) {
+      if (extra()) return ownName().isEmpty() ? t.title : ownName();
+      if (!"tv".equals(t.kind)) return t.title;
+      String number = episode <= 0 ? "" : hasSeason
+          ? String.format(L10n.locale(), L10n.t("Season %d Ep %d"), season, episode)
+          : String.format(L10n.locale(), L10n.t("Ep %d"), episode);
+      String own = ownName();
+      String line = number.isEmpty() ? own : own.isEmpty() ? number : number + " – " + own;
+      return line.isEmpty() ? t.title : line;
     }
 
     public String label() {

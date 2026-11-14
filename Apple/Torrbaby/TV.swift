@@ -138,7 +138,7 @@ struct TVRootView: View {
             // switch at the far right lands in the page even when nothing sits right below it.
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .focusSection()
-            .navigationDestination(for: LibraryDestination.self) { route in TVMediaDetail(titleID: route.id) }
+            .navigationDestination(for: LibraryDestination.self) { route in TVMediaDetail(titleID: route.id, autoPlay: route.play) }
             .navigationDestination(for: TVShelfDestination.self) { route in TVMediaDetail(titleID: route.id, autoPlay: route.play) }
         }
         .ignoresSafeArea(.container, edges: [.top, .horizontal])
@@ -347,6 +347,8 @@ private struct TVLibraryView: View {
 
 private struct TVMonochromeButtonStyle: ButtonStyle {
     var selected = false
+    /// A main action (Play, More…) that reads as a button even without focus.
+    var resting = false
     @Environment(\.isFocused) private var focused
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -354,7 +356,7 @@ private struct TVMonochromeButtonStyle: ButtonStyle {
             // Where the remote is must never look the same as what is merely chosen: focus
             // is solid white and a little larger; the chosen tab is a quiet tint until focused.
             .foregroundStyle(focused ? Color.black : .white)
-            .background(focused ? Color.white : selected ? Color.white.opacity(0.22) : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .background(focused ? Color.white : selected || resting ? Color.white.opacity(0.22) : .clear, in: RoundedRectangle(cornerRadius: 8))
             .scaleEffect(focused ? 1.08 : 1)
             .opacity(configuration.isPressed ? 0.75 : 1)
             .animation(.easeOut(duration: 0.15), value: focused)
@@ -382,8 +384,12 @@ private struct TVLanguagePicker: View {
 }
 
 private struct TVFeaturedHero: View {
+    /// Play's label, the time left and the title's name are worked out in the interface language.
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
     let title: LibraryTitle
     @FocusState private var focused: Bool
+    @FocusState private var exploreFocused: Bool
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             LibraryArtwork(id: title.id, variant: "backdrop", alignment: .top)
@@ -392,17 +398,30 @@ private struct TVFeaturedHero: View {
                 Text(title.title).font(.system(size: 48, weight: .bold)).lineLimit(2)
                 Text(([title.yearLabel] + title.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.headline)
-                NavigationLink(value: LibraryDestination(id: title.id)) {
-                    Label("Explore", systemImage: "play.fill").font(.headline)
-                }.buttonStyle(TVMonochromeButtonStyle()).focused($focused)
+                // Play exactly as on the title's page (time left beneath), then Explore for the page.
+                HStack(alignment: .top, spacing: 30) {
+                    if let asset = store.preferredLibraryAsset(title), asset.offline != true {
+                        VStack(spacing: 12) {
+                            NavigationLink(value: LibraryDestination(id: title.id, play: true)) {
+                                Label(asset.playbackActionTitle(television: title.kind == "tv", brief: true), systemImage: "play.fill")
+                            }.buttonStyle(TVMonochromeButtonStyle(resting: true)).focused($focused)
+                            if let left = asset.timeLeft {
+                                Text(verbatim: left).font(.system(size: 24)).foregroundStyle(.white.opacity(0.7))
+                            }
+                        }
+                    }
+                    NavigationLink(value: LibraryDestination(id: title.id)) {
+                        Text("Explore")
+                    }.buttonStyle(TVMonochromeButtonStyle(resting: true)).focused($exploreFocused)
+                }.focusSection()
             }.foregroundStyle(.white).padding(44)
         }.frame(height: 650)
             .clipShape(RoundedRectangle(cornerRadius: 18))
-            .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(focused ? 0.65 : 0), lineWidth: 2))
-            .scaleEffect(focused ? 1.006 : 1)
-            .animation(.easeOut(duration: 0.15), value: focused)
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(focused || exploreFocused ? 0.65 : 0), lineWidth: 2))
+            .scaleEffect(focused || exploreFocused ? 1.006 : 1)
+            .animation(.easeOut(duration: 0.15), value: focused || exploreFocused)
             .defaultFocus($focused, true)
-            .task { focused = true }
+            .task { if store.preferredLibraryAsset(title).map({ $0.offline != true }) == true { focused = true } else { exploreFocused = true } }
     }
 }
 
@@ -420,7 +439,8 @@ private struct TVMediaDetail: View {
     @State private var season: Int?
     @State private var playback: Playback?
     @State private var loading = false
-    @State private var preparation = ""
+    /// The file being prepared to play: its button shows a spinner, and pressing it again cancels.
+    @State private var preparing: String?
     @State private var playbackTask: Task<Void, Never>?
     private var title: LibraryTitle? { store.library?.titles.first { $0.id == titleID } }
     var body: some View {
@@ -437,15 +457,25 @@ private struct TVMediaDetail: View {
                             if let asset = store.preferredLibraryAsset(title) {
                                 // TV shows keep the episode guide directly below the hero, so their
                                 // secondary actions live in one compact menu beside Play.
-                                HStack(spacing: 14) {
-                                    Button { play(asset, title: title) } label: {
-                                        if asset.offline == true {
-                                            Label("Drive not connected", systemImage: "externaldrive.badge.xmark").font(.headline)
-                                        } else {
-                                            Label(asset.playbackActionTitle(television: title.kind == "tv"), systemImage: "play.fill")
-                                                .font(.headline)
+                                HStack(alignment: .top, spacing: 30) {
+                                    // The time left sits centred beneath Play, so the button stays a short label.
+                                    VStack(spacing: 12) {
+                                        Button { playOrCancel(asset, title: title) } label: {
+                                            if asset.offline == true {
+                                                Label("Drive not connected", systemImage: "externaldrive.badge.xmark")
+                                            } else {
+                                                Label {
+                                                    Text(asset.playbackActionTitle(television: title.kind == "tv", brief: true))
+                                                } icon: {
+                                                    if preparing == asset.id { PlaybackSpinner() } else { Image(systemName: "play.fill") }
+                                                }
+                                            }
+                                        }.buttonStyle(TVMonochromeButtonStyle(resting: true)).focused($heroFocused)
+                                        .modifier(PreparingPlayback(active: preparing == asset.id))
+                                        if asset.offline != true, let left = asset.timeLeft {
+                                            Text(verbatim: left).font(.system(size: 24)).foregroundStyle(.white.opacity(0.7))
                                         }
-                                    }.buttonStyle(TVMonochromeButtonStyle()).focused($heroFocused)
+                                    }
                                     if title.kind == "tv" {
                                         TVMoreActions(asset: asset, title: title) { play(asset, title: title, fromBeginning: true) }
                                             .focused($moreFocused)
@@ -470,7 +500,7 @@ private struct TVMediaDetail: View {
                                 .animation(.easeOut(duration: 0.15), value: summaryFocused)
                         }
                         if let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
-                            MediaLanguagesView(info: asset.mediaInfo)
+                            MediaLanguagesView(info: asset.mediaInfo, problem: store.detailsProblem[title.id])
                         }
                         if title.kind != "tv", let asset = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first {
                             VStack(alignment: .leading, spacing: 8) {
@@ -529,15 +559,6 @@ private struct TVMediaDetail: View {
                 }.padding(.horizontal, 32).padding(.top, 8)
             }
         }.background(Color.black)
-            .overlay(alignment: .bottom) {
-                if loading {
-                    HStack(spacing: 16) {
-                        ProgressView().tint(.white)
-                        Text(LocalizedStringKey(preparation.isEmpty ? "Preparing playback…" : preparation))
-                    }.padding(20).background(.black.opacity(0.9), in: RoundedRectangle(cornerRadius: 10))
-                        .padding(.bottom, 24).allowsHitTesting(false)
-                }
-            }
             .toolbar(.hidden, for: .navigationBar)
             // No exit handler of our own here: the system player takes Back first, hiding its
             // controls when they are showing, and only then does Back close the player.
@@ -556,13 +577,15 @@ private struct TVMediaDetail: View {
     }
     private func assetButton(_ asset: LibraryAsset, title: LibraryTitle) -> some View {
         HStack(spacing: 20) {
-        Button { play(asset, title: title) } label: {
+        Button { playOrCancel(asset, title: title) } label: {
             HStack(spacing: 28) {
                 if asset.thumbnail != nil {
                     LibraryArtwork(id: asset.id, variant: "episode")
                         .frame(width: 250, height: 140).clipShape(RoundedRectangle(cornerRadius: 10))
                 }
-                Image(systemName: "play.circle.fill").font(.largeTitle)
+                Group {
+                    if preparing == asset.id { PlaybackSpinner() } else { Image(systemName: "play.circle.fill") }
+                }.font(.largeTitle).frame(width: 60)
                 VStack(alignment: .leading, spacing: 10) {
                     // An episode with no title of its own is headed by its number, once.
                     if let episode = asset.episode {
@@ -581,19 +604,23 @@ private struct TVMediaDetail: View {
                 Spacer()
                 if asset.duration > 0 { Text("\(Int(asset.duration / 60)) min").font(.caption) }
             }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
-        }.buttonStyle(.card).disabled(!asset.complete || asset.offline == true)
+        }.buttonStyle(.card).disabled(!asset.complete || asset.offline == true || (loading && preparing != asset.id))
+        .modifier(PreparingPlayback(active: preparing == asset.id))
         }
+    }
+    private func playOrCancel(_ asset: LibraryAsset, title: LibraryTitle) {
+        if preparing == asset.id { playbackTask?.cancel() } else { play(asset, title: title) }
     }
     private func play(_ asset: LibraryAsset, title: LibraryTitle, fromBeginning: Bool = false) {
         guard !loading, asset.offline != true else { return }
-        loading = true; preparation = ""
+        loading = true; preparing = asset.id
         playbackTask = Task {
-            defer { loading = false; playbackTask = nil }
+            defer { loading = false; preparing = nil; playbackTask = nil }
             do {
                 try store.requireStreamingConnection()
                 await store.flushProgress()
                 try await store.registerClient()
-                let link = try await store.mediaPlaybackLink(asset: asset, titleID: title.id) { preparation = $0 }
+                let link = try await store.mediaPlaybackLink(asset: asset, titleID: title.id)
                 playback = Playback(sessionId: link.sessionId, resumePosition: fromBeginning ? 0 : (link.resumePosition ?? 0),
                     url: try store.endpoint(link.path), name: asset.episode == nil ? title.title : title.title + " · " + (asset.ownName ?? L10n.format("Ep %d", asset.episode!)), libraryAssetID: asset.id, libraryTitleID: title.id)
             } catch { if !Task.isCancelled { store.actionError = error.localizedDescription } }
@@ -612,8 +639,8 @@ private struct TVMoreActions: View {
     @State private var showFiles = false
     var body: some View {
         Button { showMenu = true } label: {
-            Text("More…").font(.headline)
-        }.buttonStyle(TVMonochromeButtonStyle())
+            Text("More…")
+        }.buttonStyle(TVMonochromeButtonStyle(resting: true))
         .confirmationDialog(title.title, isPresented: $showMenu, titleVisibility: .visible) {
             if title.cast?.isEmpty == false { Button("Cast") { showCast = true } }
             if asset.position > 0 { Button("Start from Beginning", action: restart) }
@@ -849,7 +876,7 @@ private struct TVSearchView: View {
     @State private var query = ""
     private var results: [LibraryTitle] {
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
-        return (store.library?.titles ?? []).filter { $0.title.localizedCaseInsensitiveContains(query) }
+        return (store.library?.titles ?? []).filter { $0.searchNames.contains { $0.localizedCaseInsensitiveContains(query) } }
     }
     var body: some View {
         ScrollView {

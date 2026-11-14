@@ -14,6 +14,7 @@ use axum::{
 };
 use serde_json::{Value, json};
 use std::{
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Instant,
@@ -1528,7 +1529,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
     }
     if method == Method::GET {
         if let Some(title) = path.strip_prefix("/v1/library/titles/").and_then(|p| p.strip_suffix("/missing-episodes")) {
-            return db.missing_episodes(title);
+            return db.missing_episodes(&title_segment(title));
         }
         if let Some(id) = path.strip_prefix("/v1/punch/") {
             return crate::punch::TESTS.status(id);
@@ -1537,13 +1538,14 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             return crate::direct::DIRECT.status(id);
         }
         if let Some(title) = path.strip_prefix("/v1/library/titles/").and_then(|p| p.strip_suffix("/details")) {
-            return db.catalog_details(profile, title);
+            return db.catalog_details(profile, &title_segment(title));
         }
     }
     if let Some(title) = path
         .strip_prefix("/v1/library/titles/")
         .and_then(|p| p.strip_suffix("/subtitle-preferences"))
     {
+        let title = &title_segment(title);
         return match method.as_str() {
             "GET" => db.subtitle_preferences(Some(title)),
             "PUT" => db.save_subtitle_preferences(Some(title), body),
@@ -1614,8 +1616,11 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             db.save_state(&state)?;
             Ok(json!({"name":state["server"]["name"],"id":state["server"]["id"]}))
         }
+        // Settings → Connection → Send logs to Diamond: saved under client-logs/ for debugging.
+        ("POST","/v1/diagnostics/logs") => { drop(db); return crate::diagnostics::receive(&s.data_dir, &body); }
         ("POST","/v1/punch") => { drop(db); return crate::punch::TESTS.start(&body).await; }
-        ("POST","/v1/direct") => { drop(db); return crate::direct::DIRECT.start(&body, s.config.listen_port).await; }
+        ("POST","/v1/direct") => { drop(db); return crate::direct::DIRECT.start(&body, s.config.listen_port, &s.data_dir).await; }
+        ("GET","/v1/punch-results") => { drop(db); return Ok(json!({"results": crate::direct::results::summary(&s.data_dir)})); }
         ("GET","/v1/events") => Ok(db.state()?["events"].take()),
         ("GET","/v1/clients") => Ok(json!(db.rows("SELECT clients.*, EXISTS(SELECT 1 FROM device_credentials WHERE client_id=clients.id) AS paired_credential FROM clients ORDER BY last_seen DESC",[])?)),
         ("POST","/v1/clients") => db.register(text(&body,"client_id")?,text(&body,"name")?,text(&body,"platform")?),
@@ -1640,6 +1645,26 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
     }
 }
 
+/// A title ID taken from a path, percent-decoded: the Apple apps send tmdb%3Atv%3A1 for tmdb:tv:1.
+fn title_segment(segment: &str) -> String {
+    let bytes = segment.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() && segment.is_char_boundary(i + 3) {
+            if let Ok(value) = u8::from_str_radix(&segment[i + 1..i + 3], 16) { out.push(value); i += 3; continue; }
+        }
+        out.push(bytes[i]); i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| segment.to_owned())
+}
+#[cfg(test)]
+#[test]
+fn title_ids_in_paths_are_percent_decoded() {
+    assert_eq!(title_segment("tmdb%3Atv%3A286171"), "tmdb:tv:286171");
+    assert_eq!(title_segment("tmdb:movie:1:copy:abc"), "tmdb:movie:1:copy:abc");
+    assert_eq!(title_segment("bad%zz%4"), "bad%zz%4");
+}
 fn signature(token: &str, hash: &str, index: u64, expires: u64) -> String {
     use hmac::{Hmac, Mac};
     let mut mac =
@@ -2532,9 +2557,46 @@ fn keep_backfilled(connection: &rusqlite::Connection, id: &str, mut entity: Valu
             let known = !(stored[field].is_null() || stored[field].as_str() == Some(""));
             if missing && known && entity.is_object() { entity[field] = stored[field].clone(); }
         }
+        // The Chinese description (and what TMDB said about it) stays when the new copy has
+        // none of its own; a translation made on Diamond stays until TMDB has its own. Match
+        // snapshots and cached metadata rewrite these documents often, without these fields.
+        let fresh_has_none = entity["summary_zh_source"].is_null();
+        let stored_machine = stored["summary_zh_source"] == "machine" && entity["summary_zh_source"] != "tmdb";
+        if entity.is_object() && !stored["summary_zh_source"].is_null() && (fresh_has_none || stored_machine) {
+            for field in CHINESE_SUMMARY_FIELDS { entity[field] = stored[field].clone(); }
+        }
+        if entity.is_object() && entity.get("title_zh").is_none() && stored.get("title_zh").is_some() {
+            entity["title_zh"] = stored["title_zh"].clone();
+        }
+        keep_episode_summaries(&stored, &mut entity);
     }
     Ok(entity)
 }
+const CHINESE_SUMMARY_FIELDS: [&str; 3] = ["summary_zh", "summary_zh_source", "summary_zh_checked"];
+/// A freshly fetched episode list has no Chinese descriptions; each episode keeps the one it
+/// had (TMDB's, or a translation of the same English text).
+fn keep_episode_summaries(stored: &Value, entity: &mut Value) {
+    let Some(old) = stored["episodes"].as_array() else { return };
+    let Some(episodes) = entity["episodes"].as_array_mut() else { return };
+    for episode in episodes.iter_mut().filter(|e| e.is_object() && e["summary_zh_source"].is_null()) {
+        let Some(before) = old.iter().find(|o| o["season"] == episode["season"] && o["episode"] == episode["episode"]) else { continue };
+        let same_text = before["summary"] == episode["summary"];
+        if before["summary_zh_source"] == "tmdb" || (before["summary_zh_source"].is_string() && same_text) {
+            for field in CHINESE_SUMMARY_FIELDS { episode[field] = before[field].clone(); }
+        }
+    }
+}
+/// Library episodes by show: (season, episode) pairs with a file.
+fn held_episodes(assets: &[Value]) -> HashMap<String, HashSet<(u64, u64)>> {
+    let mut held: HashMap<String, HashSet<(u64, u64)>> = HashMap::new();
+    for asset in assets {
+        if let (Some(entity), Some(season), Some(episode)) = (asset["entity_id"].as_str(), asset["season"].as_u64(), asset["episode"].as_u64()) {
+            held.entry(entity.to_owned()).or_default().insert((season, episode));
+        }
+    }
+    held
+}
+fn episode_key(episode: &Value) -> Option<(u64, u64)> { Some((episode["season"].as_u64()?, episode["episode"].as_u64()?)) }
 fn save_match(s: &Service, id: &str, entity: Value, confirmed: bool) -> Result<()> {
     let mut db =
         s.db.lock()
@@ -2566,6 +2628,64 @@ fn save_match(s: &Service, id: &str, entity: Value, confirmed: bool) -> Result<(
     )?;
     tx.commit()?;
     db.link_extras()?;
+    Ok(())
+}
+
+/// Translates up to 32 English descriptions into Simplified Chinese per pass, titles first, then
+/// the library's episodes, in one request to the on-device translator, and saves each as a
+/// machine translation. One whose English changed meanwhile is left for the next pass.
+async fn translate_summaries(s: &Service, entities: &[Value], held: &HashMap<String, HashSet<(u64, u64)>>) -> Result<()> {
+    // (cue id, show id, episode or None for the title, English)
+    let mut pending: Vec<(String, String, Option<(u64, u64)>, String)> = Vec::new();
+    let usable = |text: &str| !text.trim().is_empty() && text.len() <= 16_384;
+    for entity in entities {
+        let Some(id) = entity["id"].as_str().filter(|id| id.len() <= 96) else { continue };
+        if crate::metadata::wants_summary_translation(entity) && entity["summary"].as_str().is_some_and(usable) {
+            pending.push((format!("t{}", pending.len()), id.to_owned(), None, entity["summary"].as_str().unwrap_or("").trim().to_owned()));
+        }
+    }
+    for entity in entities {
+        let Some(id) = entity["id"].as_str().filter(|id| id.len() <= 96) else { continue };
+        let Some(have) = held.get(id) else { continue };
+        for episode in entity["episodes"].as_array().into_iter().flatten() {
+            let Some(key) = episode_key(episode).filter(|key| have.contains(key)) else { continue };
+            if crate::metadata::wants_summary_translation(episode) && episode["summary"].as_str().is_some_and(usable) {
+                pending.push((format!("e{}", pending.len()), id.to_owned(), Some(key), episode["summary"].as_str().unwrap_or("").trim().to_owned()));
+            }
+        }
+    }
+    pending.truncate(32);
+    if pending.is_empty() { return Ok(()); }
+    let helper = std::env::current_exe()?.with_file_name("torrbaby-subtitle-translator");
+    let request = crate::subtitles::TranslationRequest {
+        source: "en".into(), target: "zh-Hans".into(),
+        cues: pending.iter().map(|(cue, _, _, english)| crate::subtitles::Cue { id: cue.clone(), text: english.clone() }).collect(),
+    };
+    let response = crate::subtitles::translate(&helper, request).await?;
+    let translated = response.cues.context("Missing translated descriptions")?;
+    let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+    let mut documents: HashMap<String, Value> = HashMap::new();
+    for cue in translated {
+        let Some((_, id, episode, english)) = pending.iter().find(|(id, ..)| *id == cue.id) else { continue };
+        let chinese = cue.text.trim();
+        if chinese.is_empty() { continue; }
+        if !documents.contains_key(id) {
+            let Some(row) = db.rows("SELECT document FROM library_entities WHERE id=?", [id.as_str()])?.into_iter().next() else { continue };
+            documents.insert(id.clone(), serde_json::from_str(text(&row, "document")?)?);
+        }
+        let Some(current) = documents.get_mut(id) else { continue };
+        let target = match episode {
+            None => Some(current),
+            Some(key) => current["episodes"].as_array_mut().and_then(|episodes| episodes.iter_mut().find(|e| episode_key(e) == Some(*key))),
+        };
+        let Some(target) = target else { continue };
+        if !crate::metadata::wants_summary_translation(target) || target["summary"].as_str().map(str::trim) != Some(english.as_str()) { continue; }
+        target["summary_zh"] = json!(chinese);
+        target["summary_zh_source"] = json!("machine");
+    }
+    for (id, document) in documents {
+        db.connection.execute("UPDATE library_entities SET document=? WHERE id=?", [document.to_string(), id])?;
+    }
     Ok(())
 }
 
@@ -2616,6 +2736,69 @@ async fn collect_metadata(s: &Service) -> Result<()> {
                 }
             }
             Err(error)=>{eprintln!("Series run metadata: {error}");s.metadata.record_failure(key).await;}
+        }
+    }
+    // Titles saved before Chinese names and descriptions were kept pick them up here; titles
+    // with a machine translation (or none) ask TMDB again now and then.
+    let mut lookups=0;
+    let checked_at=now();
+    for entity in entities.iter().filter(|entity| entity["provider"]=="TMDB" && (entity.get("title_zh").is_none() || crate::metadata::wants_chinese_summary(entity, checked_at))) {
+        let key=entity["id"].as_str().unwrap_or_default();
+        if lookups>=20 || s.metadata.recently_failed(key).await {continue;}
+        lookups+=1;
+        match s.metadata.chinese_details(entity).await {
+            Ok((name, summary)) => {
+                let id=text(entity,"id")?;
+                let db=s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+                if let Some(row)=db.rows("SELECT document FROM library_entities WHERE id=?",[id])?.first() {
+                    let mut current:Value=serde_json::from_str(text(row,"document")?)?;
+                    current["title_zh"]=json!(name);
+                    crate::metadata::set_chinese_summary(&mut current, &summary);
+                    db.connection.execute("UPDATE library_entities SET document=? WHERE id=?",[current.to_string(),id.to_string()])?;
+                }
+            }
+            Err(error)=>{eprintln!("Chinese title metadata: {error}");s.metadata.record_failure(key).await;}
+        }
+    }
+    // Episodes in the library get TMDB's Chinese descriptions a season at a time.
+    let assets=s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.documents("assets")?;
+    let held=held_episodes(&assets);
+    let mut lookups=0;
+    'shows: for entity in entities.iter().filter(|entity| entity["provider"]=="TMDB" && entity["kind"]=="tv") {
+        let Some(id)=entity["id"].as_str() else {continue};
+        let Some(have)=held.get(id) else {continue};
+        let mut seasons: Vec<u64>=entity["episodes"].as_array().into_iter().flatten()
+            .filter(|e| episode_key(e).is_some_and(|key| have.contains(&key)) && crate::metadata::wants_chinese_summary(e, checked_at))
+            .filter_map(|e| e["season"].as_u64()).collect();
+        seasons.sort_unstable(); seasons.dedup();
+        if seasons.is_empty() || s.metadata.recently_failed(id).await {continue;}
+        for season in seasons {
+            if lookups>=20 {break 'shows;}
+            lookups+=1;
+            match s.metadata.chinese_season(entity, season).await {
+                Ok(found) => {
+                    let db=s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+                    if let Some(row)=db.rows("SELECT document FROM library_entities WHERE id=?",[id])?.first() {
+                        let mut current:Value=serde_json::from_str(text(row,"document")?)?;
+                        if let Some(episodes)=current["episodes"].as_array_mut() {
+                            for episode in episodes.iter_mut().filter(|e| e["season"].as_u64()==Some(season)) {
+                                let number=episode["episode"].as_u64();
+                                let summary=found.iter().find(|(n,_)| Some(*n)==number).map(|(_,text)| text.as_str()).unwrap_or("");
+                                crate::metadata::set_chinese_summary(episode, summary);
+                            }
+                        }
+                        db.connection.execute("UPDATE library_entities SET document=? WHERE id=?",[current.to_string(),id.to_string()])?;
+                    }
+                }
+                Err(error)=>{eprintln!("Chinese episode metadata: {error}");s.metadata.record_failure(id).await;continue 'shows;}
+            }
+        }
+    }
+    // Where TMDB has no Chinese description, Diamond translates the English one on device.
+    if !s.metadata.recently_failed("chinese-summary-translation").await {
+        if let Err(error)=translate_summaries(s,&entities,&held).await {
+            eprintln!("Description translation: {error:#}");
+            s.metadata.record_failure("chinese-summary-translation").await;
         }
     }
     if let Ok(torrents) = crate::organizer::torrents(s).await {
@@ -2886,6 +3069,42 @@ mod backfill_tests {
         let fresh = json!({"id":"tmdb:tv:1437","series_status":"Ended","last_air_date":"2003-01-01","cast":[]});
         assert_eq!(keep_backfilled(&connection, "tmdb:tv:1437", fresh)?["series_status"], "Ended");
         assert_eq!(keep_backfilled(&connection, "unknown", json!({"id":"unknown"}))?["series_status"], Value::Null);
+        Ok(())
+    }
+    #[test]
+    fn refetched_episodes_keep_their_chinese_summaries() {
+        let stored = json!({"episodes":[
+            {"season":1,"episode":1,"summary":"Pilot.","summary_zh":"试播。","summary_zh_source":"machine"},
+            {"season":1,"episode":2,"summary":"Old text.","summary_zh":"旧的。","summary_zh_source":"machine"},
+            {"season":1,"episode":3,"summary":"Old.","summary_zh":"官方。","summary_zh_source":"tmdb"}]});
+        let mut fresh = json!({"episodes":[
+            {"season":1,"episode":1,"summary":"Pilot."},
+            {"season":1,"episode":2,"summary":"New text."},
+            {"season":1,"episode":3,"summary":"New."},
+            {"season":1,"episode":4,"summary":"Brand new."}]});
+        keep_episode_summaries(&stored, &mut fresh);
+        assert_eq!(fresh["episodes"][0]["summary_zh"], "试播。");
+        assert!(fresh["episodes"][1]["summary_zh_source"].is_null(), "a changed English text is translated again");
+        assert_eq!(fresh["episodes"][2]["summary_zh"], "官方。");
+        assert!(fresh["episodes"][3]["summary_zh_source"].is_null());
+        let held = held_episodes(&[json!({"entity_id":"tmdb:tv:1","season":1,"episode":2}), json!({"entity_id":"tmdb:movie:2","season":null})]);
+        assert!(held["tmdb:tv:1"].contains(&(1, 2)) && !held.contains_key("tmdb:movie:2"));
+    }
+    #[test]
+    fn rematching_keeps_a_machine_chinese_summary_until_tmdb_has_one() -> Result<()> {
+        let connection = rusqlite::Connection::open_in_memory()?;
+        connection.execute("CREATE TABLE library_entities (id TEXT PRIMARY KEY, document TEXT NOT NULL)", [])?;
+        connection.execute("INSERT INTO library_entities VALUES('tmdb:tv:1',?)",
+            [json!({"id":"tmdb:tv:1","summary_zh":"机器翻译","summary_zh_source":"machine","summary_zh_checked":1.0}).to_string()])?;
+        let none = keep_backfilled(&connection, "tmdb:tv:1", json!({"id":"tmdb:tv:1","summary_zh":"","summary_zh_source":"none","summary_zh_checked":2.0}))?;
+        assert_eq!((none["summary_zh"].as_str(), none["summary_zh_source"].as_str()), (Some("机器翻译"), Some("machine")));
+        let tmdb = keep_backfilled(&connection, "tmdb:tv:1", json!({"id":"tmdb:tv:1","summary_zh":"官方简介","summary_zh_source":"tmdb"}))?;
+        assert_eq!((tmdb["summary_zh"].as_str(), tmdb["summary_zh_source"].as_str()), (Some("官方简介"), Some("tmdb")));
+        // A snapshot without the fields (cached metadata, an old match) keeps what was found.
+        connection.execute("UPDATE library_entities SET document=? WHERE id='tmdb:tv:1'",
+            [json!({"id":"tmdb:tv:1","title_zh":"古战场传奇","summary_zh":"官方简介","summary_zh_source":"tmdb","summary_zh_checked":5.0}).to_string()])?;
+        let bare = keep_backfilled(&connection, "tmdb:tv:1", json!({"id":"tmdb:tv:1","title":"Outlander"}))?;
+        assert_eq!((bare["summary_zh"].as_str(), bare["summary_zh_source"].as_str(), bare["title_zh"].as_str()), (Some("官方简介"), Some("tmdb"), Some("古战场传奇")));
         Ok(())
     }
 }

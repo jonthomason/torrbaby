@@ -202,6 +202,7 @@ final class L10n {
     IDS.put("Couldn’t manage files", R.string.ui_b8b71a01afec);
     IDS.put("Couldn’t open Torrbaby", R.string.ui_043e16ed23b9);
     IDS.put("Couldn’t refresh file operations", R.string.ui_4a73957afb95);
+    IDS.put("Couldn’t send logs", R.string.ui_d1658c8b1050);
     IDS.put("Create", R.string.ui_6e157c5da441);
     IDS.put("Create user", R.string.ui_bdbcfa0af077);
     IDS.put("Credits", R.string.ui_bfac50d6424b);
@@ -385,8 +386,10 @@ final class L10n {
     IDS.put("Loading processing queue…", R.string.ui_7c915baf855d);
     IDS.put("Loading server activity…", R.string.ui_4f96be70a1f2);
     IDS.put("Loading subtitles…", R.string.ui_23f94ec39630);
+    IDS.put("Loading…", R.string.ui_33ce417454bf);
     IDS.put("Location", R.string.ui_d219c68101f5);
     IDS.put("Login cookie", R.string.ui_cec3ed33b848);
+    IDS.put("Logs sent", R.string.ui_0b63361952a9);
     IDS.put("Look up again", R.string.ui_82b4b1ef514f);
     IDS.put("Looking up…", R.string.ui_27d9ea3d190c);
     IDS.put("Lookup will retry", R.string.ui_3f4fc9a34ef7);
@@ -659,6 +662,9 @@ final class L10n {
     IDS.put("Select none", R.string.ui_618cfb0a5361);
     IDS.put("Select to dismiss", R.string.ui_7bd7fdd7e26b);
     IDS.put("Selected", R.string.ui_9a976fc228b6);
+    IDS.put("Send logs automatically", R.string.ui_ced1931511e9);
+    IDS.put("Send logs now", R.string.ui_0e3a5ba2a15d);
+    IDS.put("Sending logs…", R.string.ui_d272ac80616f);
     IDS.put("Serif", R.string.ui_a5c78a86fab1);
     IDS.put("Server", R.string.ui_cb0cb170d106);
     IDS.put("Server torrents", R.string.ui_d83a107297bb);
@@ -796,6 +802,7 @@ final class L10n {
     IDS.put("To remove this drive, first move its titles to another drive from each title’s Manage Files.", R.string.ui_eafdcec8c9d0);
     IDS.put("Torrbaby makes a Media folder on the drive, with Downloads, Movies and TV inside, and keeps a small file there to recognise the drive.", R.string.ui_7fc3a24d77a0);
     IDS.put("Torrbaby transfer rates", R.string.ui_625fdd6c399e);
+    IDS.put("Torrbaby tunnel", R.string.ui_fecc14ee3002);
     IDS.put("Torrent CSV", R.string.ui_7b518ca84399);
     IDS.put("Torrent action", R.string.ui_0dcf2b602af0);
     IDS.put("Torrent added", R.string.ui_cb6d24a29606);
@@ -827,6 +834,7 @@ final class L10n {
     IDS.put("Try a shorter title or another source.", R.string.ui_bcabdf3a5848);
     IDS.put("Try again", R.string.ui_042c862e4467);
     IDS.put("Try reconnecting", R.string.ui_8310b022d173);
+    IDS.put("Turn off another VPN to connect", R.string.ui_ff0e1dd8df35);
     IDS.put("UPLOAD", R.string.ui_3c45be13a1a6);
     IDS.put("UPLOAD HISTORY", R.string.ui_9241930fa68d);
     IDS.put("UPLOADING", R.string.ui_c096eba0f2ba);

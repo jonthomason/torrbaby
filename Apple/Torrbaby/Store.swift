@@ -434,10 +434,12 @@ final class Store: ObservableObject {
             let available = path.status == .satisfied
             // The interface iOS sends data on (first in its order), for the direct path and relay.
             let dataInterface = path.availableInterfaces.first { [.wifi, .cellular, .wiredEthernet].contains($0.type) }?.name
+            let gateways = path.gateways.compactMap { if case .hostPort(.ipv4(let address), _) = $0 { "\(address)" } else { nil } }.sorted().joined(separator: ",")
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 #if os(iOS)
                 PunchProbe.preferredInterface = dataInterface
+                PunchProbe.gateways = gateways
                 #endif
                 let restored = !self.networkAvailable && available
                 // A restored Wi-Fi/cellular path still needs a successful server probe.
@@ -464,6 +466,23 @@ final class Store: ObservableObject {
         networkMonitor.start(queue: DispatchQueue(label: "org.torrbaby.connectivity"))
         #if !os(tvOS)
         DownloadQueue.shared.attach(self)
+        #if os(iOS)
+        // Torrbaby's packet tunnel connecting or dropping changes the best route at once.
+        PacketTunnel.shared.onChange = { [weak self] in
+            guard let self else { return }
+            self.directEvent("Torrbaby tunnel \(PacketTunnel.shared.statusText)")
+            // Connected: it is the way to Diamond; the app's own paths would only compete.
+            if PacketTunnel.shared.connected { self.dropDirect("the Torrbaby tunnel is connected"); self.dropRelay("the Torrbaby tunnel is connected") }
+            // Gone: requests must stop going to its address at once, not at the next check.
+            else if self.activeServer == PacketTunnel.route { self.activeServer = nil; self.lastDirectAttempt = .distantPast }
+            self.refreshFullyNext()
+            Task { await self.refresh(polling: true) }
+        }
+        Task { [weak self] in
+            await PacketTunnel.shared.load()
+            self?.autoConnectTunnel()
+        }
+        #endif
         #endif
         #if DEBUG
         // UI checks can open the user chooser directly: -initialChooser YES.
@@ -555,7 +574,11 @@ final class Store: ObservableObject {
         return URLSession(configuration: config)
     }()
     func endpoint(_ path: String) throws -> URL {
-        try ServerRoutes.endpoint(directRoute ?? activeServer ?? primaryAddress, path: path)
+        #if os(iOS)
+        // The tunnel, when it is the route, is used even if an in-app path is still open.
+        if activeServer == PacketTunnel.route { return try ServerRoutes.endpoint(PacketTunnel.route, path: path) }
+        #endif
+        return try ServerRoutes.endpoint(directRoute ?? activeServer ?? primaryAddress, path: path)
     }
     /// Torrbaby's own direct path to the server (a local proxy into a QUIC tunnel), used
     /// instead of the Tailscale route while it is up. Only away from home, on iPhone and iPad.
@@ -573,6 +596,9 @@ final class Store: ObservableObject {
     @Published private(set) var routeChecks: [String: RouteCheck] = [:]
     func noteRoute(_ kind: String, _ check: RouteCheck) { routeChecks[kind] = check }
     private func routeKind(_ address: String) -> String {
+        #if os(iOS)
+        if address == PacketTunnel.route { return "tunnel" }
+        #endif
         if address == Self.relayCandidate || (relayRoute != nil && address == relayRoute) { return "relay" }
         if directRoute != nil && address == directRoute { return "direct" }
         return ServerRoutes.normalized(address) == ServerRoutes.normalized(primaryAddress) ? "home" : "tailscale"
@@ -593,7 +619,7 @@ final class Store: ObservableObject {
     }
     /// A route's name for people: "home network", "relay via bronze", "Tailscale", "direct".
     func routeLabel(_ address: String) -> String {
-        switch routeKind(address) { case "relay": "relay via bronze"; case "direct": "direct"; case "home": "home network"; default: "Tailscale" }
+        switch routeKind(address) { case "relay": "relay via bronze"; case "direct": "direct"; case "home": "home network"; case "tunnel": "Torrbaby tunnel"; default: "Tailscale" }
     }
     /// Whether this device still uses Tailscale: only where the relay through bronze is not
     /// known (Mac and Apple TV are at home; iPhone and iPad use the relay instead).
@@ -605,10 +631,11 @@ final class Store: ObservableObject {
         #endif
     }
     /// How this device reaches the server now.
-    enum Path: String { case home = "Home network", direct = "Direct (hole punch)", relay = "Relay via bronze", tailscale = "Tailscale", offline = "Offline" }
+    enum Path: String { case home = "Home network", tunnel = "Torrbaby tunnel", direct = "Direct (hole punch)", relay = "Relay via bronze", tailscale = "Tailscale", offline = "Offline" }
     var path: Path {
         guard connected, let active = activeServer else { return .offline }
         #if os(iOS)
+        if active == PacketTunnel.route { return .tunnel }
         if directRoute != nil { return .direct }
         if relayRoute != nil && active == relayRoute { return .relay }
         #endif
@@ -623,6 +650,7 @@ final class Store: ObservableObject {
         if let relay = await ensureRelay() { targets.append(("relay", relay)) }
         else if !relayAddress.isEmpty { noteRoute("relay", RouteCheck(ok: false, ms: nil, detail: "could not open the relay to \(relayAddress)")) }
         if let direct = directRoute { targets.append(("direct", direct)) }
+        if PacketTunnel.shared.connected { targets.append(("tunnel", PacketTunnel.route)) }
         #endif
         await withTaskGroup(of: Void.self) { group in
             for (kind, address) in targets {
@@ -643,6 +671,8 @@ final class Store: ObservableObject {
     /// This device's public address as bronze sees it, asked every 5 s over the open relay.
     @Published private(set) var relayPublicAddress: String?
     private var relayWatcher: Task<Void, Never>?
+    /// See the address check in watchRelay: the relay was reconnected to compare like with like.
+    private var relayReopenedForMismatch = false
     /// Behind a hotspot the phone cannot see its carrier change (CT ↔ CM): the Wi-Fi and its
     /// local address stay the same. Bronze sees the public address move; when it does, the
     /// direct path (whose hole was opened for the old address) is dropped and tried again.
@@ -662,10 +692,22 @@ final class Store: ObservableObject {
                         self.refreshFullyNext()
                         Task { await self.refresh(polling: true) }
                     } else if self.directRoute != nil, let punched = self.directAttempt?.publicAddress, punched != ip {
+                        // The relay may still be on the old network (a data-SIM switch keeps the
+                        // interface): reconnect it first and compare again, or this re-punches forever.
+                        if !self.relayReopenedForMismatch {
+                            self.relayReopenedForMismatch = true
+                            self.directEvent("bronze sees \(ip), the direct path is from \(punched): reconnecting the relay first")
+                            self.dropRelay("checking which network is current")
+                            Task { _ = await self.ensureRelay() }
+                            return
+                        }
+                        self.relayReopenedForMismatch = false
                         self.directEvent("direct path was punched from \(punched), now \(ip)")
                         self.dropDirect("public address changed")
                         self.refreshFullyNext()
                         Task { await self.refresh(polling: true) }
+                    } else {
+                        self.relayReopenedForMismatch = false
                     }
                 }
                 try? await Task.sleep(for: .seconds(5))
@@ -793,6 +835,8 @@ final class Store: ObservableObject {
     func tryDirectNow() { lastDirectAttempt = .distantPast; startDirectIfUseful() }
     /// Away from home, try for a direct path every few minutes until one holds.
     private func startDirectIfUseful() {
+        // The packet tunnel holds its own direct path: the app's would be a second one.
+        guard activeServer != PacketTunnel.route, !PacketTunnel.shared.connected else { directNote = "not needed: the Torrbaby tunnel is in use"; return }
         guard connected, usingFallback, directRoute == nil, !directAttempting,
               Date().timeIntervalSince(lastDirectAttempt) > 180, let signal = activeServer else {
             let note = !connected ? "not tried: offline" : !usingFallback ? "not tried: at home" : directAttempting ? "trying…" : directNote
@@ -818,6 +862,25 @@ final class Store: ObservableObject {
                 directEvent("failed: \(error.localizedDescription)")
             }
         }
+    }
+    /// Back from the background. iOS suspends the app, so its keepalives stop and a path left
+    /// for more than 45 s has closed; drop such paths now so the first requests take another
+    /// way and the path is punched again at once, instead of each request failing first.
+    func checkPathsOnReturn() {
+        PacketTunnel.shared.refresh()
+        autoConnectTunnel()
+        var dropped = false
+        if directTunnel != nil, directTunnel?.alive != true { dropDirect("closed while the app was in the background"); dropped = true }
+        if relayTunnel != nil, relayTunnel?.alive != true { dropRelay("closed while the app was in the background"); dropped = true }
+        if dropped {
+            refreshFullyNext()
+            Task { await refresh(polling: true) }
+        }
+    }
+    /// Torrbaby's tunnel connects by itself where it may (see PacketTunnel.autoConnect).
+    func autoConnectTunnel() {
+        let relay = relayAddress, fingerprint = relayFingerprint, stun = stunServer ?? "", token = token
+        Task { await PacketTunnel.shared.autoConnect(relay: relay, relayFingerprint: fingerprint, stun: stun, token: token) }
     }
     func dropDirect(_ reason: String) {
         guard directTunnel != nil || directRoute != nil else { return }
@@ -848,6 +911,12 @@ final class Store: ObservableObject {
         // Tailscale is retired on iPhone and iPad once the relay is known: home, direct and
         // the relay are the only ways.
         if !tailscaleInUse { addresses.removeAll { $0 != Self.relayCandidate && ServerRoutes.normalized($0) != ServerRoutes.normalized(primary) } }
+        // Torrbaby's packet tunnel, when connected, replaces the app's relay and direct path.
+        PacketTunnel.shared.refresh()
+        if PacketTunnel.shared.connected {
+            addresses.removeAll { $0 == Self.relayCandidate }
+            addresses.append(PacketTunnel.route)
+        }
         #if DEBUG
         // Simulator checks of the relay from home: -relayOnly YES leaves home and Tailscale out.
         if UserDefaults.standard.bool(forKey: "relayOnly") { addresses = [Self.relayCandidate] }
@@ -997,11 +1066,25 @@ final class Store: ObservableObject {
         return result
     }
     /// A title's page loads its cast and each file's tracks (the list leaves them out).
+    /// Why a title's details last failed to load, shown where its languages would be.
+    @Published private(set) var detailsProblem: [String: String] = [:]
     func loadDetails(_ titleID: String) async {
         let identity = profileIdentity
         let encoded = titleID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? titleID
-        guard let details: LibraryTitleDetails = try? await request("GET", "/v1/library/titles/\(encoded)/details", timeout: 30),
-              identity == profileIdentity else { return }
+        var details: LibraryTitleDetails?
+        // Once more after a failure: a page opened while the connection settles.
+        for attempt in 0..<2 where details == nil && !Task.isCancelled {
+            do {
+                details = try await request("GET", "/v1/library/titles/\(encoded)/details", timeout: 30)
+                detailsProblem[titleID] = nil
+            } catch is CancellationError { return
+            } catch {
+                detailsProblem[titleID] = String(describing: error)
+                Logger(subsystem: "org.torrbaby", category: "library").error("Title details \(titleID, privacy: .public) failed (attempt \(attempt + 1)): \(String(describing: error), privacy: .public)")
+                if attempt == 0 { try? await Task.sleep(for: .seconds(2)) }
+            }
+        }
+        guard let details, identity == profileIdentity else { return }
         titleDetails[titleID] = details
         if var current = library { current.apply(details, to: titleID); library = current }
     }
@@ -1408,6 +1491,9 @@ struct ProfileGate<Content: View>: View {
             }
         }
         .onChange(of: scenePhase) { _, phase in
+            #if os(iOS)
+            if phase == .active { store.checkPathsOnReturn() }
+            #endif
             if phase == .active && store.profileReady { Task { await store.loadProfiles() } }
         }
         .task(id: store.server + "|" + store.clientId) {

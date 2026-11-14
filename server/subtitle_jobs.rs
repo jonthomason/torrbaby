@@ -76,6 +76,18 @@ pub(crate) fn revision(path: &Path) -> Result<String> {
         m.ctime_nsec()
     ))
 }
+/// What a revision says about the file's content: its size and modification time to the
+/// second (a move keeps both; a Mac OS Extended drive keeps no finer time). Caches that
+/// should survive a rename or a move to another drive are keyed on this, not on the
+/// path, device, inode or change time.
+pub(crate) fn content(revision: &str) -> Option<String> {
+    let parts: Vec<&str> = revision.split(':').collect();
+    (parts.len() == 7).then(|| format!("{}:{}", parts[2], parts[3]))
+}
+/// Whether two revisions describe the same content (see `content`).
+pub(crate) fn same_content(a: &str, b: &str) -> bool {
+    content(a).is_some_and(|a| Some(a) == content(b))
+}
 /// `None` when a directory entry disappeared between listing and use. Several
 /// subtitle workers write, rename and evict files in shared directories at
 /// once; such a race used to fail unrelated jobs with "No such file or

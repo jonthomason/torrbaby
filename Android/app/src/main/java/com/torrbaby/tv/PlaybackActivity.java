@@ -36,7 +36,13 @@ public class PlaybackActivity extends Activity {
   private boolean subtitleChoiceMade;
   private PlayerView view;
   private Button nextEpisodeButton;
+  /**
+   * The movie's name, or the show above "Season 1 Ep 2 – Name", at the bottom left just above
+   * the progress bar, as Apple's players show it; up and down with the controls.
+   */
+  private LinearLayout heading;
   private boolean controlsVisible, advancingEpisode;
+  private boolean navigatingControls;
   /** Start of the closing credits (ms) that Diamond detected, or -1. */
   private volatile long creditsStart = -1;
   private int progressTicks;
@@ -202,8 +208,8 @@ public class PlaybackActivity extends Activity {
         new ExoPlayer.Builder(this)
             .setMediaSourceFactory(
                 new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(factory))
-            .setSeekBackIncrementMs(10000)
-            .setSeekForwardIncrementMs(30000)
+            .setSeekBackIncrementMs(15000)
+            .setSeekForwardIncrementMs(15000)
             .build();
     player.setAudioAttributes(
         new AudioAttributes.Builder()
@@ -273,13 +279,57 @@ public class PlaybackActivity extends Activity {
     View playPause = view.findViewById(androidx.media3.ui.R.id.exo_play_pause);
     nextEpisodeButton.setNextFocusDownId(playPause.getId());
     playPause.setNextFocusUpId(nextEpisodeButton.getId());
+    addHeading();
     view.setControllerVisibilityListener((PlayerView.ControllerVisibilityListener) visibility -> {
       controlsVisible = visibility == View.VISIBLE;
+      if (!controlsVisible) navigatingControls = false;
+      heading.setVisibility(controlsVisible ? View.VISIBLE : View.GONE);
       updateNextEpisodeButton();
     });
     view.showController();
     view.findViewById(androidx.media3.ui.R.id.exo_play_pause).requestFocus();
     main.postDelayed(ticker, 1000);
+  }
+
+  private void addHeading() {
+    String show = getIntent().getStringExtra("title");
+    String line = getIntent().getStringExtra("heading");
+    if (line == null || line.isEmpty()) line = show != null ? show : getIntent().getStringExtra("name");
+    heading = Ui.column(this);
+    heading.setFocusable(false);
+    if (show != null && !show.isEmpty() && !show.equals(line)) {
+      TextView context = Ui.text(this, show, 18, 0xCCFFFFFF);
+      context.setSingleLine(true);
+      context.setEllipsize(android.text.TextUtils.TruncateAt.END);
+      context.setShadowLayer(8, 0, 1, 0x99000000);
+      Ui.add(heading, context, -2, -2);
+      Ui.gap(heading, 4);
+    }
+    TextView title = Ui.title(this, line, 26);
+    title.setTextColor(0xFFFFFFFF);
+    title.setSingleLine(true);
+    title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+    title.setShadowLayer(8, 0, 1, 0x99000000);
+    Ui.add(heading, title, -2, -2);
+    android.widget.FrameLayout.LayoutParams layout =
+        new android.widget.FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.START);
+    // Inside the television's overscan margin; the next-episode button holds the right side.
+    layout.setMargins(Ui.dp(this, 48), 0, Ui.dp(this, 260), Ui.dp(this, 100));
+    view.addView(heading, layout);
+    // Sit just above the progress bar, wherever this Media3 version lays it out.
+    View progress = view.findViewById(androidx.media3.ui.R.id.exo_progress);
+    if (progress != null)
+      progress.addOnLayoutChangeListener(
+          (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            int[] bar = new int[2], frame = new int[2];
+            v.getLocationInWindow(bar);
+            view.getLocationInWindow(frame);
+            int margin = view.getHeight() - (bar[1] - frame[1]) + Ui.dp(this, 8);
+            if (v.getHeight() > 0 && margin != layout.bottomMargin && margin < view.getHeight() / 2) {
+              layout.bottomMargin = margin;
+              heading.setLayoutParams(layout);
+            }
+          });
   }
 
   // Own the row layout: vendor AlertDialog list layouts differ across TV firmware.
@@ -516,6 +566,8 @@ public class PlaybackActivity extends Activity {
     if (player != null) player.pause();
     ArrayList<String> ids = getIntent().getStringArrayListExtra("queue_ids");
     ArrayList<String> names = getIntent().getStringArrayListExtra("queue_names");
+    ArrayList<String> headings = getIntent().getStringArrayListExtra("queue_headings");
+    boolean headed = headings != null && headings.size() == ids.size();
     Intent next = new Intent(this, PlaybackActivity.class);
     next.putExtra("asset", ids.get(0));
     next.putExtra("title_id", getIntent().getStringExtra("title_id"));
@@ -523,6 +575,10 @@ public class PlaybackActivity extends Activity {
     next.putExtra("name", names.get(0));
     next.putStringArrayListExtra("queue_ids", new ArrayList<>(ids.subList(1, ids.size())));
     next.putStringArrayListExtra("queue_names", new ArrayList<>(names.subList(1, names.size())));
+    if (headed) {
+      next.putExtra("heading", headings.get(0));
+      next.putStringArrayListExtra("queue_headings", new ArrayList<>(headings.subList(1, headings.size())));
+    }
     startActivity(next);
     finish();
   }
@@ -549,6 +605,26 @@ public class PlaybackActivity extends Activity {
   public boolean dispatchKeyEvent(KeyEvent e) {
     if (view != null && player != null) {
       int key = e.getKeyCode();
+      // Revealing the controls after a skip does not enter control navigation.
+      // Up/Down explicitly enters it; hiding the controls restores direct skipping.
+      if ((key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN)
+          && !navigatingControls) {
+        if (e.getAction() == KeyEvent.ACTION_DOWN) {
+          navigatingControls = true;
+          view.showController();
+          view.findViewById(androidx.media3.ui.R.id.exo_play_pause).requestFocus();
+        }
+        return true;
+      }
+      if (!navigatingControls
+          && (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT)) {
+        if (e.getAction() == KeyEvent.ACTION_DOWN) {
+          if (key == KeyEvent.KEYCODE_DPAD_LEFT) player.seekBack();
+          else player.seekForward();
+          view.showController();
+        }
+        return true;
+      }
       if (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
         if (nextEpisodeButton != null && nextEpisodeButton.getVisibility() == View.VISIBLE
             && nextEpisodeButton.hasFocus() && !view.isControllerFullyVisible()) {

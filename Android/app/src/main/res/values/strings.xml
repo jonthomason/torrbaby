@@ -191,6 +191,7 @@
     <string name="ui_b8b71a01afec" formatted="false">Couldn’t manage files</string>
     <string name="ui_043e16ed23b9" formatted="false">Couldn’t open Torrbaby</string>
     <string name="ui_4a73957afb95" formatted="false">Couldn’t refresh file operations</string>
+    <string name="ui_d1658c8b1050" formatted="false">Couldn’t send logs</string>
     <string name="ui_6e157c5da441" formatted="false">Create</string>
     <string name="ui_bdbcfa0af077" formatted="false">Create user</string>
     <string name="ui_bfac50d6424b" formatted="false">Credits</string>
@@ -374,8 +375,10 @@
     <string name="ui_7c915baf855d" formatted="false">Loading processing queue…</string>
     <string name="ui_4f96be70a1f2" formatted="false">Loading server activity…</string>
     <string name="ui_23f94ec39630" formatted="false">Loading subtitles…</string>
+    <string name="ui_33ce417454bf" formatted="false">Loading…</string>
     <string name="ui_d219c68101f5" formatted="false">Location</string>
     <string name="ui_cec3ed33b848" formatted="false">Login cookie</string>
+    <string name="ui_0b63361952a9" formatted="false">Logs sent</string>
     <string name="ui_82b4b1ef514f" formatted="false">Look up again</string>
     <string name="ui_27d9ea3d190c" formatted="false">Looking up…</string>
     <string name="ui_3f4fc9a34ef7" formatted="false">Lookup will retry</string>
@@ -648,6 +651,9 @@
     <string name="ui_618cfb0a5361" formatted="false">Select none</string>
     <string name="ui_7bd7fdd7e26b" formatted="false">Select to dismiss</string>
     <string name="ui_9a976fc228b6" formatted="false">Selected</string>
+    <string name="ui_ced1931511e9" formatted="false">Send logs automatically</string>
+    <string name="ui_0e3a5ba2a15d" formatted="false">Send logs now</string>
+    <string name="ui_d272ac80616f" formatted="false">Sending logs…</string>
     <string name="ui_a5c78a86fab1" formatted="false">Serif</string>
     <string name="ui_cb0cb170d106" formatted="false">Server</string>
     <string name="ui_d83a107297bb" formatted="false">Server torrents</string>
@@ -785,6 +791,7 @@
     <string name="ui_eafdcec8c9d0" formatted="false">To remove this drive, first move its titles to another drive from each title’s Manage Files.</string>
     <string name="ui_7fc3a24d77a0" formatted="false">Torrbaby makes a Media folder on the drive, with Downloads, Movies and TV inside, and keeps a small file there to recognise the drive.</string>
     <string name="ui_625fdd6c399e" formatted="false">Torrbaby transfer rates</string>
+    <string name="ui_fecc14ee3002" formatted="false">Torrbaby tunnel</string>
     <string name="ui_7b518ca84399" formatted="false">Torrent CSV</string>
     <string name="ui_0dcf2b602af0" formatted="false">Torrent action</string>
     <string name="ui_cb6d24a29606" formatted="false">Torrent added</string>
@@ -816,6 +823,7 @@
     <string name="ui_bcabdf3a5848" formatted="false">Try a shorter title or another source.</string>
     <string name="ui_042c862e4467" formatted="false">Try again</string>
     <string name="ui_8310b022d173" formatted="false">Try reconnecting</string>
+    <string name="ui_ff0e1dd8df35" formatted="false">Turn off another VPN to connect</string>
     <string name="ui_3c45be13a1a6" formatted="false">UPLOAD</string>
     <string name="ui_9241930fa68d" formatted="false">UPLOAD HISTORY</string>
     <string name="ui_c096eba0f2ba" formatted="false">UPLOADING</string>

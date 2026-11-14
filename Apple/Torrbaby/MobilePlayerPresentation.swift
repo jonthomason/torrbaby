@@ -246,6 +246,10 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
         var fillObservation: AnyCancellable?
         var nextEpisodeObservation: AnyCancellable?
         weak var preparationSpinner: UIActivityIndicatorView?
+        /// While the player waits for the file. Below AVKit's centre buttons, which stay where
+        /// they are (play/pause and skips), so the two never sit on each other.
+        weak var waitingIndicator: UIView?
+        var waitingObservation: AnyCancellable?
         var backgroundObserver: NSObjectProtocol?
         init(_ parent: MobilePlayerPresentation) { self.parent = parent }
         func presentIfNeeded() {
@@ -306,6 +310,30 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
                 preparationObservation = model.$preparingNext.sink { [weak spinner] preparing in
                     if preparing { spinner?.startAnimating() } else { spinner?.stopAnimating() }
                 }
+                let backing = UIView()
+                backing.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+                backing.layer.cornerRadius = 14
+                backing.translatesAutoresizingMaskIntoConstraints = false
+                backing.alpha = 0
+                backing.isAccessibilityElement = true
+                backing.accessibilityLabel = L10n.text("Loading…")
+                let waitingSpinner = UIActivityIndicatorView(style: .large)
+                waitingSpinner.color = .white
+                waitingSpinner.startAnimating()
+                waitingSpinner.translatesAutoresizingMaskIntoConstraints = false
+                backing.addSubview(waitingSpinner)
+                overlay.addSubview(backing)
+                NSLayoutConstraint.activate([
+                    backing.widthAnchor.constraint(equalToConstant: 72), backing.heightAnchor.constraint(equalToConstant: 72),
+                    backing.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+                    backing.centerYAnchor.constraint(equalTo: overlay.centerYAnchor, constant: 100),
+                    waitingSpinner.centerXAnchor.constraint(equalTo: backing.centerXAnchor),
+                    waitingSpinner.centerYAnchor.constraint(equalTo: backing.centerYAnchor),
+                ])
+                waitingIndicator = backing
+                waitingObservation = model.$waiting.removeDuplicates().sink { [weak backing] waiting in
+                    UIView.animate(withDuration: 0.2) { backing?.alpha = waiting ? 1 : 0 }
+                }
             }
             completionObservation = model.$endMessage.compactMap { $0 }.sink { [weak self] message in
                 guard let self, let controller = self.controller else { return }
@@ -346,6 +374,8 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
             preparationObservation = nil; completionObservation = nil; closeObservation = nil; fillObservation = nil
             nextEpisodeObservation = nil; creditsObservation = nil
             preparationSpinner?.removeFromSuperview(); preparationSpinner = nil
+            waitingObservation = nil
+            waitingIndicator?.removeFromSuperview(); waitingIndicator = nil
             if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver); self.backgroundObserver = nil }
             if Self.active === self { Self.active = nil }
         }

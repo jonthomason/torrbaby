@@ -16,6 +16,9 @@ BUILD_NUMBER="${TORRBABY_BUILD_NUMBER:-$(git -C "$ROOT" rev-list --count HEAD)}"
 OUTPUT="${TORRBABY_BUILD_ROOT:-$ROOT/local-state/apple}/testflight"
 mkdir -p "$OUTPUT"
 KEY=(-allowProvisioningUpdates -authenticationKeyPath "$ASC_KEY_PATH" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+# The tunnel's and the direct connection's Rust half, built fresh: never upload a stale one.
+"$ROOT/scripts/build_direct.sh"
+python3 "$ROOT/scripts/check_localizations.py"
 ARCHIVE="$OUTPUT/Torrbaby-$BUILD_NUMBER.xcarchive"
 xcodebuild -project "$ROOT/Apple/Torrbaby.xcodeproj" -scheme Torrbaby -configuration Release \
     -destination 'generic/platform=iOS' -derivedDataPath "$OUTPUT/derived" -archivePath "$ARCHIVE" \

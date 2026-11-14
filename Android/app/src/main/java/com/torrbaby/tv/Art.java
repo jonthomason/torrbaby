@@ -107,7 +107,11 @@ final class Art {
             while (o.outWidth / o.inSampleSize > max) o.inSampleSize *= 2;
             o.inJustDecodeBounds = false;
             result = BitmapFactory.decodeByteArray(raw, 0, raw.length, o);
-            if (result != null) cache.put(key, result);
+            if (result != null) {
+              cache.put(key, result);
+              // Upload to the GPU now, off the main thread, rather than on its first frame on screen.
+              result.prepareToDraw();
+            }
           } catch (Exception ignored) {
           }
           Bitmap bitmap = result;

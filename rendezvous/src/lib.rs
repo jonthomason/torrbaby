@@ -14,7 +14,8 @@
 //!   new stream on Diamond's connection. Requests stay ordinary Torrbaby requests carrying the
 //!   device's own credentials, which Diamond checks; this side holds no client credentials.
 //!   A stream that starts with `TBINFO1\n` is answered here instead: whether Diamond is
-//!   connected and the device's address as seen from here.
+//!   connected, the device's address as seen from here, and Diamond's public IP (a device
+//!   with the same public IP is behind the same NAT: at home).
 //!
 //! The certificate is self-signed, made once and kept in the state directory; devices pin its
 //! SHA-256 fingerprint, which reaches them through pairing or Diamond's status.
@@ -159,6 +160,11 @@ fn transport() -> quinn::TransportConfig {
     transport.stream_receive_window((8u32 << 20).into());
     transport.receive_window((32u32 << 20).into());
     transport.send_window(32 << 20);
+    // BBR, not Cubic: Cubic fills a bottleneck's queue until packets are lost (on CT 5G the
+    // round trip climbed 100 ms → 3 s with almost no loss while video streamed, and the player
+    // stalled); BBR paces to the measured bottleneck and keeps the queue short.
+    transport.congestion_controller_factory(std::sync::Arc::new(quinn::congestion::BbrConfig::default()));
+
     transport
 }
 
@@ -197,6 +203,11 @@ impl Hub {
 
     fn home_online(&self) -> bool {
         self.home.borrow().as_ref().is_some_and(|c| c.close_reason().is_none())
+    }
+
+    /// Diamond's public IP, as its standing connection comes from.
+    fn home_ip(&self) -> Option<std::net::IpAddr> {
+        self.home.borrow().as_ref().filter(|c| c.close_reason().is_none()).map(|c| c.remote_address().ip())
     }
 }
 
@@ -268,7 +279,8 @@ async fn device(connection: quinn::Connection, hub: Arc<Hub>) {
     while let Ok((send, recv)) = connection.accept_bi().await {
         streams += 1;
         hub.streams.fetch_add(1, Ordering::Relaxed);
-        tokio::spawn(splice(send, recv, hub.clone(), from, id));
+        // The address now, not at connect: a device that moved networks migrated its connection.
+        tokio::spawn(splice(send, recv, hub.clone(), connection.remote_address(), id));
     }
     hub.devices.fetch_sub(1, Ordering::Relaxed);
     eprintln!("Device {id} {from}: closed after {} s, {streams} streams ({})", started.elapsed().as_secs(),
@@ -282,7 +294,9 @@ async fn splice(mut device_send: quinn::SendStream, mut device_recv: quinn::Recv
     let mut first = vec![0u8; 4096];
     let n = match device_recv.read(&mut first).await { Ok(Some(n)) => n, _ => 0 };
     if first[..n].starts_with(INFO) {
-        let reply = format!("home {}\nyou {from}\n", if hub.home_online() { "online" } else { "offline" });
+        // Older clients read only the first two lines; "homeip" is on its own line after them.
+        let mut reply = format!("home {}\nyou {from}\n", if hub.home_online() { "online" } else { "offline" });
+        if let Some(ip) = hub.home_ip() { reply.push_str(&format!("homeip {ip}\n")) }
         let _ = device_send.write_all(reply.as_bytes()).await;
         let _ = device_send.finish();
         return;
