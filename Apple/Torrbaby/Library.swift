@@ -375,6 +375,15 @@ struct MediaLanguagesView: View {
     let info: MediaTrackInfo?
     /// Why the title's details could not be loaded, shown instead of a check that never ends.
     var problem: String? = nil
+    /// Smaller than the summary above them; on Apple TV the text styles (callout, caption) are
+    /// larger than the summary's 27 pt, so sizes are set there.
+    #if os(tvOS)
+    static let detailFont = Font.system(size: 21)
+    static let headingFont = Font.system(size: 19, weight: .semibold)
+    #else
+    static let detailFont = Font.callout
+    static let headingFont = Font.caption.weight(.semibold)
+    #endif
     private func name(_ code: String?) -> String {
         guard let raw = code?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return "" }
         let code = raw.lowercased().replacingOccurrences(of: "_", with: "-")
@@ -395,7 +404,7 @@ struct MediaLanguagesView: View {
             if let info, info.state == "ready" {
                 if let video = info.video, !videoSummary(video).isEmpty {
                     VStack(alignment: .leading, spacing: 3) {
-                        Label("Video", systemImage: "film").font(.caption.weight(.semibold))
+                        Label("Video", systemImage: "film").font(Self.headingFont)
                         Text(verbatim: videoSummary(video))
                     }
                 }
@@ -404,13 +413,13 @@ struct MediaLanguagesView: View {
                     languageRow("Audio", icon: "speaker.wave.2", languages: info.audioTracks.map { name($0.language) }.filter { !$0.isEmpty })
                 } else {
                     VStack(alignment: .leading, spacing: 3) {
-                        Label("Audio", systemImage: "speaker.wave.2").font(.caption.weight(.semibold))
+                        Label("Audio", systemImage: "speaker.wave.2").font(Self.headingFont)
                         // One line: several tracks sit side by side.
                         Text(verbatim: formats.joined(separator: "  /  ")).fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 VStack(alignment: .leading, spacing: 3) {
-                    Label("Subtitles", systemImage: "captions.bubble").font(.caption.weight(.semibold))
+                    Label("Subtitles", systemImage: "captions.bubble").font(Self.headingFont)
                     let original = Array(Set(
                         info.subtitleTracks.filter { $0.extractionSupported != false }.map { originalName($0.language, sdh: $0.sdh == true) }
                         + info.prepared.filter { !$0.generated && $0.state == "ready" }.map { originalName($0.language, sdh: $0.sdh == true) }
@@ -433,7 +442,7 @@ struct MediaLanguagesView: View {
                 else if info == nil { Text(verbatim: "no details").font(.caption2) }
                 else if let info { Text(verbatim: info.state).font(.caption2) }
             }
-        }.font(.callout).foregroundStyle(.secondary)
+        }.font(Self.detailFont).foregroundStyle(.secondary)
     }
     /// "1080p · Dolby Vision · H.265 · 12.0 Mb/s"
     private func videoSummary(_ video: MediaTrackInfo.Video) -> String {
@@ -453,7 +462,7 @@ struct MediaLanguagesView: View {
     }
     private func languageRow(_ title: String, icon: String, languages: [String]) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Label(LocalizedStringKey(title), systemImage: icon).font(.caption.weight(.semibold))
+            Label(LocalizedStringKey(title), systemImage: icon).font(Self.headingFont)
             Text(LocalizedStringKey(languages.isEmpty ? "Available" : Array(Set(languages)).sorted().joined(separator: " · ")))
                 .fixedSize(horizontal: false, vertical: true)
         }

@@ -1705,11 +1705,12 @@ public class MainActivity extends Activity {
     if (asset == null) return;
     for (String line : MediaLanguages.lines(asset.mediaInfo)) {
       Ui.gap(parent, compact ? 4 : 7);
-      TextView text = Ui.text(this, line, compact ? 12 : 14, Ui.MUTED);
+      // Smaller than the summary (14) above them.
+      TextView text = Ui.text(this, line, compact ? 11 : 12, Ui.MUTED);
       android.text.SpannableString styled = new android.text.SpannableString(line);
       for (int i = 0; i < line.length(); i++) if (line.charAt(i) == '\uFFFC') {
         android.graphics.drawable.Drawable icon = getDrawable(R.drawable.torrbaby_mark);
-        int size = Ui.dp(this, compact ? 14 : 18);
+        int size = Ui.dp(this, compact ? 13 : 15);
         icon.setBounds(0, 0, size, size);
         styled.setSpan(new android.text.style.ImageSpan(icon, android.text.style.ImageSpan.ALIGN_BASELINE), i, i + 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
       }
