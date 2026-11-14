@@ -434,10 +434,12 @@ final class Store: ObservableObject {
             let available = path.status == .satisfied
             // The interface iOS sends data on (first in its order), for the direct path and relay.
             let dataInterface = path.availableInterfaces.first { [.wifi, .cellular, .wiredEthernet].contains($0.type) }?.name
+            let gateways = path.gateways.compactMap { if case .hostPort(.ipv4(let address), _) = $0 { "\(address)" } else { nil } }.sorted().joined(separator: ",")
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 #if os(iOS)
                 PunchProbe.preferredInterface = dataInterface
+                PunchProbe.gateways = gateways
                 #endif
                 let restored = !self.networkAvailable && available
                 // A restored Wi-Fi/cellular path still needs a successful server probe.

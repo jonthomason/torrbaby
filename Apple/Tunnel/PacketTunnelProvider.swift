@@ -169,6 +169,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         monitor.pathUpdateHandler = { [weak self] path in
             guard let self else { return }
             PunchProbe.preferredInterface = path.availableInterfaces.first { $0.type == .wifi || $0.type == .cellular }?.name
+            PunchProbe.gateways = path.gateways.compactMap { if case .hostPort(.ipv4(let address), _) = $0 { "\(address)" } else { nil } }.sorted().joined(separator: ",")
             let signature = PunchProbe.networkSignature()
             if signature != self.networkSignature {
                 if !self.networkSignature.isEmpty {

@@ -87,7 +87,12 @@ struct ConnectionStatusSections: View {
     private var tunnelPaths: String? {
         tunnelState.map { $0.split(separator: "\n").filter { !$0.hasPrefix("version ") }.joined(separator: "\n") }
     }
+    /// "open" or "closed", from the tunnel's own report.
+    private var tunnelRelay: String? {
+        tunnelState?.split(separator: "\n").first { $0.hasPrefix("Relay via bronze: ") }.map { String($0.dropFirst("Relay via bronze: ".count)) }
+    }
     private var relayReachable: String {
+        if tunnel.connected, let state = tunnelRelay { return state == "open" ? "reachable (in the tunnel)" : "\(state) (in the tunnel)" }
         if let connected = store.relayServerConnected {
             return (store.relayRoute != nil || tunnel.connected ? "reachable" : "closed") + (connected ? ", \(server) connected" : ", \(server) NOT connected")
         }
@@ -116,8 +121,16 @@ struct ConnectionStatusSections: View {
             row("Home network", kind: "home", inUse: store.path == .home, detail: store.homeRoute.isEmpty ? store.primaryAddress : store.homeRoute)
             #if os(iOS)
             row("Torrbaby tunnel", kind: "tunnel", inUse: store.path == .tunnel, detail: tunnel.installed ? tunnel.statusText + (tunnel.connected ? (tunnelPaths.map { "\n\($0)" } ?? "") : "") : "not installed")
-            row("Direct (in the app)", kind: "direct", inUse: store.path == .direct, detail: store.directRoute == nil ? (store.directWhyNot ?? "") : "open" + (store.directOpenedAt.map { " since \(clock($0))" } ?? ""))
-            row("Relay via bronze", kind: "relay", inUse: store.path == .relay, detail: relayDetail)
+            // While the tunnel is connected the app's own direct path and relay stand down: their
+            // old checks would read as failures, so they say so instead, and the relay line shows
+            // the tunnel's own relay.
+            if tunnel.connected {
+                row("Direct (in the app)", kind: "direct", inUse: false, detail: "not used: the Torrbaby tunnel carries traffic", showCheck: false)
+                row("Relay via bronze", kind: "relay", inUse: false, detail: "in the tunnel: " + (tunnelRelay ?? "state not known yet"), showCheck: false)
+            } else {
+                row("Direct (in the app)", kind: "direct", inUse: store.path == .direct, detail: store.directRoute == nil ? (store.directWhyNot ?? "") : "open" + (store.directOpenedAt.map { " since \(clock($0))" } ?? ""))
+                row("Relay via bronze", kind: "relay", inUse: store.path == .relay, detail: relayDetail)
+            }
             #endif
             if store.tailscaleInUse {
                 row("Tailscale", kind: "tailscale", inUse: store.path == .tailscale, detail: store.awayRoute.isEmpty ? (store.fallbackServer.isEmpty ? "not set up" : store.fallbackServer) : store.awayRoute)
@@ -136,8 +149,8 @@ struct ConnectionStatusSections: View {
         return parts.joined(separator: " · ")
     }
 
-    private func row(_ title: String, kind: String, inUse: Bool, detail: String) -> some View {
-        let check = store.routeChecks[kind]
+    private func row(_ title: String, kind: String, inUse: Bool, detail: String, showCheck: Bool = true) -> some View {
+        let check = showCheck ? store.routeChecks[kind] : nil
         return VStack(alignment: .leading, spacing: 3) {
             HStack {
                 Text(verbatim: title).font(.body.weight(inUse ? .semibold : .regular))

@@ -68,6 +68,9 @@ final class PunchProbe: @unchecked Sendable {
     /// The interface iOS uses for data, from the network monitor (a dual-SIM phone's second
     /// SIM may be pdp_ip1, not pdp_ip0). Set by the Store on every path change.
     nonisolated(unsafe) static var preferredInterface: String?
+    /// The network's gateways, from the network monitor: moving between two phone hotspots can
+    /// keep the same interface and address range, but not the same gateway.
+    nonisolated(unsafe) static var gateways = ""
 
     /// The network to punch from: the one iOS uses for data when it has an IPv4 address,
     /// else Wi-Fi, else any cellular interface.
@@ -82,7 +85,7 @@ final class PunchProbe: @unchecked Sendable {
     /// leaves, or the phone moves between carriers (CT ↔ CM), even on the same interface.
     static func networkSignature() -> String {
         guard let name = physicalInterface() else { return "none" }
-        return "\(name) \(ipv4Addresses()[name] ?? "?")"
+        return "\(name) \(ipv4Addresses()[name] ?? "?")" + (gateways.isEmpty ? "" : " via \(gateways)")
     }
 
     private static func ipv4Addresses() -> [String: String] {
