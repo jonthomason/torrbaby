@@ -5,7 +5,12 @@ import android.net.nsd.*;
 import android.os.*;
 import java.util.*;
 
-/** The same DNS-SD service used by tvOS; credentials never travel in TXT records. */
+/**
+ * The same DNS-SD service used by tvOS; credentials never travel in TXT records. Two searches
+ * run side by side: Android's (NsdManager) and the app's own question to the network (Mdns),
+ * because Android's daemon stops on some TVs and then fails every search at once. The search
+ * has failed only when both have.
+ */
 final class ServerDiscovery implements AutoCloseable {
   interface Listener {
     void changed(Map<String, String> servers);
@@ -19,7 +24,8 @@ final class ServerDiscovery implements AutoCloseable {
   private final Map<String, String> servers = new LinkedHashMap<>();
   private final Set<String> present = new HashSet<>();
   private final ArrayDeque<NsdServiceInfo> pending = new ArrayDeque<>();
-  private boolean closed, resolving;
+  private volatile boolean closed;
+  private boolean resolving, systemFailed, ownFinished;
   private final NsdManager.DiscoveryListener browser =
       new NsdManager.DiscoveryListener() {
         public void onDiscoveryStarted(String type) {}
@@ -27,10 +33,7 @@ final class ServerDiscovery implements AutoCloseable {
         public void onDiscoveryStopped(String type) {}
 
         public void onStartDiscoveryFailed(String type, int error) {
-          main.post(
-              () -> {
-                if (!closed) listener.failed();
-              });
+          main.post(() -> { systemFailed = true; failedIfBoth(); });
         }
 
         public void onStopDiscoveryFailed(String type, int error) {}
@@ -61,11 +64,30 @@ final class ServerDiscovery implements AutoCloseable {
   }
 
   void start() {
+    Thread own = new Thread(() -> {
+      Map<String, String> answered = Mdns.find(8000, () -> closed);
+      main.post(() -> {
+        if (closed) return;
+        ownFinished = true;
+        if (answered.isEmpty()) { failedIfBoth(); return; }
+        // Android's own answer for the same service, when it has one, stays.
+        boolean added = false;
+        for (Map.Entry<String, String> server : answered.entrySet())
+          if (servers.putIfAbsent(server.getKey(), server.getValue()) == null) added = true;
+        if (added) publish();
+      });
+    }, "Server search");
+    own.setDaemon(true);
+    own.start();
     try {
       manager.discoverServices("_torrbaby._tcp.", NsdManager.PROTOCOL_DNS_SD, browser);
     } catch (RuntimeException e) {
-      listener.failed();
+      systemFailed = true;
     }
+  }
+
+  private void failedIfBoth() {
+    if (!closed && systemFailed && ownFinished && servers.isEmpty()) listener.failed();
   }
 
   private void publish() {

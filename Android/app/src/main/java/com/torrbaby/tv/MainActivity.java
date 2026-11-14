@@ -346,7 +346,7 @@ public class MainActivity extends Activity {
                   if (e instanceof java.io.IOException && !(e instanceof Api.HttpException) && refind(requested)) return;
                   if (library != null) {
                     render();
-                    Toast.makeText(this, "Could not refresh. " + message(e), Toast.LENGTH_LONG)
+                    Toast.makeText(this, L10n.t("Could not refresh.") + " " + message(e), Toast.LENGTH_LONG)
                         .show();
                     return;
                   }
@@ -366,6 +366,8 @@ public class MainActivity extends Activity {
 
   static String message(Exception e) {
     String s = e.getMessage();
+    // The server has not been found on this network: never the placeholder name it is asked by until then.
+    if (e instanceof java.net.UnknownHostException || (s != null && s.contains("torrbaby.invalid"))) return L10n.t("Could not find your server");
     return s == null
         ? "Check the server address and network connection."
         : s.substring(0, Math.min(s.length(), 220));
@@ -2149,6 +2151,20 @@ public class MainActivity extends Activity {
     Ui.add(root, spinner, 44, 44);
     io.execute(() -> {
       try {
+        // The server has not been found in this run yet (the library's search failed, or has
+        // not finished): look for it here, rather than ask a name that never resolves.
+        if (requested.base.equals(ServerRoute.UNKNOWN)) {
+          String known = ServerRoute.found;
+          String found = known.isEmpty() ? ServerRoute.locate(this, requested.client, requested.token, 8000) : known;
+          if (!found.isEmpty()) {
+            runOnUiThread(() -> {
+              if (isDestroyed() || api != requested) return;
+              moveTo(requested, found);
+              if (api != requested) chooseProfile(switching);
+            });
+            return;
+          }
+        }
         requested.register();
         JSONObject state = requested.request("GET", "/v1/devices/" + Api.part(requested.client) + "/profile", null);
         JSONArray people = state.getJSONArray("profiles");
