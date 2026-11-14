@@ -1,8 +1,56 @@
 # Running without Tailscale: bronze rendezvous, direct tunnel, relay
 
-Status: plan, written 2026-11-13 at the end of the session that built the direct tunnel.
-Owner: the next session. The user wants this ("running without Tailscale is a very desirable
-thing"), in Rust, on bronze.
+Status: **built** (iOS since Apple 247–302, Android TV since 114–116, server and bronze deployed
+2026-11-14). The plan below is the original from 2026-11-13; this first section is the current
+state and what is left.
+
+## Current state (2026-11-14 evening; Apple 302, Android 116, server deployed 18:33)
+
+Built and deployed:
+- **bronze** (`rendezvous/`, `scripts/deploy_rendezvous.sh`): STUN on UDP 3478/3479, QUIC relay on
+  7443 (ALPN `tbhome` for Diamond's standing connection, `tbrelay` for devices). Counts bytes per
+  device connection (named by its Torrbaby client id via `TBNAME1`) and per China day
+  (`usage.json`); Diamond asks with `TBUSAGE1` and serves `GET /v1/relay-usage`.
+- **End-to-end encryption through bronze**: Diamond keeps one identity (`identity.der`/`.key` in
+  its data directory), advertised in `/v1/ping` (`server.identity`) and used for the direct path.
+  Devices learn its fingerprint only from pairing or from Diamond on the home network, then wrap
+  every relayed stream in TLS pinned to it (`Apple/Direct/src/e2e.rs`; Diamond decrypts streams
+  that open with a TLS handshake, plain ones from older clients still work). A plain relayed
+  connection still open when the identity is pinned is closed so the client reconnects
+  encrypted.
+- **iOS packet tunnel** (`Apple/Tunnel`, `Apple/Direct`): 10.233.0.1 is Diamond everywhere.
+  Downloads always use it while the tunnel is connected; at home the extension carries
+  connections straight to Diamond on the LAN (Bonjour name, checked to answer). Relay
+  connections make way for the direct path or home. Dormant after 2 minutes idle (no
+  keepalives), woken by a waiting connection. Network changes act after 3 s (flaps ignored).
+  Another VPN taking over keeps the tunnel off until Torrbaby is next launched; launch takes it
+  back. Settings → Connection shows Diamond's identity, the relay usage and punch results.
+- **Remote pairing** (`docs/remote-pairing.md`): a device that is never at home shows a QR code
+  with a one-time secret; a paired iPhone scans it (Link a device → Scan the new device's code);
+  the device claims its sealed setup through bronze. Built for Android TV; verified end to end
+  on the Android TV emulator through the real bronze and Diamond.
+- **Android TV away from home**: relay plus direct path through one loopback base URL, with the
+  path upkeep in Rust (`Apple/Direct/src/proxy.rs`, the iOS extension's `maintain()` ported);
+  the relay is tried after 2.5 s while the home search goes on.
+
+Still open (the user's list):
+1. **Background downloads end to end** on a phone (start, lock, leave or reach home).
+2. **Battery**: measure the dormant behaviour on a device.
+3. **Recovery**: Diamond restart and long offline on a device (bronze restart verified).
+4. **Punching through a phone hotspot on China Mobile** never succeeds (the phone's own China
+   Mobile cellular does). The relay carries it; RTT spikes there caused one 8 s stall.
+5. **Android direct path**: untested on a real punch (only Rust tests and the emulator, which is
+   behind Diamond's own NAT and correctly stays relay-only).
+6. **Pairing a device that never had Tailscale**: test on a real device (an Android TV away
+   from home, an iPhone scanning its code).
+7. **Family distribution**: TestFlight internal testers (family added as App Store Connect
+   users on the individual account); `scripts/testflight.sh`, build number > 302. Under-13
+   child accounts cannot use TestFlight; use a parent's Apple Account for Media & Purchases.
+8. tvOS stays local-only; the Mac client away from home is not needed for now.
+
+Installing builds without Tailscale (the OTA page over ABT) is the ABT project's job: its
+pipes serve the Mac's install server as `https://ota.mac.abt.jonthomason.com/` (see
+`~/src/abt-worktrees/v0/docs/pipes.md`). No SSH tunnels.
 
 ## Where things stand
 

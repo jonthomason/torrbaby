@@ -1,5 +1,9 @@
 # Remote pairing: a device that is never at home
 
+Status (2026-11-14): built. Diamond (server/pairing.rs `remote`, deployed), iPhone scanner
+(Link a device → Scan the new device's code, Apple 297+), Android TV setup screen (Android
+114+). Verified end to end on the Android TV emulator through the real bronze and Diamond.
+
 A new device (an Android TV, a family iPhone) that will never be on the home network still has
 to learn three things it cannot get through bronze unchecked: its credentials, Diamond's
 identity (the certificate fingerprint that end-to-end encryption pins), and how to reach
