@@ -150,3 +150,50 @@ translations are unnecessary for this page).
   it off.
 - Build numbers: next Apple > 247, Android > 101 (`local-state/credits-release-handoff.txt`).
   I build and publish myself now; see memory `torrbaby-release-procedure`.
+
+## Next: Torrbaby's own packet tunnel (decided 2026-11-14)
+
+**Why.** Offline downloads use iOS background transfers, which iOS runs while the app is
+suspended. They need an address iOS can reach without the app. Today only Tailscale gives
+one: the direct path and the relay live inside the app (loopback proxy) and stop when it is
+suspended. Routing downloads through bronze is ruled out: bronze is capped at 50 Mbit/s and
+billed for traffic past an allowance. Transfers must go direct, in the background too.
+
+**Decisions (the user's).**
+- Both Tailscale and Torrbaby's own tunnel stay supported. A device on Tailscale (the user's,
+  often with an exit node) keeps using Tailscale, including for background downloads. iOS
+  allows one VPN connection at a time and starting another disconnects Tailscale, so
+  Torrbaby never starts its tunnel there.
+- Family devices without Tailscale use Torrbaby's tunnel: a Network Extension packet tunnel.
+- Transfers nearly always go direct (punched); the relay through bronze is only the fallback.
+
+**Design.**
+- `NEPacketTunnelProvider` app extension (iPhone/iPad; later Mac). Split tunnel: Diamond gets
+  a private address (10.233.0.1) and only that /32 is routed into the tunnel. No DNS change,
+  no other traffic touched.
+- The extension runs the existing Rust tunnel (`Apple/Direct`): it punches with bronze's STUN,
+  signals Diamond over the relay, and runs QUIC on the punched socket, relay as fallback.
+- A userspace TCP stack in Rust (`ipstack`) turns the tunnel's IP packets into TCP streams;
+  each becomes a QUIC stream that Diamond already pipes to its HTTP port. **No server change**
+  beyond what the direct path has.
+- **The goal is the direct path held open while Torrbaby is suspended.** The extension owns
+  the punched socket and its QUIC connection; iOS keeps the extension running when the app is
+  suspended, so the path stays open (keepalives keep both NATs' mappings) and is punched again
+  from the extension on a network change. The relay is only for while there is no direct path.
+- Battery: keepalives run while the path is in use (a transfer pending or the app open) and
+  for a while after; when idle for long the path may be let go and punched again on the next
+  request (2–3 s). Tune once measured.
+- Background downloads (and the app and the player) use `http://10.233.0.1:8765` on tunnel
+  devices. A player's address no longer changes when the path does.
+- The app shares the device's credentials and bronze's details with the extension through an
+  App Group. Memory limit for packet tunnels: 50 MB.
+- Settings → Connection: "Torrbaby tunnel: Automatic / On / Off". Automatic uses Tailscale
+  when it reaches Diamond, otherwise the tunnel (iOS asks once to add the VPN configuration).
+
+**Steps.**
+0. Spike: extension + ipstack + QUIC over the relay; prove a background download completes
+   while the app is suspended. (Relay first: no punching to move yet.)
+1. Punching inside the extension (move the STUN, window/random spray and signalling out of
+   `DirectTunnel.establish` into code both targets share), relay fallback, network changes.
+2. App integration: route choice, download URLs, Settings (EN + 中文), Tailscale detection.
+3. Hardening: memory, battery (keepalives only while busy), metering, the Mac.

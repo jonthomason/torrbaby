@@ -21,6 +21,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
+pub mod packet;
+
 struct Tunnel {
     runtime: tokio::runtime::Runtime,
     connection: quinn::Connection,
@@ -179,4 +181,49 @@ pub extern "C" fn tbdirect_relay_info(buffer: *mut c_char, capacity: usize) -> i
         *buffer.add(length) = 0;
     }
     length as i32
+}
+
+/// The connection a tunnel stream should take: the direct path while it is open, else the relay.
+fn carrier() -> Option<quinn::Connection> {
+    for slot in [&TUNNEL, &RELAY] {
+        let connection = slot.lock().ok().and_then(|held| held.as_ref().map(|t| t.connection.clone()));
+        if let Some(connection) = connection.filter(|c| c.close_reason().is_none()) { return Some(connection) }
+    }
+    None
+}
+
+/// Packets the stack sends back to the extension, one call each.
+pub type PacketWriter = extern "C" fn(context: *mut std::ffi::c_void, packet: *const u8, length: usize);
+struct Context(*mut std::ffi::c_void);
+unsafe impl Send for Context {}
+
+/// Start the packet tunnel's TCP stack (Network Extension). Each packet it sends goes to
+/// `write(context, packet, length)`, from a background thread. A TCP connection that arrives
+/// while neither the direct path nor the relay is open waits up to 20 s for one.
+#[unsafe(no_mangle)]
+pub extern "C" fn tbtunnel_start(mtu: u16, write: PacketWriter, context: *mut std::ffi::c_void) -> bool {
+    tbtunnel_stop();
+    let Some((stack, mut output)) = packet::Stack::start(mtu, Box::new(carrier), Duration::from_secs(20)) else { return false };
+    let context = Context(context);
+    stack.runtime.spawn(async move {
+        let context = context;
+        while let Some(packet) = output.recv().await { write(context.0, packet.as_ptr(), packet.len()) }
+    });
+    if let Ok(mut held) = packet::STACK.lock() { *held = Some(stack) }
+    true
+}
+
+/// One packet the extension read from the tunnel.
+#[unsafe(no_mangle)]
+pub extern "C" fn tbtunnel_input(packet: *const u8, length: usize) -> bool {
+    if packet.is_null() { return false }
+    let bytes = unsafe { std::slice::from_raw_parts(packet, length) }.to_vec();
+    packet::STACK.lock().ok().and_then(|held| held.as_ref().map(|stack| stack.input(bytes))).unwrap_or(false)
+}
+
+/// Stop the packet tunnel's TCP stack.
+#[unsafe(no_mangle)]
+pub extern "C" fn tbtunnel_stop() {
+    let stack = packet::STACK.lock().ok().and_then(|mut held| held.take());
+    if let Some(stack) = stack { stack.runtime.shutdown_background() }
 }

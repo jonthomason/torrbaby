@@ -15,9 +15,11 @@ quinn = { version = "0.11", default-features = false, features = ["runtime-tokio
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "macros", "sync"] }
 sha2 = "0.11"
+ipstack = "1.0.1"
 
 [dev-dependencies]
 rcgen = "0.13"
+smoltcp = { version = "0.12", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "socket-tcp"] }
 tbrendezvous = { path = "../../rendezvous" }
 
 [profile.release]
