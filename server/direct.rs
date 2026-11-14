@@ -190,6 +190,10 @@ async fn run(socket: UdpSocket, ip: IpAddr, ports: Arc<Vec<u16>>, id: String, id
     transport.keep_alive_interval(Some(Duration::from_secs(10)));
     transport.max_idle_timeout(Some(Duration::from_secs(45).try_into()?));
     transport.max_concurrent_bidi_streams(256u32.into());
+    // BBR, not Cubic: Cubic fills a bottleneck's queue until packets are lost (on CT 5G the
+    // round trip climbed 100 ms → 3 s with almost no loss while video streamed, and the player
+    // stalled); BBR paces to the measured bottleneck and keeps the queue short.
+    transport.congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
     server.transport_config(Arc::new(transport));
     let std_socket = socket.into_std()?;
     // Keep spraying until QUIC connects: iOS may start QUIC from a fresh port rather than the

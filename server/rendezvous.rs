@@ -84,6 +84,10 @@ async fn connect_and_serve(config: &RendezvousConfig, http_port: u16) -> Result<
     transport.stream_receive_window((8u32 << 20).into());
     transport.receive_window((32u32 << 20).into());
     transport.send_window(32 << 20);
+    // BBR, not Cubic: Cubic fills a bottleneck's queue until packets are lost (on CT 5G the
+    // round trip climbed 100 ms → 3 s with almost no loss while video streamed, and the player
+    // stalled); BBR paces to the measured bottleneck and keeps the queue short.
+    transport.congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
     client.transport_config(Arc::new(transport));
     let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse()?)?;
     endpoint.set_default_client_config(client);
