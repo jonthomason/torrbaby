@@ -144,6 +144,8 @@ impl Stack {
                                     carry(tcp, &mut to_diamond, &mut from_diamond, moved).await;
                                 }
                                 crate::e2e::Wrapped::Plain(mut send, mut recv) => {
+                                    // Plain only until Diamond's identity is pinned (crate::e2e).
+                                    let moved = async { tokio::select! { _ = moved => {}, _ = crate::e2e::pinned_now() => {} } };
                                     let complete = carry(tcp, &mut send, &mut recv, moved).await;
                                     if !complete { let _ = recv.stop(0u32.into()); }
                                 }

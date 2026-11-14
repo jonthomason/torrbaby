@@ -27,6 +27,17 @@ pub fn pin(fingerprint: &str) {
     *held = Some((fingerprint, Arc::new(tls)));
 }
 
+/// Resolves once an identity is pinned: a plain relayed connection (opened before the device
+/// knew Diamond's identity, as pairing's own requests are) is then closed, so the client's
+/// keep-alive connection cannot go on carrying requests and credentials unencrypted; it
+/// reconnects, encrypted.
+pub async fn pinned_now() {
+    loop {
+        if pinned().is_some() { return }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
 /// The pinned fingerprint, if any.
 pub fn pinned() -> Option<String> { PINNED.lock().ok().and_then(|held| held.as_ref().map(|(f, _)| f.clone())) }
 

@@ -163,7 +163,8 @@ fn open_on(slot: &Mutex<Option<Tunnel>>, socket: std::net::UdpSocket, server: So
                     if !relayed { return pipe(tcp, send, recv).await }
                     match e2e::wrap(send, recv).await {
                         e2e::Wrapped::Encrypted(stream) => { let (from, to) = tokio::io::split(stream); pipe(tcp, to, from).await }
-                        e2e::Wrapped::Plain(send, recv) => pipe(tcp, send, recv).await,
+                        // Plain only until Diamond's identity is pinned: then closed (crate::e2e).
+                        e2e::Wrapped::Plain(send, recv) => { tokio::select! { _ = pipe(tcp, send, recv) => {}, _ = e2e::pinned_now() => {} } }
                         e2e::Wrapped::Failed => {}
                     }
                 });
