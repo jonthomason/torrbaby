@@ -585,6 +585,8 @@ public class MainActivity extends Activity {
                 else play(t, asset, false);
               });
       Ui.primary(play);
+      // Smaller than other buttons' 15: "Resume Season 1 Ep 2 (40 min remaining)" was too loud.
+      play.setTextSize(13);
       play.setTag("hero");
       Ui.add(buttons, play, -2, 48);
       Ui.add(info, buttons, -1, 52);
@@ -598,6 +600,7 @@ public class MainActivity extends Activity {
       if (t.kind.equals("tv") && asset != null) {
         Ui.gap(buttons, 10);
         Button more = Ui.button(this, L10n.t("More…"), () -> moreActions(t));
+        more.setTextSize(13);
         more.setTag("more");
         more.setOnFocusChangeListener(heroFocus);
         Ui.add(buttons, more, -2, 48);

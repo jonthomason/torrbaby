@@ -440,10 +440,10 @@ private struct TVMediaDetail: View {
                                 HStack(spacing: 14) {
                                     Button { play(asset, title: title) } label: {
                                         if asset.offline == true {
-                                            Label("Drive not connected", systemImage: "externaldrive.badge.xmark").font(.headline)
+                                            Label("Drive not connected", systemImage: "externaldrive.badge.xmark").font(TVHeroAction.font)
                                         } else {
                                             Label(asset.playbackActionTitle(television: title.kind == "tv"), systemImage: "play.fill")
-                                                .font(.headline)
+                                                .font(TVHeroAction.font)
                                         }
                                     }.buttonStyle(TVMonochromeButtonStyle()).focused($heroFocused)
                                     if title.kind == "tv" {
@@ -612,7 +612,7 @@ private struct TVMoreActions: View {
     @State private var showFiles = false
     var body: some View {
         Button { showMenu = true } label: {
-            Text("More…").font(.headline)
+            Text("More…").font(TVHeroAction.font)
         }.buttonStyle(TVMonochromeButtonStyle())
         .confirmationDialog(title.title, isPresented: $showMenu, titleVisibility: .visible) {
             if title.cast?.isEmpty == false { Button("Cast") { showCast = true } }
@@ -857,5 +857,10 @@ private struct TVSearchView: View {
         }.searchable(text: $query, prompt: "Movies and TV shows")
             .background(Theme.canvas)
     }
+}
+/// Play/Resume and More… in a title's hero. Headline (38 pt) made a label such as
+/// "Resume Season 1 Ep 2 (40 min remaining)" shout; this sits just above the summary text.
+enum TVHeroAction {
+    static let font = Font.system(size: 29, weight: .semibold)
 }
 #endif
