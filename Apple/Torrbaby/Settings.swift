@@ -246,6 +246,9 @@ private struct SettingsRowLabel: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let page: SettingsPage
+    /// Selected in the iPad's Settings sidebar: the row is filled with the accent (white), so its
+    /// text is dark, as in the main sidebar.
+    var selected = false
     var body: some View {
         if page == .user {
             HStack(spacing: 14) {
@@ -253,11 +256,12 @@ private struct SettingsRowLabel: View {
                 else { Image(systemName: page.symbol).font(.system(size: 44)).foregroundStyle(page.tint).accessibilityHidden(true) }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(verbatim: store.activeProfile?.name ?? L10n.text("Choose a user")).font(.title3.weight(.semibold))
-                    Text("Switch user").font(.subheadline).foregroundStyle(.secondary)
+                        .foregroundStyle(selected ? Theme.onAccent : Color.primary)
+                    Text("Switch user").font(.subheadline).foregroundStyle(selected ? Theme.onAccent.opacity(0.7) : Color.secondary)
                 }
             }.padding(.vertical, 4)
         } else {
-            Label { Text(LocalizedStringKey(page.rawValue)) } icon: { SettingsIcon(page: page) }
+            Label { Text(LocalizedStringKey(page.rawValue)).foregroundStyle(selected ? Theme.onAccent : Color.primary) } icon: { SettingsIcon(page: page) }
         }
     }
 }
@@ -285,11 +289,20 @@ struct PadSettingsView: View {
     }
     var body: some View {
         NavigationSplitView(columnVisibility: $columns) {
-            List(selection: $selected) {
+            // Rows draw their own selection, as the main sidebar does (a white row with black
+            // text): the system's depends on focus (white, or grey once a sheet is over it),
+            // so no single text colour could be read on both.
+            List {
                 SwiftUI.Section { SettingsQuickRows() }
                 ForEach(Array(SettingsPage.groups.enumerated()), id: \.offset) { _, group in
                     SwiftUI.Section {
-                        ForEach(group.pages) { page in SettingsRowLabel(page: page).tag(page) }
+                        ForEach(group.pages) { page in
+                            Button { selected = page } label: {
+                                HStack { SettingsRowLabel(page: page, selected: selected == page); Spacer(minLength: 0) }.contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                                .listRowBackground(selected == page ? Theme.accent : Color(uiColor: .secondarySystemGroupedBackground))
+                                .accessibilityAddTraits(selected == page ? .isSelected : [])
+                        }
                     } header: { if let header = group.header { Text(LocalizedStringKey(header)) } }
                       footer: { if let footer = group.footer { Text(LocalizedStringKey(footer)) } }
                 }
