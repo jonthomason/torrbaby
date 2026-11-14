@@ -121,7 +121,11 @@ extension LibraryAsset {
     }
 }
 
-struct LibraryDestination: Hashable { let id: String }
+struct LibraryDestination: Hashable {
+    let id: String
+    /// Opened from the home hero's Play: the page starts the next file to watch at once.
+    var play = false
+}
 
 /// What changes as people watch, sent apart from the list: each played file's position and
 /// watched mark (a file not listed has none) and the titles hidden from Continue Watching.
@@ -693,22 +697,35 @@ struct LibraryBrowser: View {
             #endif
             LazyVStack(alignment: .leading, spacing: compactLibrary ? 18 : 28) {
                 if browsing, let featured = titles.homeHero {
+                    // The artwork opens the title; Play starts the next file to watch, exactly as the
+                    // title page's Play (time left beneath), and Explore opens the page.
                     NavigationLink(value: LibraryDestination(id: featured.id)) {
                         LibraryArtwork(id: featured.id, variant: "backdrop")
                             .frame(height: 360)
                             .overlay(LinearGradient(colors: [.clear, .black.opacity(0.92)], startPoint: .top, endPoint: .bottom))
-                            .overlay(alignment: .bottomLeading) {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text(featured.title).font(.system(size: 38, weight: .bold))
-                                    .lineLimit(3).minimumScaleFactor(0.7).multilineTextAlignment(.leading)
-                                Text(verbatim: ([featured.yearLabel] + featured.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · ")).font(.subheadline)
-                                Label("Explore", systemImage: "play.fill").font(.headline)
-                                    .padding(.horizontal, 16).padding(.vertical, 9)
-                                    .foregroundStyle(Theme.onAccent).background(Theme.accent, in: RoundedRectangle(cornerRadius: Theme.radius))
-                                    .padding(.top, 5)
-                            }.padding(28).foregroundStyle(.white)
-                        }.clipShape(RoundedRectangle(cornerRadius: 10))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
                     }.buttonStyle(.plain)
+                    .overlay(alignment: .bottomLeading) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(featured.title).font(.system(size: 38, weight: .bold))
+                                .lineLimit(3).minimumScaleFactor(0.7).multilineTextAlignment(.leading)
+                            Text(verbatim: ([featured.yearLabel] + featured.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · ")).font(.subheadline)
+                            HStack(alignment: .top, spacing: 12) {
+                                if let asset = store.preferredLibraryAsset(featured), store.canPlay(asset) {
+                                    VStack(spacing: 5) {
+                                        NavigationLink(value: LibraryDestination(id: featured.id, play: true)) {
+                                            Label(asset.playbackActionTitle(television: featured.kind == "tv", brief: true), systemImage: "play.fill")
+                                                .font(.headline).frame(minHeight: 44)
+                                        }.libraryActionStyle(prominent: true)
+                                        if let left = asset.timeLeft { Text(verbatim: left).font(.caption).foregroundStyle(.white.opacity(0.75)) }
+                                    }
+                                }
+                                NavigationLink(value: LibraryDestination(id: featured.id)) {
+                                    Text("Explore").font(.headline).frame(minHeight: 44)
+                                }.libraryActionStyle()
+                            }.padding(.top, 5)
+                        }.padding(28).foregroundStyle(.white)
+                    }
                 }
                 #if !os(iOS)
                 if !isHome && !titles.isEmpty { HStack(spacing: 10) { genreMenu; sortMenu; Spacer(minLength: 0) }.buttonStyle(MonoButtonStyle()).fixedSize(horizontal: false, vertical: true) }
@@ -840,6 +857,9 @@ struct LibraryDetail: View {
     @Environment(\.openWindow) private var openWindow
     #endif
     let titleID: String
+    /// Start the next file to watch as soon as the page opens (the home hero's Play).
+    var autoPlay = false
+    @State private var didAutoPlay = false
     @State private var season: Int = -1
     @State private var playback: Playback?
     @State private var loading = false
@@ -853,18 +873,20 @@ struct LibraryDetail: View {
         return title.resume?.season ?? title.playable.first(where: { !$0.watched && ($0.season ?? 0) > 0 })?.season ?? seasons.first(where: { $0 > 0 }) ?? seasons.first
     }
     @ViewBuilder private func playbackActions(_ asset: LibraryAsset, title: LibraryTitle, selectedSeason: Int?) -> some View {
-        Button { play(asset, title: title.title) } label: {
-            Label {
-                if store.canPlay(asset) {
-                    // The full label when it fits on one line; otherwise without the time remaining.
-                    ViewThatFits(in: .horizontal) {
-                        Text(asset.playbackActionTitle(television: title.kind == "tv")).lineLimit(1).fixedSize()
+        // The time left sits centred beneath Play, so the button stays a short label.
+        VStack(spacing: 5) {
+            Button { play(asset, title: title.title) } label: {
+                Label {
+                    if store.canPlay(asset) {
                         Text(asset.playbackActionTitle(television: title.kind == "tv", brief: true)).lineLimit(2)
-                    }
-                } else { Text(LocalizedStringKey(store.onMissingDrive(asset) ? "Drive not connected" : "Not downloaded")) }
-            } icon: { Image(systemName: store.canPlay(asset) ? "play.fill" : store.onMissingDrive(asset) ? "externaldrive.badge.xmark" : "wifi.slash") }
-                .font(.headline).frame(minWidth: title.kind == "tv" && !stacksActions ? 120 : nil, alignment: .leading).frame(minHeight: 44)
-        }.libraryActionStyle(prominent: true).disabled(loading || store.onMissingDrive(asset))
+                    } else { Text(LocalizedStringKey(store.onMissingDrive(asset) ? "Drive not connected" : "Not downloaded")) }
+                } icon: { Image(systemName: store.canPlay(asset) ? "play.fill" : store.onMissingDrive(asset) ? "externaldrive.badge.xmark" : "wifi.slash") }
+                    .font(.headline).frame(minWidth: title.kind == "tv" && !stacksActions ? 120 : nil, alignment: .leading).frame(minHeight: 44)
+            }.libraryActionStyle(prominent: true).disabled(loading || store.onMissingDrive(asset))
+            if store.canPlay(asset), let left = asset.timeLeft {
+                Text(verbatim: left).font(.caption).foregroundStyle(.white.opacity(0.75))
+            }
+        }
         #if !os(tvOS)
         // Nothing can be downloaded to this device while the server's drive is away.
         if !store.onMissingDrive(asset) {
@@ -897,7 +919,7 @@ struct LibraryDetail: View {
                                     VStack(alignment: .leading, spacing: 10) { playbackActions(asset, title: title, selectedSeason: chosen) }
                                         .environment(\.libraryActionFullWidth, true)
                                 } else {
-                                    HStack(spacing: 12) { playbackActions(asset, title: title, selectedSeason: chosen) }
+                                    HStack(alignment: .top, spacing: 12) { playbackActions(asset, title: title, selectedSeason: chosen) }
                                 }
                             }
                         }.foregroundStyle(.white).padding(16).frame(minHeight: 380, alignment: .bottomLeading)
@@ -962,6 +984,10 @@ struct LibraryDetail: View {
         .onDisappear { playbackTask?.cancel() }
         // Cast and each file's tracks come with the page, not the list.
         .task(id: titleID) { await store.loadDetails(titleID) }
+        .task(id: title?.id) {
+            guard autoPlay, !didAutoPlay, let title, let asset = store.preferredLibraryAsset(title) else { return }
+            didAutoPlay = true; play(asset, title: title.title)
+        }
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .background(MobilePlayerPresentation(playback: $playback, store: store).frame(width: 0, height: 0))

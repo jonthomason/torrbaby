@@ -138,7 +138,7 @@ struct TVRootView: View {
             // switch at the far right lands in the page even when nothing sits right below it.
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .focusSection()
-            .navigationDestination(for: LibraryDestination.self) { route in TVMediaDetail(titleID: route.id) }
+            .navigationDestination(for: LibraryDestination.self) { route in TVMediaDetail(titleID: route.id, autoPlay: route.play) }
             .navigationDestination(for: TVShelfDestination.self) { route in TVMediaDetail(titleID: route.id, autoPlay: route.play) }
         }
         .ignoresSafeArea(.container, edges: [.top, .horizontal])
@@ -384,8 +384,10 @@ private struct TVLanguagePicker: View {
 }
 
 private struct TVFeaturedHero: View {
+    @EnvironmentObject var store: Store
     let title: LibraryTitle
     @FocusState private var focused: Bool
+    @FocusState private var exploreFocused: Bool
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             LibraryArtwork(id: title.id, variant: "backdrop", alignment: .top)
@@ -394,17 +396,30 @@ private struct TVFeaturedHero: View {
                 Text(title.title).font(.system(size: 48, weight: .bold)).lineLimit(2)
                 Text(([title.yearLabel] + title.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.headline)
-                NavigationLink(value: LibraryDestination(id: title.id)) {
-                    Label("Explore", systemImage: "play.fill")
-                }.buttonStyle(TVMonochromeButtonStyle(resting: true)).focused($focused)
+                // Play exactly as on the title's page (time left beneath), then Explore for the page.
+                HStack(alignment: .top, spacing: 30) {
+                    if let asset = store.preferredLibraryAsset(title), asset.offline != true {
+                        VStack(spacing: 12) {
+                            NavigationLink(value: LibraryDestination(id: title.id, play: true)) {
+                                Label(asset.playbackActionTitle(television: title.kind == "tv", brief: true), systemImage: "play.fill")
+                            }.buttonStyle(TVMonochromeButtonStyle(resting: true)).focused($focused)
+                            if let left = asset.timeLeft {
+                                Text(verbatim: left).font(.system(size: 24)).foregroundStyle(.white.opacity(0.7))
+                            }
+                        }
+                    }
+                    NavigationLink(value: LibraryDestination(id: title.id)) {
+                        Text("Explore")
+                    }.buttonStyle(TVMonochromeButtonStyle(resting: true)).focused($exploreFocused)
+                }.focusSection()
             }.foregroundStyle(.white).padding(44)
         }.frame(height: 650)
             .clipShape(RoundedRectangle(cornerRadius: 18))
-            .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(focused ? 0.65 : 0), lineWidth: 2))
-            .scaleEffect(focused ? 1.006 : 1)
-            .animation(.easeOut(duration: 0.15), value: focused)
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(focused || exploreFocused ? 0.65 : 0), lineWidth: 2))
+            .scaleEffect(focused || exploreFocused ? 1.006 : 1)
+            .animation(.easeOut(duration: 0.15), value: focused || exploreFocused)
             .defaultFocus($focused, true)
-            .task { focused = true }
+            .task { if store.preferredLibraryAsset(title).map({ $0.offline != true }) == true { focused = true } else { exploreFocused = true } }
     }
 }
 

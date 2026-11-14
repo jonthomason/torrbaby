@@ -517,6 +517,8 @@ public class MainActivity extends Activity {
     if (hero != null && firstPoster != null) {
       if (firstPoster.getId() == View.NO_ID) firstPoster.setId(View.generateViewId());
       hero.setNextFocusDownId(firstPoster.getId());
+      View explore = page.findViewWithTag("explore");
+      if (explore != null) explore.setNextFocusDownId(firstPoster.getId());
     }
     restoreFocus(body);
   }
@@ -622,13 +624,51 @@ public class MainActivity extends Activity {
       }
       play.requestFocus();
     } else {
-      Button explore=Ui.button(this,L10n.t("▶  Explore"),()->open(t));
+      // Play exactly as on the title's page (time left beneath), then Explore for the page.
+      LinearLayout buttons = Ui.row(this);
+      buttons.setGravity(Gravity.TOP);
+      LinearLayout playColumn = Ui.column(this);
+      playColumn.setGravity(Gravity.CENTER_HORIZONTAL);
+      Button play = Ui.button(this, "", () -> {});
+      Ui.resting(play);
+      play.setTag("hero");
+      Ui.add(playColumn, play, -2, 44);
+      TextView left = Ui.text(this, "", 12, Ui.MUTED);
+      View leftGap = new View(this);
+      Ui.add(playColumn, leftGap, 1, 6);
+      Ui.add(playColumn, left, -2, -2);
+      Ui.add(buttons, playColumn, -2, -2);
+      Ui.gap(buttons, 20);
+      Button explore=Ui.button(this,L10n.t("Explore"),()->open(t));
       Ui.resting(explore);
-      Ui.add(info,explore,-2,44);explore.setTag("hero");
-      explore.setOnFocusChangeListener((v,f)-> {
-        frame.setForeground(f ? Ui.shape(0,0x99ffffff,this) : null);
-        frame.animate().scaleX(f?1.006f:1).scaleY(f?1.006f:1).setDuration(140).start();
-      });
+      Ui.add(buttons,explore,-2,44);explore.setTag("explore");
+      Ui.add(info, buttons, -1, -2);
+      View.OnFocusChangeListener heroFocus = (v,f)-> {
+        boolean any = play.hasFocus() || explore.hasFocus();
+        frame.setForeground(any ? Ui.shape(0,0x99ffffff,this) : null);
+        frame.animate().scaleX(any?1.006f:1).scaleY(any?1.006f:1).setDuration(140).start();
+      };
+      play.setOnFocusChangeListener(heroFocus);
+      explore.setOnFocusChangeListener(heroFocus);
+      java.util.function.Consumer<Library.Title> bind = selected -> {
+        Library.Asset next = selected.preferred();
+        boolean playable = next != null && !next.offline;
+        playColumn.setVisibility(playable ? View.VISIBLE : View.GONE);
+        // The entry point from the top bar and the shelves is Play, or Explore without it.
+        play.setTag(playable ? "hero" : null);
+        explore.setTag(playable ? "explore" : "hero");
+        if (playable) {
+          play.setText(playbackLabel(selected, next));
+          play.setOnClickListener(v -> play(selected, next, false));
+          String remaining = timeLeft(next);
+          left.setText(remaining);
+          left.setVisibility(remaining.isEmpty() ? View.GONE : View.VISIBLE);
+          leftGap.setVisibility(remaining.isEmpty() ? View.GONE : View.VISIBLE);
+        }
+        explore.setContentDescription(L10n.t("Explore")+" "+selected.title);
+        explore.setOnClickListener(v -> open(selected));
+      };
+      bind.accept(t);
       onCatalogUpdate(() -> {
         Library.Title latest=null;
         for(Library.Title candidate:library.titles)
@@ -637,11 +677,10 @@ public class MainActivity extends Activity {
         final Library.Title selected=latest;
         name.setText(selected.title);
         ((TextView)info.getChildAt(2)).setText(selected.metadata());
-        explore.setContentDescription(L10n.t("Explore")+" "+selected.title);
-        explore.setOnClickListener(v -> open(selected));
+        bind.accept(selected);
         art.load(image,selected.id,selected.backdrop.isEmpty()?"poster":"backdrop",selected.backdrop.isEmpty()?selected.poster:selected.backdrop);
       });
-      if (restoreId.isEmpty()) explore.requestFocus();
+      if (restoreId.isEmpty()) (playColumn.getVisibility() == View.VISIBLE ? play : explore).requestFocus();
     }
   }
 
