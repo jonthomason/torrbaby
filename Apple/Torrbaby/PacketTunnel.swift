@@ -131,7 +131,7 @@ import UIKit
         if ABT.connected { ABT.inCharge = true }
         if ABT.inCharge {
             if ready { launched = true }
-            if !connected { await yield() }
+            if !connected { await yield(); await ABT.turnOnIfOff() }
             return
         }
         // The launch: the first call of this process with the credentials known (on a first
@@ -263,6 +263,27 @@ import UIKit
     /// time and turning this one on disables ABT's configuration, which nothing brings back
     /// until the user opens ABT: seen on 2026-11-15, ABT off on the phone after a night on.
     /// Only the Connection page's Connect clears it.
+    /// ABT is the VPN here and is off: it is turned on. iOS lets only ABT's own app start its
+    /// VPN, so ABT is opened with `abt://connect`; it connects and comes back to Torrbaby.
+    /// Only with Torrbaby on screen, only once ABT has been off for three seconds running (it
+    /// drops for a moment when it reconnects), and at most once in five minutes, so that an
+    /// ABT that cannot connect does not pull the user away again and again.
+    static func turnOnIfOff() async {
+        guard inCharge, !connected, !asking, UIApplication.shared.applicationState == .active,
+              Date().timeIntervalSince(lastAsked) > 300 else { return }
+        asking = true
+        defer { asking = false }
+        for _ in 0..<6 {
+            try? await Task.sleep(for: .milliseconds(500))
+            if connected { return }
+        }
+        guard UIApplication.shared.applicationState == .active, PacketTunnel.shared.status != .connected,
+              let url = URL(string: "abt://connect?return=torrbaby://abt") else { return }
+        lastAsked = Date()
+        await UIApplication.shared.open(url)
+    }
+    private static var asking = false
+    private static var lastAsked = Date.distantPast
     static var inCharge: Bool {
         get { UserDefaults.standard.bool(forKey: "abtInCharge") }
         set { if newValue != inCharge { UserDefaults.standard.set(newValue, forKey: "abtInCharge") } }
