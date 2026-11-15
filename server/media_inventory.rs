@@ -334,8 +334,10 @@ fn advance_jobs(s:&Service,asset:&Value,id:&str,planned:&[(std::path::PathBuf,u6
             // Awaiting the temporary external lane; with it off, translate on device.
             Some(job) if job["state"]=="external" && s.subtitle_jobs.external() => job,
             Some(job) if job["state"]=="failed" => {
-                // Coordinator supplies the retry boundary; preserve the error until then.
-                if asset["retrying"]==true && complete && s.subtitle_jobs.can_admit() {
+                // Coordinator supplies the retry boundary; preserve the error until then,
+                // unless what caused it has since been fixed.
+                let fixed=job["error"].as_str().is_some_and(crate::subtitle_jobs::failed_for_fixed_cause);
+                if (asset["retrying"]==true || fixed) && complete && s.subtitle_jobs.can_admit() {
                     s.subtitle_jobs.prepare(id,path.clone(),*track,source,target)?
                 } else {job}
             },

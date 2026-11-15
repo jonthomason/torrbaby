@@ -68,6 +68,12 @@ const MAX_CONCURRENCY: usize = 8;
 /// "Subtitle storage is full". A subtitle is tens of KB; 8 GB is room for any library.
 const STORAGE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 pub(crate) const STORAGE_FULL: &str = "Subtitle storage is full";
+/// A job that failed for a cause later builds removed (the store's old file cap, the bitmap
+/// scan's old fixed three minutes, a file read while still being copied in): prepared again
+/// when its file is processed, rather than kept failed until someone asks.
+pub(crate) fn failed_for_fixed_cause(error: &str) -> bool {
+    error == STORAGE_FULL || error.contains(crate::ocr_subtitles::SCAN_TIMED_OUT) || error.starts_with("integers can be at most 8 bytes")
+}
 pub(crate) fn revision(path: &Path) -> Result<String> {
     let m = path.metadata()?;
     ensure!(m.is_file(), "Media is not a file");
@@ -890,5 +896,16 @@ mod sidecar_job_tests {
         assert_eq!(manager.status(id)?["state"], "stale");
         fs::remove_dir_all(root)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod fixed_cause_tests {
+    #[test]
+    fn failures_whose_cause_was_fixed_are_recognised() {
+        assert!(super::failed_for_fixed_cause("Subtitle storage is full"));
+        assert!(super::failed_for_fixed_cause("Bitmap subtitles could not be decoded (Bitmap scan timed out); source preserved"));
+        assert!(super::failed_for_fixed_cause("integers can be at most 8 bytes. Found size of: 50"));
+        assert!(!super::failed_for_fixed_cause("Subtitle validation failed: timing or text changed unexpectedly"));
     }
 }

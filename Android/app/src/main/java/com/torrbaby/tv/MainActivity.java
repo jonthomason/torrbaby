@@ -328,7 +328,9 @@ public class MainActivity extends Activity {
                   if (firstScreen || refreshingExistingScreen || !liveRaw.equals(librarySnapshot)) {
                     librarySnapshot = liveRaw;
                     StartupTrace.mark("Live render started");
-                    if(firstScreen || !detailId.isEmpty())render();
+                    // Home first drawn from the saved library can feature a title since removed from
+                    // Continue Watching: rows refresh in place, the hero is chosen again.
+                    if(firstScreen || !detailId.isEmpty() || heroChanged())render();
                     else updateBrowse(root);
                   }
                 });
@@ -481,6 +483,31 @@ public class MainActivity extends Activity {
 
   private void ambient(Library.Title title) { root.setBackgroundColor(Ui.BG); }
 
+  /** The home hero's title, so a live refresh can tell whether Home must be drawn again. */
+  private String shownHero = "";
+  /**
+   * The title most recently played, unless it was removed from Continue Watching; else the
+   * first recent title with a backdrop.
+   */
+  private static Library.Title featured(List<Library.Title> recent) {
+    Library.Title featured = recent.get(0);
+    for (Library.Title t : recent)
+      if (!t.backdrop.isEmpty() && !t.playable().isEmpty()) {
+        featured = t;
+        break;
+      }
+    Library.Title played = null;
+    for (Library.Title t : recent)
+      if (!t.playable().isEmpty() && !t.continueWatchingHidden && t.latestPlayed() > 0 && (played == null || t.latestPlayed() > played.latestPlayed())) played = t;
+    return played != null ? played : featured;
+  }
+  /** Home is showing, and the library now features another title than the one on screen. */
+  private boolean heroChanged() {
+    if (!section.equals("Home") || !detailId.isEmpty() || library == null) return false;
+    List<Library.Title> recent = library.filter("", "", "", 0);
+    return !recent.isEmpty() && !featured(recent).id.equals(shownHero);
+  }
+
   private void home() {
     ScrollView sc = scroll(content);
     LinearLayout page = Ui.column(this);
@@ -497,17 +524,8 @@ public class MainActivity extends Activity {
       Ui.add(page, Ui.button(this, L10n.t("Refresh"), this::load), 160, 44);
       return;
     }
-    Library.Title featured = recent.get(0);
-    for (Library.Title t : recent)
-      if (!t.backdrop.isEmpty() && !t.playable().isEmpty()) {
-        featured = t;
-        break;
-      }
-    // The title most recently played, unless it was removed from Continue Watching.
-    Library.Title played = null;
-    for (Library.Title t : recent)
-      if (!t.playable().isEmpty() && !t.continueWatchingHidden && t.latestPlayed() > 0 && (played == null || t.latestPlayed() > played.latestPlayed())) played = t;
-    if (played != null) featured = played;
+    Library.Title featured = featured(recent);
+    shownHero = featured.id;
     ambient(featured);
     hero(page, featured, false);
     LinearLayout body = Ui.column(this);
