@@ -103,7 +103,7 @@ struct CloudCopy: Decodable {
         let held = episodes ?? []
         guard !held.isEmpty else { return (videoCount ?? 0) == 1 ? L10n.text("1 video") : L10n.format("%d videos", videoCount ?? 0) }
         var parts: [String] = []
-        if let season, season > 1 { parts.append(L10n.format("Season %d", season)) }
+        if let season, season > 0 { parts.append(L10n.format("Season %d", season)) }
         if beyond == true, let total {
             parts += [L10n.format("%d episodes", held.count), L10n.format("The series has %d", total)]
         } else if let aired, aired > 0 {

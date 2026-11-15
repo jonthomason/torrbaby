@@ -198,7 +198,7 @@ public final class TorrentSearchActivity extends Activity {
     JSONArray held=cloud.optJSONArray("episodes");int count=held==null?0:held.length();
     if(count==0){int videos=cloud.optInt("video_count");return videos==1?L10n.t("1 video"):String.format(L10n.locale(),L10n.t("%d videos"),videos);}
     List<String> parts=new ArrayList<>();
-    if(cloud.optInt("season")>1)parts.add(String.format(L10n.locale(),L10n.t("Season %d"),cloud.optInt("season")));
+    if(cloud.optInt("season")>0)parts.add(String.format(L10n.locale(),L10n.t("Season %d"),cloud.optInt("season")));
     int aired=cloud.optInt("aired"),total=cloud.optInt("total");JSONArray missing=cloud.optJSONArray("missing");int absent=missing==null?0:missing.length();
     if(cloud.optBoolean("beyond")&&total>0){parts.add(String.format(L10n.locale(),L10n.t("%d episodes"),count));parts.add(String.format(L10n.locale(),L10n.t("The series has %d"),total));}
     else if(aired>0){
