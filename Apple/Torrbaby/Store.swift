@@ -1500,6 +1500,11 @@ final class Store: ObservableObject {
 
 extension Store {
     func requireStreamingConnection() throws {
+        #if os(iOS)
+        // A stream is starting away from home (over the relay, the app's own punch or
+        // Tailscale) on a device where ABT is the VPN and is off: ABT is turned on.
+        if [.relay, .direct, .tailscale].contains(path) { Task { await ABT.turnOnIfOff() } }
+        #endif
         guard canStream else {
             throw APIError(message: Self.unreachable)
         }

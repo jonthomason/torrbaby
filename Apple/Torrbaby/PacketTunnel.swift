@@ -131,7 +131,7 @@ import UIKit
         if ABT.connected { ABT.inCharge = true }
         if ABT.inCharge {
             if ready { launched = true }
-            if !connected { await yield(); await ABT.turnOnIfOff() }
+            if !connected { await yield() }
             return
         }
         // The launch: the first call of this process with the credentials known (on a first
@@ -263,11 +263,14 @@ import UIKit
     /// time and turning this one on disables ABT's configuration, which nothing brings back
     /// until the user opens ABT: seen on 2026-11-15, ABT off on the phone after a night on.
     /// Only the Connection page's Connect clears it.
-    /// ABT is the VPN here and is off: it is turned on. iOS lets only ABT's own app start its
-    /// VPN, so ABT is opened with `abt://connect`; it connects and comes back to Torrbaby.
-    /// Only with Torrbaby on screen, only once ABT has been off for three seconds running (it
-    /// drops for a moment when it reconnects), and at most once in five minutes, so that an
-    /// ABT that cannot connect does not pull the user away again and again.
+    /// ABT is the VPN here and is off, and the user has just started a stream away from home
+    /// (see `Store.requireStreamingConnection`): ABT is turned on, so that the stream can move
+    /// to its straight path to Diamond. Never at home, where no tunnel is needed, and never
+    /// just because Torrbaby was opened. iOS lets only ABT's own app start its VPN, so ABT is
+    /// opened with `abt://connect`; it connects and comes back to Torrbaby. Only once ABT has
+    /// been off for three seconds running (it drops for a moment when it reconnects), and at
+    /// most once in five minutes, so that an ABT that cannot connect does not pull the user
+    /// away again and again.
     static func turnOnIfOff() async {
         guard inCharge, !connected, !asking, UIApplication.shared.applicationState == .active,
               Date().timeIntervalSince(lastAsked) > 300 else { return }
