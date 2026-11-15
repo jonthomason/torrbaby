@@ -95,6 +95,8 @@ fn untried(saved: &Value) -> Vec<&'static str> {
         (_, None) => vec!["en"],
     };
     let mut tried = tried;
+    // OpenSubtitles could not be asked last time: not yet due again.
+    if saved["opensubtitles_after"].as_f64().is_some_and(|t| t > now()) && !tried.contains(&OPENSUBTITLES) { tried.push(OPENSUBTITLES); }
     if saved["state"] == "rejected" && saved["reason"] == NO_AUDIO && saved["audio_decoder"].as_u64() != Some(AUDIO_DECODER) {
         tried.retain(|step| !LANGUAGES.contains(step));
     }
@@ -194,6 +196,8 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
     // the track's first timestamp, a temporary file to remove).
     let mut audio: Option<(String, u64, Option<PathBuf>)> = None;
     let mut finding: Option<Result<Transcript>> = None;
+    // When OpenSubtitles could not be asked now, when to ask again.
+    let mut opensubtitles_after: Option<f64> = None;
     let mut reason = NOT_SPEECH.to_owned();
     for step in remaining {
         if tried.contains(&step) { continue; }
@@ -214,7 +218,17 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
                     save(&unsettled(&tried, &reason, &Value::Null))?;
                     continue;
                 }
-                Err(error) => { finding = Some(Err(error)); break; }
+                Err(error) => {
+                    // The day's downloads used up, or the site unreachable: go on with what the
+                    // title has (or the picture and the audio) so it gets Chinese now, and try
+                    // OpenSubtitles again later; its English then replaces this and the Chinese
+                    // is translated again (the user's rule, 2026-11-15).
+                    let message = error.to_string();
+                    let until = crate::opensubtitles::waits_until(&message).unwrap_or(now() + 3600.0);
+                    tracing::info!(asset = id, %message, "OpenSubtitles later; going on without it");
+                    opensubtitles_after = Some(until);
+                    continue;
+                }
             }
         }
         let heard = if step == PICTURE {
@@ -291,6 +305,12 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
         break;
     }
     if let Some((_, _, Some(path))) = &audio { let _ = std::fs::remove_file(path); }
+    if let Some(until) = opensubtitles_after {
+        if let Some(mut saved) = std::fs::read(&record).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
+            saved["opensubtitles_after"] = json!(until);
+            save(&saved)?;
+        }
+    }
     match (finding, kept) {
         (Some(finding), _) => finding,
         (None, Some((_, output, language))) => Ok(Transcript::Ready(output, language)),
@@ -483,6 +503,9 @@ mod tests {
         assert_eq!(untried(&json!({"state":"ready","language":"zh-Hans","method":"speech","tried":["picture","zh-Hans"]})), ["opensubtitles"]);
         assert!(untried(&json!({"state":"ready","language":"zh-Hans","method":"burned","tried":["picture"]})).is_empty());
         assert!(untried(&json!({"state":"ready","language":"en","method":"opensubtitles","tried":["opensubtitles"]})).is_empty());
+        // Downloads used up: asked again only after the reset.
+        assert!(untried(&json!({"state":"ready","language":"en","method":"speech","tried":["picture","en"],"opensubtitles_after":now()+3600.0})).is_empty());
+        assert_eq!(untried(&json!({"state":"ready","language":"en","method":"speech","tried":["picture","en"],"opensubtitles_after":now()-1.0})), ["opensubtitles"]);
         // Rejected before ffmpeg decoded what AVFoundation cannot: the speech is tried again.
         assert_eq!(untried(&json!({"state":"rejected","reason":"No decodable audio track","tried":["picture","en","zh-Hans"]})), ["opensubtitles","zh-Hans","en"]);
         assert_eq!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["picture","zh-Hans","en"]})), ["opensubtitles"]);
