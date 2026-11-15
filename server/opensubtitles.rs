@@ -24,7 +24,18 @@ const USER_AGENT: &str = "Torrbaby v1.0";
 pub const LIMIT_REACHED: &str = "OpenSubtitles daily download limit reached";
 
 #[derive(serde::Deserialize)]
-struct Credentials { api_key: String, username: String, password: String }
+struct Credentials {
+    api_key: String,
+    #[serde(default)] username: String,
+    #[serde(default)] password: String,
+    /// False with a paid API package: downloads count against the key's own daily quota
+    /// (2,000 on Light), not the account's 20, so no sign-in. True (free mode) by default.
+    #[serde(default = "yes")] signed_in: bool,
+    /// Also look for Chinese (zh-cn) people wrote before translating English on device:
+    /// worth it while the quota is large. Off by default.
+    #[serde(default)] chinese: bool,
+}
+fn yes() -> bool { true }
 
 struct Session { token: String, host: String, at: std::time::Instant }
 
@@ -44,6 +55,9 @@ fn credentials(data: &Path) -> Option<Credentials> {
 }
 
 pub fn configured(data: &Path) -> bool { credentials(data).is_some() }
+
+/// Whether Chinese subtitles are looked for on OpenSubtitles before translating.
+pub fn chinese(data: &Path) -> bool { credentials(data).is_some_and(|c| c.chinese) }
 
 /// When downloads may start again, while the day's are used up.
 pub fn limited_until(data: &Path) -> Option<f64> {
@@ -104,11 +118,11 @@ fn tokens(name: &str) -> std::collections::HashSet<String> {
 /// The best English subtitle of a search: made for this file (hash match) first, then
 /// the release most like the file's name, then the most downloaded. Machine and AI
 /// translations are never chosen; hearing-impaired versions only when nothing else fits.
-pub(crate) fn choose(results: &[Value], release: &str) -> Option<(u64, String)> {
+pub(crate) fn choose(results: &[Value], release: &str, language: &str) -> Option<(u64, String)> {
     let mine = tokens(release);
     results.iter().filter_map(|r| {
         let a = &r["attributes"];
-        if a["language"] != "en" || a["ai_translated"] == true || a["machine_translated"] == true || a["foreign_parts_only"] == true { return None; }
+        if a["language"] != language || a["ai_translated"] == true || a["machine_translated"] == true || a["foreign_parts_only"] == true { return None; }
         let file = a["files"].as_array()?.first()?;
         let id = file["file_id"].as_u64()?;
         let theirs = tokens(a["release"].as_str().unwrap_or(""));
@@ -123,6 +137,12 @@ pub(crate) fn choose(results: &[Value], release: &str) -> Option<(u64, String)> 
 
 /// English subtitles for `asset`'s file at `input`, written into `directory` as `name`.
 pub async fn find(data: &Path, asset: &Value, input: &Path, directory: &Path, name: &str) -> Result<Found> {
+    find_language(data, asset, input, directory, name, "en").await
+}
+
+/// Subtitles in `language` ("en" or "zh-cn") for `asset`'s file, written into `directory`.
+pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: &Path, name: &str, language: &str) -> Result<Found> {
+    let (code, ours) = match language { "zh-cn" => ("zh-cn", "zh-Hans"), _ => ("en", "en") };
     let Some(c) = credentials(data) else { return Ok(Found::Missing("No OpenSubtitles account".into())) };
     let entity = asset["entity_id"].as_str().unwrap_or("");
     let mut query: Vec<(&str, String)> = Vec::new();
@@ -138,7 +158,7 @@ pub async fn find(data: &Path, asset: &Value, input: &Path, directory: &Path, na
     }
     let hashed = input.to_owned();
     if let Ok(Ok(hash)) = tokio::task::spawn_blocking(move || movie_hash(&hashed)).await { query.push(("moviehash", hash)); }
-    query.push(("languages", "en".into()));
+    query.push(("languages", code.into()));
     // OpenSubtitles redirects any other order of the parameters: send them sorted.
     query.sort();
     let client = client()?;
@@ -148,13 +168,18 @@ pub async fn find(data: &Path, asset: &Value, input: &Path, directory: &Path, na
     ensure!(reply.status().is_success(), "OpenSubtitles search failed ({})", reply.status());
     let results: Value = reply.json().await?;
     let release = format!("{} {}", asset["torrent_name"].as_str().unwrap_or(""), input.file_name().and_then(|n| n.to_str()).unwrap_or(""));
-    let Some((file_id, chosen)) = choose(results["data"].as_array().map(Vec::as_slice).unwrap_or(&[]), &release) else {
-        return Ok(Found::Missing("No English subtitles on OpenSubtitles".into()));
+    let Some((file_id, chosen)) = choose(results["data"].as_array().map(Vec::as_slice).unwrap_or(&[]), &release, code) else {
+        return Ok(Found::Missing(format!("No {ours} subtitles on OpenSubtitles")));
     };
     if let Some(until) = limited_until(data) { anyhow::bail!("{LIMIT_REACHED}; downloads reset at {until}"); }
-    let (token, host) = session(&client, &c).await?;
-    let reply = client.post(format!("https://{host}/api/v1/download")).header("Api-Key", &c.api_key).header("Accept", "application/json")
-        .bearer_auth(&token).json(&json!({"file_id": file_id, "sub_format": "srt"})).send().await.context("OpenSubtitles download")?;
+    // Signed in, downloads count against the account (20 a day free); not signed in, against
+    // the key's own quota (a paid API package).
+    let request = if c.signed_in {
+        let (token, host) = session(&client, &c).await?;
+        client.post(format!("https://{host}/api/v1/download")).bearer_auth(&token)
+    } else { client.post(format!("{API}/download")) };
+    let reply = request.header("Api-Key", &c.api_key).header("Accept", "application/json")
+        .json(&json!({"file_id": file_id, "sub_format": "srt"})).send().await.context("OpenSubtitles download")?;
     let status = reply.status();
     let body: Value = reply.json().await.unwrap_or(Value::Null);
     let reset = || body["reset_time_utc"].as_str().and_then(utc_seconds).unwrap_or(crate::storage::now() + 6.0 * 3600.0);
@@ -169,17 +194,17 @@ pub async fn find(data: &Path, asset: &Value, input: &Path, directory: &Path, na
     let bytes = client.get(link).send().await.context("OpenSubtitles file")?.error_for_status()?.bytes().await?;
     ensure!(bytes.len() <= 8 << 20, "Subtitle file too large");
     // A file that cannot be read is no source; the next one is tried.
-    let read = crate::text_encoding::decode(&bytes, Some("en")).and_then(|text| Ok((crate::subtitles::parse_srt(&text)?, text)));
+    let read = crate::text_encoding::decode(&bytes, Some(ours)).and_then(|text| Ok((crate::subtitles::parse_srt(&text)?, text)));
     let (cues, text) = match read {
         Ok((cues, text)) if cues.len() >= 20 => (cues, text),
         Ok(_) => return Ok(Found::Missing("The OpenSubtitles file holds almost nothing".into())),
         Err(error) => return Ok(Found::Missing(format!("The OpenSubtitles file could not be read: {error}"))),
     };
-    let path = directory.join(format!("{name}.en.opensubtitles.srt"));
-    let temporary = directory.join(format!("{name}.en.opensubtitles.srt.tmp"));
+    let path = directory.join(format!("{name}.{ours}.opensubtitles.srt"));
+    let temporary = directory.join(format!("{name}.{ours}.opensubtitles.srt.tmp"));
     std::fs::write(&temporary, text)?;
     std::fs::rename(&temporary, &path)?;
-    tracing::info!(asset = asset["id"].as_str().unwrap_or(""), release = %chosen, cues = cues.len(), "English subtitles from OpenSubtitles");
+    tracing::info!(asset = asset["id"].as_str().unwrap_or(""), language = ours, release = %chosen, cues = cues.len(), "Subtitles from OpenSubtitles");
     Ok(Found::Ready(path))
 }
 
@@ -234,10 +259,11 @@ mod tests {
             result(2, "Parasite (2019) [1080p] [YTS.LT]", false, 100, json!({})),
             result(3, "Parasite machine", true, 50, json!({"machine_translated":true})),
         ];
-        assert_eq!(choose(&results, "Parasite (2019) Parasite (2019).mp4 YTS.LT 1080p").map(|c| c.0), Some(2));
+        assert_eq!(choose(&results, "Parasite (2019) Parasite (2019).mp4 YTS.LT 1080p", "en").map(|c| c.0), Some(2));
         let hashed = [result(1, "Other", false, 9000, json!({})), result(4, "Other", true, 1, json!({}))];
-        assert_eq!(choose(&hashed, "x").map(|c| c.0), Some(4));
-        assert_eq!(choose(&[result(5, "x", false, 1, json!({"language":"fr"}))], "x"), None);
+        assert_eq!(choose(&hashed, "x", "en").map(|c| c.0), Some(4));
+        assert_eq!(choose(&[result(5, "x", false, 1, json!({"language":"fr"}))], "x", "en"), None);
+        assert_eq!(choose(&[result(6, "x", false, 1, json!({"language":"zh-cn"}))], "x", "zh-cn").map(|c| c.0), Some(6));
         assert_eq!(utc_seconds("2026-11-16T00:00:00.000Z"), Some(1_794_787_200.0));
         assert_eq!(waits_until("OpenSubtitles daily download limit reached; downloads reset at 1794800000"), Some(1_794_800_000.0));
     }

@@ -318,6 +318,50 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
     }
 }
 
+/// Chinese subtitles people wrote, from OpenSubtitles, for a title whose Chinese would
+/// otherwise be translated on device (while the account's `chinese` switch is on). The
+/// answer is kept per file, so a title is looked up once; when OpenSubtitles cannot be
+/// asked now, the translation goes ahead and the title is looked up again after the reset.
+pub async fn people_chinese(s: &Service, asset: &Value, input: &Path) -> Result<Option<PathBuf>> {
+    if !crate::opensubtitles::chinese(&s.data_dir) { return Ok(None); }
+    let id = asset["id"].as_str().context("Missing asset ID")?;
+    let revision = crate::subtitle_jobs::revision(input)?;
+    let root = directory(&s.data_dir);
+    std::fs::create_dir_all(&root)?;
+    let name = key(&s.data_dir, id, &revision);
+    let record = root.join(format!("{name}.zh-opensubtitles.json"));
+    if let Some(saved) = std::fs::read(&record).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
+        if saved["state"] == "ready" {
+            let path = root.join(saved["output"].as_str().unwrap_or_default());
+            if path.is_file() { return Ok(Some(path)); }
+        }
+        if saved["state"] == "missing" { return Ok(None); }
+        if saved["after"].as_f64().is_some_and(|t| t > now()) { return Ok(None); }
+    }
+    let save = |document: Value| -> Result<()> {
+        let temporary = root.join(format!("{name}.zh-opensubtitles.json.tmp"));
+        std::fs::write(&temporary, document.to_string())?;
+        std::fs::rename(temporary, &record)?; Ok(())
+    };
+    match crate::opensubtitles::find_language(&s.data_dir, asset, input, &root, &name, "zh-cn").await {
+        Ok(crate::opensubtitles::Found::Ready(path)) => {
+            save(json!({"state":"ready","asset_id":id,"output":path.file_name().and_then(|n| n.to_str()),"updated":now()}))?;
+            Ok(Some(path))
+        }
+        Ok(crate::opensubtitles::Found::Missing(why)) => {
+            save(json!({"state":"missing","asset_id":id,"reason":why,"updated":now()}))?;
+            Ok(None)
+        }
+        Err(error) => {
+            let message = error.to_string();
+            let after = crate::opensubtitles::waits_until(&message).unwrap_or(now() + 3600.0);
+            tracing::info!(asset = id, %message, "Chinese from OpenSubtitles later; translating meanwhile");
+            save(json!({"state":"later","asset_id":id,"after":after,"updated":now()}))?;
+            Ok(None)
+        }
+    }
+}
+
 /// Run one helper over the title. None: stopped for playback preparation. Err inside:
 /// the helper found nothing of its kind (no subtitles in the picture, no decodable
 /// audio, no speech).

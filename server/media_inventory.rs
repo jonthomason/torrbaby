@@ -277,6 +277,7 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
         planned.push((source_input.clone(),track,language,None));
         if language!=target || target=="auto" {planned.push((source_input,track,language,Some(target)));}
     }
+    prefer_people_chinese(s,asset,id,&input,&mut planned).await?;
     let mut outcome=advance_jobs(s,asset,id,&planned)?;
     if outcome.no_source {
         // No usable English or Chinese subtitles: transcribe the English or Mandarin
@@ -291,7 +292,8 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
         };
         match crate::speech_subtitles::transcript(s,asset,&input,report).await? {
             crate::speech_subtitles::Transcript::Ready(path,language) => {
-                let planned=vec![(path.clone(),1,language,None),(path,1,language,Some(if language=="en" {"zh-Hans"}else{"en"}))];
+                let mut planned=vec![(path.clone(),1,language,None),(path,1,language,Some(if language=="en" {"zh-Hans"}else{"en"}))];
+                prefer_people_chinese(s,asset,id,&input,&mut planned).await?;
                 outcome=advance_jobs(s,asset,id,&planned)?;
             }
             crate::speech_subtitles::Transcript::Rejected(reason) => {
@@ -315,6 +317,17 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
 }
 
 struct Outcome { prepared:Vec<Value>, jobs:Vec<Value>, complete:bool, progress:Value, no_source:bool }
+/// A Chinese translation not made yet is replaced by Chinese people wrote, when OpenSubtitles
+/// has some for this file. Translations already made (on device or by the external fleet)
+/// stay as they are.
+async fn prefer_people_chinese(s:&Service,asset:&Value,id:&str,input:&std::path::Path,planned:&mut [(std::path::PathBuf,u64,&'static str,Option<&'static str>)])->Result<()> {
+    let Some(at)=planned.iter().position(|(_,_,language,target)|*language=="en" && *target==Some("zh-Hans")) else {return Ok(())};
+    let (path,track,_,_)=&planned[at];
+    let existing=s.subtitle_jobs.lookup(id,path,*track,&Some("en".to_owned()),&Some("zh-Hans".to_owned()));
+    if existing.as_ref().is_some_and(|job|matches!(job["state"].as_str(),Some("ready"|"running"|"queued"|"external"))) {return Ok(());}
+    if let Some(chinese)=crate::speech_subtitles::people_chinese(s,asset,input).await? {planned[at]=(chinese,1,"zh-Hans",None);}
+    Ok(())
+}
 /// Earlier ready subtitles for languages the new plan has not made ready yet.
 fn keep_until_replaced(prepared:&mut Vec<Value>, earlier:&[Value]) {
     let ready:std::collections::HashSet<String>=prepared.iter().filter_map(|j|j["language"].as_str().map(str::to_owned)).collect();
