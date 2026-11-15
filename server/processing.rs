@@ -59,7 +59,7 @@ fn reopen_replaced(db:&Database)->Result<usize> {
 /// again once, so its English replaces them (the user's rule, 2026-11-15). Each waits behind
 /// titles that have no subtitles.
 fn reopen_for_people_english(db:&Database,data:&Path)->Result<usize> {
-    if !crate::opensubtitles::configured(data) {return Ok(0);}
+    if !crate::opensubtitles::read_english(data) {return Ok(0);}
     let rows=db.rows("SELECT m.asset_id,m.revision,i.document FROM media_processing m JOIN media_inventory i ON i.asset_id=m.asset_id AND i.revision=m.revision WHERE m.state='ready' AND m.subtitles_state='ready'",[])?;
     let mut reopened=0;
     for row in rows {

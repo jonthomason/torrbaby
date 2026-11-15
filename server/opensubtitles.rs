@@ -34,6 +34,10 @@ struct Credentials {
     /// Also look for Chinese (zh-cn) people wrote before translating English on device:
     /// worth it while the quota is large. Off by default.
     #[serde(default)] chinese: bool,
+    /// Also replace English the server read from text (bitmap subtitles, or Chinese read from
+    /// the picture and translated): worth it while the quota is large. Off by default; audio
+    /// transcripts and titles without subtitles always use OpenSubtitles.
+    #[serde(default)] read_english: bool,
 }
 fn yes() -> bool { true }
 
@@ -58,6 +62,9 @@ pub fn configured(data: &Path) -> bool { credentials(data).is_some() }
 
 /// Whether Chinese subtitles are looked for on OpenSubtitles before translating.
 pub fn chinese(data: &Path) -> bool { credentials(data).is_some_and(|c| c.chinese) }
+
+/// Whether English read from text is replaced by English from OpenSubtitles.
+pub fn read_english(data: &Path) -> bool { credentials(data).is_some_and(|c| c.read_english) }
 
 /// When downloads may start again, while the day's are used up.
 pub fn limited_until(data: &Path) -> Option<f64> {

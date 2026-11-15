@@ -331,7 +331,7 @@ pub async fn people_chinese(s: &Service, asset: &Value, input: &Path) -> Result<
 /// made itself (read from a bitmap track, or translated from Chinese read from the picture).
 /// Looked up once per file, like `people_chinese`.
 pub async fn people_english(s: &Service, asset: &Value, input: &Path) -> Result<Option<PathBuf>> {
-    if !crate::opensubtitles::configured(&s.data_dir) { return Ok(None); }
+    if !crate::opensubtitles::read_english(&s.data_dir) { return Ok(None); }
     people(s, asset, input, "en").await
 }
 
