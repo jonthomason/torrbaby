@@ -34,6 +34,9 @@ const PICTURE: &str = "picture";
 const STEPS: [&str; 3] = [PICTURE, "zh-Hans", "en"];
 const NOT_SPEECH: &str = "No subtitles in the picture, and the audio is not English or Mandarin speech";
 const NO_AUDIO: &str = "No decodable audio track";
+/// Records made since audio AVFoundation cannot decode goes through ffmpeg carry this; a
+/// "no decodable audio" verdict without it is tried again (Creed's DTS, say).
+const AUDIO_DECODER: u64 = 2;
 /// Concurrent transcriptions across the processing pool.
 static GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
@@ -86,6 +89,10 @@ fn untried(saved: &Value) -> Vec<&'static str> {
         (_, None) if saved["reason"] == NO_AUDIO => vec!["en", "zh-Hans"],
         (_, None) => vec!["en"],
     };
+    let mut tried = tried;
+    if saved["state"] == "rejected" && saved["reason"] == NO_AUDIO && saved["audio_decoder"].as_u64() != Some(AUDIO_DECODER) {
+        tried.retain(|step| !LANGUAGES.contains(step));
+    }
     if saved["state"] == "ready" { return if tried.contains(&PICTURE) { vec![] } else { vec![PICTURE] }; }
     STEPS.into_iter().filter(|step| !tried.contains(step)).collect()
 }
@@ -165,7 +172,7 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
     let unsettled = |tried: &[&str], reason: &str, stats: &Value| -> Value {
         match &kept {
             Some((saved, _, _)) => { let mut saved = saved.clone(); saved["tried"] = json!(tried); saved }
-            None => json!({"state":"rejected","reason":reason,"tried":tried,"asset_id":id,"stats":stats,"updated":now()}),
+            None => json!({"state":"rejected","reason":reason,"tried":tried,"asset_id":id,"stats":stats,"audio_decoder":AUDIO_DECODER,"updated":now()}),
         }
     };
     // The audio, prepared when the first speech step needs it: (what the helper reads,
@@ -185,7 +192,19 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
                 // stream. Cue times are then shifted by that track's first timestamp.
                 audio = if crate::container::is_matroska(input) {
                     let (source, directory, base) = (input.to_path_buf(), root.clone(), name.clone());
-                    match tokio::task::spawn_blocking(move || extract_audio(&source, &directory, &base)).await?? {
+                    // Frames copied as they are where AVFoundation decodes them (AAC, AC-3,
+                    // E-AC-3); otherwise (DTS, TrueHD, FLAC, Opus…, or a file the Matroska
+                    // reader trips on) the bundled ffmpeg decodes the track to PCM.
+                    let copied = tokio::task::spawn_blocking(move || extract_audio(&source, &directory, &base)).await?;
+                    let found = match copied {
+                        Ok(Some(found)) => Some(found),
+                        Ok(None) => decode_audio(input, &root, &name).await?,
+                        Err(error) => {
+                            tracing::info!(asset = id, %error, "Audio copy failed; decoding the audio instead");
+                            decode_audio(input, &root, &name).await?
+                        }
+                    };
+                    match found {
                         Some((path, first_ms)) => Some((path.to_str().context("Invalid audio path")?.to_owned(), first_ms, Some(path))),
                         None => None,
                     }
@@ -231,7 +250,7 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
         let temporary = root.join(format!("{file}.tmp"));
         std::fs::write(&temporary, srt(&cues))?;
         std::fs::rename(temporary, root.join(&file))?;
-        save(&json!({"state":"ready","language":language,"method":if step == PICTURE {"burned"} else {"speech"},"output":file,"tried":tried,"asset_id":id,"stats":stats,"cues":cues.len(),"updated":now()}))?;
+        save(&json!({"state":"ready","language":language,"method":if step == PICTURE {"burned"} else {"speech"},"output":file,"tried":tried,"asset_id":id,"stats":stats,"cues":cues.len(),"audio_decoder":AUDIO_DECODER,"updated":now()}))?;
         tracing::info!(asset = id, %stats, cues = cues.len(), "Transcription finished");
         finding = Some(Ok(Transcript::Ready(root.join(file), language)));
         break;
@@ -317,6 +336,40 @@ fn adts_header((profile, frequency, channels): (u8, u8, u8), payload: usize) -> 
 /// decodable one) into a raw stream AVFoundation reads: AC-3/E-AC-3 frames as
 /// they are, AAC with ADTS headers. Returns the file and the track's first
 /// timestamp in milliseconds, or None when no track has a decodable codec.
+/// The audio track decoded by the bundled ffmpeg to 16 kHz mono PCM (WAV), for codecs
+/// AVFoundation cannot decode and Matroska files the packet reader cannot walk. The track is
+/// chosen as `extract_audio` chooses (English, else the first); the cue offset is the track's
+/// start time, as the frames' first timestamp is there. None: no audio track, or nothing decoded.
+async fn decode_audio(input: &Path, directory: &Path, name: &str) -> Result<Option<(PathBuf, u64)>> {
+    decode_audio_with(input, directory, name, &std::env::current_exe()?).await
+}
+async fn decode_audio_with(input: &Path, directory: &Path, name: &str, bin: &Path) -> Result<Option<(PathBuf, u64)>> {
+    let (ffmpeg, ffprobe) = (bin.with_file_name("torrbaby-ffmpeg"), bin.with_file_name("torrbaby-ffprobe"));
+    if !ffmpeg.is_file() || !ffprobe.is_file() { return Ok(None); }
+    let probe = tokio::time::timeout(Duration::from_secs(60), tokio::process::Command::new(&ffprobe)
+        .args(["-v", "error", "-select_streams", "a", "-show_entries", "stream=index,start_time:stream_tags=language", "-of", "json"])
+        .arg(input).stdin(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true).output()).await.context("Audio probe timed out")??;
+    if !probe.status.success() { return Ok(None); }
+    let streams: Value = serde_json::from_slice(&probe.stdout)?;
+    let streams = streams["streams"].as_array().cloned().unwrap_or_default();
+    let english = |s: &&Value| s["tags"]["language"].as_str().is_some_and(|l| { let l = l.to_ascii_lowercase(); l == "en" || l == "eng" || l.starts_with("en-") });
+    let Some(position) = streams.iter().position(|s| english(&s)).or((!streams.is_empty()).then_some(0)) else { return Ok(None) };
+    let start = streams[position]["start_time"].as_str().and_then(|t| t.parse::<f64>().ok()).filter(|t| t.is_finite() && *t > 0.0).unwrap_or(0.0);
+    let path = directory.join(format!("{name}.audio.wav"));
+    let temporary = directory.join(format!("{name}.audio.wav.tmp"));
+    let status = tokio::time::timeout(Duration::from_secs(3 * 3600), tokio::process::Command::new(&ffmpeg)
+        .args(["-v", "error", "-nostdin", "-y", "-i"]).arg(input)
+        .args(["-map", &format!("0:a:{position}"), "-vn", "-sn", "-dn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-f", "wav"])
+        .arg(&temporary).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true).status()).await.context("Audio decoding timed out")??;
+    // 16 kHz mono 16-bit: a minute of audio is 1.9 MB; less than a second means nothing decoded.
+    if !status.success() || std::fs::metadata(&temporary).map_or(0, |m| m.len()) < 32_000 {
+        let _ = std::fs::remove_file(&temporary);
+        return Ok(None);
+    }
+    std::fs::rename(&temporary, &path)?;
+    Ok(Some((path, (start * 1000.0).round() as u64)))
+}
+
 fn extract_audio(input: &Path, directory: &Path, name: &str) -> Result<Option<(PathBuf, u64)>> {
     use matroska_demuxer::{Frame, MatroskaFile, TrackType};
     use std::io::Write;
@@ -389,7 +442,9 @@ mod tests {
         // Rejected when only English was transcribed: the picture and Mandarin remain.
         assert_eq!(untried(&json!({"state":"rejected","reason":"The audio is not English speech"})), ["picture", "zh-Hans"]);
         // No audio to decode says nothing about the picture.
-        assert_eq!(untried(&json!({"state":"rejected","reason":"No decodable audio track"})), ["picture"]);
+        assert_eq!(untried(&json!({"state":"rejected","reason":"No decodable audio track","audio_decoder":AUDIO_DECODER})), ["picture"]);
+        // Rejected before ffmpeg decoded what AVFoundation cannot: the speech is tried again.
+        assert_eq!(untried(&json!({"state":"rejected","reason":"No decodable audio track","tried":["picture","en","zh-Hans"]})), ["zh-Hans","en"]);
         assert!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["picture","zh-Hans","en"]})).is_empty());
         assert_eq!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["zh-Hans","en"]})), ["picture"]);
         assert_eq!(untried(&json!({"state":"ready","language":"zh-Hans","tried":["en","burned","zh-Hans"]})), ["picture"], "a verdict from before the picture could be found");

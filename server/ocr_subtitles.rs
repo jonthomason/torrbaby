@@ -36,6 +36,10 @@ pub fn decode(input: &Path, track: u64, out: &Path) -> Result<()> {
     fs::create_dir(out)?;
     let started = Instant::now();
     let before = fs::metadata(input)?;
+    // The whole file is read to find the track's packets: allow for its size at a slow
+    // drive's pace (4 MB/s), never less than three minutes. A fixed three minutes failed
+    // 2.6 GB Outlander episodes read while other work shared the drive.
+    let limit = (before.len() / (4 << 20)).max(180);
     let mut mkv = MatroskaFile::open(BufReader::new(crate::matroska::Bounded::open(input)?))?;
     let scale = mkv.info().timestamp_scale().get();
     let t = mkv
@@ -75,7 +79,7 @@ pub fn decode(input: &Path, track: u64, out: &Path) -> Result<()> {
     let mut frame = Frame::default();
     let mut bytes_written = 0u64;
     while mkv.next_frame(&mut frame)? {
-        ensure!(started.elapsed().as_secs() < 180, "Bitmap scan timed out");
+        ensure!(started.elapsed().as_secs() < limit, "{SCAN_TIMED_OUT}");
         ensure!(
             frame.data.len() <= 64 * 1024 * 1024,
             "Media packet too large"
@@ -262,6 +266,10 @@ const OCR_MODELS_CHANGED: i32 = 75;
 /// A bitmap track whose every display is empty or fully transparent, such as
 /// the placeholder PGS tracks some releases carry for unused languages. The
 /// processing queue treats it as "no subtitle source", not as a failure.
+/// A subtitle track whose text reads as neither English nor Chinese (an advert track named
+/// after a chat group, say): no source, like a track with no visible captions.
+pub const SCAN_TIMED_OUT: &str = "Bitmap scan timed out";
+pub const UNIDENTIFIED_LANGUAGE: &str = "No supported subtitle language could be identified";
 pub const NO_VISIBLE_CAPTIONS: &str = "This subtitle track has no visible captions";
 /// Stable text the processing queue matches to requeue instead of failing.
 pub const TEXT_MODELS_CHANGED: &str = "Text recognition models changed; retry later";
@@ -390,7 +398,7 @@ pub async fn detect_language(cues: &[crate::subtitles::TimedCue]) -> Result<Stri
     match tag.as_deref() {
         Some("en") => Ok("en".into()),
         Some(t) if t.starts_with("zh") => Ok("zh-Hans".into()),
-        _ => anyhow::bail!("No supported subtitle language could be identified"),
+        _ => anyhow::bail!("{UNIDENTIFIED_LANGUAGE}"),
     }
 }
 

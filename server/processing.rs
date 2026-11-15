@@ -41,6 +41,12 @@ fn enroll(db:&Database,id:&str,revision:&str)->Result<()> {
 /// "Media is unavailable or changed": the file was replaced and the scan has not caught up.
 fn transient(error:&str)->bool { error.contains("Text recognition models changed") || error.contains(MEDIA_CHANGED) }
 const MEDIA_CHANGED:&str="Media is unavailable or changed";
+/// Written in the last ten minutes: a failure may be the file still arriving (four episodes
+/// of 逐玉 were read mid-copy and skipped for good with "integers can be at most 8 bytes").
+/// Retried, not skipped.
+fn settling(path:&Path)->bool {
+    std::fs::metadata(path).and_then(|m|m.modified()).ok().and_then(|t|t.elapsed().ok()).is_some_and(|age|age<std::time::Duration::from_secs(600))
+}
 /// Files whose subtitle stage was skipped because the file had just been replaced (that was
 /// not retried before), so no language inventory was ever saved: do the stage again.
 fn reopen_replaced(db:&Database)->Result<usize> {
@@ -48,14 +54,24 @@ fn reopen_replaced(db:&Database)->Result<usize> {
         WHERE state!='running' AND subtitles_state='skipped' AND json_extract(detail,'$.error')=?2 \
         AND NOT EXISTS(SELECT 1 FROM media_inventory i WHERE i.asset_id=media_processing.asset_id AND i.revision=media_processing.revision)",rusqlite::params![now(),MEDIA_CHANGED])?)
 }
-/// Files whose subtitles were skipped because the subtitle store had reached its old cap
-/// (4,096 files), which it no longer has: prepare them again.
+/// Subtitle errors a later build no longer has: the subtitle store's old 4,096-file cap, and
+/// a subtitle track in neither English nor Chinese blocking the picture and the speech.
+const RETIRED_SUBTITLE_ERRORS:[&str;4]=[crate::subtitle_jobs::STORAGE_FULL,crate::ocr_subtitles::UNIDENTIFIED_LANGUAGE,
+    // The Matroska reader on a file still being copied in (see `settling`).
+    "integers can be at most 8 bytes%",
+    // A bitmap track in a large file, cut off by the scan's old fixed three minutes.
+    "Bitmap subtitles could not be decoded (Bitmap scan timed out)%"];
+/// Files whose subtitles were skipped for one of those errors: prepare them again.
 fn reopen_storage_full(db:&Database)->Result<usize> {
-    let reopened=db.connection.execute("UPDATE media_processing SET subtitles_state='pending',stage='subtitles',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=?1 \
-        WHERE state!='running' AND subtitles_state='skipped' AND (json_extract(detail,'$.error')=?2 \
-          OR EXISTS(SELECT 1 FROM processing_failures f WHERE f.asset_id=media_processing.asset_id AND f.stage='subtitles_skipped' AND f.error=?2 AND f.resolved_at IS NULL))",
-        rusqlite::params![now(),crate::subtitle_jobs::STORAGE_FULL])?;
-    if reopened>0 {tracing::info!(reopened,"Subtitles skipped for a full subtitle store will be prepared again");}
+    let mut reopened=0;
+    for error in RETIRED_SUBTITLE_ERRORS {
+        reopened+=db.connection.execute("UPDATE media_processing SET subtitles_state='pending',stage='subtitles',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=?1 \
+        WHERE state!='running' AND subtitles_state='skipped' AND (json_extract(detail,'$.error') LIKE ?2 \
+          OR (EXISTS(SELECT 1 FROM processing_failures f WHERE f.asset_id=media_processing.asset_id AND f.stage='subtitles_skipped' AND f.error LIKE ?2) \
+            AND NOT EXISTS(SELECT 1 FROM processing_failures f WHERE f.asset_id=media_processing.asset_id AND f.stage='subtitles_skipped' AND f.error NOT LIKE ?2 AND f.resolved_at IS NULL)))",
+        rusqlite::params![now(),error])?;
+    }
+    if reopened>0 {tracing::info!(reopened,"Subtitles skipped for an error since fixed will be prepared again");}
     Ok(reopened)
 }
 /// `skipped`: credits analysis failed. It is optional, so the file finishes without it.
@@ -444,12 +460,12 @@ async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()>
         let progress=match crate::media_inventory::process(s,asset).await {
             Ok(progress)=>progress,
             // Shutdown, a file mid-move and a model swap are retried, not skipped.
-            Err(error) if SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst) || !path.exists() || transient(&error.to_string()) => return Err(error),
+            Err(error) if SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst) || !path.exists() || transient(&error.to_string()) || settling(path) => return Err(error),
             Err(error)=>json!({"state":"failed","error":error.to_string()}),
         };
         let mut state=progress["state"].as_str().unwrap_or("queued");
         // Subtitles are not essential to playing the file: log the failure and go on.
-        if state=="failed" && transient(progress["error"].as_str().unwrap_or("")) {
+        if state=="failed" && (transient(progress["error"].as_str().unwrap_or("")) || settling(path)) {
             anyhow::bail!("{}",progress["error"].as_str().unwrap_or(""));
         }
         if state=="failed" {
