@@ -300,6 +300,25 @@ public class MainActivity extends Activity {
               }
             } catch (Exception ignored) {}
           }
+          // Continue Watching's hidden titles first, from the small progress document (6 KB):
+          // the saved library can predate a removal, and the full library (over 1 MB) may
+          // not arrive on a weak link, which left a removed title in the hero.
+          try {
+            JSONArray hiddenIds = requested.request("GET", "/v1/library/progress", null).optJSONArray("hidden");
+            if (hiddenIds != null) {
+              Set<String> hidden = new HashSet<>();
+              for (int i = 0; i < hiddenIds.length(); i++) hidden.add(hiddenIds.optString(i));
+              runOnUiThread(() -> {
+                if (isDestroyed() || api != requested || library == null) return;
+                boolean changed = false;
+                for (Library.Title t : library.titles) {
+                  boolean value = hidden.contains(t.id);
+                  if (t.continueWatchingHidden != value) { t.continueWatchingHidden = value; changed = true; }
+                }
+                if (changed && detailId.isEmpty()) { if (heroChanged()) render(); else updateBrowse(root); }
+              });
+            }
+          } catch (Exception ignored) { /* The full library brings the same state. */ }
           try {
             if (!requested.libraryChanged()) {
               runOnUiThread(() -> { if(api==requested)loading=false; });
