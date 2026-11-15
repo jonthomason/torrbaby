@@ -431,6 +431,10 @@ async fn process_file(s:&Service,mut asset:Value)->Result<()> {
             // Moved mid-stage (its package finished, or it was filed): pick it up at its new path.
             db.connection.execute("UPDATE media_processing SET state='queued',retry_after=?,updated=? WHERE asset_id=?",rusqlite::params![now()+15.0,now(),id])?;
             tracing::info!(asset=id,"Processing paused while its file moves");
+        } else if let Some(until)=crate::opensubtitles::waits_until(&message) {
+            // The day's OpenSubtitles downloads are used up: wait for the reset, not an hour's backoff.
+            db.connection.execute("UPDATE media_processing SET state='queued',retry_after=?,error=?,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![until+60.0,message,now(),id,revision])?;
+            tracing::info!(asset=id,until,"Processing waits for OpenSubtitles downloads");
         } else if transient(&message) {
             // Another helper replaced the shared Vision models mid-job. The next
             // attempt re-warms them under the helpers' lock; it is not a failure.
@@ -460,7 +464,8 @@ async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()>
         let progress=match crate::media_inventory::process(s,asset).await {
             Ok(progress)=>progress,
             // Shutdown, a file mid-move and a model swap are retried, not skipped.
-            Err(error) if SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst) || !path.exists() || transient(&error.to_string()) || settling(path) => return Err(error),
+            Err(error) if SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst) || !path.exists() || transient(&error.to_string()) || settling(path)
+                || crate::opensubtitles::retry_later(&error.to_string()) => return Err(error),
             Err(error)=>json!({"state":"failed","error":error.to_string()}),
         };
         let mut state=progress["state"].as_str().unwrap_or("queued");
@@ -743,12 +748,17 @@ mod tests {
         // Once transcription reaches a verdict the file stays settled.
         db.connection.execute("UPDATE media_processing SET state='ready',subtitles_state='not_applicable' WHERE asset_id='silent'",[])?;
         std::fs::create_dir_all(crate::speech_subtitles::directory(&data))?;
-        std::fs::write(crate::speech_subtitles::record(&data,"silent","r1"),r#"{"state":"rejected","tried":["en","zh-Hans","picture"]}"#)?;
+        std::fs::write(crate::speech_subtitles::record(&data,"silent","r1"),r#"{"state":"rejected","tried":["en","zh-Hans","picture","opensubtitles"]}"#)?;
         assert_eq!(reopen_untranscribed(&db,&data)?,0);
+        // Rejected before OpenSubtitles was a source: reopened for it once.
+        std::fs::write(crate::speech_subtitles::record(&data,"silent","r1"),r#"{"state":"rejected","tried":["en","zh-Hans","picture"]}"#)?;
+        assert_eq!(reopen_untranscribed(&db,&data)?,1);
+        db.connection.execute("UPDATE media_processing SET state='ready',subtitles_state='not_applicable' WHERE asset_id='silent'",[])?;
+        std::fs::write(crate::speech_subtitles::record(&data,"silent","r1"),r#"{"state":"rejected","tried":["en","zh-Hans","picture","opensubtitles"]}"#)?;
         // A finished title transcribed by an older version is redone once.
         std::fs::write(crate::speech_subtitles::directory(&data).join("old.json"),r#"{"state":"ready","asset_id":"subtitled"}"#)?;
         assert_eq!(reopen_untranscribed(&db,&data)?,1);
-        std::fs::write(crate::speech_subtitles::record(&data,"subtitled","r1"),r#"{"state":"ready","asset_id":"subtitled","tried":["picture","en"]}"#)?;
+        std::fs::write(crate::speech_subtitles::record(&data,"subtitled","r1"),r#"{"state":"ready","asset_id":"subtitled","tried":["picture","en","opensubtitles"]}"#)?;
         db.connection.execute("UPDATE media_processing SET state='ready',subtitles_state='ready' WHERE asset_id='subtitled'",[])?;
         assert_eq!(reopen_untranscribed(&db,&data)?,0);
         std::fs::remove_dir_all(data)?;

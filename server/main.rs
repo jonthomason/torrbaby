@@ -17,6 +17,7 @@ pub fn log_stamp() -> String {
     format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}", parts.tm_year + 1900, parts.tm_mon + 1, parts.tm_mday, parts.tm_hour, parts.tm_min, parts.tm_sec, now.subsec_millis())
 }
 mod trials;
+mod opensubtitles;
 mod punch;
 mod direct;
 mod rendezvous;

@@ -30,8 +30,12 @@ const LANGUAGES: [&str; 2] = ["en", "zh-Hans"];
 /// ("burned" was this step's name for one evening, while it could not find the picture
 /// in files that open with an empty video stream; verdicts under that name do not count.)
 const PICTURE: &str = "picture";
-/// Everything tried, in the order a title with a Chinese name is tried.
-const STEPS: [&str; 3] = [PICTURE, "zh-Hans", "en"];
+/// English subtitles people wrote, from OpenSubtitles: tried before any transcript of the
+/// audio, and they replace English transcripts made before this source existed.
+const OPENSUBTITLES: &str = "opensubtitles";
+/// Everything tried, in the order a title with a Chinese name is tried: its picture's
+/// Chinese subtitles are exact, so they come first there.
+const STEPS: [&str; 4] = [PICTURE, OPENSUBTITLES, "zh-Hans", "en"];
 const NOT_SPEECH: &str = "No subtitles in the picture, and the audio is not English or Mandarin speech";
 const NO_AUDIO: &str = "No decodable audio track";
 /// Records made since audio AVFoundation cannot decode goes through ffmpeg carry this; a
@@ -55,7 +59,8 @@ pub fn directory(data: &Path) -> PathBuf { data.join("transcripts") }
 /// picture, "speech" when transcribed; None for any other file.
 pub fn method(data: &Path, path: &Path) -> Option<&'static str> {
     if path.parent() != Some(directory(data).as_path()) { return None; }
-    Some(if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(".burned.srt")) { "ocr" } else { "speech" })
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    Some(if name.ends_with(".burned.srt") { "ocr" } else if name.ends_with(".opensubtitles.srt") { "opensubtitles" } else { "speech" })
 }
 
 /// Named for the file's identity that survives a move or rename (device, inode,
@@ -93,7 +98,13 @@ fn untried(saved: &Value) -> Vec<&'static str> {
     if saved["state"] == "rejected" && saved["reason"] == NO_AUDIO && saved["audio_decoder"].as_u64() != Some(AUDIO_DECODER) {
         tried.retain(|step| !LANGUAGES.contains(step));
     }
-    if saved["state"] == "ready" { return if tried.contains(&PICTURE) { vec![] } else { vec![PICTURE] }; }
+    if saved["state"] == "ready" {
+        // A title that has subtitles keeps them: OpenSubtitles' 20 downloads a day go to
+        // titles with none (the user's rule, 2026-11-15), and transcripts already
+        // translated, some by the external fleet, stay as they are.
+        if saved["method"] == OPENSUBTITLES || tried.contains(&PICTURE) { return Vec::new(); }
+        return vec![PICTURE];
+    }
     STEPS.into_iter().filter(|step| !tried.contains(step)).collect()
 }
 /// Chinese in the file's name: try Mandarin first.
@@ -141,7 +152,7 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
     // Subtitles printed in the picture always come first; the audio is the last resort,
     // transcribed only when the picture holds none. A Chinese name tries Mandarin speech
     // before English, any other name English first.
-    let mut remaining: Vec<&'static str> = if chinese_name(Path::new(asset["path"].as_str().unwrap_or_default())) || chinese_name(input) { STEPS.to_vec() } else { vec![PICTURE, "en", "zh-Hans"] };
+    let mut remaining: Vec<&'static str> = if chinese_name(Path::new(asset["path"].as_str().unwrap_or_default())) || chinese_name(input) { STEPS.to_vec() } else { vec![OPENSUBTITLES, PICTURE, "en", "zh-Hans"] };
     let mut tried: Vec<&'static str> = Vec::new();
     // A transcript already made, kept if the picture turns out to hold no subtitles.
     let mut kept: Option<(Value, PathBuf, &'static str)> = None;
@@ -182,6 +193,26 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
     let mut reason = NOT_SPEECH.to_owned();
     for step in remaining {
         if tried.contains(&step) { continue; }
+        if step == OPENSUBTITLES {
+            // A limit or a network failure is an error: the file waits and tries again,
+            // rather than being transcribed when people's subtitles may exist.
+            match crate::opensubtitles::find(&s.data_dir, asset, input, &root, &name).await {
+                Ok(crate::opensubtitles::Found::Ready(path)) => {
+                    tried.push(step);
+                    let file = path.file_name().and_then(|n| n.to_str()).context("Invalid subtitle path")?.to_owned();
+                    save(&json!({"state":"ready","language":"en","method":OPENSUBTITLES,"output":file,"tried":tried,"asset_id":id,"audio_decoder":AUDIO_DECODER,"updated":now()}))?;
+                    finding = Some(Ok(Transcript::Ready(path, "en")));
+                    break;
+                }
+                Ok(crate::opensubtitles::Found::Missing(why)) => {
+                    tracing::info!(asset = id, reason = %why, "No subtitles from OpenSubtitles");
+                    tried.push(step);
+                    save(&unsettled(&tried, &reason, &Value::Null))?;
+                    continue;
+                }
+                Err(error) => { finding = Some(Err(error)); break; }
+            }
+        }
         let heard = if step == PICTURE {
             let media = input.to_str().context("Invalid media path")?;
             run(s, &root, &name, "torrbaby-burned-subtitles", &[media], &report).await
@@ -440,13 +471,18 @@ mod tests {
     #[test]
     fn earlier_verdicts_are_reopened_for_what_they_had_not_tried() {
         // Rejected when only English was transcribed: the picture and Mandarin remain.
-        assert_eq!(untried(&json!({"state":"rejected","reason":"The audio is not English speech"})), ["picture", "zh-Hans"]);
+        assert_eq!(untried(&json!({"state":"rejected","reason":"The audio is not English speech"})), ["picture", "opensubtitles", "zh-Hans"]);
         // No audio to decode says nothing about the picture.
-        assert_eq!(untried(&json!({"state":"rejected","reason":"No decodable audio track","audio_decoder":AUDIO_DECODER})), ["picture"]);
+        assert_eq!(untried(&json!({"state":"rejected","reason":"No decodable audio track","audio_decoder":AUDIO_DECODER})), ["picture", "opensubtitles"]);
+        // A title with subtitles keeps them: downloads go to titles with none.
+        assert!(untried(&json!({"state":"ready","language":"en","method":"speech","tried":["picture","en"]})).is_empty());
+        assert!(untried(&json!({"state":"ready","language":"zh-Hans","method":"burned","tried":["picture"]})).is_empty());
+        assert!(untried(&json!({"state":"ready","language":"en","method":"opensubtitles","tried":["opensubtitles"]})).is_empty());
         // Rejected before ffmpeg decoded what AVFoundation cannot: the speech is tried again.
-        assert_eq!(untried(&json!({"state":"rejected","reason":"No decodable audio track","tried":["picture","en","zh-Hans"]})), ["zh-Hans","en"]);
-        assert!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["picture","zh-Hans","en"]})).is_empty());
-        assert_eq!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["zh-Hans","en"]})), ["picture"]);
+        assert_eq!(untried(&json!({"state":"rejected","reason":"No decodable audio track","tried":["picture","en","zh-Hans"]})), ["opensubtitles","zh-Hans","en"]);
+        assert_eq!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["picture","zh-Hans","en"]})), ["opensubtitles"]);
+        assert!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["picture","opensubtitles","zh-Hans","en"]})).is_empty());
+        assert_eq!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["zh-Hans","en"]})), ["picture","opensubtitles"]);
         assert_eq!(untried(&json!({"state":"ready","language":"zh-Hans","tried":["en","burned","zh-Hans"]})), ["picture"], "a verdict from before the picture could be found");
         // A transcript made before the picture was looked at is redone from the picture once,
         // Mandarin or English: the audio is only ever a last resort.
