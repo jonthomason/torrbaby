@@ -316,15 +316,16 @@ struct Outcome { prepared:Vec<Value>, jobs:Vec<Value>, complete:bool, progress:V
 fn advance_jobs(s:&Service,asset:&Value,id:&str,planned:&[(std::path::PathBuf,u64,&'static str,Option<&'static str>)])->Result<Outcome> {
     let mut jobs=Vec::new();let mut prepared=Vec::new();let mut complete=true;
     let mut progress=json!({"state":"ready","stage":"subtitles","completed_cues":0,"total_cues":0});
-    // Bitmap tracks found to hold no visible captions (placeholders), and tracks in neither
-    // English nor Chinese, are no source: the picture and the speech are tried instead.
+    // Bitmap tracks found to hold no visible captions (placeholders) or that text recognition
+    // cannot read, and tracks in neither English nor Chinese, are no source: the picture and
+    // the speech are tried instead.
     let mut empty_tracks=std::collections::HashSet::new();
     for (path,track,language,target) in planned {
         if empty_tracks.contains(&(path.clone(),*track)) {continue;}
         let source=Some((*language).to_owned());let target=target.map(str::to_owned);
         let existing=s.subtitle_jobs.lookup(id,path,*track,&source,&target);
         if target.is_none() && existing.as_ref().is_some_and(|job| job["state"]=="failed"
-            && (job["error"]==crate::ocr_subtitles::NO_VISIBLE_CAPTIONS || job["error"]==crate::ocr_subtitles::UNIDENTIFIED_LANGUAGE)) {
+            && [crate::ocr_subtitles::NO_VISIBLE_CAPTIONS,crate::ocr_subtitles::UNIDENTIFIED_LANGUAGE,crate::ocr_subtitles::UNREADABLE].iter().any(|e|job["error"]==*e)) {
             empty_tracks.insert((path.clone(),*track));
             continue;
         }

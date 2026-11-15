@@ -259,7 +259,7 @@ async fn run(program: &Path, args: &[&std::ffi::OsStr], seconds: u64, stage: Sta
             let detail: String = line.strip_prefix("Error: ").unwrap_or(line).chars().take(200).collect();
             anyhow::bail!("Bitmap subtitles could not be decoded ({detail}); source preserved")
         }
-        Stage::Recognize => anyhow::bail!("OCR could not read these subtitles; source preserved"),
+        Stage::Recognize => anyhow::bail!("{UNREADABLE}"),
     }
 }
 const OCR_MODELS_CHANGED: i32 = 75;
@@ -268,6 +268,8 @@ const OCR_MODELS_CHANGED: i32 = 75;
 /// processing queue treats it as "no subtitle source", not as a failure.
 /// A subtitle track whose text reads as neither English nor Chinese (an advert track named
 /// after a chat group, say): no source, like a track with no visible captions.
+/// Bitmap subtitles text recognition could not read (Spirited Away's VobSub tracks).
+pub const UNREADABLE: &str = "OCR could not read these subtitles; source preserved";
 pub const SCAN_TIMED_OUT: &str = "Bitmap scan timed out";
 pub const UNIDENTIFIED_LANGUAGE: &str = "No supported subtitle language could be identified";
 pub const NO_VISIBLE_CAPTIONS: &str = "This subtitle track has no visible captions";
