@@ -37,7 +37,9 @@ import UIKit
 
     /// Install (iOS asks once) or update the configuration, and connect (on demand, so iOS keeps
     /// it connected, after a restart too, until another VPN takes over).
-    func turnOn(relay: String, relayFingerprint: String, stun: String, token: String, home: String? = nil, identity: String? = nil, client: String? = nil) async {
+    func turnOn(relay: String, relayFingerprint: String, stun: String, token: String, home: String? = nil, identity: String? = nil, client: String? = nil, byUser: Bool = false) async {
+        // Only the Connection page's Connect takes the device back from ABT.
+        if byUser { ABT.inCharge = false } else if ABT.inCharge || ABT.connected { await yield(); return }
         lastError = nil
         heldOff = false
         // Connected on purpose: whatever took over before is no longer in charge.
@@ -123,6 +125,15 @@ import UIKit
             if connected, changed || !reloadedThisLaunch { reloadedThisLaunch = true; _ = await ask("reload") }
         }
         let ready = !relay.isEmpty && relayFingerprint.count == 64 && !token.isEmpty
+        // ABT has this device (see `ABT.inCharge`): this tunnel never connects by itself, at
+        // launch, on a change of network or in the background, whether or not ABT's interface
+        // is up at this moment.
+        if ABT.connected { ABT.inCharge = true }
+        if ABT.inCharge {
+            if ready { launched = true }
+            if !connected { await yield() }
+            return
+        }
         // The launch: the first call of this process with the credentials known (on a first
         // launch they come after pairing), with the app on screen. iOS also starts the app in
         // the background for downloads; that is not the user launching Torrbaby.
@@ -226,7 +237,7 @@ import UIKit
         case .connecting: "connecting"
         case .disconnecting: "disconnecting"
         case .reasserting: "reconnecting"
-        case .disconnected: "VPN off" + (heldOff ? ", disconnected here" : TunnelYield.yielded ? ", another VPN took over (back at the next launch)" : "") + (Self.otherVPN().map { "; \($0) is connected" } ?? "")
+        case .disconnected: "VPN off" + (heldOff ? ", disconnected here" : ABT.inCharge ? ", left to ABT (Connect takes it back)" : TunnelYield.yielded ? ", another VPN took over (back at the next launch)" : "") + (Self.otherVPN().map { "; \($0) is connected" } ?? "")
         case .invalid: installed ? "not configured" : "not installed"
         @unknown default: "unknown"
         }
@@ -246,6 +257,16 @@ import UIKit
     /// The address ABT's tunnel gives its interface on iPhone and iPad.
     static let address = "198.18.0.2"
     static var connected: Bool { PacketTunnel.otherVPN() == "ABT" }
+    /// ABT has been seen on this device, and is taken to be the VPN the user keeps on: from
+    /// then on Torrbaby's tunnel never connects by itself, even at a moment when ABT's
+    /// interface is down (ABT reconnecting, restarting, being updated). iOS runs one VPN at a
+    /// time and turning this one on disables ABT's configuration, which nothing brings back
+    /// until the user opens ABT: seen on 2026-11-15, ABT off on the phone after a night on.
+    /// Only the Connection page's Connect clears it.
+    static var inCharge: Bool {
+        get { UserDefaults.standard.bool(forKey: "abtInCharge") }
+        set { if newValue != inCharge { UserDefaults.standard.set(newValue, forKey: "abtInCharge") } }
+    }
     /// ABT's own account of how it reaches Diamond now, from the page its tunnel answers on
     /// the device itself: "lan" (home network), "punched", "exit" (no straight path) or
     /// "unknown"; nil when ABT did not answer.

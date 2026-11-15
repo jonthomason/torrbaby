@@ -851,6 +851,7 @@ final class Store: ObservableObject {
     /// the best route changes at once.
     private func abtChanged() {
         let now = ABT.connected
+        if now { ABT.inCharge = true }
         guard now != abtWasConnected else { return }
         abtWasConnected = now
         directEvent("ABT \(now ? "is on" : "is off")")
@@ -1003,7 +1004,7 @@ final class Store: ObservableObject {
     /// Connect the tunnel now (the Connection page's Connect), with everything it needs.
     func connectTunnel() async {
         let settings = tunnelSettings
-        await PacketTunnel.shared.turnOn(relay: settings.relay, relayFingerprint: settings.fingerprint, stun: settings.stun, token: settings.token, home: settings.home, identity: settings.identity, client: settings.client)
+        await PacketTunnel.shared.turnOn(relay: settings.relay, relayFingerprint: settings.fingerprint, stun: settings.stun, token: settings.token, home: settings.home, identity: settings.identity, client: settings.client, byUser: true)
     }
     /// Everything the tunnel extension is given, in one place: every way of connecting it must
     /// pass all of it, or the extension's copy loses what was left out (Diamond's home name, its
