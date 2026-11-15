@@ -1156,8 +1156,9 @@ extension Store {
 }
 
 extension Array where Element == LibraryTitle {
+    /// The title most recently played, unless it was removed from Continue Watching.
     var homeHero: LibraryTitle? {
-        let watched = filter { !$0.playable.isEmpty && $0.assets.contains { $0.lastPlayed > 0 } }
+        let watched = filter { !$0.playable.isEmpty && $0.continueWatchingHidden != true && $0.assets.contains { $0.lastPlayed > 0 } }
         return watched.max { ($0.assets.map(\.lastPlayed).max() ?? 0) < ($1.assets.map(\.lastPlayed).max() ?? 0) }
             ?? first(where: { $0.backdrop != nil && !$0.playable.isEmpty })
     }

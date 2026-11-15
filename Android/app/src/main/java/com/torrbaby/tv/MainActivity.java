@@ -503,8 +503,11 @@ public class MainActivity extends Activity {
         featured = t;
         break;
       }
+    // The title most recently played, unless it was removed from Continue Watching.
+    Library.Title played = null;
     for (Library.Title t : recent)
-      if (!t.playable().isEmpty() && t.latestPlayed() > featured.latestPlayed()) featured = t;
+      if (!t.playable().isEmpty() && !t.continueWatchingHidden && t.latestPlayed() > 0 && (played == null || t.latestPlayed() > played.latestPlayed())) played = t;
+    if (played != null) featured = played;
     ambient(featured);
     hero(page, featured, false);
     LinearLayout body = Ui.column(this);
