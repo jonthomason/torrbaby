@@ -402,7 +402,8 @@ static WARMED:std::sync::LazyLock<std::sync::Mutex<(std::collections::HashSet<St
 /// only a read of the file.
 async fn warm_playback_index(s:&Service)->Result<()> {
     {let mut warmed=WARMED.lock().map_err(|_|anyhow::anyhow!("Processing pool unavailable"))?;
-        if now()-warmed.1<60.0 {return Ok(());}
+        // Checked every few seconds: the next index starts as soon as the last is built.
+        if now()-warmed.1<5.0 {return Ok(());}
         warmed.1=now();}
     if !s.virtual_media.idle() || !s.virtual_media.can_preindex() || playback_active(s)? {return Ok(());}
     let candidates:Vec<Value>={
