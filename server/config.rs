@@ -35,6 +35,11 @@ pub struct Config {
     /// on-device translator. Off restores on-device translation for leftovers.
     #[serde(default)]
     pub external_translation: bool,
+    /// Where the playback caches (MKV indexes, HLS packages) live: a fast drive with room,
+    /// so they are bounded by its free space rather than Diamond's system disk. Unset, or
+    /// the drive not mounted at start: the data directory, with its fixed caps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_dir: Option<String>,
     pub token_file: String,
     pub state_file: String,
     pub transmission_url: String,

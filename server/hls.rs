@@ -32,6 +32,7 @@ pub struct Caption {
 }
 pub struct Manager {
     root: PathBuf,
+    caches: crate::storage::CacheRoot,
     jobs: Mutex<HashMap<String, Job>>,
 }
 fn revision(path: &Path) -> Result<String> {
@@ -51,8 +52,8 @@ fn valid(id: &str) -> bool {
     uuid::Uuid::parse_str(id).is_ok() && id.len() == 36
 }
 impl Manager {
-    pub fn new(data: &Path) -> Result<Arc<Self>> {
-        let root = data.join("hls-cache");
+    pub fn new(caches: &crate::storage::CacheRoot) -> Result<Arc<Self>> {
+        let root = caches.path.join("hls-cache");
         fs::create_dir_all(&root)?;
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
         // No leases survive restart. Only remove directories in our dedicated cache.
@@ -64,6 +65,7 @@ impl Manager {
         }
         Ok(Arc::new(Self {
             root,
+            caches: caches.clone(),
             jobs: Mutex::new(HashMap::new()),
         }))
     }
@@ -188,14 +190,10 @@ impl Manager {
             .saturating_mul(2)
             .saturating_add(256 * 1024 * 1024)
             .max(1_048_576);
+        let reserved = jobs.values().map(|j| j.budget).sum::<u64>();
+        let limit = self.caches.budget(LIMIT, reserved);
         ensure!(
-            budget <= LIMIT
-                && jobs
-                    .values()
-                    .map(|j| j.budget)
-                    .sum::<u64>()
-                    .saturating_add(budget)
-                    <= LIMIT,
+            budget <= limit && reserved.saturating_add(budget) <= limit,
             "HLS cache is full; existing playback expires after six hours"
         );
         let id = uuid::Uuid::new_v4().to_string();

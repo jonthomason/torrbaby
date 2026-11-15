@@ -63,6 +63,7 @@ fn playback_refusal(j: &Job) -> Option<String> {
 }
 pub struct Manager {
     root: PathBuf,
+    caches: crate::storage::CacheRoot,
     pending: Mutex<HashSet<String>>,
     /// Pending builds requested by background processing rather than playback.
     background: Mutex<HashSet<String>>,
@@ -80,8 +81,17 @@ fn valid(id: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 impl Manager {
-    pub fn new(data: &Path) -> Result<Arc<Self>> {
-        let root = data.join("virtual-media-v1");
+    pub fn new(data: &Path, caches: &crate::storage::CacheRoot) -> Result<Arc<Self>> {
+        let root = caches.path.join("virtual-media-v1");
+        // Moved to their own drive: the indexes left on the system disk are only a cache
+        // (rebuilt on the drive as titles are played or preindexed), so free the space.
+        if caches.external && caches.path != data {
+            let old = data.join("virtual-media-v1");
+            if old.is_dir() {
+                tracing::info!(path = %old.display(), "Removing playback indexes left on the system disk");
+                if let Err(error) = fs::remove_dir_all(&old) { tracing::warn!(%error, "Old playback indexes not removed"); }
+            }
+        }
         fs::create_dir_all(&root)?;
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
         // An unfinished build is never published; completed indices survive restart.
@@ -100,6 +110,7 @@ impl Manager {
         crate::audio_transcode::sweep(data);
         let manager = Self {
             root,
+            caches: caches.clone(),
             pending: Mutex::new(HashSet::new()),
             background: Mutex::new(HashSet::new()),
             gate: tokio::sync::Semaphore::new(1),
@@ -487,12 +498,14 @@ impl Manager {
         Ok(entries)
     }
     pub fn can_preindex(&self) -> bool {
-        self.index_usage().is_ok_and(|entries|entries.iter().map(|(_,n,_)|*n).sum::<u64>() + 256*1024*1024 <= INDEX_BUDGET)
+        self.index_usage().is_ok_and(|entries|{let used=entries.iter().map(|(_,n,_)|*n).sum::<u64>(); used + 256*1024*1024 <= self.caches.budget(INDEX_BUDGET,used)})
     }
     fn reclaim_indexes(&self) -> Result<()> {
         let mut entries=self.index_usage()?;
         let mut used=entries.iter().map(|(_,n,_)|*n).sum::<u64>();
-        if used + 256*1024*1024 <= INDEX_BUDGET {return Ok(());}
+        // Fixed once per pass: removing an index frees as much as it no longer holds.
+        let budget=self.caches.budget(INDEX_BUDGET,used);
+        if used + 256*1024*1024 <= budget {return Ok(());}
         let mut protected=HashSet::new();
         {
             let pending=self.pending.lock().map_err(|_|anyhow::anyhow!("Playback queue unavailable"))?;
@@ -504,13 +517,13 @@ impl Manager {
         }
         entries.sort_by_key(|(_,_,modified)|*modified);
         for (path,size,modified) in entries {
-            if used + 256*1024*1024 <= INDEX_BUDGET {break;}
+            if used + 256*1024*1024 <= budget {break;}
             // Recent readers may still be in flight after leaving the small RAM cache.
             if protected.contains(&path) || modified.elapsed().unwrap_or_default().as_secs()<3600 {continue;}
             fs::remove_dir_all(&path)?;
             used=used.saturating_sub(size);
         }
-        ensure!(used+256*1024*1024<=INDEX_BUDGET,"Playback cache is busy. Please try again shortly.");
+        ensure!(used+256*1024*1024<=budget,"Playback cache is busy. Please try again shortly.");
         Ok(())
     }
     fn build(&self, id: &str) -> Result<()> {
@@ -584,7 +597,7 @@ mod cache_tests {
     #[test]
     fn only_old_unprotected_indexes_are_reclaimed() -> Result<()> {
         let root=std::env::temp_dir().join(format!("torrbaby-index-reclaim-{}-{}",std::process::id(),uuid::Uuid::new_v4()));
-        let manager=Manager::new(&root)?;
+        let manager=Manager::new(&root,&crate::storage::CacheRoot::local(&root))?;
         let base=manager.root.join(format!("base-{}","a".repeat(64)));
         fs::create_dir(&base)?;
         fs::File::create(base.join("metadata.bin"))?.set_len(INDEX_BUDGET)?;
@@ -602,7 +615,7 @@ mod cache_tests {
     #[test]
     fn a_reclaimed_index_reads_as_missing_until_rebuilt() -> Result<()> {
         let root=std::env::temp_dir().join(format!("torrbaby-indexed-{}",uuid::Uuid::new_v4()));
-        let manager=Manager::new(&root)?;
+        let manager=Manager::new(&root,&crate::storage::CacheRoot::local(&root))?;
         let input=root.join("episode.mkv");
         fs::write(&input,b"media")?;
         assert!(!manager.indexed("asset-one",&input));
@@ -618,7 +631,7 @@ mod cache_tests {
     #[test]
     fn a_renamed_file_keeps_its_index_and_path_keyed_indexes_are_rekeyed() -> Result<()> {
         let root=std::env::temp_dir().join(format!("torrbaby-rename-{}",uuid::Uuid::new_v4()));
-        let manager=Manager::new(&root)?;
+        let manager=Manager::new(&root,&crate::storage::CacheRoot::local(&root))?;
         let input=root.join("Some.Show.S01E01.mkv");
         fs::write(&input,b"media")?;
         let job=Job{id:"d".repeat(64),asset:"asset-one".into(),input:input.clone(),revision:crate::subtitle_jobs::revision(&input)?,
@@ -628,7 +641,7 @@ mod cache_tests {
         fs::create_dir(manager.path_index_path(&job,0)?)?;
         drop(manager);
         fs::remove_file(root.join("virtual-media-v1/content-keys"))?;
-        let manager=Manager::new(&root)?;
+        let manager=Manager::new(&root,&crate::storage::CacheRoot::local(&root))?;
         assert!(manager.indexed("asset-one",&input));
         assert!(!manager.path_index_path(&job,0)?.exists());
         // The organizer renames the file: same content, new path and change time.
@@ -644,7 +657,7 @@ mod cache_tests {
     #[test]
     fn earlier_ready_jobs_keep_their_index_while_new_jobs_use_the_new_layout() -> Result<()> {
         let root=std::env::temp_dir().join(format!("torrbaby-layout-{}",uuid::Uuid::new_v4()));
-        let manager=Manager::new(&root)?;
+        let manager=Manager::new(&root,&crate::storage::CacheRoot::local(&root))?;
         let input=root.join("title.mkv");
         fs::write(&input,b"\x00\x00\x00\x10ftypisom\x00\x00\x02\x00source")?; // sniffed as MP4
         let revision=crate::subtitle_jobs::revision(&input)?;
@@ -666,7 +679,7 @@ mod cache_tests {
     #[test]
     fn video_only_index_serves_analysis_but_not_playback() -> Result<()> {
         let root=std::env::temp_dir().join(format!("torrbaby-video-only-{}",uuid::Uuid::new_v4()));
-        let manager=Manager::new(&root)?;
+        let manager=Manager::new(&root,&crate::storage::CacheRoot::local(&root))?;
         let input=root.join("title.mkv");
         fs::write(&input,b"\x00\x00\x00\x10ftypisom\x00\x00\x02\x00source")?; // sniffed as MP4
         let revision=crate::subtitle_jobs::revision(&input)?;
@@ -690,7 +703,7 @@ mod cache_tests {
     #[test]
     fn earlier_preparation_failures_are_retried_once() -> Result<()> {
         let root=std::env::temp_dir().join(format!("torrbaby-retry-{}",uuid::Uuid::new_v4()));
-        let manager=Manager::new(&root)?;
+        let manager=Manager::new(&root,&crate::storage::CacheRoot::local(&root))?;
         let input=root.join("title.mp4");
         fs::write(&input,b"\x00\x00\x00\x10ftypisom\x00\x00\x02\x00source")?; // sniffed as MP4
         let runtime=tokio::runtime::Builder::new_current_thread().enable_all().build()?;

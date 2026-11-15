@@ -146,6 +146,8 @@ pub async fn serve(
     lease
         .try_lock()
         .context("Another Torrbaby server owns this database")?;
+    let data = database.parent().context("Missing data directory")?.to_path_buf();
+    let caches = crate::storage::CacheRoot::choose(&data, config.cache_dir.as_deref());
     let service = Arc::new(Service {
         cloud: crate::cloud::Cloud::new(database.parent().context("Database needs a parent directory")?)?,
         watcher: crate::watcher::Watcher::new(database.parent().context("Database needs a parent directory")?),
@@ -175,8 +177,8 @@ pub async fn serve(
         )?,
         metadata_lock: tokio::sync::Mutex::new(()),
         mutation_lock: tokio::sync::Mutex::new(()),
-        virtual_media: crate::virtual_media::Manager::new(database.parent().context("Missing data directory")?)?,
-        hls: crate::hls::Manager::new(database.parent().context("Missing data directory")?)?,
+        virtual_media: crate::virtual_media::Manager::new(&data, &caches)?,
+        hls: crate::hls::Manager::new(&caches)?,
         subtitle_jobs: crate::subtitle_jobs::Manager::new(
             database.parent().context("Missing data directory")?,
         )?,

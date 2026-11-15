@@ -275,3 +275,52 @@ pub(crate) fn add_column(connection: &Connection, table: &str, column: &str, kin
     if !exists { connection.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind}"), [])?; }
     Ok(())
 }
+
+/// Where the playback caches (MKV indexes, HLS packages) live, and how much they may use.
+/// On a drive of their own (config `cache_dir`, Alpha on Diamond) they may grow into its free
+/// space down to a 50 GB reserve; in the data directory, on the system disk, fixed caps apply.
+#[derive(Clone)]
+pub struct CacheRoot { pub path: std::path::PathBuf, pub external: bool }
+const CACHE_RESERVE: u64 = 50 * 1024 * 1024 * 1024;
+impl CacheRoot {
+    pub fn local(data: &Path) -> Self { Self { path: data.to_path_buf(), external: false } }
+    /// The configured directory when its drive is mounted, else the data directory (the
+    /// caches rebuild there; nothing in them is the only copy of anything).
+    pub fn choose(data: &Path, configured: Option<&str>) -> Self {
+        let Some(dir) = configured.filter(|d| !d.trim().is_empty()) else { return Self::local(data) };
+        let Ok(path) = crate::config::expand(dir) else { return Self::local(data) };
+        // A drive that is not mounted leaves no /Volumes/<name>: never create one on the system disk.
+        let mounted = path.ancestors().find(|a| a.parent() == Some(Path::new("/Volumes"))).is_none_or(|volume| volume.is_dir());
+        if mounted && fs::create_dir_all(&path).is_ok() {
+            tracing::info!(path = %path.display(), "Playback caches on their own drive");
+            return Self { path, external: true };
+        }
+        tracing::warn!(path = %path.display(), "Playback cache drive unavailable; using the data directory");
+        Self::local(data)
+    }
+    /// The most the cache may hold: `fixed` on the system disk; on its own drive, what it
+    /// already holds plus the drive's free space above the reserve.
+    pub fn budget(&self, fixed: u64, used: u64) -> u64 {
+        if !self.external { return fixed; }
+        crate::drives::capacity_of(&self.path).map_or(fixed, |(_, free)| used.saturating_add(free.saturating_sub(CACHE_RESERVE)))
+    }
+}
+
+#[cfg(test)]
+mod cache_root_tests {
+    use super::*;
+    #[test]
+    fn an_unmounted_drive_leaves_the_caches_in_the_data_directory() {
+        let data = std::env::temp_dir();
+        let chosen = CacheRoot::choose(&data, Some("/Volumes/Torrbaby-not-mounted-7c1e/Cache"));
+        assert!(!chosen.external && chosen.path == data);
+        assert!(!Path::new("/Volumes/Torrbaby-not-mounted-7c1e").exists());
+        assert_eq!(CacheRoot::choose(&data, None).budget(32, 0), 32);
+        let own = std::env::temp_dir().join(format!("torrbaby-cache-root-{}", std::process::id()));
+        let chosen = CacheRoot::choose(&data, own.to_str());
+        assert!(chosen.external && chosen.path == own);
+        // On its own drive: bounded by free space, not the fixed cap.
+        assert_ne!(chosen.budget(32, 0), 32);
+        let _ = fs::remove_dir_all(own);
+    }
+}
