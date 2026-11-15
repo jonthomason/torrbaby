@@ -108,7 +108,15 @@ public final class TorrentSearchActivity extends Activity {
     }),240,44);
     resultsRoot.addView(hiddenBox,new LinearLayout.LayoutParams(-1,0,1));
     list = new ListView(this); list.setDivider(null); list.setDividerHeight(Ui.dp(this, 10));
-    list.setAdapter(new Results()); list.setOnItemClickListener((parent, view, position, id) -> { JSONObject item=results.optJSONObject(position); if(isCloud(item))cloudDetails(item); else details(item); });
+    list.setAdapter(new Results());
+    // The row under the remote turns white with black text, like every other focused control;
+    // ListView's own selector was a faint tint that was hard to see on the TCL.
+    list.setSelector(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
+    list.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
+      public void onItemSelected(AdapterView<?> parent,View view,int position,long id){paintRows();}
+      public void onNothingSelected(AdapterView<?> parent){paintRows();}});
+    list.setOnFocusChangeListener((v,focused)->paintRows());
+    list.setOnItemClickListener((parent, view, position, id) -> { JSONObject item=results.optJSONObject(position); if(isCloud(item))cloudDetails(item); else details(item); });
     resultsRoot.addView(list, new LinearLayout.LayoutParams(-1,0,1));
     resultsRoot.addView(ProfileUi.header(this, api), 0);
     setContentView(resultsRoot); query.requestFocus();
@@ -302,6 +310,23 @@ public final class TorrentSearchActivity extends Activity {
     JSONArray languages=hints.optJSONArray("languages");if(languages!=null)for(int i=0;i<languages.length();i++)values.add(languages.optString(i));
     return String.join(" · ",values);
   }
+  private void paintRows(){
+    if(list==null)return;
+    for(int i=0;i<list.getChildCount();i++)paintRow(list.getChildAt(i),list.hasFocus()&&list.getFirstVisiblePosition()+i==list.getSelectedItemPosition());
+  }
+  /** Rows keep each text's own colour in its tag, to put back when focus moves on. */
+  private void paintRow(View row,boolean focused){
+    row.setBackground(Ui.shape(focused?android.graphics.Color.WHITE:Ui.PANEL,focused?android.graphics.Color.WHITE:0,this));
+    tintRow(row,focused);
+  }
+  private static void tintRow(View v,boolean focused){
+    if(v instanceof TextView&&v.getTag() instanceof Integer)((TextView)v).setTextColor(focused?android.graphics.Color.BLACK:(Integer)v.getTag());
+    if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++)tintRow(((ViewGroup)v).getChildAt(i),focused);
+  }
+  private static void keepColours(View v){
+    if(v instanceof TextView)v.setTag(((TextView)v).getCurrentTextColor());
+    if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++)keepColours(((ViewGroup)v).getChildAt(i));
+  }
   private class Results extends BaseAdapter {
     public int getCount(){return results.length();} public Object getItem(int p){return results.optJSONObject(p);} public long getItemId(int p){return p;}
     public View getView(int position, View old, ViewGroup parent) {
@@ -318,6 +343,8 @@ public final class TorrentSearchActivity extends Activity {
         said.setMaxLines(1);said.setEllipsize(android.text.TextUtils.TruncateAt.END);Ui.add(content,said,-1,-2);
       } else Ui.add(content,Ui.text(TorrentSearchActivity.this,tags(item),13,Ui.MUTED),-1,-2);
       row.addView(content,new LinearLayout.LayoutParams(0,-2,1));
+      keepColours(row);
+      paintRow(row,list!=null&&list.hasFocus()&&position==list.getSelectedItemPosition());
       return row;
     }
   }

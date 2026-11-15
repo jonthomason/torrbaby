@@ -219,13 +219,15 @@ public class MainActivity extends Activity {
     Ui.gap(nav, 12);
     LinearLayout menus=Ui.row(this);menus.setGravity(Gravity.CENTER);
     nav.addView(menus,new LinearLayout.LayoutParams(0,-2,1));
-    for (String label : new String[] {"Home", "Movies", "TV Shows", "Torrents", "Search"}) {
+    // Find second, after Home, as in the Mac and iPhone/iPad sidebars. It opens its own screen.
+    for (String label : new String[] {"Home", "Find", "Movies", "TV Shows", "Torrents", "Search"}) {
       Button b =
           Ui.button(
               this,
               // The page holds cloud downloads as well as torrents, so the television calls it Downloads.
               L10n.t(label.equals("Torrents") ? "Downloads" : label),
               () -> {
+                if (label.equals("Find")) { startActivity(new Intent(this, TorrentSearchActivity.class)); return; }
                 if (!section.equals(label)) transition = 2;
                 section = label;
                 collectionName = "";
@@ -1094,8 +1096,6 @@ public class MainActivity extends Activity {
     }
     View space = new View(this);
     controls.addView(space, new LinearLayout.LayoutParams(0, 1, 1));
-    Ui.add(controls, Ui.button(this, L10n.t("Find"), () -> startActivity(new Intent(this, TorrentSearchActivity.class))), -2, 42);
-    Ui.gap(controls, 12);
     Ui.add(controls, Ui.button(this, L10n.t("Manage"), () -> torrentActions.manage()), -2, 42);
     Ui.gap(controls, 12);
     Ui.add(controls, Ui.button(this, L10n.t("Refresh"), () -> fetchTorrents()), -2, 42);

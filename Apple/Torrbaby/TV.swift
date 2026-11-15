@@ -119,7 +119,8 @@ struct TVRootView: View {
             DispatchQueue.main.async { focusedTab = "Home" }
         }
     }
-    private let sections = ["Home", "Movies", "TV Shows", "Torrents", "Search", "Settings"]
+    // Find second, after Home, as in the Mac and iPhone/iPad sidebars.
+    private let sections = ["Home", "Find", "Movies", "TV Shows", "Torrents", "Search", "Settings"]
     var body: some View {
         NavigationStack(path: $path) {
             Group {
@@ -129,6 +130,7 @@ struct TVRootView: View {
                     switch section {
                     case "Movies": TVLibraryView(kind: "movie")
                     case "TV Shows": TVLibraryView(kind: "tv")
+                    case "Find": TorrentSearchView()
                     case "Torrents": TVTorrentView()
                     case "Search": TVSearchView()
                     case "Settings": TVSettingsView(connection: { settings = true })
@@ -301,9 +303,6 @@ private struct TVSettingsView: View {
                 // Rows are buttons so focus can reach the end of the list.
                 SwiftUI.Section("About") {
                     if let status = store.status { Button {} label: { TVSettingsRow(title: "Server version", value: status.version) } }
-                }
-                SwiftUI.Section("Library") {
-                    NavigationLink { TorrentSearchView() } label: { Text("Find") }
                 }
             }.listStyle(.grouped).frame(maxWidth: 900)
             // The app tints controls white; a focused row is white too, so its title must not be.
