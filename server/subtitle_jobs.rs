@@ -400,7 +400,7 @@ impl Manager {
         Ok(
             json!({"updated":job.updated,"extraction_method":job.extraction_method,"kind":kind(job.extraction_method.as_deref(),job.target.as_deref()),"name":track_name(job.target.as_deref().filter(|t|*t!="auto").or(job.source.as_deref()).unwrap_or("und"),kind(job.extraction_method.as_deref(),job.target.as_deref()),sdh),"sdh":sdh,"unreadable_cues":job.unreadable_cues,"stage":if ocr_progress.is_some(){"ocr"}else if job.target.is_some(){"translation"}else{"extraction"},"id":job.id,"asset_id":job.asset_id,"state":job.state,"error":job.error,
             "sidecar":if job.input.extension().is_some_and(|e|e.eq_ignore_ascii_case("srt")) { job.input.file_name().and_then(|n|n.to_str()).map(|name|sha2::Sha256::digest(name.as_bytes()).iter().map(|b|format!("{b:02x}")).collect::<String>()) } else {None},
-            "track":job.track,"source":job.source.as_deref().filter(|s|*s!="auto"),"target":job.target.as_deref().filter(|s|*s!="auto"),"completed_cues":job.completed_cues,"total_cues":job.total_cues,
+            "track":job.track,"translated_by":job.translated_by,"source":job.source.as_deref().filter(|s|*s!="auto"),"target":job.target.as_deref().filter(|s|*s!="auto"),"completed_cues":job.completed_cues,"total_cues":job.total_cues,
             "path":if job.state=="ready" {Some(format!("/v1/subtitle-jobs/{id}.vtt"))} else {None}}),
         )
     }

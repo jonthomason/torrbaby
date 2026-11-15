@@ -54,6 +54,26 @@ fn reopen_replaced(db:&Database)->Result<usize> {
         WHERE state!='running' AND subtitles_state='skipped' AND json_extract(detail,'$.error')=?2 \
         AND NOT EXISTS(SELECT 1 FROM media_inventory i WHERE i.asset_id=media_processing.asset_id AND i.revision=media_processing.revision)",rusqlite::params![now(),MEDIA_CHANGED])?)
 }
+/// Titles whose English the server made from text it read (bitmap subtitles, or Chinese read
+/// from the picture and translated) and that OpenSubtitles has not been asked about: done
+/// again once, so its English replaces them (the user's rule, 2026-11-15). Each waits behind
+/// titles that have no subtitles.
+fn reopen_for_people_english(db:&Database,data:&Path)->Result<usize> {
+    if !crate::opensubtitles::configured(data) {return Ok(0);}
+    let rows=db.rows("SELECT m.asset_id,m.revision,i.document FROM media_processing m JOIN media_inventory i ON i.asset_id=m.asset_id AND i.revision=m.revision WHERE m.state='ready' AND m.subtitles_state='ready'",[])?;
+    let mut reopened=0;
+    for row in rows {
+        let (Some(id),Some(revision),Some(document))=(row["asset_id"].as_str(),row["revision"].as_str(),row["document"].as_str()) else{continue};
+        let Ok(info)=serde_json::from_str::<Value>(document) else{continue};
+        let read=info["prepared"].as_array().is_some_and(|jobs|jobs.iter().any(|j|j["state"]=="ready" && j["language"]=="en" && j["extraction_method"]=="ocr"));
+        if !read || crate::speech_subtitles::people_decided(data,id,revision,"en") {continue;}
+        let changed=db.connection.execute("UPDATE media_processing SET subtitles_state='pending',stage='subtitles',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![now(),id,revision])?;
+        if changed>0 {db.connection.execute("INSERT INTO subtitle_priorities(asset_id,priority) VALUES(?,-1) ON CONFLICT(asset_id) DO NOTHING",[id])?;}
+        reopened+=changed;
+    }
+    if reopened>0 {tracing::info!(reopened,"Titles with English read from text will look for English from OpenSubtitles");}
+    Ok(reopened)
+}
 /// Subtitle errors a later build no longer has: the subtitle store's old 4,096-file cap, and
 /// a subtitle track in neither English nor Chinese blocking the picture and the speech.
 const RETIRED_SUBTITLE_ERRORS:[&str;4]=[crate::subtitle_jobs::STORAGE_FULL,crate::ocr_subtitles::UNIDENTIFIED_LANGUAGE,
@@ -311,6 +331,7 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
             reopen_outdated(&db)?;
             reopen_replaced(&db)?;
             reopen_storage_full(&db)?;
+            reopen_for_people_english(&db,&s.data_dir)?;
             retire_obsolete_failures(&db)?;
             reopen_untranscribed(&db,&s.data_dir)?;
             reopen_line_translated(&db,&s.subtitle_jobs.line_translated())?;

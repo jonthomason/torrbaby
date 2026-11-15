@@ -277,6 +277,7 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
         planned.push((source_input.clone(),track,language,None));
         if language!=target || target=="auto" {planned.push((source_input,track,language,Some(target)));}
     }
+    prefer_people_english(s,asset,id,&input,&info,&mut planned).await?;
     prefer_people_chinese(s,asset,id,&input,&mut planned).await?;
     let mut outcome=advance_jobs(s,asset,id,&planned)?;
     if outcome.no_source {
@@ -293,6 +294,7 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
         match crate::speech_subtitles::transcript(s,asset,&input,report).await? {
             crate::speech_subtitles::Transcript::Ready(path,language) => {
                 let mut planned=vec![(path.clone(),1,language,None),(path,1,language,Some(if language=="en" {"zh-Hans"}else{"en"}))];
+                prefer_people_english(s,asset,id,&input,&info,&mut planned).await?;
                 prefer_people_chinese(s,asset,id,&input,&mut planned).await?;
                 outcome=advance_jobs(s,asset,id,&planned)?;
             }
@@ -317,6 +319,36 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
 }
 
 struct Outcome { prepared:Vec<Value>, jobs:Vec<Value>, complete:bool, progress:Value, no_source:bool }
+/// English the server made itself (read from a bitmap track, or translated from Chinese read
+/// from the picture) gives way to English people wrote, from OpenSubtitles; the picture's
+/// Chinese stays. A title with a translation by the external fleet waits for a later round
+/// (the user's rule, 2026-11-15).
+async fn prefer_people_english(s:&Service,asset:&Value,id:&str,input:&std::path::Path,info:&Value,planned:&mut [(std::path::PathBuf,u64,&'static str,Option<&'static str>)])->Result<()> {
+    let bitmap=|track:u64| info["subtitle_tracks"].as_array().is_some_and(|tracks|tracks.iter().any(|t|t["track"]==track && t["sidecar"]!=true && matches!(t["codec"].as_str(),Some("S_HDMV/PGS"|"S_VOBSUB"))));
+    let read=planned.iter().position(|(path,track,language,target)|*language=="en" && target.is_none() && path.as_path()==input && bitmap(*track));
+    // Only English translated from the picture's Chinese; English translated from a Chinese
+    // subtitle track is not transcribed, and is reviewed before anything replaces it.
+    let picture=|path:&std::path::Path|crate::speech_subtitles::method(&s.data_dir,path)==Some("ocr");
+    let translated=planned.iter().position(|(path,_,language,target)|*language=="zh-Hans" && *target==Some("en") && picture(path));
+    if read.is_none() && translated.is_none() {return Ok(());}
+    let fleet=planned.iter().any(|(path,track,language,target)|s.subtitle_jobs.lookup(id,path,*track,&Some((*language).to_owned()),&target.map(str::to_owned)).is_some_and(|job|job["translated_by"]=="fleet"));
+    if fleet {
+        crate::speech_subtitles::set_aside(s,asset,input,"en","Translated by the external fleet: a later round")?;
+        return Ok(());
+    }
+    let Some(english)=crate::speech_subtitles::people_english(s,asset,input).await? else {return Ok(())};
+    if let Some(at)=read {
+        let (path,track,_,_)=planned[at].clone();
+        planned[at]=(english.clone(),1,"en",None);
+        // Its Chinese: a translation already made stays; otherwise it comes from the new English.
+        if let Some(chinese)=planned.iter().position(|(p,t,language,target)|*p==path && *t==track && *language=="en" && *target==Some("zh-Hans")) {
+            let made=s.subtitle_jobs.lookup(id,&path,track,&Some("en".to_owned()),&Some("zh-Hans".to_owned())).is_some_and(|job|job["state"]=="ready");
+            if !made {planned[chinese]=(english.clone(),1,"en",Some("zh-Hans"));}
+        }
+    }
+    if let Some(at)=translated {planned[at]=(english,1,"en",None);}
+    Ok(())
+}
 /// A Chinese translation not made yet is replaced by Chinese people wrote, when OpenSubtitles
 /// has some for this file. Translations already made (on device or by the external fleet)
 /// stay as they are.

@@ -205,10 +205,10 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
             // A limit or a network failure is an error: the file waits and tries again,
             // rather than being transcribed when people's subtitles may exist.
             match crate::opensubtitles::find(&s.data_dir, asset, input, &root, &name).await {
-                Ok(crate::opensubtitles::Found::Ready(path)) => {
+                Ok(crate::opensubtitles::Found::Ready(path, provenance)) => {
                     tried.push(step);
                     let file = path.file_name().and_then(|n| n.to_str()).context("Invalid subtitle path")?.to_owned();
-                    save(&json!({"state":"ready","language":"en","method":OPENSUBTITLES,"output":file,"tried":tried,"asset_id":id,"audio_decoder":AUDIO_DECODER,"updated":now()}))?;
+                    save(&json!({"state":"ready","language":"en","method":OPENSUBTITLES,"output":file,"tried":tried,"asset_id":id,"audio_decoder":AUDIO_DECODER,"provenance":provenance,"updated":now()}))?;
                     finding = Some(Ok(Transcript::Ready(path, "en")));
                     break;
                 }
@@ -324,12 +324,42 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
 /// asked now, the translation goes ahead and the title is looked up again after the reset.
 pub async fn people_chinese(s: &Service, asset: &Value, input: &Path) -> Result<Option<PathBuf>> {
     if !crate::opensubtitles::chinese(&s.data_dir) { return Ok(None); }
+    people(s, asset, input, "zh-cn").await
+}
+
+/// English subtitles people wrote, from OpenSubtitles, for a title whose English the server
+/// made itself (read from a bitmap track, or translated from Chinese read from the picture).
+/// Looked up once per file, like `people_chinese`.
+pub async fn people_english(s: &Service, asset: &Value, input: &Path) -> Result<Option<PathBuf>> {
+    if !crate::opensubtitles::configured(&s.data_dir) { return Ok(None); }
+    people(s, asset, input, "en").await
+}
+
+/// Whether OpenSubtitles has been asked for this file's subtitles in `tag` ("en" or "zh").
+pub fn people_decided(data: &Path, asset: &str, revision: &str, tag: &str) -> bool {
+    directory(data).join(format!("{}.{tag}-opensubtitles.json", key(data, asset, revision))).is_file()
+}
+
+/// Leave a file out of the OpenSubtitles lookup for now, saying why; a later round removes
+/// these records to look again.
+pub fn set_aside(s: &Service, asset: &Value, input: &Path, tag: &str, reason: &str) -> Result<()> {
+    let id = asset["id"].as_str().context("Missing asset ID")?;
+    let name = key(&s.data_dir, id, &crate::subtitle_jobs::revision(input)?);
+    let root = directory(&s.data_dir);
+    std::fs::create_dir_all(&root)?;
+    let record = root.join(format!("{name}.{tag}-opensubtitles.json"));
+    if !record.is_file() { std::fs::write(&record, json!({"state":"missing","asset_id":id,"reason":reason,"set_aside":true,"updated":now()}).to_string())?; }
+    Ok(())
+}
+
+async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Result<Option<PathBuf>> {
+    let tag = if language == "en" { "en" } else { "zh" };
     let id = asset["id"].as_str().context("Missing asset ID")?;
     let revision = crate::subtitle_jobs::revision(input)?;
     let root = directory(&s.data_dir);
     std::fs::create_dir_all(&root)?;
     let name = key(&s.data_dir, id, &revision);
-    let record = root.join(format!("{name}.zh-opensubtitles.json"));
+    let record = root.join(format!("{name}.{tag}-opensubtitles.json"));
     if let Some(saved) = std::fs::read(&record).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
         if saved["state"] == "ready" {
             let path = root.join(saved["output"].as_str().unwrap_or_default());
@@ -339,13 +369,13 @@ pub async fn people_chinese(s: &Service, asset: &Value, input: &Path) -> Result<
         if saved["after"].as_f64().is_some_and(|t| t > now()) { return Ok(None); }
     }
     let save = |document: Value| -> Result<()> {
-        let temporary = root.join(format!("{name}.zh-opensubtitles.json.tmp"));
+        let temporary = root.join(format!("{name}.{tag}-opensubtitles.json.tmp"));
         std::fs::write(&temporary, document.to_string())?;
         std::fs::rename(temporary, &record)?; Ok(())
     };
-    match crate::opensubtitles::find_language(&s.data_dir, asset, input, &root, &name, "zh-cn").await {
-        Ok(crate::opensubtitles::Found::Ready(path)) => {
-            save(json!({"state":"ready","asset_id":id,"output":path.file_name().and_then(|n| n.to_str()),"updated":now()}))?;
+    match crate::opensubtitles::find_language(&s.data_dir, asset, input, &root, &name, language).await {
+        Ok(crate::opensubtitles::Found::Ready(path, provenance)) => {
+            save(json!({"state":"ready","asset_id":id,"output":path.file_name().and_then(|n| n.to_str()),"provenance":provenance,"updated":now()}))?;
             Ok(Some(path))
         }
         Ok(crate::opensubtitles::Found::Missing(why)) => {
@@ -355,7 +385,7 @@ pub async fn people_chinese(s: &Service, asset: &Value, input: &Path) -> Result<
         Err(error) => {
             let message = error.to_string();
             let after = crate::opensubtitles::waits_until(&message).unwrap_or(now() + 3600.0);
-            tracing::info!(asset = id, %message, "Chinese from OpenSubtitles later; translating meanwhile");
+            tracing::info!(asset = id, language, %message, "OpenSubtitles later; going on with what the title has");
             save(json!({"state":"later","asset_id":id,"after":after,"updated":now()}))?;
             Ok(None)
         }

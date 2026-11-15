@@ -44,8 +44,8 @@ static SESSION: Mutex<Option<Session>> = Mutex::new(None);
 static LIMITED_UNTIL: Mutex<f64> = Mutex::new(0.0);
 
 pub enum Found {
-    /// An English SRT written to `path`.
-    Ready(PathBuf),
+    /// An SRT written to `path`, and where it came from (kept with the title, not shown).
+    Ready(PathBuf, Value),
     /// Nothing suitable on OpenSubtitles (or no credentials): the next source is tried.
     Missing(String),
 }
@@ -118,7 +118,7 @@ fn tokens(name: &str) -> std::collections::HashSet<String> {
 /// The best English subtitle of a search: made for this file (hash match) first, then
 /// the release most like the file's name, then the most downloaded. Machine and AI
 /// translations are never chosen; hearing-impaired versions only when nothing else fits.
-pub(crate) fn choose(results: &[Value], release: &str, language: &str) -> Option<(u64, String)> {
+pub(crate) fn choose(results: &[Value], release: &str, language: &str) -> Option<(u64, String, Value)> {
     let mine = tokens(release);
     results.iter().filter_map(|r| {
         let a = &r["attributes"];
@@ -131,8 +131,10 @@ pub(crate) fn choose(results: &[Value], release: &str, language: &str) -> Option
             + alike * 10.0
             - (a["hearing_impaired"] == true) as u8 as f64 * 5.0
             + (a["download_count"].as_f64().unwrap_or(0.0) + 1.0).log10();
-        Some((score, id, a["release"].as_str().unwrap_or("").to_owned()))
-    }).max_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, id, release)| (id, release))
+        let provenance = json!({"source":"opensubtitles","subtitle_id":r["id"],"file_id":id,"release":a["release"],"language":language,
+            "moviehash_match":a["moviehash_match"],"hearing_impaired":a["hearing_impaired"],"download_count":a["download_count"],"fps":a["fps"],"uploader":a["uploader"]["name"],"url":a["url"]});
+        Some((score, id, a["release"].as_str().unwrap_or("").to_owned(), provenance))
+    }).max_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, id, release, provenance)| (id, release, provenance))
 }
 
 /// English subtitles for `asset`'s file at `input`, written into `directory` as `name`.
@@ -168,7 +170,7 @@ pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: 
     ensure!(reply.status().is_success(), "OpenSubtitles search failed ({})", reply.status());
     let results: Value = reply.json().await?;
     let release = format!("{} {}", asset["torrent_name"].as_str().unwrap_or(""), input.file_name().and_then(|n| n.to_str()).unwrap_or(""));
-    let Some((file_id, chosen)) = choose(results["data"].as_array().map(Vec::as_slice).unwrap_or(&[]), &release, code) else {
+    let Some((file_id, chosen, mut provenance)) = choose(results["data"].as_array().map(Vec::as_slice).unwrap_or(&[]), &release, code) else {
         return Ok(Found::Missing(format!("No {ours} subtitles on OpenSubtitles")));
     };
     if let Some(until) = limited_until(data) { anyhow::bail!("{LIMIT_REACHED}; downloads reset at {until}"); }
@@ -190,6 +192,7 @@ pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: 
     }
     ensure!(status.is_success(), "OpenSubtitles download refused ({status})");
     if body["remaining"].as_i64().is_some_and(|r| r <= 0) { limit(data, reset()); }
+    tracing::info!(remaining = body["remaining"].as_i64(), "OpenSubtitles downloads left today");
     let link = body["link"].as_str().context("OpenSubtitles gave no download link")?;
     let bytes = client.get(link).send().await.context("OpenSubtitles file")?.error_for_status()?.bytes().await?;
     ensure!(bytes.len() <= 8 << 20, "Subtitle file too large");
@@ -205,7 +208,9 @@ pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: 
     std::fs::write(&temporary, text)?;
     std::fs::rename(&temporary, &path)?;
     tracing::info!(asset = asset["id"].as_str().unwrap_or(""), language = ours, release = %chosen, cues = cues.len(), "Subtitles from OpenSubtitles");
-    Ok(Found::Ready(path))
+    provenance["downloaded_at"] = json!(crate::storage::now());
+    provenance["cues"] = json!(cues.len());
+    Ok(Found::Ready(path, provenance))
 }
 
 /// "2026-11-16T00:00:00.000Z" as seconds since the epoch.
@@ -262,7 +267,7 @@ mod tests {
         assert_eq!(choose(&results, "Parasite (2019) Parasite (2019).mp4 YTS.LT 1080p", "en").map(|c| c.0), Some(2));
         let hashed = [result(1, "Other", false, 9000, json!({})), result(4, "Other", true, 1, json!({}))];
         assert_eq!(choose(&hashed, "x", "en").map(|c| c.0), Some(4));
-        assert_eq!(choose(&[result(5, "x", false, 1, json!({"language":"fr"}))], "x", "en"), None);
+        assert_eq!(choose(&[result(5, "x", false, 1, json!({"language":"fr"}))], "x", "en").map(|c| c.0), None);
         assert_eq!(choose(&[result(6, "x", false, 1, json!({"language":"zh-cn"}))], "x", "zh-cn").map(|c| c.0), Some(6));
         assert_eq!(utc_seconds("2026-11-16T00:00:00.000Z"), Some(1_794_787_200.0));
         assert_eq!(waits_until("OpenSubtitles daily download limit reached; downloads reset at 1794800000"), Some(1_794_800_000.0));
