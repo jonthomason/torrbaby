@@ -58,6 +58,20 @@ public final class TorrentSearchActivity extends Activity {
   private static final String[] SOURCE_NAMES = {"Recommended", "The Pirate Bay", "Nyaa", "Torrent CSV"};
 
   private String[] sourceNames() { return china ? new String[]{"Recommended"} : SOURCE_NAMES; }
+  /**
+   * The connection, with the server's address. Find is a top-level tab, so it can open before
+   * the library has found the server in this run (the saved connection holds no address): find
+   * it here, as the library would. Call off the main thread.
+   */
+  private synchronized Api ready() throws Exception {
+    if (!api.base.equals(ServerRoute.UNKNOWN)) return api;
+    String found = ServerRoute.found.isEmpty() ? ServerRoute.locate(this, api.client, api.token, 8000) : ServerRoute.found;
+    if (found.isEmpty()) return api;
+    Api located = new Api(found, api.token, api.client, api.profile, api.profileName);
+    located.profileAppearance = api.profileAppearance;
+    api = located;
+    return api;
+  }
   public void onCreate(Bundle state) {
     super.onCreate(state);
     try { api = new SecureStore(this).load(); } catch (Exception ignored) {}
@@ -73,7 +87,7 @@ public final class TorrentSearchActivity extends Activity {
     markets.setOnCheckedChangeListener((group,id) -> {
       china = id == chinese.getId(); getPreferences(MODE_PRIVATE).edit().putBoolean("china",china).apply();
       ++generation; source=0; sourceButton.setText(L10n.t("Recommended")); sourceButton.setVisibility(china?View.GONE:View.VISIBLE); results=new JSONArray();allResults=new JSONArray();enrichmentGeneration++;if(hiddenBox!=null){hiddenBox.setVisibility(View.GONE);list.setVisibility(View.VISIBLE);}
-      ((BaseAdapter)list.getAdapter()).notifyDataSetChanged(); status.setText(""); search.setEnabled(true); list.setEnabled(true);
+      ((BaseAdapter)list.getAdapter()).notifyDataSetChanged(); status.setText(""); searching=false; list.setEnabled(true);
       if(query.getText().toString().trim().length()>=2)search();
     });
     LinearLayout controls = Ui.row(this);
@@ -95,7 +109,7 @@ public final class TorrentSearchActivity extends Activity {
       String[] labels={L10n.t("All resolutions"),"2160p","1080p","720p"};String[] values={"all","2160p","1080p","720p"};
       new AppDialog(this).setTitle(L10n.t("Resolution")).setSingleChoiceItems(labels,Arrays.asList(values).indexOf(resolution),(d,which)->{
         resolution=values[which];getPreferences(MODE_PRIVATE).edit().putString("resolution",resolution).apply();
-        resolutionButton.setText(L10n.t("Resolution")+": "+resolutionLabel());enrichmentGeneration++;applyResolution();if(!searchedQuery.isEmpty()&&search.isEnabled())showCount();d.dismiss();
+        resolutionButton.setText(L10n.t("Resolution")+": "+resolutionLabel());enrichmentGeneration++;applyResolution();if(!searchedQuery.isEmpty()&&!searching)showCount();d.dismiss();
       }).show();
     });Ui.add(resultsRoot,resolutionButton,240,44);
     // Everything found is filtered out: say so in large type, or it reads as a failed search.
@@ -142,14 +156,19 @@ public final class TorrentSearchActivity extends Activity {
     state.putString("results", allResults.toString());
     state.putStringArrayList("added", new ArrayList<>(added));
     state.putInt("position", list.getFirstVisiblePosition());
-    state.putBoolean("searching", !search.isEnabled());
+    state.putBoolean("searching", searching);
     if (inDetail && selectedItem != null) state.putString("selected", selectedItem.toString());
   }
   private LinearLayout page() { LinearLayout root=Ui.column(this); root.setBackgroundColor(Ui.BG); Ui.pad(root,36,24); return root; }
+  /**
+   * A search is under way. The Search button stays enabled meanwhile: disabling the control
+   * under the remote sent focus to the first control on the page, the profile button.
+   */
+  private boolean searching;
   private void search() {
-    String value=query.getText().toString().trim(); if (value.length()<2) return;
+    String value=query.getText().toString().trim(); if (value.length()<2 || searching) return;
     enrichmentGeneration++;
-    int request=++generation; int provider=source; boolean requestChina=china; search.setEnabled(false); list.setEnabled(false); hiddenBox.setVisibility(View.GONE); list.setVisibility(View.VISIBLE); status.setText(L10n.t(requestChina?"Searching and checking links…":"Searching…"));
+    int request=++generation; int provider=source; boolean requestChina=china; searching=true; list.setEnabled(false); hiddenBox.setVisibility(View.GONE); list.setVisibility(View.VISIBLE); status.setText(L10n.t(requestChina?"Searching and checking links…":"Searching…"));
     ((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(query.getWindowToken(),0);
     io.execute(() -> {
       try {
@@ -160,17 +179,17 @@ public final class TorrentSearchActivity extends Activity {
           if(getIntent().hasExtra("year"))body.put("year",getIntent().getIntExtra("year",0));
           if(getIntent().hasExtra("season"))body.put("season",getIntent().getIntExtra("season",0));
         }
-        JSONObject response=api.request("POST","/v1/search/torrents",body);
+        JSONObject response=ready().request("POST","/v1/search/torrents",body);
         runOnUiThread(() -> {
           if(isDestroyed() || request!=generation)return;
-          search.setEnabled(true); list.setEnabled(true); searchedQuery=response.optString("query",value); allResults=response.optJSONArray("items"); if(allResults==null)allResults=new JSONArray();applyResolution();
+          searching=false; list.setEnabled(true); searchedQuery=response.optString("query",value); allResults=response.optJSONArray("items"); if(allResults==null)allResults=new JSONArray();applyResolution();
           List<String> messages=notes; messages.clear();
           JSONArray providers=response.optJSONArray("providers");
           if(providers!=null) for(int i=0;i<providers.length();i++) {JSONObject p=providers.optJSONObject(i); if(p!=null&&!p.isNull("error"))messages.add(label(p.optString("provider"))+": "+p.optString("error"));}
           showCount(); ((BaseAdapter)list.getAdapter()).notifyDataSetChanged();
           if(results.length()>0)list.requestFocus();
         });
-      } catch(Exception error) {runOnUiThread(() -> {if(!isDestroyed()&&request==generation){search.setEnabled(true);list.setEnabled(true);status.setText(MainActivity.message(error));}});}
+      } catch(Exception error) {runOnUiThread(() -> {if(!isDestroyed()&&request==generation){searching=false;list.setEnabled(true);status.setText(MainActivity.message(error));}});}
     });
   }
   private static String label(String provider) {return provider.equals("quark")?L10n.t("Quark Drive"):provider.equals("tpb")?"The Pirate Bay":provider.equals("csv")?"Torrent CSV":"Nyaa";}
@@ -358,7 +377,7 @@ public final class TorrentSearchActivity extends Activity {
       // The first episode's tracks are read from the drive; a few seconds, once per copy.
       TextView tracks=Ui.text(this,copy.optJSONObject("measured")!=null?tracksText(copy.optJSONObject("measured")):copyKey.isEmpty()?"":L10n.t("Checking sound and subtitles…"),13,Ui.TEXT);Ui.add(root,tracks,-1,-2);
       if(copy.optJSONObject("measured")==null&&!copyKey.isEmpty())io.execute(()->{JSONObject read=null;
-        try{read=api.request("POST","/v1/cloud/probe",new JSONObject().put("url",shareUrl(item)).put("copy",copyKey));}catch(Exception ignored){}
+        try{read=ready().request("POST","/v1/cloud/probe",new JSONObject().put("url",shareUrl(item)).put("copy",copyKey));}catch(Exception ignored){}
         JSONObject measured=read;runOnUiThread(()->{if(isDestroyed()||request!=generation)return;tracks.setText(measured!=null&&measured.has("audio")?tracksText(measured):"");});});
       Ui.gap(root,6);}
     LinearLayout actions=Ui.row(this);Ui.add(actions,Ui.button(this,L10n.t("Back"),this::onBackPressed),100,44);Ui.gap(actions,12);
@@ -386,7 +405,7 @@ public final class TorrentSearchActivity extends Activity {
         }
         if(body.optString("title").isEmpty())return;
         add.setEnabled(false);add.setText(L10n.t("Adding…"));
-        io.execute(()->{try{JSONObject result=api.request("POST","/v1/cloud/add",body);
+        io.execute(()->{try{JSONObject result=ready().request("POST","/v1/cloud/add",body);
           // Says so when it was already queued, or already in the library, instead of adding it again.
           int had=result.optInt("already_have"),all=result.optInt("total");boolean nothing=result.optBoolean("already_queued")||result.isNull("job_id");
           String warning=result.optBoolean("already_queued")?L10n.t("Already in the download queue."):had>0&&had>=all?String.format(L10n.locale(),L10n.t("Already in your library: all %d videos. Nothing to download."),all)
@@ -398,7 +417,7 @@ public final class TorrentSearchActivity extends Activity {
     });
     String url=shareUrl(item);
     io.execute(()->{JSONObject share=null;try{
-      JSONArray shares=api.request("POST","/v1/cloud/search",new JSONObject().put("query",searchedQuery.isEmpty()?title(item):searchedQuery)).optJSONArray("shares");
+      JSONArray shares=ready().request("POST","/v1/cloud/search",new JSONObject().put("query",searchedQuery.isEmpty()?title(item):searchedQuery)).optJSONArray("shares");
       for(int i=0;shares!=null&&i<shares.length();i++)if(url.equals(shares.optJSONObject(i).optString("url"))){share=shares.optJSONObject(i);break;}
     }catch(Exception ignored){}
       JSONObject found=share;
@@ -441,7 +460,7 @@ public final class TorrentSearchActivity extends Activity {
     if(chosen==null){note.setText(L10n.t("Source details unavailable."));return;}
     JSONObject source=chosen;
     io.execute(() -> {try{
-      JSONObject response=api.request("POST","/v1/search/torrents/detail",new JSONObject().put("provider",source.optString("provider")).put("id",source.optString("id")));
+      JSONObject response=ready().request("POST","/v1/search/torrents/detail",new JSONObject().put("provider",source.optString("provider")).put("id",source.optString("id")));
       JSONArray entries=response.optJSONArray("files");List<String> names=new ArrayList<>();if(entries!=null)for(int i=0;i<entries.length();i++){JSONObject f=entries.optJSONObject(i);names.add(f.optString("name")+(f.isNull("size_bytes")?"":"\n"+android.text.format.Formatter.formatFileSize(this,f.optLong("size_bytes"))));}
       runOnUiThread(()->{if(isDestroyed()||request!=generation)return;description.setText(sourceLanguages(response)+response.optString("description"));
         JSONArray releases=response.optJSONArray("releases");
@@ -484,7 +503,7 @@ public final class TorrentSearchActivity extends Activity {
       JSONObject payload=new JSONObject().put("paused",paused);
       if(!item.optString("magnet").isEmpty())payload.put("magnet",item.getString("magnet"));
       else throw new Exception(L10n.t("This release has no downloadable torrent."));
-      JSONObject response=api.request("POST","/v1/torrents",payload);
+      JSONObject response=ready().request("POST","/v1/torrents",payload);
       runOnUiThread(()->{if(isDestroyed())return;added.add(item.optString("info_hash").isEmpty()?item.optString("name"):item.optString("info_hash"));button.setText(L10n.t("Added"));Toast.makeText(this,response.has("torrent_duplicate")?L10n.t("Already in your torrents"):L10n.t("Torrent added"),Toast.LENGTH_LONG).show();});
     }catch(Exception error){runOnUiThread(()->{if(!isDestroyed()){button.setTag(false);button.setEnabled(true);button.setText(L10n.t("Add torrent"));new AppDialog(this).setTitle(L10n.t("Couldn’t add torrent")).setMessage(MainActivity.message(error)).setPositiveButton(L10n.t("Close"),null).show();}});}});
   }
