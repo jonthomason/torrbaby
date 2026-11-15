@@ -206,7 +206,8 @@ struct RootView: View {
         return start
     }
     @State private var location = smokeTestStart ?? Location()
-    @State private var preferredColumn: NavigationSplitViewColumn = smokeTestStart == nil ? .sidebar : .detail
+    // iPhone opens on Home, as every other platform does; its back button leads to the menu.
+    @State private var preferredColumn: NavigationSplitViewColumn = .detail
     @State private var past: [Location] = []
     @State private var future: [Location] = []
     private var selection: Section? { location.section }
