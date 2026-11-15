@@ -365,7 +365,8 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
             let path = root.join(saved["output"].as_str().unwrap_or_default());
             if path.is_file() { return Ok(Some(path)); }
         }
-        if saved["state"] == "missing" { return Ok(None); }
+        // Lookups before version 2 never matched Chinese ("zh-CN" against "zh-cn"): asked again.
+        if saved["state"] == "missing" && (saved["lookup"].as_u64() >= Some(2) || saved["set_aside"] == true) { return Ok(None); }
         if saved["after"].as_f64().is_some_and(|t| t > now()) { return Ok(None); }
     }
     let save = |document: Value| -> Result<()> {
@@ -379,7 +380,7 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
             Ok(Some(path))
         }
         Ok(crate::opensubtitles::Found::Missing(why)) => {
-            save(json!({"state":"missing","asset_id":id,"reason":why,"updated":now()}))?;
+            save(json!({"state":"missing","asset_id":id,"reason":why,"lookup":2,"updated":now()}))?;
             Ok(None)
         }
         Err(error) => {

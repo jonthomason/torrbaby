@@ -122,7 +122,8 @@ pub(crate) fn choose(results: &[Value], release: &str, language: &str) -> Option
     let mine = tokens(release);
     results.iter().filter_map(|r| {
         let a = &r["attributes"];
-        if a["language"] != language || a["ai_translated"] == true || a["machine_translated"] == true || a["foreign_parts_only"] == true { return None; }
+        // Results name Chinese "zh-CN" while searches ask for "zh-cn".
+        if !a["language"].as_str().is_some_and(|l| l.eq_ignore_ascii_case(language)) || a["ai_translated"] == true || a["machine_translated"] == true || a["foreign_parts_only"] == true { return None; }
         let file = a["files"].as_array()?.first()?;
         let id = file["file_id"].as_u64()?;
         let theirs = tokens(a["release"].as_str().unwrap_or(""));
@@ -268,7 +269,7 @@ mod tests {
         let hashed = [result(1, "Other", false, 9000, json!({})), result(4, "Other", true, 1, json!({}))];
         assert_eq!(choose(&hashed, "x", "en").map(|c| c.0), Some(4));
         assert_eq!(choose(&[result(5, "x", false, 1, json!({"language":"fr"}))], "x", "en").map(|c| c.0), None);
-        assert_eq!(choose(&[result(6, "x", false, 1, json!({"language":"zh-cn"}))], "x", "zh-cn").map(|c| c.0), Some(6));
+        assert_eq!(choose(&[result(6, "x", false, 1, json!({"language":"zh-CN"}))], "x", "zh-cn").map(|c| c.0), Some(6));
         assert_eq!(utc_seconds("2026-11-16T00:00:00.000Z"), Some(1_794_787_200.0));
         assert_eq!(waits_until("OpenSubtitles daily download limit reached; downloads reset at 1794800000"), Some(1_794_800_000.0));
     }
