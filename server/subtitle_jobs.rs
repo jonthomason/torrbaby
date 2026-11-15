@@ -62,6 +62,12 @@ pub struct Manager {
     index: Mutex<std::collections::HashMap<String, Vec<String>>>,
 }
 const MAX_CONCURRENCY: usize = 8;
+/// Disk the subtitle store may use. Every finished subtitle stays (the library plays them), so
+/// this bounds unfinished work and the cache, not the library: a 4,096-file cap (about 2,000
+/// subtitles at 200 MB) was reached on Diamond on 2026-11-14 and every later job failed with
+/// "Subtitle storage is full". A subtitle is tens of KB; 8 GB is room for any library.
+const STORAGE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+pub(crate) const STORAGE_FULL: &str = "Subtitle storage is full";
 pub(crate) fn revision(path: &Path) -> Result<String> {
     let m = path.metadata()?;
     ensure!(m.is_file(), "Media is not a file");
@@ -577,9 +583,8 @@ impl Manager {
             }
         }
         entries.sort();
-        let mut count = entries.len() + pending.len();
         for (_, id) in entries {
-            if bytes < 496 * 1024 * 1024 && count < 4096 {
+            if bytes < STORAGE_BYTES {
                 break;
             }
             if self.read(&id).is_ok_and(|job| job.state == "ready") { continue; }
@@ -590,9 +595,8 @@ impl Manager {
                     bytes = bytes.saturating_sub(metadata.len());
                 }
             }
-            count = count.saturating_sub(1);
         }
-        ensure!(bytes < 496 * 1024 * 1024 && count < 4096, "Subtitle storage is full");
+        ensure!(bytes < STORAGE_BYTES, STORAGE_FULL);
         Ok(())
     }
     async fn run(self: Arc<Self>, mut job: Job) {
@@ -673,7 +677,7 @@ impl Manager {
                     let progress=serde_json::to_vec(&ProgressRef {completed:end,cues:&cues})?;
                     ensure!(progress.len()<=16_777_216,"Subtitle checkpoint too large");
                     let used=fs::read_dir(&self.root)?.try_fold(0u64, |sum, entry| -> Result<u64> { Ok(sum.saturating_add(present(entry?.metadata())?.map_or(0,|m|m.len()))) })?;
-                    ensure!(used.saturating_add(progress.len() as u64)<=512*1024*1024,"Subtitle storage is full");
+                    ensure!(used.saturating_add(progress.len() as u64)<=STORAGE_BYTES,STORAGE_FULL);
                     let temporary=self.root.join(format!("{}.progress.tmp",job.id));
                     fs::write(&temporary,progress)?;
                     fs::rename(temporary,&checkpoint)?;

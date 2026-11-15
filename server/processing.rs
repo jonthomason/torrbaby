@@ -48,6 +48,16 @@ fn reopen_replaced(db:&Database)->Result<usize> {
         WHERE state!='running' AND subtitles_state='skipped' AND json_extract(detail,'$.error')=?2 \
         AND NOT EXISTS(SELECT 1 FROM media_inventory i WHERE i.asset_id=media_processing.asset_id AND i.revision=media_processing.revision)",rusqlite::params![now(),MEDIA_CHANGED])?)
 }
+/// Files whose subtitles were skipped because the subtitle store had reached its old cap
+/// (4,096 files), which it no longer has: prepare them again.
+fn reopen_storage_full(db:&Database)->Result<usize> {
+    let reopened=db.connection.execute("UPDATE media_processing SET subtitles_state='pending',stage='subtitles',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=?1 \
+        WHERE state!='running' AND subtitles_state='skipped' AND (json_extract(detail,'$.error')=?2 \
+          OR EXISTS(SELECT 1 FROM processing_failures f WHERE f.asset_id=media_processing.asset_id AND f.stage='subtitles_skipped' AND f.error=?2 AND f.resolved_at IS NULL))",
+        rusqlite::params![now(),crate::subtitle_jobs::STORAGE_FULL])?;
+    if reopened>0 {tracing::info!(reopened,"Subtitles skipped for a full subtitle store will be prepared again");}
+    Ok(reopened)
+}
 /// `skipped`: credits analysis failed. It is optional, so the file finishes without it.
 fn finished(value:&str)->bool {matches!(value,"ready"|"not_applicable"|"skipped")}
 fn sign_off(db:&Database,id:&str,revision:&str)->Result<bool> {
@@ -284,6 +294,7 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
             }
             reopen_outdated(&db)?;
             reopen_replaced(&db)?;
+            reopen_storage_full(&db)?;
             retire_obsolete_failures(&db)?;
             reopen_untranscribed(&db,&s.data_dir)?;
             reopen_line_translated(&db,&s.subtitle_jobs.line_translated())?;
@@ -549,6 +560,23 @@ mod tests {
         db.connection.execute("UPDATE media_processing SET inventory_state='ready',subtitles_state='ready',credits_state='ready' WHERE asset_id='episode'",[])?;
         assert!(sign_off(&db,"episode","r1")?);
         assert!(!db.rows("SELECT resolved_at FROM processing_failures",[])?[0]["resolved_at"].is_null());
+        Ok(())
+    }
+    #[test]
+    fn subtitles_skipped_for_a_full_store_are_prepared_again()->Result<()> {
+        let db=database()?;
+        for (id,error) in [("full",crate::subtitle_jobs::STORAGE_FULL),("broken","Subtitle validation failed")] {
+            enroll(&db,id,"r1")?;
+            db.connection.execute("UPDATE media_processing SET state='ready',stage='complete',inventory_state='ready',subtitles_state='skipped',credits_state='ready',detail=? WHERE asset_id=?",
+                rusqlite::params![json!({"state":"failed","error":error}).to_string(),id])?;
+        }
+        // Recorded only in the failure log, not in the file's own detail.
+        enroll(&db,"logged","r1")?;
+        db.connection.execute("UPDATE media_processing SET state='ready',stage='complete',inventory_state='ready',subtitles_state='skipped',credits_state='ready',detail='{}' WHERE asset_id='logged'",[])?;
+        log_failure(&db,"logged","r1","subtitles_skipped",crate::subtitle_jobs::STORAGE_FULL)?;
+        assert_eq!(reopen_storage_full(&db)?,2);
+        let rows=db.rows("SELECT asset_id,state,subtitles_state FROM media_processing ORDER BY asset_id",[])?;
+        assert_eq!(rows.iter().map(|r|r["subtitles_state"].as_str().unwrap_or("")).collect::<Vec<_>>(),["skipped","pending","pending"]);
         Ok(())
     }
     #[test]
