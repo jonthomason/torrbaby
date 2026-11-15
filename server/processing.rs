@@ -56,13 +56,11 @@ fn reopen_replaced(db:&Database)->Result<usize> {
 }
 /// Subtitle errors a later build no longer has: the subtitle store's old 4,096-file cap, and
 /// a subtitle track in neither English nor Chinese blocking the picture and the speech.
-const RETIRED_SUBTITLE_ERRORS:[&str;5]=[crate::subtitle_jobs::STORAGE_FULL,crate::ocr_subtitles::UNIDENTIFIED_LANGUAGE,
+const RETIRED_SUBTITLE_ERRORS:[&str;4]=[crate::subtitle_jobs::STORAGE_FULL,crate::ocr_subtitles::UNIDENTIFIED_LANGUAGE,
     // The Matroska reader on a file still being copied in (see `settling`).
     "integers can be at most 8 bytes%",
     // A bitmap track in a large file, cut off by the scan's old fixed three minutes.
-    "Bitmap subtitles could not be decoded (Bitmap scan timed out)%",
-    // Unreadable bitmap tracks now fall through to the speech.
-    crate::ocr_subtitles::UNREADABLE];
+    "Bitmap subtitles could not be decoded (Bitmap scan timed out)%"];
 /// Files whose subtitles were skipped for one of those errors: prepare them again.
 fn reopen_storage_full(db:&Database)->Result<usize> {
     let mut reopened=0;
