@@ -462,7 +462,8 @@ pub mod ipv6 {
         ensure!(public(device), "address must be a public IPv6 address");
         let port = *PORT.get().context("This server is not listening for direct connections over IPv6")?;
         let own = own_address().context("This server has no public IPv6 address")?;
-        let fingerprint = fingerprint().context("Direct connection unavailable")?;
+        // The identity the endpoint answers with (see `start`), whichever way it came to be.
+        let fingerprint = DIRECT.identity()?.fingerprint.clone();
         {
             let mut expected = EXPECTED.lock().map_err(|_| anyhow::anyhow!("Direct connection unavailable"))?;
             let now = Instant::now();
