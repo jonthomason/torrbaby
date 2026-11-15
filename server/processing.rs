@@ -389,7 +389,9 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
     }
     flight.is_empty()
     };
-    if idle && limit>0 {warm_playback_index(s).await?;}
+    // Alongside subtitle work, not only when the queue is empty (it can be busy for days).
+    let _=idle;
+    if limit>0 {warm_playback_index(s).await?;}
     Ok(())
 }
 /// Files whose playback index was rebuilt (or tried) in this run, and when the
