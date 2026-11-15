@@ -99,11 +99,15 @@ fn untried(saved: &Value) -> Vec<&'static str> {
         tried.retain(|step| !LANGUAGES.contains(step));
     }
     if saved["state"] == "ready" {
-        // A title that has subtitles keeps them: OpenSubtitles' 20 downloads a day go to
-        // titles with none (the user's rule, 2026-11-15), and transcripts already
-        // translated, some by the external fleet, stay as they are.
-        if saved["method"] == OPENSUBTITLES || tried.contains(&PICTURE) { return Vec::new(); }
-        return vec![PICTURE];
+        // Subtitles people wrote, or read from the picture, stay. A transcript of the audio,
+        // English or Mandarin, gives way to OpenSubtitles' English when it has some (the
+        // user's rule, 2026-11-15: transcripts are poor); its Chinese is then translated on
+        // device. No transcript was translated by the external fleet, whose work stays.
+        if saved["method"] == OPENSUBTITLES || saved["method"] == "burned" { return Vec::new(); }
+        let mut left = Vec::new();
+        if !tried.contains(&PICTURE) { left.push(PICTURE); }
+        if !tried.contains(&OPENSUBTITLES) { left.push(OPENSUBTITLES); }
+        return left;
     }
     STEPS.into_iter().filter(|step| !tried.contains(step)).collect()
 }
@@ -474,8 +478,9 @@ mod tests {
         assert_eq!(untried(&json!({"state":"rejected","reason":"The audio is not English speech"})), ["picture", "opensubtitles", "zh-Hans"]);
         // No audio to decode says nothing about the picture.
         assert_eq!(untried(&json!({"state":"rejected","reason":"No decodable audio track","audio_decoder":AUDIO_DECODER})), ["picture", "opensubtitles"]);
-        // A title with subtitles keeps them: downloads go to titles with none.
-        assert!(untried(&json!({"state":"ready","language":"en","method":"speech","tried":["picture","en"]})).is_empty());
+        // A transcript gives way to OpenSubtitles; the picture's Chinese does not.
+        assert_eq!(untried(&json!({"state":"ready","language":"en","method":"speech","tried":["picture","en"]})), ["opensubtitles"]);
+        assert_eq!(untried(&json!({"state":"ready","language":"zh-Hans","method":"speech","tried":["picture","zh-Hans"]})), ["opensubtitles"]);
         assert!(untried(&json!({"state":"ready","language":"zh-Hans","method":"burned","tried":["picture"]})).is_empty());
         assert!(untried(&json!({"state":"ready","language":"en","method":"opensubtitles","tried":["opensubtitles"]})).is_empty());
         // Rejected before ffmpeg decoded what AVFoundation cannot: the speech is tried again.
@@ -483,14 +488,14 @@ mod tests {
         assert_eq!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["picture","zh-Hans","en"]})), ["opensubtitles"]);
         assert!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["picture","opensubtitles","zh-Hans","en"]})).is_empty());
         assert_eq!(untried(&json!({"state":"rejected","reason":NOT_SPEECH,"tried":["zh-Hans","en"]})), ["picture","opensubtitles"]);
-        assert_eq!(untried(&json!({"state":"ready","language":"zh-Hans","tried":["en","burned","zh-Hans"]})), ["picture"], "a verdict from before the picture could be found");
+        assert_eq!(untried(&json!({"state":"ready","language":"zh-Hans","tried":["en","burned","zh-Hans"]})), ["picture","opensubtitles"], "a verdict from before the picture could be found");
         // A transcript made before the picture was looked at is redone from the picture once,
         // Mandarin or English: the audio is only ever a last resort.
-        assert_eq!(untried(&json!({"state":"ready","language":"zh-Hans"})), ["picture"]);
-        assert!(untried(&json!({"state":"ready","language":"zh-Hans","tried":["zh-Hans","picture"]})).is_empty());
-        assert_eq!(untried(&json!({"state":"ready"})), ["picture"]);
-        assert_eq!(untried(&json!({"state":"ready","language":"en"})), ["picture"]);
-        assert!(untried(&json!({"state":"ready","language":"en","tried":["picture","en"]})).is_empty());
+        assert_eq!(untried(&json!({"state":"ready","language":"zh-Hans"})), ["picture","opensubtitles"]);
+        assert_eq!(untried(&json!({"state":"ready","language":"zh-Hans","tried":["zh-Hans","picture"]})), ["opensubtitles"]);
+        assert_eq!(untried(&json!({"state":"ready"})), ["picture","opensubtitles"]);
+        assert_eq!(untried(&json!({"state":"ready","language":"en"})), ["picture","opensubtitles"]);
+        assert_eq!(untried(&json!({"state":"ready","language":"en","tried":["picture","en"]})), ["opensubtitles"]);
         assert!(chinese_name(Path::new("/tv/尚公主 - S01E05.mkv")) && !chinese_name(Path::new("/tv/Black Doves - S01E01.mkv")));
     }
     #[test]

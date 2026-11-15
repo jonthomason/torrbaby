@@ -303,7 +303,11 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
             }
         }
     }
-    let Outcome{prepared,jobs,complete,progress,..}=outcome;
+    let Outcome{mut prepared,jobs,complete,progress,..}=outcome;
+    // While replacements are made (OpenSubtitles' English for a transcript, then its Chinese
+    // translated on device), each language keeps the subtitles it had until its new ones
+    // are ready: a title never loses subtitles before the new ones exist.
+    if !complete { keep_until_replaced(&mut prepared, info["prepared"].as_array().map(Vec::as_slice).unwrap_or(&[])); }
     info["prepared"]=json!(prepared);info["jobs"]=json!(jobs);
     info["preparation_state"]=json!(if complete {"ready"}else if progress["state"]=="failed" {"failed"}else{"preparing"});
     {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;save(&db,id,&revision,&info)?;}
@@ -311,6 +315,13 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
 }
 
 struct Outcome { prepared:Vec<Value>, jobs:Vec<Value>, complete:bool, progress:Value, no_source:bool }
+/// Earlier ready subtitles for languages the new plan has not made ready yet.
+fn keep_until_replaced(prepared:&mut Vec<Value>, earlier:&[Value]) {
+    let ready:std::collections::HashSet<String>=prepared.iter().filter_map(|j|j["language"].as_str().map(str::to_owned)).collect();
+    for job in earlier.iter().filter(|j|j["state"]=="ready") {
+        if job["language"].as_str().is_some_and(|l|!ready.contains(l)) && !prepared.iter().any(|p|p["id"]==job["id"]) { prepared.push(job.clone()); }
+    }
+}
 /// Start or check the subtitle jobs for the planned sources, in order:
 /// extraction must finish before its translation starts.
 fn advance_jobs(s:&Service,asset:&Value,id:&str,planned:&[(std::path::PathBuf,u64,&'static str,Option<&'static str>)])->Result<Outcome> {
@@ -378,6 +389,13 @@ pub fn summary(db: &Database, _jobs: &crate::subtitle_jobs::Manager) -> Result<V
 #[cfg(test)]
 mod priority_tests {
     use super::*;
+    #[test]
+    fn a_language_keeps_its_subtitles_until_the_new_ones_are_ready() {
+        let earlier=[json!({"id":"old-en","state":"ready","language":"en"}),json!({"id":"old-zh","state":"ready","language":"zh-Hans"})];
+        let mut prepared=vec![json!({"id":"new-en","state":"ready","language":"en"})];
+        keep_until_replaced(&mut prepared,&earlier);
+        assert_eq!(prepared.iter().map(|j|j["id"].as_str().unwrap()).collect::<Vec<_>>(),["new-en","old-zh"]);
+    }
     #[test]
     fn shows_stay_together_but_clicked_episode_moves_to_front() {
         let mut assets=vec![
