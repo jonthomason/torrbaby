@@ -395,9 +395,11 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
 /// Files whose playback index was rebuilt (or tried) in this run, and when the
 /// last warm-up pass ran.
 static WARMED:std::sync::LazyLock<std::sync::Mutex<(std::collections::HashSet<String>,f64)>>=std::sync::LazyLock::new(Default::default);
-/// Processed Matroska files can lose their playback index to the cache's space
-/// reclaim, and then the next play waits while the whole file is re-read. While
-/// nothing else is running, rebuild one missing index at a time in queue order.
+/// Processed Matroska files can lose their playback index (the cache's space reclaim, or
+/// the cache moving to its own drive), and then the next play waits while the whole file
+/// is re-read. Rebuild one missing index at a time, the most recently played and added
+/// first, alongside subtitle work: that work can fill the queue for days, and an index is
+/// only a read of the file.
 async fn warm_playback_index(s:&Service)->Result<()> {
     {let mut warmed=WARMED.lock().map_err(|_|anyhow::anyhow!("Processing pool unavailable"))?;
         if now()-warmed.1<60.0 {return Ok(());}
@@ -405,11 +407,15 @@ async fn warm_playback_index(s:&Service)->Result<()> {
     if !s.virtual_media.idle() || !s.virtual_media.can_preindex() || playback_active(s)? {return Ok(());}
     let candidates:Vec<Value>={
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
-        let busy:bool=db.connection.query_row("SELECT EXISTS(SELECT 1 FROM media_processing WHERE state='running')",[],|r|r.get(0))?;
-        if busy {return Ok(());}
-        let ready:std::collections::HashSet<String>=db.rows("SELECT asset_id FROM media_processing WHERE state='ready'",[])?
-            .iter().filter_map(|r|r["asset_id"].as_str().map(str::to_owned)).collect();
-        assets(&db)?.into_iter().filter(|a|a["role"]!="extra" && a["id"].as_str().is_some_and(|id|ready.contains(id))).collect()
+        let played:std::collections::HashMap<String,f64>=db.rows("SELECT media_id,MAX(last_played) AS at FROM profile_playback GROUP BY media_id",[])?
+            .iter().filter_map(|r|Some((r["media_id"].as_str()?.to_owned(),r["at"].as_f64().unwrap_or(0.0)))).collect();
+        let mut list:Vec<Value>=assets(&db)?.into_iter().filter(|a|a["role"]!="extra" && a["available"]==true && a["complete"]==true).collect();
+        let recency=|a:&Value|{
+            let media=format!("{}:{}",a["torrent_hash"].as_str().unwrap_or(""),a["file_index"].as_i64().unwrap_or(0));
+            played.get(&media).copied().unwrap_or(0.0).max(a["added_at"].as_f64().unwrap_or(0.0))
+        };
+        list.sort_by(|a,b|recency(b).total_cmp(&recency(a)));
+        list
     };
     for asset in candidates {
         let Some(id)=asset["id"].as_str() else{continue};

@@ -1193,15 +1193,29 @@ struct PlaybackSpinner: View {
     @Environment(\.isFocused) private var focused
     #endif
     var body: some View {
-        ProgressView()
-            #if os(tvOS)
-            .tint(focused ? .black : .white)
-            #else
-            .controlSize(.small).tint(color)
-            #endif
-            .accessibilityHidden(true)
+        #if os(tvOS)
+        ProgressView().tint(focused ? .black : .white).accessibilityHidden(true)
+        #else
+        // Drawn here rather than with ProgressView: the Mac's spinner ignores the tint and
+        // drew white (dark appearance) on the white Play button, so it could not be seen.
+        PlaybackArc(color: color).frame(width: 16, height: 16).accessibilityHidden(true)
+        #endif
     }
 }
+#if !os(tvOS)
+/// A turning three-quarter ring in the given colour, the size of a small spinner.
+struct PlaybackArc: View {
+    let color: Color
+    var body: some View {
+        TimelineView(.animation) { context in
+            let turn = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 0.9) / 0.9
+            Circle().trim(from: 0, to: 0.75)
+                .stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(turn * 360))
+        }
+    }
+}
+#endif
 /// A Play button preparing its file: says so, and pressing it again cancels.
 struct PreparingPlayback: ViewModifier {
     let active: Bool
