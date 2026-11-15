@@ -266,6 +266,43 @@ fn fire(sockets: &[UdpSocket], server: SocketAddr, id: &str, limit: Duration, in
     None
 }
 
+/// The path over IPv6, where both ends have a public IPv6 address: no NAT stands between
+/// them, so there is nothing to punch. Diamond is told this device's address (over the route
+/// in `plan.signal`) and answers with its own and the port it listens on; the socket returned
+/// is ready for QUIC there. None when this network has no IPv6, Diamond has none, or it is a
+/// server from before this. Whether packets really pass is only known once QUIC is tried:
+/// the caller falls back to the punch if it does not open.
+pub fn ipv6(plan: &Plan) -> Option<Punched> {
+    use std::net::{IpAddr, Ipv6Addr};
+    let probe = socket6(plan.interface.as_deref())?;
+    probe.connect((Ipv6Addr::new(0x2400, 0x3200, 0, 0, 0, 0, 0, 1), 53)).ok()?;
+    let own = match probe.local_addr().ok()?.ip() {
+        // Global unicast (2000::/3) only: not a private or link-local address.
+        IpAddr::V6(address) if address.segments()[0] & 0xe000 == 0x2000 => address,
+        _ => return None,
+    };
+    let kind = match plan.interface.as_deref() { Some(i) if i.starts_with("pdp") || i.starts_with("rmnet") => "cellular", Some(i) if i.starts_with("en") || i.starts_with("wlan") => "wifi", _ => "unknown" };
+    let reply = post(&plan.signal, &plan.token, "/v1/direct/ipv6", &json!({"address": own.to_string(), "kind": kind})).ok()?;
+    let server: SocketAddr = reply["server"].as_str()?.parse().ok()?;
+    let fingerprint = reply["fingerprint"].as_str()?.to_owned();
+    let socket = socket6(plan.interface.as_deref())?;
+    Some(Punched { socket, server, fingerprint, public_address: own.to_string(), summary: "over IPv6, nothing to punch".into() })
+}
+
+/// A UDP socket for IPv6, on `interface` where one is named (the real network, not a VPN).
+fn socket6(interface: Option<&str>) -> Option<UdpSocket> {
+    let socket = UdpSocket::bind((std::net::Ipv6Addr::UNSPECIFIED, 0)).ok()?;
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    if let Some(index) = interface.and_then(|name| std::ffi::CString::new(name).ok()).map(|name| unsafe { libc::if_nametoindex(name.as_ptr()) }).filter(|index| *index != 0) {
+        use std::os::fd::AsRawFd;
+        let value = index as libc::c_uint;
+        unsafe { libc::setsockopt(socket.as_raw_fd(), libc::IPPROTO_IPV6, libc::IPV6_BOUND_IF, &value as *const _ as *const libc::c_void, std::mem::size_of::<libc::c_uint>() as libc::socklen_t) };
+    }
+    #[cfg(not(any(target_os = "ios", target_os = "macos")))]
+    let _ = interface;
+    Some(socket)
+}
+
 /// A JSON POST to Diamond over `base` ("http://host:port"), with the device's token. Plain
 /// HTTP/1.1 over TCP: the relay's loopback port, or Tailscale.
 pub fn post(base: &str, token: &str, path: &str, body: &Value) -> Result<Value, String> {

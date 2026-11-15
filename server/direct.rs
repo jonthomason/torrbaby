@@ -37,6 +37,10 @@ fn random_ports(count: usize) -> Vec<u16> {
     chosen.into_iter().collect()
 }
 const ALPN: &[u8] = b"tbdirect";
+/// The UDP port devices reach this server on over IPv6 (see `ipv6`). The home router must let
+/// IPv6 in to it; it is the port ABT's host uses for TCP on the same machine, so one rule at
+/// the router serves both.
+pub const IPV6_PORT: u16 = 47800;
 
 pub static DIRECT: std::sync::LazyLock<Direct> = std::sync::LazyLock::new(Direct::default);
 
@@ -308,21 +312,7 @@ async fn run(socket: UdpSocket, ip: IpAddr, ports: Arc<Vec<u16>>, id: String, id
         s["punched_after_ms"] = json!(started.elapsed().as_millis() as u64);
     }
     // The same socket, and so the same hole, becomes a QUIC endpoint for that device only.
-    let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-        .with_protocol_versions(&[&rustls::version::TLS13])?
-        .with_no_client_auth()
-        .with_single_cert(vec![identity.cert.clone()], rustls::pki_types::PrivateKeyDer::Pkcs8(identity.key.clone().into()))?;
-    tls.alpn_protocols = vec![ALPN.to_vec()];
-    let mut server = quinn::ServerConfig::with_crypto(Arc::new(quinn::crypto::rustls::QuicServerConfig::try_from(tls)?));
-    let mut transport = quinn::TransportConfig::default();
-    transport.keep_alive_interval(Some(Duration::from_secs(10)));
-    transport.max_idle_timeout(Some(Duration::from_secs(45).try_into()?));
-    transport.max_concurrent_bidi_streams(256u32.into());
-    // BBR, not Cubic: Cubic fills a bottleneck's queue until packets are lost (on CT 5G the
-    // round trip climbed 100 ms → 3 s with almost no loss while video streamed, and the player
-    // stalled); BBR paces to the measured bottleneck and keeps the queue short.
-    transport.congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
-    server.transport_config(Arc::new(transport));
+    let server = quic_server(&identity)?;
     let std_socket = socket.into_std()?;
     // Keep spraying until QUIC connects: iOS may start QUIC from a fresh port rather than the
     // punched one, and the device's NAT gives each new destination port the next port along,
@@ -366,6 +356,186 @@ async fn run(socket: UdpSocket, ip: IpAddr, ports: Arc<Vec<u16>>, id: String, id
     eprintln!("Direct {id}: closed after {} s ({})", started.elapsed().as_secs(), connection.close_reason().map(|r| r.to_string()).unwrap_or_default());
     if let Ok(mut s) = state.lock() { s["state"] = json!("closed"); s["closed_after_ms"] = json!(started.elapsed().as_millis() as u64); }
     Ok(())
+}
+
+/// What a device's QUIC meets, on a punched socket or over IPv6: Diamond's identity, ALPN
+/// `tbdirect`, and the transport settings video needs.
+fn quic_server(identity: &Identity) -> Result<quinn::ServerConfig> {
+    let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_protocol_versions(&[&rustls::version::TLS13])?
+        .with_no_client_auth()
+        .with_single_cert(vec![identity.cert.clone()], rustls::pki_types::PrivateKeyDer::Pkcs8(identity.key.clone().into()))?;
+    tls.alpn_protocols = vec![ALPN.to_vec()];
+    let mut server = quinn::ServerConfig::with_crypto(Arc::new(quinn::crypto::rustls::QuicServerConfig::try_from(tls)?));
+    let mut transport = quinn::TransportConfig::default();
+    transport.keep_alive_interval(Some(Duration::from_secs(10)));
+    transport.max_idle_timeout(Some(Duration::from_secs(45).try_into()?));
+    transport.max_concurrent_bidi_streams(256u32.into());
+    // BBR, not Cubic: Cubic fills a bottleneck's queue until packets are lost (on CT 5G the
+    // round trip climbed 100 ms → 3 s with almost no loss while video streamed, and the player
+    // stalled); BBR paces to the measured bottleneck and keeps the queue short.
+    transport.congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
+    server.transport_config(Arc::new(transport));
+    Ok(server)
+}
+
+/// The direct connection over IPv6, where nothing has to be punched: with a public IPv6
+/// address at each end no NAT stands between them, and the home router only has to let the
+/// port in. One QUIC endpoint stays open on that port. It answers only a device that has just
+/// asked over its normal connection (POST /v1/direct/ipv6, with its own IPv6 address): for a
+/// minute, QUIC from that address's network (its /64: a device may send from another of its
+/// addresses there) is taken, and everything else is ignored without an answer. What follows
+/// is what follows a punch: QUIC to Diamond's identity, each stream piped to the HTTP port.
+pub mod ipv6 {
+    use super::*;
+    use std::net::Ipv6Addr;
+
+    const EXPECTED_FOR: Duration = Duration::from_secs(60);
+    static PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+    /// The networks (/64) a connection is expected from, and until when.
+    static EXPECTED: std::sync::LazyLock<Mutex<HashMap<[u16; 4], Instant>>> = std::sync::LazyLock::new(Default::default);
+
+    fn network(address: Ipv6Addr) -> [u16; 4] {
+        let s = address.segments();
+        [s[0], s[1], s[2], s[3]]
+    }
+
+    /// Global unicast (2000::/3): an address the internet can reach, not a private or
+    /// link-local one.
+    fn public(address: Ipv6Addr) -> bool { address.segments()[0] & 0xe000 == 0x2000 }
+
+    /// This machine's public IPv6 address, if it has one: the address it would send from to
+    /// somewhere on the internet (no packet is sent to find out).
+    pub fn own_address() -> Option<Ipv6Addr> {
+        let socket = std::net::UdpSocket::bind((Ipv6Addr::UNSPECIFIED, 0)).ok()?;
+        socket.connect((Ipv6Addr::new(0x2400, 0x3200, 0, 0, 0, 0, 0, 1), 53)).ok()?;
+        match socket.local_addr().ok()?.ip() {
+            IpAddr::V6(address) if public(address) => Some(address),
+            _ => None,
+        }
+    }
+
+    fn expected(from: IpAddr) -> bool {
+        let IpAddr::V6(address) = from else { return false };
+        EXPECTED.lock().map(|e| e.get(&network(address)).is_some_and(|until| Instant::now() < *until)).unwrap_or(false)
+    }
+
+    /// Open the endpoint on `port` (UDP, IPv6) and serve it. Call once, on the runtime.
+    pub fn start(port: u16, http_port: u16) -> Result<()> {
+        let identity = DIRECT.identity()?;
+        let socket = std::net::UdpSocket::bind((Ipv6Addr::UNSPECIFIED, port)).context("IPv6 direct port")?;
+        socket.set_nonblocking(true)?;
+        let endpoint = quinn::Endpoint::new(quinn::EndpointConfig::default(), Some(quic_server(&identity)?), socket, Arc::new(quinn::TokioRuntime))?;
+        let _ = PORT.set(port);
+        eprintln!("Direct over IPv6: listening on UDP port {port}");
+        tokio::spawn(serve(endpoint, http_port));
+        Ok(())
+    }
+
+    async fn serve(endpoint: quinn::Endpoint, http_port: u16) {
+        while let Some(incoming) = endpoint.accept().await {
+            let from = incoming.remote_address();
+            // Unasked for: no answer at all, so a scan of the port learns nothing.
+            if !expected(from.ip()) { incoming.ignore(); continue }
+            tokio::spawn(async move {
+                let started = Instant::now();
+                let connection = match incoming.await {
+                    Ok(connection) => connection,
+                    Err(error) => { eprintln!("Direct over IPv6: QUIC from {from} failed: {error}"); return }
+                };
+                eprintln!("Direct over IPv6: QUIC open from {from}");
+                let mut streams = 0u64;
+                while let Ok((send, recv)) = connection.accept_bi().await {
+                    streams += 1;
+                    tokio::spawn(pipe(send, recv, http_port, format!("Direct over IPv6 {}", from.ip())));
+                }
+                eprintln!("Direct over IPv6: {from} closed after {} s, {streams} streams ({})", started.elapsed().as_secs(),
+                    connection.close_reason().map(|r| r.to_string()).unwrap_or_default());
+            });
+        }
+    }
+
+    /// POST /v1/direct/ipv6 {"address": the device's IPv6 address}: expect its QUIC, and say
+    /// where: {"server": "[address]:port", "fingerprint"}.
+    pub fn expect(body: &Value) -> Result<Value> {
+        let device: Ipv6Addr = body["address"].as_str().context("address is required")?.parse().context("address must be an IPv6 address")?;
+        ensure!(public(device), "address must be a public IPv6 address");
+        let port = *PORT.get().context("This server is not listening for direct connections over IPv6")?;
+        let own = own_address().context("This server has no public IPv6 address")?;
+        let fingerprint = fingerprint().context("Direct connection unavailable")?;
+        {
+            let mut expected = EXPECTED.lock().map_err(|_| anyhow::anyhow!("Direct connection unavailable"))?;
+            let now = Instant::now();
+            expected.retain(|_, until| now < *until);
+            expected.insert(network(device), now + EXPECTED_FOR);
+        }
+        eprintln!("Direct over IPv6: expecting {device} ({})", body["kind"].as_str().unwrap_or("unknown"));
+        Ok(json!({"server": SocketAddr::new(IpAddr::V6(own), port).to_string(), "fingerprint": fingerprint}))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn only_a_public_address_is_expected_and_only_its_network_for_a_while() {
+            assert!(public("240e:3ba::1".parse().unwrap()) && public("2600:1f1c::1".parse().unwrap()));
+            assert!(!public("fd7a:115c:a1e0::1".parse().unwrap()) && !public("fe80::1".parse().unwrap()) && !public("::1".parse().unwrap()));
+            assert!(expect(&json!({"address": "fd00::1"})).is_err() && expect(&json!({"address": "1.2.3.4"})).is_err());
+            let device: Ipv6Addr = "2001:db8:1:2:aaaa::1".parse().unwrap();
+            assert!(!expected(IpAddr::V6(device)));
+            EXPECTED.lock().unwrap().insert(network(device), Instant::now() + EXPECTED_FOR);
+            // Another address on the same network counts (a device's temporary address); another network does not.
+            assert!(expected("2001:db8:1:2:bbbb::9".parse().unwrap()));
+            assert!(!expected("2001:db8:1:3::1".parse().unwrap()) && !expected("1.2.3.4".parse().unwrap()));
+            EXPECTED.lock().unwrap().insert(network(device), Instant::now() - Duration::from_secs(1));
+            assert!(!expected(IpAddr::V6(device)));
+        }
+
+        /// A device that asked is served over IPv6 as over a punched socket; one that did not
+        /// gets no answer.
+        #[tokio::test]
+        async fn an_expected_device_reaches_the_http_port_over_ipv6_and_no_other_does() -> Result<()> {
+            let http = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+            let http_port = http.local_addr()?.port();
+            tokio::spawn(async move {
+                while let Ok((mut tcp, _)) = http.accept().await {
+                    tokio::spawn(async move {
+                        let mut request = [0u8; 256];
+                        let n = tcp.read(&mut request).await.unwrap_or(0);
+                        let _ = tcp.write_all(format!("HTTP/1.1 200 OK\r\n\r\nheard {}", String::from_utf8_lossy(&request[..n]).lines().next().unwrap_or("")).as_bytes()).await;
+                    });
+                }
+            });
+            let identity = Direct::default().identity()?;
+            let socket = std::net::UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))?;
+            socket.set_nonblocking(true)?;
+            let server_address = socket.local_addr()?;
+            let endpoint = quinn::Endpoint::new(quinn::EndpointConfig::default(), Some(quic_server(&identity)?), socket, Arc::new(quinn::TokioRuntime))?;
+            tokio::spawn(serve(endpoint, http_port));
+
+            let mut roots = rustls::RootCertStore::empty();
+            roots.add(identity.cert.clone())?;
+            let mut tls = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+                .with_protocol_versions(&[&rustls::version::TLS13])?.with_root_certificates(roots).with_no_client_auth();
+            tls.alpn_protocols = vec![ALPN.to_vec()];
+            let mut client = quinn::Endpoint::client((Ipv6Addr::LOCALHOST, 0).into())?;
+            client.set_default_client_config(quinn::ClientConfig::new(Arc::new(quinn::crypto::rustls::QuicClientConfig::try_from(tls)?)));
+
+            // Not asked for: nothing comes back.
+            assert!(tokio::time::timeout(Duration::from_millis(700), client.connect(server_address, "torrbaby-direct")?.into_future()).await.is_err());
+            // Asked for (as POST /v1/direct/ipv6 does for a public address): served.
+            EXPECTED.lock().unwrap().insert(network(Ipv6Addr::LOCALHOST), Instant::now() + EXPECTED_FOR);
+            let connection = tokio::time::timeout(Duration::from_secs(5), client.connect(server_address, "torrbaby-direct")?.into_future()).await??;
+            let (mut send, mut recv) = connection.open_bi().await?;
+            send.write_all(b"GET /v1/ping HTTP/1.1\r\n\r\n").await?;
+            send.finish()?;
+            let reply = tokio::time::timeout(Duration::from_secs(5), recv.read_to_end(4096)).await??;
+            assert_eq!(String::from_utf8_lossy(&reply), "HTTP/1.1 200 OK\r\n\r\nheard GET /v1/ping HTTP/1.1");
+            EXPECTED.lock().unwrap().remove(&network(Ipv6Addr::LOCALHOST));
+            Ok(())
+        }
+    }
 }
 
 /// ALPN of the TLS a device wraps a relayed stream in (end to end, to Diamond's identity).

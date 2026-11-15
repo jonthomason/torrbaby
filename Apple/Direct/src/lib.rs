@@ -454,6 +454,19 @@ pub fn punch_json(request: String, mut report: impl FnMut(&punch::Report)) -> se
     };
     let lean = request["lean"].as_bool().unwrap_or(false);
     let mut last = punch::Report::default();
+    // Over IPv6 first, where both ends have it: nothing to punch, and it opens in a second.
+    // If QUIC does not open there (IPv6 that does not carry UDP end to end), the punch follows.
+    if let Some(found) = punch::ipv6(&plan) {
+        tbdirect_stop();
+        let started = std::time::Instant::now();
+        let (summary, public_address) = (found.summary.clone(), found.public_address.clone());
+        let port = open_on(&TUNNEL, found.socket, found.server, found.fingerprint, b"tbdirect", "torrbaby-direct", 4,
+            if lean { LEAN_TIMING } else { (5, 45) }, if lean { LEAN_WINDOWS } else { APP_WINDOWS });
+        if port != 0 {
+            return json!({"ok": true, "port": port, "summary": summary, "public_address": public_address,
+                "quic_ms": started.elapsed().as_millis() as u64, "report": last.json()});
+        }
+    }
     let outcome = punch::punch(&plan, |r| { last = r.clone(); report(r) });
     match outcome {
         Err(failure) => json!({"ok": false, "failure": failure.message, "session": failure.session, "window_failed_at": failure.window_failed_at, "report": last.json()}),

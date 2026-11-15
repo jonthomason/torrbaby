@@ -216,6 +216,10 @@ pub async fn serve(
         }
     });
     if let Err(error) = crate::direct::load_identity(&service.data_dir) { eprintln!("Identity: {error:#}") }
+    // Off in previews and tests, like the connection to bronze: one server holds the port.
+    if !preview {
+        if let Err(error) = crate::direct::ipv6::start(crate::direct::IPV6_PORT, service.config.listen_port) { eprintln!("Direct over IPv6: {error:#}") }
+    }
     // Off in previews and tests: only the live server holds the connection to bronze.
     let rendezvous_task = (!preview).then(|| service.config.rendezvous.clone()).flatten()
         .map(|config| crate::rendezvous::spawn(config, service.config.listen_port));
@@ -1636,6 +1640,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         // Settings → Connection → Send logs to Diamond: saved under client-logs/ for debugging.
         ("POST","/v1/diagnostics/logs") => { drop(db); return crate::diagnostics::receive(&s.data_dir, &body); }
         ("POST","/v1/punch") => { drop(db); return crate::punch::TESTS.start(&body).await; }
+        ("POST","/v1/direct/ipv6") => { drop(db); return crate::direct::ipv6::expect(&body); }
         ("POST","/v1/direct") => { drop(db); return crate::direct::DIRECT.start(&body, s.config.listen_port, &s.data_dir).await; }
         // bronze's relay: who is on it now and how much it carried, with device names.
         ("GET","/v1/relay-usage") => {

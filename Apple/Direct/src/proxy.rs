@@ -440,6 +440,20 @@ impl Keeper {
         let (epoch, at, shared) = (self.epoch.clone(), self.epoch.load(Ordering::SeqCst), self.shared.clone());
         let current = move || epoch.load(Ordering::SeqCst) == at && !shared.stopped.load(Ordering::SeqCst);
         self.punch = Some(tokio::task::spawn_blocking(move || {
+            // Over IPv6 first, where both ends have it: nothing to punch. If QUIC does not
+            // open there, the punch follows.
+            if let Some(found) = punch::ipv6(&plan) {
+                note("direct: trying IPv6");
+                if !current() { return Outcome::Stale }
+                crate::stop(&TUNNEL);
+                let started = Instant::now();
+                let (summary, public_address) = (found.summary.clone(), found.public_address.clone());
+                if crate::open_on(&TUNNEL, found.socket, found.server, found.fingerprint, b"tbdirect", "torrbaby-direct", 4, crate::LEAN_TIMING, crate::APP_WINDOWS) != 0 {
+                    if !current() { crate::stop(&TUNNEL); return Outcome::Stale }
+                    return Outcome::Opened { summary, public_address, quic_ms: started.elapsed().as_millis() as u64 };
+                }
+                note("direct: QUIC did not open over IPv6; punching instead");
+            }
             let punched = match punch::punch(&plan, |r| note(&format!("direct: {}", r.step))) {
                 Ok(punched) => punched,
                 Err(failure) => return if current() { Outcome::Failed(failure) } else { Outcome::Stale },
