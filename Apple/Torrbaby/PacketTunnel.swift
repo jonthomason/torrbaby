@@ -292,7 +292,7 @@ import UIKit
         set { if newValue != inCharge { UserDefaults.standard.set(newValue, forKey: "abtInCharge") } }
     }
     /// ABT's own account of how it reaches Diamond now, from the page its tunnel answers on
-    /// the device itself: "lan" (home network), "punched", "exit" (no straight path) or
+    /// the device itself: "lan" (home network), "punched", "ipv6" (straight over IPv6), "exit" (no straight path) or
     /// "unknown"; nil when ABT did not answer.
     static func pathToDiamond() async -> String? {
         guard let url = URL(string: "http://status.abt.jonthomason.com/") else { return nil }

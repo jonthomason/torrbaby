@@ -814,7 +814,7 @@ final class Store: ObservableObject {
     /// straight path the relay through bronze carries it.
     private var abtWasConnected = false
     @Published private(set) var abtPath: String?
-    var abtDirect: Bool { abtPath == "lan" || abtPath == "punched" }
+    var abtDirect: Bool { abtPath == "lan" || abtPath == "punched" || abtPath == "ipv6" }
     private var abtChecking = false
     private var abtLastAsked = Date.distantPast
     private var abtWatch: Task<Void, Never>?
