@@ -533,6 +533,8 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
                       (DownloadStorage.fileSize(storage.mediaURL(item)) ?? 0) >= reuse.prefix else { updates[item.id] = nil; continue }
                 updates[item.id] = DownloadStorage.Update(virtualJob: job, revision: info.etag, size: info.size,
                                                           prefix: reuse.prefix, patchAt: reuse.patchAt, probes: reuse.probes)
+                // At home it is fetched now, not after every other title has been checked.
+                if atHome { await applyUpdate(item.id, announce: false); if updates[item.id] == nil { store.notify("Download updated", detail: item.title) } }
             } catch { continue /* Not being able to check is not a problem to show. */ }
         }
     }

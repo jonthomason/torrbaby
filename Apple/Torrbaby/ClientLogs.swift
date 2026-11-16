@@ -112,6 +112,11 @@ enum ClientLogs {
         for (kind, check) in store.routeChecks.sorted(by: { $0.key < $1.key }) {
             lines.append("\(kind): \(check.ok ? "ok" : "failed") at \(check.at.formatted(date: .omitted, time: .standard)), \(check.detail)\(check.ms.map { ", \($0) ms" } ?? "")")
         }
+        #if !os(tvOS)
+        // Whether downloads count this as home (updates fetched without asking), and why not.
+        let queue = DownloadQueue.shared
+        lines.append("Downloads: at home \(queue.atHome) (connected \(store.connected), fallback \(store.usingFallback), metered \(queue.metered)); primary \(store.primaryAddress); \(queue.updates.count) update(s) waiting")
+        #endif
         #if os(iOS)
         lines.append(store.directDiagnostics)
         lines.append("Torrbaby tunnel: \(PacketTunnel.shared.statusText)" + (PacketTunnel.shared.lastDisconnect.map { ", last disconnect: \($0)" } ?? ""))
