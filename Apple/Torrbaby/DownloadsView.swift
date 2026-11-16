@@ -115,8 +115,8 @@ struct DownloadsView: View {
                             .frame(width: 40, height: 60).clipShape(RoundedRectangle(cornerRadius: 8))
                         VStack(alignment: .leading, spacing: 6) {
                             Text(item.title).font(.headline).lineLimit(2)
-                            if let season = item.season, let episode = item.episode {
-                                Text(String(format: "S%02d E%02d", season, episode)).font(.caption.monospacedDigit()).foregroundStyle(Theme.muted)
+                            if let line = queue.episodeLine(item) {
+                                Text(line).font(.caption).foregroundStyle(Theme.muted).lineLimit(2)
                             } else if item.name != item.title {
                                 Text(item.name).font(.caption).foregroundStyle(Theme.muted).lineLimit(1)
                             }

@@ -299,7 +299,9 @@ extension LibraryAsset {
     /// The episode's own title, when it has one. TMDB lists most Chinese dramas (and many
     /// other shows) with no episode titles, only the number again as "Episode 1" or
     /// "第1集"; shown under our own "Episode 1" that read "Episode 1 Episode 1".
-    var ownName: String? {
+    var ownName: String? { Self.ownName(name, episode: episode) }
+    /// An episode's own name ("The Bakra", "Part 2"); nil when it only repeats its number.
+    static func ownName(_ name: String?, episode: Int?) -> String? {
         guard let name = name?.trimmingCharacters(in: .whitespaces), !name.isEmpty else { return nil }
         guard episode != nil else { return name }
         return name.range(of: #"^(episode|ep\.?|第)\s*#?\d+(\.\d+)?\s*[集话話期回]?$"#, options: [.regularExpression, .caseInsensitive]) == nil ? name : nil

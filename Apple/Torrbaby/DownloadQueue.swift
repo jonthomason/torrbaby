@@ -244,7 +244,8 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         for old in (try? fm.contentsOfDirectory(at: shares, includingPropertiesForKeys: [.creationDateKey])) ?? [] {
             if let created = try? old.resourceValues(forKeys: [.creationDateKey]).creationDate, created < Date().addingTimeInterval(-6 * 3600) { try? fm.removeItem(at: old) }
         }
-        let label = (item.season != nil && item.episode != nil ? "\(item.title) " + String(format: "S%02dE%02d", item.season!, item.episode!) : item.title)
+        let part = item.episode == nil ? nil : LibraryAsset.ownName(item.name, episode: item.episode)
+        let label = (item.season != nil && item.episode != nil ? "\(item.title) " + String(format: "S%02dE%02d", item.season!, item.episode!) + (part.map { " " + $0 } ?? "") : item.title)
             .components(separatedBy: CharacterSet(charactersIn: "/:\\")).joined(separator: " ").prefix(120)
         let package = shares.appendingPathComponent(UUID().uuidString, isDirectory: true).appendingPathComponent(label + ".torrbaby", isDirectory: true)
         try fm.createDirectory(at: package, withIntermediateDirectories: true)
@@ -550,6 +551,16 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             reload()
             if announce { store.notify("Download updated") }
         } catch { report(error) }
+    }
+    /// How the library names a downloaded episode: "Season 3 Ep 4 · Part 2", with the
+    /// episode's own name as the library has it now (the one saved with the download when
+    /// the library no longer lists it); nil for a movie.
+    func episodeLine(_ item: DownloadStorage.Item) -> String? {
+        guard let season = item.season, let episode = item.episode else { return nil }
+        let asset = store?.titleIndex[item.titleID]?.assets.first { $0.id == item.assetID }
+        let number = L10n.format("Season %d Ep %d", season, episode)
+        let name = asset.map { $0.ownName } ?? LibraryAsset.ownName(item.name, episode: episode)
+        return name.map { number + " · " + $0 } ?? number
     }
     /// Downloads not finished yet: what Cancel all removes.
     var unfinished: [DownloadStorage.Item] { items.filter { [.queued, .transferring, .paused, .failed].contains($0.state) } }
