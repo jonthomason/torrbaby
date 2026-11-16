@@ -523,7 +523,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         for item in items where item.server == server && item.titleID == title.id && item.state == .ready {
             guard let asset = title.playable.first(where: { $0.id == item.assetID }) else { continue }
             do {
-                let link = try await store.mediaPlaybackLink(asset: asset, titleID: title.id, startSession: false)
+                let link = try await store.mediaPlaybackLink(asset: asset, titleID: title.id, startSession: false, requireSubtitles: true)
                 guard store.libraryKey == server else { return }
                 guard let job = URLComponents(string: link.path)?.queryItems?.first(where: { $0.name == "virtual" })?.value,
                       job != item.virtualJob else { updates[item.id] = nil; continue }

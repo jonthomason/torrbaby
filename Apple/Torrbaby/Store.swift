@@ -1648,7 +1648,9 @@ extension Store {
         #endif
     }
     /// Request native virtual MP4 tracks without copying the audiovisual stream.
-    func mediaPlaybackLink(asset: LibraryAsset, titleID: String, startSession: Bool = true, progress: @escaping (String) -> Void = { _ in }) async throws -> PlaybackLink {
+    /// `requireSubtitles`: fail when the subtitles could not be read, rather than go on without
+    /// them (a download's update check, which would otherwise offer a copy with none).
+    func mediaPlaybackLink(asset: LibraryAsset, titleID: String, startSession: Bool = true, requireSubtitles: Bool = false, progress: @escaping (String) -> Void = { _ in }) async throws -> PlaybackLink {
         if startSession { try requireStreamingConnection() }
         else if !connected { throw URLError(.notConnectedToInternet) }
         // The player reads the file's tracks (subtitles in the picture, picture shape); the
@@ -1684,7 +1686,8 @@ extension Store {
         do {
             // Ready sidecar and translated jobs do not require embedded captions.
             // Include every ready language even when the device starts with subtitles Off.
-            let ready: MediaTrackInfo = try await request("GET", base + "/media-info")
+            // Slow when Diamond is busy (44 s over the relay on 2026-11-16).
+            let ready: MediaTrackInfo = try await request("GET", base + "/media-info", timeout: 45)
             ids = Array(Set(ready.prepared.filter { $0.state == "ready" }.map(\.id))).sorted()
             for job in ready.prepared where job.state == "ready" {
                 names[job.id] = SubtitleTrackName.text(language: job.language, kind: job.kind, sdh: job.sdh == true)
@@ -1703,6 +1706,7 @@ extension Store {
         } catch {
             try Task.checkCancellation()
             guard server == serverAtStart && profileIdentity == profileAtStart else { throw CancellationError() }
+            if requireSubtitles { throw error }
             notify("Subtitles unavailable", detail: error.localizedDescription)
         }
         if startSession { try requireStreamingConnection() }
