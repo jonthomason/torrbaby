@@ -58,13 +58,13 @@ struct QRPictureSources: View {
         if let value { found(value) } else { failed("No QR code was found in that picture.") }
     }
     @ViewBuilder private var buttons: some View {
-        Button { use(QRPicture.fromClipboard()) } label: { Label("Paste picture", systemImage: "doc.on.clipboard") }
-        PhotosPicker(selection: $photo, matching: .images) { Label("Photo", systemImage: "photo") }
-        Button { choosingFile = true } label: { Label("File", systemImage: "folder") }
+        Button { use(QRPicture.fromClipboard()) } label: { Label("Paste picture", systemImage: "doc.on.clipboard").frame(maxWidth: .infinity) }
+        PhotosPicker(selection: $photo, matching: .images) { Label("Photo", systemImage: "photo").frame(maxWidth: .infinity) }
+        Button { choosingFile = true } label: { Label("File", systemImage: "folder").frame(maxWidth: .infinity) }
     }
     var body: some View {
         VStack(spacing: 10) { buttons }
-        .buttonStyle(MonoButtonStyle(compact: true))
+        .buttonStyle(MonoButtonStyle())
         .onChange(of: photo) { _, item in
             guard let item else { return }
             Task {
@@ -119,16 +119,17 @@ struct JoinScannerView: View {
                     VStack(spacing: 18) {
                         Image(systemName: "checkmark.circle.fill").font(.system(size: 80)).foregroundStyle(Theme.accent)
                         Text("Device allowed").font(.title2.bold())
-                        Button("Done") { dismiss() }.buttonStyle(MonoButtonStyle(prominent: true))
+                        Button { dismiss() } label: { Text("Done").frame(maxWidth: .infinity) }.buttonStyle(MonoButtonStyle(prominent: true))
                     }.padding(24)
                 } else if let join {
                     VStack(spacing: 18) {
                         Image(systemName: join.platform?.contains("tv") == true ? "tv" : join.platform == "macos" ? "laptopcomputer" : "iphone").font(.largeTitle)
                         Text("Let this device join?").font(.title2.bold())
                         Text(verbatim: join.name ?? "").font(.callout)
-                        Button(LocalizedStringKey(busy ? "Allowing…" : "Allow")) { Task { await allow(join) } }
+                        Button { Task { await allow(join) } } label: { Text(LocalizedStringKey(busy ? "Allowing…" : "Allow")).frame(maxWidth: .infinity) }
                             .buttonStyle(MonoButtonStyle(prominent: true)).disabled(busy)
-                        Button("Scan again") { self.join = nil; error = nil; scannerID = UUID() }.disabled(busy)
+                        Button { self.join = nil; error = nil; scannerID = UUID() } label: { Text("Scan again").frame(maxWidth: .infinity) }
+                            .buttonStyle(MonoButtonStyle()).disabled(busy)
                         if let error { Text(L10n.text(error)).foregroundStyle(.orange) }
                     }.padding(24)
                 } else {
@@ -150,8 +151,8 @@ struct JoinScannerView: View {
                         }
                         if linkPage {
                             Divider().padding(.vertical, 4)
-                            Button("Unpair this device", role: .destructive) { confirmingUnpair = true }
-                                .foregroundStyle(.red)
+                            Button(role: .destructive) { confirmingUnpair = true } label: { Text("Unpair this device").frame(maxWidth: .infinity) }
+                                .buttonStyle(MonoButtonStyle()).foregroundStyle(.red)
                                 .confirmationDialog("Unpair this device?", isPresented: $confirmingUnpair, titleVisibility: .visible) {
                                     Button("Unpair", role: .destructive) { Task { await unpair() } }
                                     Button("Cancel", role: .cancel) {}
@@ -230,15 +231,15 @@ struct OwnCodeView: View {
                 let image = Image(decorative: code, scale: 1).interpolation(.none)
                 image.resizable().scaledToFit().padding(16).background(.white).frame(maxWidth: 300, maxHeight: 300)
                     .accessibilityLabel("Setup code")
-                HStack(spacing: 12) {
+                VStack(spacing: 10) {
                     // To paste into WeChat, Messages or any other app.
                     Button { copy(code); copied = true } label: {
-                        Label(LocalizedStringKey(copied ? "Copied" : "Copy code"), systemImage: copied ? "checkmark" : "doc.on.doc")
+                        Label(LocalizedStringKey(copied ? "Copied" : "Copy code"), systemImage: copied ? "checkmark" : "doc.on.doc").frame(maxWidth: .infinity)
                     }
                     ShareLink(item: image, preview: SharePreview("Setup code", image: image)) {
-                        Label("Send", systemImage: "square.and.arrow.up")
+                        Label("Send", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity)
                     }
-                }.buttonStyle(MonoButtonStyle())
+                }.buttonStyle(MonoButtonStyle()).frame(maxWidth: 360)
             } else { ProgressView().frame(height: 300) }
             if !status.isEmpty { Text(L10n.text(status)).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center) }
         }.frame(maxWidth: 520).frame(maxWidth: .infinity)
