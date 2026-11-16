@@ -39,8 +39,10 @@ fn enroll(db:&Database,id:&str,revision:&str)->Result<()> {
 }
 /// Helper errors that a fresh attempt resolves on its own.
 /// "Media is unavailable or changed": the file was replaced and the scan has not caught up.
-fn transient(error:&str)->bool { error.contains("Text recognition models changed") || error.contains(MEDIA_CHANGED) }
+/// "Download is not complete": its torrent is still downloading; the file is read once it finishes.
+fn transient(error:&str)->bool { error.contains("Text recognition models changed") || error.contains(MEDIA_CHANGED) || error.contains(DOWNLOAD_INCOMPLETE) }
 const MEDIA_CHANGED:&str="Media is unavailable or changed";
+const DOWNLOAD_INCOMPLETE:&str="Download is not complete";
 /// Written in the last ten minutes: a failure may be the file still arriving (four episodes
 /// of 逐玉 were read mid-copy and skipped for good with "integers can be at most 8 bytes").
 /// Retried, not skipped.
@@ -76,7 +78,9 @@ fn reopen_for_people_english(db:&Database,data:&Path)->Result<usize> {
 }
 /// Subtitle errors a later build no longer has: the subtitle store's old 4,096-file cap, and
 /// a subtitle track in neither English nor Chinese blocking the picture and the speech.
-const RETIRED_SUBTITLE_ERRORS:[&str;4]=[crate::subtitle_jobs::STORAGE_FULL,crate::ocr_subtitles::UNIDENTIFIED_LANGUAGE,
+const RETIRED_SUBTITLE_ERRORS:[&str;5]=[crate::subtitle_jobs::STORAGE_FULL,crate::ocr_subtitles::UNIDENTIFIED_LANGUAGE,
+    // A file read before its download finished (Outlander S04E13 kept no Chinese): now retried.
+    DOWNLOAD_INCOMPLETE,
     // The Matroska reader on a file still being copied in (see `settling`).
     "integers can be at most 8 bytes%",
     // A bitmap track in a large file, cut off by the scan's old fixed three minutes.
@@ -634,6 +638,7 @@ mod tests {
     fn a_file_skipped_because_it_was_just_replaced_is_done_again()->Result<()> {
         let db=database()?;
         assert!(transient("Media is unavailable or changed"));
+        assert!(transient("Download is not complete"));
         for id in ["replaced","unreadable"] {
             enroll(&db,id,"r2")?;
             let error=if id=="replaced" {MEDIA_CHANGED} else {"integers can be at most 8 bytes"};
