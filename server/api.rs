@@ -499,7 +499,7 @@ async fn dispatch(
     actual.update(supplied.as_bytes());
     // Pairing: redeeming a code, and a remote device claiming its sealed setup through bronze
     // (docs/remote-pairing.md), come from devices without credentials yet.
-    let redeem = method == Method::POST && (uri.path() == "/v1/pairings/redeem" || uri.path() == "/v1/pairings/remote/claim");
+    let redeem = method == Method::POST && uri.path() == "/v1/pairings/remote/claim";
     let device_authorized =
         s.db.lock()
             .map(|db| crate::pairing::authorized(&db, supplied))
@@ -1115,10 +1115,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         });
         return crate::pairing::remote::claim(&mut db, &body, setup);
     }
-    if path == "/v1/pairings"
-        || path.starts_with("/v1/pairings/")
-        || path.starts_with("/v1/device-credentials/")
-    {
+    if path.starts_with("/v1/device-credentials/") {
         let mut db =
             s.db.lock()
                 .map_err(|_| anyhow::anyhow!("Database lock failed"))?;

@@ -83,221 +83,6 @@ struct QRPictureSources: View {
 }
 #endif
 
-private struct PairingPayload: Codable {
-    let app: String
-    let version: Int
-    let server: String
-    let code: String
-    var fallbackServer: String? = nil
-    /// Torrbaby's rendezvous on bronze ("ip:port") and its certificate's SHA-256: a device
-    /// with neither the home network nor Tailscale pairs through the relay.
-    var relay: String? = nil
-    var relayFingerprint: String? = nil
-    /// Diamond's identity fingerprint (end-to-end encryption through bronze), from a device
-    /// that learned it at home.
-    var identity: String? = nil
-}
-
-/// Settings → Link a device: on a paired iPhone, iPad or Mac, read a new device's code and
-/// allow it (or unpair this one); an Apple TV shows a code for a phone to read.
-struct LinkDeviceSheet: View {
-    var body: some View {
-        #if os(tvOS)
-        PairingCodeView()
-        #else
-        JoinScannerView(linkPage: true)
-        #endif
-    }
-}
-
-struct PairingCodeView: View {
-    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
-    @EnvironmentObject var store: Store
-    @Environment(\.dismiss) private var dismiss
-    @State private var grant: Grant?
-    @State private var error: String?
-    @State private var paired = false
-    @State private var generation = UUID()
-    #if !os(tvOS)
-    @State private var showJoin = false
-    #endif
-    private struct Grant: Decodable { let id: String; let code: String; let expires: Double }
-    private struct Status: Decodable { let paired: Bool }
-    private var qr: CGImage? {
-        guard let grant, let data = try? JSONEncoder().encode(PairingPayload(app: "torrbaby", version: 1, server: store.server, code: grant.code, fallbackServer: store.fallbackServer.isEmpty ? nil : store.fallbackServer, relay: store.relayAddress.isEmpty ? nil : store.relayAddress, relayFingerprint: store.relayFingerprint.isEmpty ? nil : store.relayFingerprint, identity: store.diamondIdentity.isEmpty ? nil : store.diamondIdentity)) else { return nil }
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = data
-        filter.correctionLevel = "M"
-        guard let output = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 8, y: 8)) else { return nil }
-        return CIContext().createCGImage(output, from: output.extent)
-    }
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 18) {
-                Text(LocalizedStringKey(paired ? "Device linked" : "Link a device")).font(.title.bold())
-                if paired {
-                    Image(systemName: "checkmark.circle.fill").font(.system(size: 80)).foregroundStyle(Theme.accent)
-                    Button("Done") { dismiss() }.buttonStyle(MonoButtonStyle(prominent: true))
-                } else if let error {
-                    Text(L10n.text(error)).foregroundStyle(.orange)
-                    Button("New code") { generation = UUID() }
-                } else if let grant, let qr {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        if context.date.timeIntervalSince1970 < grant.expires {
-                            Image(decorative: qr, scale: 1).interpolation(.none).resizable().scaledToFit()
-                                .padding(16).background(.white).frame(width: 280, height: 280)
-                            Text("Open Torrbaby on your iPhone or iPad and choose Scan connection code.")
-                                .multilineTextAlignment(.center)
-                            Text("Expires in \(Int(grant.expires - context.date.timeIntervalSince1970)) seconds")
-                                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                            #if !os(tvOS)
-                            // A device far away shows its own code instead: read it with the
-                            // camera, or from a picture of it (pasted, a photo, a file).
-                            Button("Scan the new device's code") { showJoin = true }
-                            #endif
-                        } else {
-                            Text("This code has expired.")
-                            Button("New code") { generation = UUID() }
-                        }
-                    }
-                } else { ProgressView() }
-            }.padding(30).frame(maxWidth: 420, minHeight: 410)
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
-        }
-        #if !os(tvOS)
-        .sheet(isPresented: $showJoin) { LocalizedInterface { JoinScannerView() }.environmentObject(store) }
-        #endif
-        .task(id: generation) {
-            error = nil; paired = false
-            if let grant { try? await store.send("DELETE", "/v1/pairings/" + grant.id) }
-            grant = nil
-            do {
-                let created: Grant = try await store.request("POST", "/v1/pairings")
-                grant = created
-                while !Task.isCancelled && Date().timeIntervalSince1970 < created.expires {
-                    try await Task.sleep(for: .seconds(2))
-                    let status: Status = try await store.request("GET", "/v1/pairings/" + created.id)
-                    if status.paired { paired = true; await store.refresh(); break }
-                }
-            } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
-        }
-        .onDisappear {
-            if let grant { Task { try? await store.send("DELETE", "/v1/pairings/" + grant.id) } }
-        }
-    }
-}
-
-#if os(iOS)
-struct PairingScannerView: View {
-    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
-    @EnvironmentObject var store: Store
-    @Environment(\.dismiss) private var dismiss
-    let connected: () -> Void
-    @State private var payload: PairingPayload?
-    @State private var error: String?
-    @State private var busy = false
-    @State private var scannerID = UUID()
-    var body: some View {
-        NavigationStack {
-            Group {
-                if let payload {
-                    ScrollView {
-                        VStack(spacing: 18) {
-                            Image(systemName: "network").font(.largeTitle)
-                            Text("Connect to this server?").font(.title2.bold())
-                            Text(payload.server).font(.callout).textSelection(.enabled)
-                            Button(LocalizedStringKey(busy ? "Connecting…" : "Connect")) { Task { await redeem(payload) } }
-                                .buttonStyle(MonoButtonStyle(prominent: true)).disabled(busy)
-                            Button("Scan again") { self.payload = nil; error = nil; scannerID = UUID() }.disabled(busy)
-                            if let error { Text(L10n.text(error)).foregroundStyle(.orange) }
-                        }.frame(maxWidth: .infinity).padding(24)
-                    }
-                } else {
-                    GeometryReader { geometry in
-                        let landscape = geometry.size.width > geometry.size.height
-                        let layout = landscape ? AnyLayout(HStackLayout(spacing: 20)) : AnyLayout(VStackLayout(spacing: 20))
-                        layout {
-                            camera.id(scannerID)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .clipShape(RoundedRectangle(cornerRadius: 10))
-                            VStack(spacing: 12) {
-                                Image(systemName: "qrcode.viewfinder").font(.system(size: 40)).foregroundStyle(Theme.accent)
-                                QRPictureSources(found: read, failed: { error = $0 })
-                                if let error {
-                                    Text(L10n.text(error)).font(.caption).foregroundStyle(.orange)
-                                    Button("Try again") { self.error = nil; scannerID = UUID() }
-                                }
-                            }.multilineTextAlignment(.center)
-                                .frame(maxWidth: landscape ? 190 : .infinity)
-                        }.padding(20)
-                    }
-                }
-            }.navigationTitle("Scan connection code")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(busy) } }
-        }
-    }
-    private var camera: some View {
-        CameraScanner { read($0) } failed: { error = $0 }
-    }
-    private func read(_ value: String) {
-            do {
-                let decoded = try JSONDecoder().decode(PairingPayload.self, from: Data(value.utf8))
-                guard decoded.app == "torrbaby", decoded.version == 1, decoded.code.count == 64,
-                      let url = URL(string: decoded.server), ["http", "https"].contains(url.scheme ?? ""),
-                      url.host != nil, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else {
-                    throw APIError(message: "This isn’t a Torrbaby connection code.")
-                }
-                error = nil; payload = decoded
-            } catch { self.error = "This isn’t a valid Torrbaby connection code." }
-    }
-    private func redeem(_ payload: PairingPayload) async {
-        busy = true; error = nil
-        defer { busy = false }
-        do {
-            // The code names the server's home route and its Tailscale route; a device pairing
-            // away from home reaches it by the second, or else through the relay on bronze.
-            var routes = [payload.server, payload.fallbackServer ?? ""].map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }.filter { !$0.isEmpty }
-            store.learnRelay(address: payload.relay, fingerprint: payload.relayFingerprint)
-            store.learnIdentity(payload.identity, from: "from pairing")
-            if payload.relay != nil, let relay = await store.ensureRelay() {
-                // With the relay, Tailscale is not used: home first, then the relay.
-                routes = Array(routes.prefix(1)) + [relay]
-            }
-            var base = routes.first ?? ""
-            var reply: (Data, URLResponse)?
-            for route in routes {
-                guard let url = URL(string: route + "/v1/pairings/redeem") else { continue }
-                var request = URLRequest(url: url)
-                request.httpMethod = "POST"
-                request.timeoutInterval = route == routes.last ? 20 : 6
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.httpBody = try JSONSerialization.data(withJSONObject: ["code":payload.code,"name":store.defaultClientName,"platform":store.clientPlatform])
-                // Through the relay, the server is still kept by its home address.
-                do { reply = try await URLSession.shared.data(for: request); base = route == store.relayRoute ? (routes.first ?? route) : route; break }
-                catch let failure as URLError where failure.code != .cancelled && route != routes.last { continue }
-            }
-            guard let (data, response) = reply else { throw APIError(message: "Invalid server address") }
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                throw APIError(message: "The code expired or was already used. Show a new code on the linked device.")
-            }
-            struct Redeemed: Decodable { let client_id: String; let token: String }
-            let result = try JSONDecoder().decode(Redeemed.self, from: data)
-            try Credentials.save(result.token)
-            try Credentials.save(result.client_id, account: "client-id")
-            store.clientId = result.client_id
-            store.server = base; store.token = result.token
-            if let fallback = payload.fallbackServer { try store.saveFallback(fallback) }
-            UserDefaults.standard.set(base, forKey: "server")
-            await store.connect()
-            guard store.connected else { throw APIError(message: store.connectionError ?? "Could not connect") }
-            dismiss(); connected()
-        } catch { self.error = error.localizedDescription }
-    }
-}
-
-#endif
-
 #if !os(tvOS)
 /// Let a new device join from anywhere (docs/remote-pairing.md): read the code it shows (with
 /// the camera, or from a pasted, photographed or saved picture of it), which holds a one-time
@@ -328,12 +113,8 @@ struct JoinScannerView: View {
         NavigationStack {
             Group {
                 if unpaired {
-                    #if os(iOS)
-                    // Unpaired: this device now shows its own code, for a connected one to allow.
+                    // Unpaired: this device now shows its own code, for a paired one to allow.
                     ScrollView { OwnCodeView { dismiss() }.padding(24) }
-                    #else
-                    Text("This Mac is no longer paired. Connect it again from the Connection settings.").padding(24)
-                    #endif
                 } else if allowed {
                     VStack(spacing: 18) {
                         Image(systemName: "checkmark.circle.fill").font(.system(size: 80)).foregroundStyle(Theme.accent)
@@ -367,7 +148,6 @@ struct JoinScannerView: View {
                             Button("Try again") { self.error = nil; scannerID = UUID() }
                             #endif
                         }
-                        #if os(iOS)
                         if linkPage {
                             Divider().padding(.vertical, 4)
                             Button("Unpair this device", role: .destructive) { confirmingUnpair = true }
@@ -377,7 +157,6 @@ struct JoinScannerView: View {
                                     Button("Cancel", role: .cancel) {}
                                 }
                         }
-                        #endif
                     }.padding(20)
                     #if os(macOS)
                     .frame(minWidth: 420, minHeight: 320)
@@ -410,7 +189,25 @@ struct JoinScannerView: View {
 }
 #endif
 
-#if os(iOS)
+#if !os(tvOS)
+/// Finds Diamond on the home network (Bonjour, _torrbaby._tcp), for a device not paired yet.
+@MainActor
+final class HomeServerFinder: NSObject, ObservableObject, @preconcurrency NetServiceBrowserDelegate, @preconcurrency NetServiceDelegate {
+    @Published private(set) var addresses: [String] = []
+    private let browser = NetServiceBrowser()
+    private var services: [NetService] = []
+    func start() { browser.delegate = self; browser.searchForServices(ofType: "_torrbaby._tcp.", inDomain: "local.") }
+    func stop() { browser.stop(); services.forEach { $0.stop() }; services.removeAll() }
+    func netServiceBrowser(_ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool) {
+        services.append(service); service.delegate = self; service.resolve(withTimeout: 10)
+    }
+    func netServiceDidResolveAddress(_ sender: NetService) {
+        guard let host = sender.hostName, sender.port > 0 else { return }
+        var parts = URLComponents(); parts.scheme = "http"; parts.host = host.hasSuffix(".") ? String(host.dropLast()) : host; parts.port = sender.port
+        if let value = parts.url?.absoluteString, !addresses.contains(value) { addresses.append(value) }
+    }
+}
+
 /// This device's own setup code, shown while it is not paired (docs/remote-pairing.md,
 /// version 1), as an Android TV shows one: a connected device reads it (camera, or a pasted
 /// or photographed picture of it) and allows it; this device then claims its setup through
@@ -426,6 +223,7 @@ struct OwnCodeView: View {
     @State private var code: CGImage?
     @State private var status = ""
     @State private var copied = false
+    @StateObject private var home = HomeServerFinder()
     var body: some View {
         VStack(spacing: 16) {
             if let code {
@@ -434,7 +232,7 @@ struct OwnCodeView: View {
                     .accessibilityLabel("Setup code")
                 HStack(spacing: 12) {
                     // To paste into WeChat, Messages or any other app.
-                    Button { UIPasteboard.general.image = UIImage(cgImage: code); copied = true } label: {
+                    Button { copy(code); copied = true } label: {
                         Label(LocalizedStringKey(copied ? "Copied" : "Copy code"), systemImage: copied ? "checkmark" : "doc.on.doc")
                     }
                     ShareLink(item: image, preview: SharePreview("Setup code", image: image)) {
@@ -444,7 +242,17 @@ struct OwnCodeView: View {
             } else { ProgressView().frame(height: 300) }
             if !status.isEmpty { Text(L10n.text(status)).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center) }
         }.frame(maxWidth: 520).frame(maxWidth: .infinity)
+        .onAppear { home.start() }
+        .onDisappear { home.stop() }
         .task { await run() }
+    }
+    private func copy(_ code: CGImage) {
+        #if os(iOS)
+        UIPasteboard.general.image = UIImage(cgImage: code)
+        #else
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([NSImage(cgImage: code, size: NSSize(width: code.width, height: code.height))])
+        #endif
     }
     /// The secret is kept until it is used, so a code sent as a picture stays good.
     private static func secret() -> Data {
@@ -461,22 +269,28 @@ struct OwnCodeView: View {
         if store.relayAddress.isEmpty || store.relayFingerprint.count != 64 { store.learnRelay(address: Self.relayAddress, fingerprint: Self.relayFingerprint) }
         let started = Date()
         while !Task.isCancelled {
-            // Nothing pinned yet on a new device: the claim goes plain through bronze, and its reply is sealed.
-            if let relay = await store.ensureRelay(), let url = URL(string: relay + "/v1/pairings/remote/claim") {
-                var request = URLRequest(url: url); request.httpMethod = "POST"; request.timeoutInterval = 15
+            // At home Diamond is asked directly; away (iPhone, iPad), through the relay on bronze.
+            // Nothing is pinned yet on a new device: the claim goes plain, and its reply is sealed.
+            var routes = home.addresses
+            #if os(iOS)
+            if let relay = await store.ensureRelay() { routes.append(relay) }
+            #endif
+            var reached = false
+            for route in routes {
+                guard let url = URL(string: route + "/v1/pairings/remote/claim") else { continue }
+                var request = URLRequest(url: url); request.httpMethod = "POST"; request.timeoutInterval = 10
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 request.httpBody = try? JSONSerialization.data(withJSONObject: ["id": pairing.id])
-                do {
-                    let (data, _) = try await URLSession.shared.data(for: request)
-                    if let setup = pairing.open(data) { await finish(setup); return }
-                    status = ""
-                } catch { status = "Can’t reach your server yet. Still trying…" }
-            } else { status = "Can’t reach your server yet. Still trying…" }
+                guard let (data, _) = try? await URLSession.shared.data(for: request) else { continue }
+                reached = true
+                if let setup = pairing.open(data) { await finish(setup, at: route); return }
+            }
+            status = reached || Date().timeIntervalSince(started) < 15 ? "" : "Can’t reach your server yet. Still trying…"
             // Every 2 s while someone is likely reading it, then every 5 s.
             try? await Task.sleep(for: .seconds(Date().timeIntervalSince(started) < 600 ? 2 : 5))
         }
     }
-    private func finish(_ setup: RemotePairing.Setup) async {
+    private func finish(_ setup: RemotePairing.Setup, at route: String) async {
         status = "Setting up…"
         guard let identity = setup.server?.identity, identity.count == 64 else {
             status = "Your server did not send its identity. Update Torrbaby on the server, then choose New setup code."; return
@@ -489,8 +303,8 @@ struct OwnCodeView: View {
         } catch { status = error.localizedDescription; return }
         try? Credentials.save("", account: "join-secret")
         store.clientId = setup.client_id
-        // Kept by its home address, as a device paired through the relay is; away, the relay carries it.
-        let base = "http://\(setup.routes?.home ?? "diamond.local"):8765"
+        // Kept by its home address (the one it was found at, or Diamond's own); away, the relay carries it.
+        let base = home.addresses.contains(route) ? route : "http://\(setup.routes?.home ?? "diamond.local"):8765"
         store.server = base; store.token = setup.token
         UserDefaults.standard.set(base, forKey: "server")
         await store.connect()

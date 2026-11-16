@@ -249,7 +249,6 @@ private struct TVSettingsView: View {
     @EnvironmentObject var store: Store
     let connection: () -> Void
     @State private var showSubtitles = false
-    @State private var showPairing = false
     @State private var editingProfile: UserProfile?
     var body: some View { statusContent.modifier(NeedsServerStatus()) }
     @ViewBuilder private var statusContent: some View {
@@ -263,7 +262,6 @@ private struct TVSettingsView: View {
                 // Which build this is comes first: it is what Settings is most often opened for.
                 SwiftUI.Section {
                     // A phone or tablet scans this TV's code to join the same server.
-                    Button { showPairing = true } label: { TVSettingsRow(title: "Link a device") }.disabled(!store.connected)
                     Button {} label: { TVSettingsRow(title: "Version", value: AppRelease.description.replacingOccurrences(of: "Version ", with: "")) }
                 }
                 SwiftUI.Section("User") {
@@ -311,7 +309,6 @@ private struct TVSettingsView: View {
             .mask(Rectangle().padding(.horizontal, -80).padding(.bottom, -80))
         }.padding(.horizontal, 60)
         .sheet(isPresented: $showSubtitles) { LocalizedInterface { SubtitlePreferencesView() } }
-        .fullScreenCover(isPresented: $showPairing) { LocalizedInterface { PairingCodeView() }.environmentObject(store) }
         .sheet(item: $editingProfile) { person in LocalizedInterface { ProfileEditor(profile: person) }.environmentObject(store) }
     }
 }

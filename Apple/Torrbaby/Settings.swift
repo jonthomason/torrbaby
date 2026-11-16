@@ -164,7 +164,7 @@ private struct SettingsQuickRows: View {
         }
         .buttonStyle(.plain)
         .disabled(!store.connected)
-        .sheet(isPresented: $showPairing) { LocalizedInterface { LinkDeviceSheet() } }
+        .sheet(isPresented: $showPairing) { LocalizedInterface { JoinScannerView(linkPage: true) } }
         #if os(macOS)
         // The Mac sidebar is narrow: the build sits under its title instead of beside it.
         Label {
@@ -486,7 +486,7 @@ private struct DeviceSettings: View {
         SwiftUI.Section {
             Button { showPairing = true } label: { Label("Link a device", systemImage: "qrcode") }
                 .disabled(!store.connected)
-                .sheet(isPresented: $showPairing) { LocalizedInterface { LinkDeviceSheet() } }
+                .sheet(isPresented: $showPairing) { LocalizedInterface { JoinScannerView(linkPage: true) } }
         }
         SwiftUI.Section("Devices") {
             ForEach(store.clients) { client in
@@ -661,82 +661,31 @@ struct QuarkDriveSettings: View {
     }
 }
 
+#if !os(tvOS)
+/// Not paired: this device shows its own code until a paired device allows it.
 struct ConnectionView: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) var dismiss
-    @State private var address = ""
-    @State private var token = ""
-    @State private var importProfile = false
-    #if os(iOS)
-    @State private var showScanner = false
-    #endif
     var body: some View {
         NavigationStack {
-            #if os(iOS)
             ScrollView {
                 VStack(spacing: 20) {
                     Image("TorrbabyLogo").resizable().frame(width: 64, height: 64)
                         .clipShape(RoundedRectangle(cornerRadius: 10)).accessibilityHidden(true)
                     Text("Link a device").font(.system(size: 28, weight: .bold, design: .rounded))
-                    // Not paired: this device shows its own code, for a connected one to allow.
                     OwnCodeView { dismiss() }
-                    Button("Scan a connection code instead") { showScanner = true }
-                        .font(.subheadline)
-                        .sheet(isPresented: $showScanner) { LocalizedInterface { PairingScannerView { dismiss() } } }
                 }.padding(30).frame(maxWidth: .infinity)
             }
             .background(Theme.canvas)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
-            #else
-            VStack(alignment: .leading, spacing: 24) {
-                Image(systemName: "arrow.down.forward.and.arrow.up.backward.circle.fill").font(.system(size: 55)).foregroundStyle(Theme.accent)
-                VStack(alignment: .leading, spacing: 9) {
-                    Text("Connect to Torrbaby").font(.system(size: 30, weight: .bold, design: .rounded))
-                }
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("SERVER ADDRESS").font(.caption2.weight(.semibold)).tracking(1.5).foregroundStyle(Theme.muted)
-                    TextField("http://your-server:8765", text: $address).textFieldStyle(.roundedBorder)
-                        #if os(iOS)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
-                        #endif
-                    Text("API TOKEN").font(.caption2.weight(.semibold)).tracking(1.5).foregroundStyle(Theme.muted)
-                    SecureField("Paste your server token", text: $token).textFieldStyle(.roundedBorder)
-                        #if os(iOS)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                        #endif
-                    Button("Import connection file…") { importProfile = true }.font(.caption)
-                }
-                if let error = store.connectionError { Text(L10n.text(error)).font(.caption).foregroundStyle(.orange) }
-                Button {
-                    store.server = address; store.token = token
-                    Task { await store.connect(); if store.connected { dismiss() } }
-                } label: {
-                    HStack { Spacer(); if store.isConnecting { ProgressView().controlSize(.small) }; Text(LocalizedStringKey(store.isConnecting ? "Connecting…" : "Connect to server")).fontWeight(.semibold); Spacer() }.padding(.vertical, 7)
-                }.buttonStyle(MonoButtonStyle(prominent: true)).foregroundStyle(Theme.onAccent).disabled(address.isEmpty || token.isEmpty || store.isConnecting)
-                Spacer(minLength: 0)
-            }.padding(30).background(Theme.canvas)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
-            .onAppear { address = store.server; token = store.token }
-            .fileImporter(isPresented: $importProfile, allowedContentTypes: [.json]) { result in
-                do {
-                    let url = try result.get()
-                    let accessed = url.startAccessingSecurityScopedResource()
-                    defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-                    let profile = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: url))
-                    guard let server = profile["server"], let secret = profile["token"] else {
-                        throw APIError(message: "The file must contain server and token fields.")
-                    }
-                    address = server; token = secret
-                } catch { store.connectionError = error.localizedDescription }
-            }
-            #endif
         }
         #if os(macOS)
-        .frame(width: 520, height: 580)
+        .frame(width: 520, height: 620)
         #endif
     }
 }
+#endif
 
 // Preserve the encoded query (including every tracker); normalize browser variants
 // such as magnet:/? and magnet://? to Transmission's canonical magnet:? form.
