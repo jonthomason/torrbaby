@@ -18,6 +18,9 @@
 //!   with the same public IP is behind the same NAT: at home). One that is `TBNAME1 <client
 //!   id>\n` names the connection's device (its Torrbaby client id; Diamond knows the names).
 //!
+//! - TCP (loopback 7444, behind bronze's web server on 443): the relay over TCP, for networks
+//!   that block UDP; see `serve_tcp`.
+//!
 //! Usage, for Diamond's Connection page: the devices connected now (client id, address, since,
 //! bytes relayed) and bytes relayed per day (China time), kept in usage.json in the state
 //! directory. Diamond asks over its own connection with a `TBUSAGE1\n` stream.
@@ -40,6 +43,8 @@ pub const HOME_HELLO: &str = "TBHOME1 ";
 pub const INFO: &[u8] = b"TBINFO1\n";
 pub const NAME: &[u8] = b"TBNAME1 ";
 pub const USAGE: &[u8] = b"TBUSAGE1\n";
+/// The path the relay over TCP is asked for, through bronze's web server.
+pub const TCP_PATH: &str = "/tbrelay";
 /// Stream reset code when Diamond is not connected.
 pub const HOME_OFFLINE: u32 = 2;
 const MAGIC: u32 = 0x2112A442;
@@ -210,6 +215,8 @@ struct Device {
     down: AtomicU64,
     up: AtomicU64,
     streams: AtomicU64,
+    /// Streams open now (the relay over TCP: the record goes when the last one closes).
+    open: AtomicU64,
 }
 
 /// Bytes relayed per day ("2026-11-14", China time): (down, up). Folded from the running
@@ -389,7 +396,7 @@ async fn device(connection: quinn::Connection, hub: Arc<Hub>) {
     let id = connection.stable_id();
     hub.devices.fetch_add(1, Ordering::Relaxed);
     eprintln!("Device {id} {from}: connected");
-    let record = Arc::new(Device { client: Default::default(), address: std::sync::Mutex::new(from), since: unix_now(), down: AtomicU64::new(0), up: AtomicU64::new(0), streams: AtomicU64::new(0) });
+    let record = Arc::new(Device { client: Default::default(), address: std::sync::Mutex::new(from), since: unix_now(), down: AtomicU64::new(0), up: AtomicU64::new(0), streams: AtomicU64::new(0), open: AtomicU64::new(0) });
     if let Ok(mut connected) = hub.connected.lock() { connected.insert(id, record.clone()); }
     let started = Instant::now();
     let mut streams = 0u64;
@@ -408,48 +415,138 @@ async fn device(connection: quinn::Connection, hub: Arc<Hub>) {
         connection.close_reason().map(|r| r.to_string()).unwrap_or_default());
 }
 
-/// One device stream onto one new stream to Diamond, both ways. The first request line
-/// (method and path, never the query, which can carry signatures) goes to the log.
-async fn splice(mut device_send: quinn::SendStream, mut device_recv: quinn::RecvStream, hub: Arc<Hub>, from: SocketAddr, id: usize, record: Arc<Device>) {
+/// One device stream onto one new stream to Diamond, both ways (a QUIC relay stream).
+async fn splice(device_send: quinn::SendStream, device_recv: quinn::RecvStream, hub: Arc<Hub>, from: SocketAddr, id: usize, record: Arc<Device>) {
+    let mut device_send = device_send;
+    if let Err(Refused) = relay(device_recv, &mut device_send, hub, from, &format!("Device {id}"), &record).await {
+        let _ = device_send.reset(HOME_OFFLINE.into());
+    }
+}
+
+/// Diamond was not connected: the device's stream is refused.
+struct Refused;
+
+/// One device stream (any byte stream) onto one new stream to Diamond, both ways, or bronze's
+/// own answer to TBINFO and TBNAME. The first request line (method and path, never the query,
+/// which can carry signatures) goes to the log; streams encrypted end to end show as such.
+async fn relay<R, W>(mut device_recv: R, device_send: &mut W, hub: Arc<Hub>, from: SocketAddr, who: &str, record: &Arc<Device>) -> Result<(), Refused>
+where R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let started = Instant::now();
     let mut first = vec![0u8; 4096];
-    let n = match device_recv.read(&mut first).await { Ok(Some(n)) => n, _ => 0 };
+    let n = device_recv.read(&mut first).await.unwrap_or(0);
     if first[..n].starts_with(INFO) {
         // Older clients read only the first two lines; "homeip" is on its own line after them.
         let mut reply = format!("home {}\nyou {from}\n", if hub.home_online() { "online" } else { "offline" });
         if let Some(ip) = hub.home_ip() { reply.push_str(&format!("homeip {ip}\n")) }
         let _ = device_send.write_all(reply.as_bytes()).await;
-        let _ = device_send.finish();
-        return;
+        let _ = device_send.shutdown().await;
+        return Ok(());
     }
     if first[..n].starts_with(NAME) {
         let client = String::from_utf8_lossy(&first[NAME.len()..n]).trim().chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(64).collect::<String>();
         if let Ok(mut held) = record.client.lock() { *held = client }
-        let _ = device_send.finish();
-        return;
+        let _ = device_send.shutdown().await;
+        return Ok(());
     }
     let Some(home) = hub.home(Duration::from_secs(5)).await else {
-        let _ = device_send.reset(HOME_OFFLINE.into());
-        eprintln!("Device {id}: stream refused, Diamond is not connected");
-        return;
+        eprintln!("{who}: stream refused, Diamond is not connected");
+        return Err(Refused);
     };
-    let Ok((mut home_send, mut home_recv)) = home.open_bi().await else { let _ = device_send.reset(HOME_OFFLINE.into()); return };
+    let Ok((mut home_send, mut home_recv)) = home.open_bi().await else { return Err(Refused) };
     // Encrypted end to end (a TLS handshake): nothing here can be read.
     let line = if first.first() == Some(&0x16) { "(end to end)".to_owned() } else {
         String::from_utf8_lossy(&first[..n]).lines().next().unwrap_or("").split('?').next().unwrap_or("").to_owned()
     };
-    if n > 0 && home_send.write_all(&first[..n]).await.is_err() { let _ = device_send.reset(HOME_OFFLINE.into()); return }
+    if n > 0 && home_send.write_all(&first[..n]).await.is_err() { return Err(Refused) }
     hub.up.fetch_add(n as u64, Ordering::Relaxed); record.up.fetch_add(n as u64, Ordering::Relaxed);
     let up = async {
         let sent = counted_copy(&mut device_recv, &mut home_send, [&hub.up, &record.up]).await;
         match sent { Ok(_) => { let _ = home_send.finish(); } Err(_) => { let _ = home_send.reset(0u32.into()); } }
     };
     let down = async {
-        let got = counted_copy(&mut home_recv, &mut device_send, [&hub.down, &record.down]).await;
-        match got { Ok(bytes) => { let _ = device_send.finish(); bytes } Err(_) => { let _ = device_send.reset(0u32.into()); 0 } }
+        let got = counted_copy(&mut home_recv, device_send, [&hub.down, &record.down]).await;
+        let _ = device_send.shutdown().await;
+        got.unwrap_or(0)
     };
     let (_, down_bytes) = tokio::join!(up, down);
-    eprintln!("Device {id}: {line} → {down_bytes} bytes in {} ms", started.elapsed().as_millis());
+    eprintln!("{who}: {line} → {down_bytes} bytes in {} ms", started.elapsed().as_millis());
+    Ok(())
+}
+
+/// The relay over TCP, for networks that block UDP: bronze's web server (Caddy, which owns
+/// TCP 443 with a Let's Encrypt certificate for bronze's IP) hands each `GET /tbrelay` that
+/// asks to upgrade to this loopback listener. After the `101` the connection is one relayed
+/// stream, spliced exactly as a QUIC relay stream. The device's address comes from Caddy's
+/// X-Forwarded-For, its client id from X-Torrbaby-Client. Streams from one device share one
+/// record on the Connection page while any is open.
+pub async fn serve_tcp(listener: tokio::net::TcpListener, hub: Arc<Hub>) {
+    while let Ok((tcp, _)) = listener.accept().await {
+        let hub = hub.clone();
+        tokio::spawn(async move { let _ = tcp_stream(tcp, hub).await; });
+    }
+}
+
+/// Relayed streams open over TCP now, and at most (each is a socket here and one at Caddy).
+static TCP_OPEN: AtomicU64 = AtomicU64::new(0);
+const MAX_TCP_STREAMS: usize = 4096;
+
+/// Key of the Connection page's records for devices on the relay over TCP (QUIC connections
+/// use their stable id, which counts up from 0).
+fn tcp_key(client: &str, ip: &str) -> usize {
+    let digest = Sha256::digest(format!("tcp {client} {ip}").as_bytes());
+    usize::MAX / 2 + (u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]]) as usize)
+}
+
+async fn tcp_stream(mut tcp: tokio::net::TcpStream, hub: Arc<Hub>) -> Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let _ = tcp.set_nodelay(true);
+    // The request's head, a byte at a time so nothing after it is taken.
+    let mut head = Vec::new();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !head.ends_with(b"\r\n\r\n") {
+            if head.len() > 8192 { bail!("request head too long") }
+            head.push(tcp.read_u8().await?);
+        }
+        anyhow::Ok(())
+    }).await??;
+    let head = String::from_utf8_lossy(&head).into_owned();
+    let mut lines = head.split("\r\n");
+    let request = lines.next().unwrap_or("");
+    let header = |name: &str| head.split("\r\n").skip(1).find_map(|line| line.split_once(':').filter(|(key, _)| key.trim().eq_ignore_ascii_case(name)).map(|(_, value)| value.trim().to_owned()));
+    if !request.starts_with(&format!("GET {TCP_PATH} ")) || header("Upgrade").is_none() {
+        tcp.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await?;
+        return Ok(());
+    }
+    // Caddy appends the address it saw last.
+    let ip = header("X-Forwarded-For").and_then(|f| f.rsplit(',').next().map(|ip| ip.trim().to_owned())).unwrap_or_default();
+    let from = ip.parse::<IpAddr>().map(|ip| SocketAddr::new(ip, 0)).unwrap_or_else(|_| tcp.peer_addr().unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0))));
+    let client = header("X-Torrbaby-Client").unwrap_or_default().chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(64).collect::<String>();
+    if TCP_OPEN.load(Ordering::Relaxed) as usize >= MAX_TCP_STREAMS {
+        tcp.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await?;
+        return Ok(());
+    }
+    tcp.write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n").await?;
+    // One record per device while any of its streams is open.
+    let key = tcp_key(&client, &ip);
+    let record = {
+        let mut connected = hub.connected.lock().map_err(|_| anyhow::anyhow!("lock"))?;
+        connected.entry(key).or_insert_with(|| Arc::new(Device { client: std::sync::Mutex::new(client.clone()), address: std::sync::Mutex::new(from), since: unix_now(),
+            down: AtomicU64::new(0), up: AtomicU64::new(0), streams: AtomicU64::new(0), open: AtomicU64::new(0) })).clone()
+    };
+    record.open.fetch_add(1, Ordering::Relaxed);
+    record.streams.fetch_add(1, Ordering::Relaxed);
+    hub.streams.fetch_add(1, Ordering::Relaxed);
+    TCP_OPEN.fetch_add(1, Ordering::Relaxed);
+    let (recv, mut send) = tcp.into_split();
+    let _ = relay(recv, &mut send, hub.clone(), from, &format!("Device tcp {}", if client.is_empty() { ip.as_str() } else { client.as_str() }), &record).await;
+    TCP_OPEN.fetch_sub(1, Ordering::Relaxed);
+    if record.open.fetch_sub(1, Ordering::Relaxed) == 1 {
+        if let Ok(mut connected) = hub.connected.lock() {
+            if connected.get(&key).is_some_and(|held| held.open.load(Ordering::Relaxed) == 0) { connected.remove(&key); }
+        }
+    }
+    Ok(())
 }
 
 /// Copy until the end, adding each chunk to `counters` as it goes (so a long video counts as

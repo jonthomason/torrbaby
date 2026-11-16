@@ -1,11 +1,12 @@
 //! tbrendezvous: Torrbaby's rendezvous on bronze. See lib.rs.
 //!
-//!   tbrendezvous [--state DIR] [--stun PORT] [--stun2 PORT] [--quic PORT]   run the service
+//!   tbrendezvous [--state DIR] [--stun PORT] [--stun2 PORT] [--quic PORT] [--tcp PORT]   run the service
+//!       (--tcp: the relay over TCP on loopback, behind bronze's web server on 443; 0: off)
 //!   tbrendezvous [--state DIR] info                           print the certificate
 //!       fingerprint and the path of Diamond's secret, making both on first use
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
-use tbrendezvous::{Hub, Identity, endpoint, load_or_create_secret, serve, stun};
+use tbrendezvous::{Hub, Identity, endpoint, load_or_create_secret, serve, serve_tcp, stun};
 
 fn main() -> Result<()> {
     let mut state = PathBuf::from("/var/lib/tbrendezvous");
@@ -13,6 +14,7 @@ fn main() -> Result<()> {
     // A second STUN port: a device asking both from one socket learns whether its NAT gives
     // each destination its own port (China Mobile does, which defeats predicting the port).
     let mut stun_port_2 = 3479u16;
+    let mut tcp_port = 7444u16;
     let mut info = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -21,6 +23,7 @@ fn main() -> Result<()> {
             "--stun" => stun_port = args.next().context("--stun needs a port")?.parse()?,
             "--stun2" => stun_port_2 = args.next().context("--stun2 needs a port")?.parse()?,
             "--quic" => quic_port = args.next().context("--quic needs a port")?.parse()?,
+            "--tcp" => tcp_port = args.next().context("--tcp needs a port")?.parse()?,
             "info" => info = true,
             other => bail!("Unknown argument {other}"),
         }
@@ -44,6 +47,11 @@ fn main() -> Result<()> {
         tokio::spawn(stun::serve(stun_socket));
         let hub = Hub::new(&secret);
         hub.keep_usage(&state);
+        if tcp_port != 0 {
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", tcp_port)).await.with_context(|| format!("TCP port {tcp_port}"))?;
+            eprintln!("tbrendezvous: relay over TCP on 127.0.0.1:{tcp_port}");
+            tokio::spawn(serve_tcp(listener, hub.clone()));
+        }
         let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
         tokio::select! {
             _ = serve(endpoint.clone(), hub.clone()) => {}

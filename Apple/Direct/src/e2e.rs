@@ -63,3 +63,22 @@ pub async fn wrap(send: quinn::SendStream, recv: quinn::RecvStream) -> Wrapped {
         _ => Wrapped::Failed,
     }
 }
+
+/// As `Wrapped`, for a relayed stream that is a byte stream of its own (the relay over TCP).
+pub enum WrappedIo<S> {
+    Encrypted(tokio_rustls::client::TlsStream<S>),
+    Plain(S),
+    Failed,
+}
+
+/// As `wrap`, over any byte stream.
+pub async fn wrap_io<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(io: S) -> WrappedIo<S> {
+    let config = PINNED.lock().ok().and_then(|held| held.as_ref().map(|(_, config)| config.clone()));
+    let Some(config) = config else { return WrappedIo::Plain(io) };
+    let connector = tokio_rustls::TlsConnector::from(config);
+    let name = rustls::pki_types::ServerName::try_from("torrbaby-diamond").expect("a valid name");
+    match tokio::time::timeout(Duration::from_secs(15), connector.connect(name, io)).await {
+        Ok(Ok(stream)) => WrappedIo::Encrypted(stream),
+        _ => WrappedIo::Failed,
+    }
+}

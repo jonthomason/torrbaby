@@ -94,6 +94,14 @@ pipes serve the Mac's install server as `https://ota.mac.abt.jonthomason.com/` (
   7443 and 40000 got no reply from Diamond or the Mac on 2026-11-13. Open the new ports in
   ufw **and** check the Alibaba security group, which is separate and may need the console;
   ask the user if it does.
+- **Relay over TCP 443 (2026-11-16, Apple 330):** for networks that block UDP (a Beijing airport
+  Wi-Fi blocked 7443). Caddy's `47.112.18.69` site has `handle /tbrelay`, reverse-proxying the
+  upgrade to tbrendezvous on 127.0.0.1:7444 (`stream_close_delay 10m`; backup of the previous
+  file: /etc/caddy/Caddyfile.before-tbrelay). Each upgraded connection is one relayed stream,
+  spliced like a QUIC `tbrelay` stream; TBINFO1 works the same (`you <ip>:0`, from
+  X-Forwarded-For); the client id comes in `X-Torrbaby-Client`. The app (Apple/Direct
+  `tcp.rs`) races QUIC with TCP 1.5 s behind and remembers networks where only TCP opened; no
+  punching over it. The packet tunnel extension still uses QUIC only.
 
 ## Ports to open on bronze
 

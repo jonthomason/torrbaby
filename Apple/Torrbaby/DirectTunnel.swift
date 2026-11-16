@@ -9,6 +9,9 @@ import Foundation
 @_silgen_name("tbdirect_relay_stop") private func tbdirect_relay_stop()
 @_silgen_name("tbdirect_identity") private func tbdirect_identity(_ fingerprint: UnsafePointer<CChar>)
 @_silgen_name("tbdirect_client") private func tbdirect_client(_ id: UnsafePointer<CChar>)
+@_silgen_name("tbdirect_relay_tcp_start") private func tbdirect_relay_tcp_start(_ server: UnsafePointer<CChar>, _ interface: UnsafePointer<CChar>) -> UInt16
+@_silgen_name("tbdirect_relay_tcp_alive") private func tbdirect_relay_tcp_alive() -> Bool
+@_silgen_name("tbdirect_relay_tcp_stop") private func tbdirect_relay_tcp_stop()
 @_silgen_name("tbdirect_relay_info") private func tbdirect_relay_info(_ buffer: UnsafeMutablePointer<CChar>, _ capacity: Int) -> Int32
 
 /// The relay through Torrbaby's rendezvous on bronze, for when this device has no home
@@ -18,13 +21,42 @@ import Foundation
 /// Torrbaby requests with this device's credentials. Signalling (the online check, the
 /// direct path's request) rides it, then traffic moves to the direct tunnel when that opens.
 /// The socket is bound to the real network, so a Tailscale exit node does not carry it.
+///
+/// Networks that block UDP (an airport's Wi-Fi did) get the relay over TCP 443 instead: each
+/// connection is TLS to bronze's web server, upgraded into one relayed stream (Apple/Direct
+/// tcp.rs). QUIC and TCP race, TCP 1.5 s behind; a network where TCP won tries TCP first.
 final class RelayTunnel: @unchecked Sendable {
     private(set) var port: UInt16 = 0
     private(set) var interface: String?
+    /// Over TCP 443 (UDP is blocked on this network), not QUIC.
+    private(set) var overTCP = false
     var onClose: (@MainActor () -> Void)?
     private var watcher: Task<Void, Never>?
 
+    /// The networks (PunchProbe.networkSignature) where only the relay over TCP opened.
+    private static let blocking = NSLock()
+    nonisolated(unsafe) private static var udpBlocked: Set<String> = []
+
     static func open(address: String, fingerprint: String) async -> RelayTunnel? {
+        let network = PunchProbe.networkSignature()
+        let tcpFirst = blocking.withLock { udpBlocked.contains(network) }
+        // bronze's web server, on 443 at the relay's host.
+        let host = address.split(separator: ":").dropLast().joined(separator: ":")
+        let race = Race(entrants: tcpFirst ? 1 : 2)
+        if !tcpFirst {
+            Task.detached { race.offer(await openQUIC(address: address, fingerprint: fingerprint)) }
+        }
+        Task.detached {
+            if !tcpFirst { try? await Task.sleep(for: .milliseconds(1500)) }
+            race.offer(race.decided ? nil : await openTCP(server: "\(host):443"))
+        }
+        guard let tunnel = await race.winner() else { return nil }
+        blocking.withLock { if tunnel.overTCP { udpBlocked.insert(network) } else { udpBlocked.remove(network) } }
+        tunnel.watch()
+        return tunnel
+    }
+
+    private static func openQUIC(address: String, fingerprint: String) async -> RelayTunnel? {
         let probe = PunchProbe(count: 1)
         defer { probe.close() }
         guard probe.ready, let fd = probe.take(0) else { return nil }
@@ -35,11 +67,51 @@ final class RelayTunnel: @unchecked Sendable {
         let tunnel = RelayTunnel()
         tunnel.port = port
         tunnel.interface = probe.interface
-        tunnel.watch()
         return tunnel
     }
 
-    var alive: Bool { tbdirect_relay_alive() }
+    private static func openTCP(server: String) async -> RelayTunnel? {
+        let interface = PunchProbe.physicalInterface()
+        let port = await Task.detached { () -> UInt16 in
+            server.withCString { s in (interface ?? "").withCString { i in tbdirect_relay_tcp_start(s, i) } }
+        }.value
+        guard port != 0 else { return nil }
+        let tunnel = RelayTunnel()
+        tunnel.port = port
+        tunnel.interface = interface
+        tunnel.overTCP = true
+        return tunnel
+    }
+
+    /// The first relay to open; one that opens after it is closed.
+    private final class Race: @unchecked Sendable {
+        private let lock = NSLock()
+        private var pending: Int
+        private var won = false
+        private var waiting: CheckedContinuation<RelayTunnel?, Never>?
+        private var result: RelayTunnel??
+        init(entrants: Int) { pending = entrants }
+        var decided: Bool { lock.withLock { won } }
+        func offer(_ tunnel: RelayTunnel?) {
+            let (late, finish): (RelayTunnel?, Bool) = lock.withLock {
+                pending -= 1
+                if let tunnel, !won { won = true; result = .some(tunnel); return (nil, true) }
+                if let tunnel { return (tunnel, false) }
+                if pending == 0 && !won { won = true; result = .some(nil); return (nil, true) }
+                return (nil, false)
+            }
+            late?.close()
+            if finish { lock.withLock { let w = waiting; waiting = nil; return w }?.resume(returning: result ?? nil) }
+        }
+        func winner() async -> RelayTunnel? {
+            await withCheckedContinuation { continuation in
+                let ready: RelayTunnel?? = lock.withLock { if let result { return .some(result) }; waiting = continuation; return nil }
+                if let ready { continuation.resume(returning: ready) }
+            }
+        }
+    }
+
+    var alive: Bool { overTCP ? tbdirect_relay_tcp_alive() : tbdirect_relay_alive() }
 
     /// Bronze's view, over the relay: whether Diamond is connected, and this device's public
     /// address ("ip:port"). Behind a hotspot this is the only way to see the carrier change.
@@ -61,7 +133,7 @@ final class RelayTunnel: @unchecked Sendable {
         watcher = Task.detached { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(3))
-                if !tbdirect_relay_alive() {
+                if self?.alive != true {
                     let notify = self?.onClose
                     await MainActor.run { notify?() }
                     return
@@ -73,7 +145,7 @@ final class RelayTunnel: @unchecked Sendable {
     func close() {
         watcher?.cancel(); watcher = nil
         onClose = nil
-        tbdirect_relay_stop()
+        if overTCP { tbdirect_relay_tcp_stop() } else { tbdirect_relay_stop() }
     }
 }
 

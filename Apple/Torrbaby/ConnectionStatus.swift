@@ -171,6 +171,9 @@ struct ConnectionStatusSections: View {
         parts.append(store.relayAddress.isEmpty ? "bronze's address not known yet" : "bronze \(store.relayAddress)")
         parts.append(store.relayRoute == nil ? "relay closed" : "relay open")
         #if os(iOS)
+        if store.relayRoute != nil && store.relayOverTCP { parts.append("over TCP 443 (this network blocks UDP)") }
+        #endif
+        #if os(iOS)
         if let address = store.relayPublicAddress { parts.append("this network's public address \(address)") }
         #endif
         if let connected = store.relayServerConnected { parts.append(connected ? "\(server) connected to bronze" : "\(server) NOT connected to bronze") }

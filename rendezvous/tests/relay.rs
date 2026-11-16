@@ -72,8 +72,58 @@ fn start() -> (SocketAddr, String) {
     let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
     let address = socket.local_addr().unwrap();
     let endpoint = endpoint(socket, &identity).unwrap();
-    tokio::spawn(serve(endpoint, Hub::new(&secret)));
+    let hub = Hub::new(&secret);
+    tokio::spawn(serve(endpoint, hub.clone()));
+    let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    tcp.set_nonblocking(true).unwrap();
+    TCP.lock().unwrap().insert(address, tcp.local_addr().unwrap());
+    tokio::spawn(serve_tcp(tokio::net::TcpListener::from_std(tcp).unwrap(), hub));
     (address, secret)
+}
+
+/// Each test's relay over TCP, by its QUIC address.
+static TCP: std::sync::Mutex<std::collections::BTreeMap<SocketAddr, SocketAddr>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// One stream over the relay over TCP, as bronze's web server hands it over: the upgrade
+/// request (with the headers Caddy adds), then `request`, then the reply to the end.
+async fn ask_tcp(server: SocketAddr, path: &str, request: &[u8]) -> (String, String) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let tcp = *TCP.lock().unwrap().get(&server).unwrap();
+    let mut stream = tokio::net::TcpStream::connect(tcp).await.unwrap();
+    stream.write_all(format!("GET {path} HTTP/1.1\r\nHost: 47.112.18.69\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nX-Torrbaby-Client: 9c1d-phone\r\nX-Forwarded-For: 203.0.113.7\r\n\r\n").as_bytes()).await.unwrap();
+    let mut head = Vec::new();
+    while !head.ends_with(b"\r\n\r\n") { head.push(stream.read_u8().await.unwrap()) }
+    stream.write_all(request).await.unwrap();
+    stream.shutdown().await.unwrap();
+    let mut reply = Vec::new();
+    tokio::time::timeout(Duration::from_secs(10), stream.read_to_end(&mut reply)).await.unwrap().unwrap();
+    (String::from_utf8_lossy(&head).lines().next().unwrap_or("").to_owned(), String::from_utf8_lossy(&reply).into_owned())
+}
+
+#[tokio::test]
+async fn the_relay_over_tcp_carries_streams_like_quic() {
+    let (server, secret) = start();
+    let (status, reply) = ask_tcp(server, "/tbrelay", INFO).await;
+    assert_eq!(status, "HTTP/1.1 101 Switching Protocols");
+    assert!(reply.starts_with("home offline\nyou 203.0.113.7:0\n"), "{reply}");
+    let (_, refused) = ask_tcp(server, "/tbrelay", b"GET /v1/ping HTTP/1.1\r\n\r\n").await;
+    assert_eq!(refused, "", "closed while Diamond is not connected");
+    let diamond = home(server, &secret).await.unwrap();
+    assert!(ask_tcp(server, "/tbrelay", INFO).await.1.starts_with("home online\n"));
+    let big = [b"POST /v1/x HTTP/1.1\r\n\r\n".as_slice(), &vec![b'a'; 300_000]].concat();
+    let ((_, a), (_, b)) = tokio::join!(ask_tcp(server, "/tbrelay", &big), ask_tcp(server, "/tbrelay", b"GET /v1/status?sig=x HTTP/1.1\r\n\r\n"));
+    assert_eq!(a, format!("heard POST /v1/x HTTP/1.1 ({} bytes)", big.len()));
+    assert!(b.starts_with("heard GET /v1/status?sig=x"));
+    // Another path is not the relay.
+    assert_eq!(ask_tcp(server, "/other", b"").await.0, "HTTP/1.1 404 Not Found");
+    // The streams are counted for the device while open, and in the day's total after.
+    let (mut send, mut recv) = diamond.open_bi().await.unwrap();
+    send.write_all(tbrendezvous::USAGE).await.unwrap();
+    send.finish().unwrap();
+    let usage: serde_json::Value = serde_json::from_slice(&recv.read_to_end(1 << 20).await.unwrap()).unwrap();
+    assert!(usage["devices"].as_array().unwrap().is_empty(), "no stream open now: {usage}");
+    let today = usage["today"].as_str().unwrap();
+    assert!(usage["days"][today]["up"].as_u64().unwrap() >= big.len() as u64, "{usage}");
 }
 
 static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

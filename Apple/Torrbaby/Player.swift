@@ -231,9 +231,34 @@ final class PlaybackModel: ObservableObject {
             if item.status == .failed {
                 let message = item.error?.localizedDescription ?? "Apple's player cannot open this file."
                 ClientLogs.failed("Playback: \((item.error as NSError?).map { "\($0.domain) \($0.code) \($0.localizedDescription) \($0.userInfo[NSUnderlyingErrorKey] ?? "")" } ?? message)")
-                Task { @MainActor [weak self] in self?.error = message }
+                Task { @MainActor [weak self] in
+                    guard let self, self.player.currentItem === item else { return }
+                    if await self.retryOnAnotherRoute(item) { return }
+                    self.error = message
+                }
             }
         }
+    }
+    /// The playback last tried again on another route (once each).
+    private var retriedPlayback: UUID?
+    /// A stream that failed is tried again, once, on the next way to the server that answers
+    /// (the relay through bronze failed on an airport's Wi-Fi while ABT had a path), from where
+    /// it was. False when there is no other way, or it was already tried.
+    private func retryOnAnotherRoute(_ item: AVPlayerItem) async -> Bool {
+        let failed = playback
+        guard !failed.url.isFileURL, retriedPlayback != failed.id else { return false }
+        retriedPlayback = failed.id
+        let position = player.currentTime().seconds
+        guard let route = await store.routeAfterStreamFailure(failed.url), playback.id == failed.id, player.currentItem === item,
+              var parts = URLComponents(url: failed.url, resolvingAgainstBaseURL: false),
+              let base = URLComponents(string: route) else { return false }
+        parts.scheme = base.scheme; parts.host = base.host; parts.port = base.port
+        guard let url = parts.url else { return false }
+        var next = Playback(sessionId: failed.sessionId, resumePosition: position.isFinite && position > 0 ? position : failed.resumePosition, url: url, name: failed.name,
+                            localDownloadID: failed.localDownloadID, libraryAssetID: failed.libraryAssetID, libraryTitleID: failed.libraryTitleID)
+        next.id = failed.id
+        load(next)
+        return true
     }
     func updateNextEpisodeAvailability() {
         let duration = player.currentItem?.duration.seconds ?? 0

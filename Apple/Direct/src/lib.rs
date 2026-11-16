@@ -25,6 +25,7 @@ pub mod e2e;
 pub mod packet;
 pub mod proxy;
 pub mod punch;
+pub mod tcp;
 
 pub(crate) struct Tunnel {
     runtime: tokio::runtime::Runtime,
@@ -54,7 +55,7 @@ impl ServerCertVerifier for Pinned {
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> { self.1.signature_verification_algorithms.supported_schemes() }
 }
 
-fn text(pointer: *const c_char) -> Option<String> {
+pub(crate) fn text(pointer: *const c_char) -> Option<String> {
     if pointer.is_null() { return None }
     unsafe { CStr::from_ptr(pointer) }.to_str().ok().map(str::to_owned)
 }
@@ -179,7 +180,7 @@ pub(crate) fn open_on(slot: &Mutex<Option<Tunnel>>, socket: std::net::UdpSocket,
     port
 }
 
-async fn pipe<W: tokio::io::AsyncWrite + Unpin, R: tokio::io::AsyncRead + Unpin>(tcp: tokio::net::TcpStream, mut send: W, mut recv: R) {
+pub(crate) async fn pipe<W: tokio::io::AsyncWrite + Unpin, R: tokio::io::AsyncRead + Unpin>(tcp: tokio::net::TcpStream, mut send: W, mut recv: R) {
     let _ = tcp.set_nodelay(true);
     let (mut from_app, mut to_app) = tcp.into_split();
     let up = async { let _ = tokio::io::copy(&mut from_app, &mut send).await; let _ = send.shutdown().await; };
@@ -241,7 +242,8 @@ pub extern "C" fn tbdirect_relay_stop() { stop(&RELAY) }
 #[unsafe(no_mangle)]
 pub extern "C" fn tbdirect_relay_info(buffer: *mut c_char, capacity: usize) -> i32 {
     if buffer.is_null() || capacity == 0 { return -1 }
-    let Some(reply) = relay_info() else { return -1 };
+    // The QUIC relay when open, else the relay over TCP.
+    let Some(reply) = relay_info().or_else(tcp::info) else { return -1 };
     let length = reply.len().min(capacity - 1);
     unsafe {
         std::ptr::copy_nonoverlapping(reply.as_ptr() as *const c_char, buffer, length);
@@ -273,7 +275,7 @@ static HOME: Mutex<Option<SocketAddr>> = Mutex::new(None);
 
 /// This device's Torrbaby client id: the relay names its connection with it, so Diamond's
 /// Connection page can show which devices use bronze (bronze is told nothing more).
-static CLIENT: Mutex<String> = Mutex::new(String::new());
+pub(crate) static CLIENT: Mutex<String> = Mutex::new(String::new());
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tbdirect_client(id: *const c_char) {
