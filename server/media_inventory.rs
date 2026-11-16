@@ -350,13 +350,17 @@ async fn prefer_people_english(s:&Service,asset:&Value,id:&str,input:&std::path:
     Ok(())
 }
 /// A Chinese translation not made yet is replaced by Chinese people wrote, when OpenSubtitles
-/// has some for this file. Translations already made (on device or by the external fleet)
-/// stay as they are.
+/// has some for this file. So is one made on device from English that came from OpenSubtitles
+/// (Parasite's, translated while Chinese downloads were off): it stays until the download is
+/// ready (or is dropped mid-way). Other translations already made, and any by the external
+/// fleet, stay as they are.
 async fn prefer_people_chinese(s:&Service,asset:&Value,id:&str,input:&std::path::Path,planned:&mut [(std::path::PathBuf,u64,&'static str,Option<&'static str>)])->Result<()> {
     let Some(at)=planned.iter().position(|(_,_,language,target)|*language=="en" && *target==Some("zh-Hans")) else {return Ok(())};
     let (path,track,_,_)=&planned[at];
     let existing=s.subtitle_jobs.lookup(id,path,*track,&Some("en".to_owned()),&Some("zh-Hans".to_owned()));
-    if existing.as_ref().is_some_and(|job|matches!(job["state"].as_str(),Some("ready"|"running"|"queued"|"external"))) {return Ok(());}
+    let interim=crate::speech_subtitles::method(&s.data_dir,path)==Some("opensubtitles")
+        && !existing.as_ref().is_some_and(|job|job["translated_by"]=="fleet");
+    if !interim && existing.as_ref().is_some_and(|job|matches!(job["state"].as_str(),Some("ready"|"running"|"queued"|"external"))) {return Ok(());}
     if let Some(chinese)=crate::speech_subtitles::people_chinese(s,asset,input).await? {planned[at]=(chinese,1,"zh-Hans",None);}
     Ok(())
 }

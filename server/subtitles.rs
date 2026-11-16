@@ -235,13 +235,6 @@ pub fn parse_srt(input: &str) -> Result<Vec<TimedCue>> {
             block.clear();
             continue;
         }
-        if let Some(previous) = cues.last() {
-            let previous: &TimedCue = previous;
-            ensure!(
-                start_ms >= previous.start_ms,
-                "Subtitle cues are out of order"
-            );
-        }
         cues.push(TimedCue {
             start_ms,
             end_ms,
@@ -250,6 +243,9 @@ pub fn parse_srt(input: &str) -> Result<Vec<TimedCue>> {
         block.clear();
     }
     ensure!(!cues.is_empty(), "No subtitle cues");
+    // Files people make can list a cue out of place (OpenSubtitles' Chinese for Creed): put
+    // in time order, not refused. Stable, so cues at the same time keep the file's order.
+    cues.sort_by_key(|cue: &TimedCue| cue.start_ms);
     Ok(cues)
 }
 
@@ -636,6 +632,14 @@ pub fn read_sidecar(media: &Path, id: &str) -> Result<String> {
 
 #[cfg(test)]
 mod sidecar_tests {
+    #[test]
+    fn cues_out_of_place_are_put_in_order() {
+        use super::parse_srt;
+        let text = "1\n00:00:05,000 --> 00:00:06,000\nsecond\n\n2\n00:00:01,000 --> 00:00:02,000\nfirst\n\n3\n00:00:09,000 --> 00:00:10,000\nthird\n";
+        let cues = parse_srt(text).unwrap();
+        assert_eq!(cues.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["first", "second", "third"]);
+    }
+
     #[test]
     fn chinese_lines_of_one_sentence_are_translated_together_and_spread_back() {
         let cue = |start: u64, end: u64, text: &str| TimedCue { start_ms: start, end_ms: end, text: text.into() };

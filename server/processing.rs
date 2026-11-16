@@ -76,6 +76,23 @@ fn reopen_for_people_english(db:&Database,data:&Path)->Result<usize> {
     if reopened>0 {tracing::info!(reopened,"Titles with English read from text will look for English from OpenSubtitles");}
     Ok(reopened)
 }
+/// Titles whose English came from OpenSubtitles and whose Chinese was translated on device
+/// while Chinese downloads were off (Parasite): done again once, so OpenSubtitles' Chinese
+/// replaces the translation when it has some.
+fn reopen_for_people_chinese(db:&Database,data:&Path)->Result<usize> {
+    if !crate::opensubtitles::chinese(data) {return Ok(0);}
+    let rows=db.rows("SELECT m.asset_id,m.revision,i.document FROM media_processing m JOIN media_inventory i ON i.asset_id=m.asset_id AND i.revision=m.revision WHERE m.state='ready' AND m.subtitles_state='ready'",[])?;
+    let mut reopened=0;
+    for row in rows {
+        let (Some(id),Some(revision),Some(document))=(row["asset_id"].as_str(),row["revision"].as_str(),row["document"].as_str()) else{continue};
+        let Ok(info)=serde_json::from_str::<Value>(document) else{continue};
+        let people=info["prepared"].as_array().is_some_and(|jobs|jobs.iter().any(|j|j["state"]=="ready" && j["language"]=="en" && j["extraction_method"]=="opensubtitles"));
+        if !people || crate::speech_subtitles::people_settled(data,id,revision,"zh") {continue;}
+        reopened+=db.connection.execute("UPDATE media_processing SET subtitles_state='pending',stage='subtitles',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![now(),id,revision])?;
+    }
+    if reopened>0 {tracing::info!(reopened,"Titles with English from OpenSubtitles will look for its Chinese");}
+    Ok(reopened)
+}
 /// Subtitle errors a later build no longer has: the subtitle store's old 4,096-file cap, and
 /// a subtitle track in neither English nor Chinese blocking the picture and the speech.
 const RETIRED_SUBTITLE_ERRORS:[&str;5]=[crate::subtitle_jobs::STORAGE_FULL,crate::ocr_subtitles::UNIDENTIFIED_LANGUAGE,
@@ -336,6 +353,7 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
             reopen_replaced(&db)?;
             reopen_storage_full(&db)?;
             reopen_for_people_english(&db,&s.data_dir)?;
+            reopen_for_people_chinese(&db,&s.data_dir)?;
             retire_obsolete_failures(&db)?;
             reopen_untranscribed(&db,&s.data_dir)?;
             reopen_line_translated(&db,&s.subtitle_jobs.line_translated())?;

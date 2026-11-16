@@ -340,6 +340,14 @@ pub fn people_decided(data: &Path, asset: &str, revision: &str, tag: &str) -> bo
     directory(data).join(format!("{}.{tag}-opensubtitles.json", key(data, asset, revision))).is_file()
 }
 
+/// Whether OpenSubtitles gave an answer that stands for this file in `tag`: subtitles, or none
+/// suitable. Not while it could not be asked, nor when its file was refused for cues out of place.
+pub fn people_settled(data: &Path, asset: &str, revision: &str, tag: &str) -> bool {
+    let record = directory(data).join(format!("{}.{tag}-opensubtitles.json", key(data, asset, revision)));
+    std::fs::read(record).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).is_some_and(|saved|
+        saved["state"] == "ready" || (saved["state"] == "missing" && !saved["reason"].as_str().is_some_and(|r| r.ends_with("Subtitle cues are out of order"))))
+}
+
 /// Leave a file out of the OpenSubtitles lookup for now, saying why; a later round removes
 /// these records to look again.
 pub fn set_aside(s: &Service, asset: &Value, input: &Path, tag: &str, reason: &str) -> Result<()> {
@@ -366,7 +374,9 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
             if path.is_file() { return Ok(Some(path)); }
         }
         // Lookups before version 2 never matched Chinese ("zh-CN" against "zh-cn"): asked again.
-        if saved["state"] == "missing" && (saved["lookup"].as_u64() >= Some(2) || saved["set_aside"] == true) { return Ok(None); }
+        // Files refused for cues out of place are now put in order (Creed's Chinese): asked again.
+        let unordered = saved["reason"].as_str().is_some_and(|r| r.ends_with("Subtitle cues are out of order"));
+        if saved["state"] == "missing" && !unordered && (saved["lookup"].as_u64() >= Some(2) || saved["set_aside"] == true) { return Ok(None); }
         if saved["after"].as_f64().is_some_and(|t| t > now()) { return Ok(None); }
     }
     let save = |document: Value| -> Result<()> {

@@ -413,7 +413,7 @@ pub async fn extract_worker(path: &Path, track: u64) -> Result<Vec<TimedCue>> {
             child.wait().await?.success(),
             "Subtitle extraction worker failed"
         );
-        let cues: Vec<TimedCue> =
+        let mut cues: Vec<TimedCue> =
             serde_json::from_slice(&bytes).context("Invalid subtitle worker response")?;
         ensure!(
             !cues.is_empty()
@@ -423,11 +423,8 @@ pub async fn extract_worker(path: &Path, track: u64) -> Result<Vec<TimedCue>> {
                     && cue.text.len() <= 16_384),
             "Invalid extracted cues"
         );
-        ensure!(
-            cues.windows(2)
-                .all(|pair| pair[0].start_ms <= pair[1].start_ms),
-            "Extracted cues out of order"
-        );
+        // A track can store a cue out of place: put in time order, not refused.
+        cues.sort_by_key(|cue| cue.start_ms);
         ensure!(
             before == revision(path)?,
             "Media changed during subtitle extraction"
