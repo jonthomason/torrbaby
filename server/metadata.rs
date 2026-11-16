@@ -99,12 +99,16 @@ fn search_candidates(data: &Value, kind: &str) -> Vec<Value> {
 }
 
 /// Candidates whose normalized title or original title equals the query, in the given year.
+/// With a year, a release's country tag ("The Office (US) (2005)") need not be in TMDB's
+/// title: the year tells the US Office from the UK one (2001).
 fn exact_candidates<'a>(query: &str, year: &str, candidates: &'a [Value]) -> Vec<&'a Value> {
+    static COUNTRY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)[\s(\[]+(?:US|USA|UK|AU|NZ|CA)[)\]]*\s*$").expect("valid regex"));
+    let untagged = (!year.is_empty()).then(|| normalized(&COUNTRY.replace(query, ""))).filter(|q| !q.is_empty());
     let query = normalized(query);
     candidates.iter().filter(|c| {
+        let titles = [normalized(c["title"].as_str().unwrap_or("")), normalized(c["original_title"].as_str().unwrap_or(""))];
         !query.is_empty()
-            && (query == normalized(c["title"].as_str().unwrap_or(""))
-                || query == normalized(c["original_title"].as_str().unwrap_or("")))
+            && titles.iter().any(|t| *t == query || untagged.as_ref() == Some(t))
             && (year.is_empty() || c["year"] == year)
     }).collect()
 }
@@ -939,6 +943,10 @@ mod prefixed_name_tests {
         assert!(exact_candidates("Moonraker", "1980", &hits).is_empty());
         assert!(exact_candidates("Bond Moonraker", "1979", &hits).is_empty());
         assert!(exact_candidates("", "1979", &[json!({"title":"","year":"1979"})]).is_empty());
+        let offices = [json!({"title":"The Office","original_title":"The Office","year":"2005"}), json!({"title":"The Office","original_title":"The Office","year":"2001"})];
+        assert_eq!(exact_candidates("The Office (US", "2005", &offices).len(), 1, "a country tag with the year");
+        assert_eq!(exact_candidates("The Office US", "2001", &offices)[0]["year"], "2001");
+        assert!(exact_candidates("The Office (US", "", &offices).is_empty(), "no year: the tag must match");
     }
 
     /// `identify` against recorded TMDB responses: no token, no network.

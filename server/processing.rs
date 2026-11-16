@@ -62,7 +62,7 @@ fn reopen_replaced(db:&Database)->Result<usize> {
 /// titles that have no subtitles.
 fn reopen_for_people_english(db:&Database,data:&Path)->Result<usize> {
     if !crate::opensubtitles::read_english(data) {return Ok(0);}
-    let rows=db.rows("SELECT m.asset_id,m.revision,i.document FROM media_processing m JOIN media_inventory i ON i.asset_id=m.asset_id AND i.revision=m.revision WHERE m.state='ready' AND m.subtitles_state='ready'",[])?;
+    let rows=db.rows("SELECT m.asset_id,m.revision,i.document FROM media_processing m JOIN media_inventory i ON i.asset_id=m.asset_id AND i.revision=m.revision LEFT JOIN library_assets a ON a.id=m.asset_id WHERE m.state='ready' AND m.subtitles_state='ready' AND coalesce(json_extract(a.document,'$.role'),'')!='extra'",[])?;
     let mut reopened=0;
     for row in rows {
         let (Some(id),Some(revision),Some(document))=(row["asset_id"].as_str(),row["revision"].as_str(),row["document"].as_str()) else{continue};
@@ -81,7 +81,7 @@ fn reopen_for_people_english(db:&Database,data:&Path)->Result<usize> {
 /// replaces the translation when it has some.
 fn reopen_for_people_chinese(db:&Database,data:&Path)->Result<usize> {
     if !crate::opensubtitles::chinese(data) {return Ok(0);}
-    let rows=db.rows("SELECT m.asset_id,m.revision,i.document,json_extract(a.document,'$.season') AS season FROM media_processing m JOIN media_inventory i ON i.asset_id=m.asset_id AND i.revision=m.revision LEFT JOIN library_assets a ON a.id=m.asset_id WHERE m.state='ready' AND m.subtitles_state='ready'",[])?;
+    let rows=db.rows("SELECT m.asset_id,m.revision,i.document,json_extract(a.document,'$.season') AS season FROM media_processing m JOIN media_inventory i ON i.asset_id=m.asset_id AND i.revision=m.revision LEFT JOIN library_assets a ON a.id=m.asset_id WHERE m.state='ready' AND m.subtitles_state='ready' AND coalesce(json_extract(a.document,'$.role'),'')!='extra'",[])?;
     let mut reopened=0;
     for row in rows {
         let (Some(id),Some(revision),Some(document))=(row["asset_id"].as_str(),row["revision"].as_str(),row["document"].as_str()) else{continue};
@@ -97,7 +97,7 @@ fn reopen_for_people_chinese(db:&Database,data:&Path)->Result<usize> {
 /// both languages is done again, behind titles that have none.
 fn reopen_for_everything(db:&Database,data:&Path)->Result<usize> {
     if !crate::opensubtitles::everything(data) {return Ok(0);}
-    let rows=db.rows("SELECT m.asset_id,m.revision,json_extract(a.document,'$.season') AS season FROM media_processing m LEFT JOIN library_assets a ON a.id=m.asset_id WHERE m.state='ready' AND m.subtitles_state IN ('ready','not_applicable','skipped') AND m.inventory_state='ready'",[])?;
+    let rows=db.rows("SELECT m.asset_id,m.revision,json_extract(a.document,'$.season') AS season FROM media_processing m LEFT JOIN library_assets a ON a.id=m.asset_id WHERE m.state='ready' AND m.subtitles_state IN ('ready','not_applicable','skipped') AND m.inventory_state='ready' AND coalesce(json_extract(a.document,'$.role'),'')!='extra'",[])?;
     let mut reopened=0;
     for row in rows {
         let (Some(id),Some(revision))=(row["asset_id"].as_str(),row["revision"].as_str()) else{continue};
@@ -242,7 +242,8 @@ pub(crate) fn reopen_for_sound(db:&Database)->Result<usize> {
 /// Titles transcribed by an older transcript version are redone the same way.
 pub(crate) fn reopen_untranscribed(db:&Database,data:&Path)->Result<usize> {
     let transcribed=crate::speech_subtitles::transcribed_assets(data);
-    let rows=db.rows("SELECT asset_id,revision,subtitles_state FROM media_processing WHERE inventory_state='ready' AND state!='running' AND subtitles_state IN ('not_applicable','ready')",[])?;
+    // Bonus material is never transcribed (see media_inventory::process).
+    let rows=db.rows("SELECT m.asset_id,m.revision,m.subtitles_state FROM media_processing m LEFT JOIN library_assets a ON a.id=m.asset_id WHERE m.inventory_state='ready' AND m.state!='running' AND m.subtitles_state IN ('not_applicable','ready') AND coalesce(json_extract(a.document,'$.role'),'')!='extra'",[])?;
     let rows:Vec<_>=rows.into_iter().filter(|r|r["subtitles_state"]=="not_applicable" || r["asset_id"].as_str().is_some_and(|id|transcribed.contains(id))).collect();
     let mut reopened=0;
     for row in rows {

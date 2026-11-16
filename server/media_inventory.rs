@@ -277,11 +277,20 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
         planned.push((source_input.clone(),track,language,None));
         if language!=target || target=="auto" {planned.push((source_input,track,language,Some(target)));}
     }
-    prefer_people_english(s,asset,id,&input,&info,&mut planned).await?;
-    prefer_people_chinese(s,asset,id,&input,&mut planned).await?;
-    people_everywhere(s,asset,id,&input,&mut planned).await?;
+    // Bonus material (featurettes, deleted scenes) keeps the text subtitles it carries and
+    // nothing more: no reading of picture tracks, translation, OpenSubtitles or transcription
+    // (the user's rule, 2026-11-16).
+    let extra=asset["role"]=="extra";
+    if extra {
+        let bitmap=|track:u64| tracks.iter().any(|t|t["track"]==track && t["sidecar"]!=true && matches!(t["codec"].as_str(),Some("S_HDMV/PGS"|"S_VOBSUB")));
+        planned.retain(|(path,track,_,target)| target.is_none() && !(path.as_path()==input && bitmap(*track)));
+    } else {
+        prefer_people_english(s,asset,id,&input,&info,&mut planned).await?;
+        prefer_people_chinese(s,asset,id,&input,&mut planned).await?;
+        people_everywhere(s,asset,id,&input,&mut planned).await?;
+    }
     let mut outcome=advance_jobs(s,asset,id,&planned)?;
-    if outcome.no_source {
+    if outcome.no_source && !extra {
         // No usable English or Chinese subtitles: transcribe the English or Mandarin
         // audio, then translate the transcript to the other language like any text track.
         let report=|done:u64,total:u64,source:&str|{
