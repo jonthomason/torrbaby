@@ -79,12 +79,28 @@ pub async fn process(s:&Service, asset:&Value)->Result<()> {
         let path=Path::new(path);
         if !crate::container::virtual_mp4_source(path) {continue;}
         let Ok(revision)=crate::subtitle_jobs::revision(path) else {continue};
-        {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
-            let prior:Option<(String,i64,String,f64)>=db.connection.query_row("SELECT revision,version,document,updated FROM credits_analysis WHERE asset_id=?",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
-            if let Some((rev,version,text,_updated))=prior {
-                let info:Value=serde_json::from_str(&text)?;
-                if rev==revision && version==VERSION && info["state"]=="ready"{continue;}
+        let entity=asset["entity_id"].as_str().map(str::to_owned).unwrap_or_default();
+        // Episodes are also heard: their closing music, shared with the series' other
+        // episodes, places credits the picture scan cannot see (Chinese dramas).
+        let episode=asset["season"].is_number() && !entity.is_empty();
+        let heard=episode && remember_sound(s,id,path,&revision).await?;
+        let prior_state={let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+            let prior:Option<(String,i64,String)>=db.connection.query_row("SELECT revision,version,document FROM credits_analysis WHERE asset_id=?",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+            prior.filter(|(rev,version,_)|*rev==revision && *version==VERSION).and_then(|(_,_,text)|serde_json::from_str::<Value>(&text).ok()).map(|info|info["state"].as_str().unwrap_or("").to_owned())
+        };
+        match prior_state.as_deref() {
+            Some("ready") => {
+                if episode {place_by_sound(s,&entity).await?;}
+                continue;
             }
+            // The picture scan could not read this file before; the sound stands alone.
+            Some("failed") if heard => {
+                let document=heard_only(s,id,"Picture scan failed earlier")?;
+                {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;save(&db,id,&revision,&document)?;}
+                place_by_sound(s,&entity).await?;
+                return Ok(());
+            }
+            _ => {}
         }
         // Resolve through the same complete-file/access checks as playback.
         let input=crate::api::processing_file(s,id).await?;
@@ -105,17 +121,95 @@ pub async fn process(s:&Service, asset:&Value)->Result<()> {
         }
         {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;save(&db,id,&revision,&json!({"state":"running"}))?;}
         let outcome=scan(s,&input,reader,if asset["kind"]=="tv" || asset["season"].is_number(){300}else{900}).await;
-        let document=explain(match outcome {Ok(result)=>crate::credit_series::prepare(result),Err(error)=>json!({"state":if error.to_string().contains("deferred") {"deferred"}else{"failed"},"error":error.to_string()})});
+        let document=explain(match outcome {
+            Ok(result)=>crate::credit_series::prepare(result),
+            Err(error) if heard && !error.to_string().contains("deferred") => heard_only(s,id,&error.to_string())?,
+            Err(error)=>json!({"state":if error.to_string().contains("deferred") {"deferred"}else{"failed"},"error":error.to_string()}),
+        });
         if crate::subtitle_jobs::revision(&input).ok().as_deref()==Some(&revision) {
-            let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;save(&db,id,&revision,&document)?;
+            {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;save(&db,id,&revision,&document)?;
             // Resolve this file against its series, and its series against it.
-            let entity=asset["entity_id"].as_str().map(str::to_owned).unwrap_or_default();
             if entity.is_empty() {save(&db,id,&revision,&crate::credit_series::resolve(&document,&[]))?;}
-            else {crate::credit_series::resolve_title(&db,&entity,VERSION)?;}
+            else {crate::credit_series::resolve_title(&db,&entity,VERSION)?;}}
+            if episode {place_by_sound(s,&entity).await?;}
         }
         tracing::info!(asset=id,state=?document["state"],elapsed=?document["elapsed_seconds"],"Credits analysis finished");
         return Ok(());
     }
+    Ok(())
+}
+/// Make and keep this file's audio fingerprint, once per revision. True when there is one.
+/// A file whose audio cannot be read is recorded as such and is not tried again.
+async fn remember_sound(s:&Service,id:&str,path:&Path,revision:&str)->Result<bool> {
+    {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+        let held:Option<(String,bool)>=db.connection.query_row("SELECT revision,print IS NOT NULL FROM credit_prints WHERE asset_id=?",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+        if let Some((rev,present))=held { if rev==revision {return Ok(present);} }
+    }
+    let file=path.to_owned();
+    let made=tokio::task::spawn_blocking(move || {
+        let duration=crate::media_format::duration(&file).ok_or_else(||anyhow::anyhow!("Duration unknown"))?;
+        crate::credit_audio::print(&file,duration)
+    }).await?;
+    let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+    let (print,error)=match &made { Ok(p)=>(Some(p.to_bytes()),None), Err(e)=>(None,Some(e.to_string())) };
+    db.connection.execute("INSERT INTO credit_prints VALUES(?,?,?,?,?) ON CONFLICT(asset_id) DO UPDATE SET revision=excluded.revision,print=excluded.print,error=excluded.error,updated=excluded.updated",
+        rusqlite::params![id,revision,print,error,now()])?;
+    if let Err(error)=&made {tracing::info!(asset=id,%error,"Credits: audio could not be fingerprinted");}
+    Ok(made.is_ok())
+}
+/// A ready analysis with nothing from the picture (its scan failed), for the sound to place.
+fn heard_only(s:&Service,id:&str,why:&str)->Result<Value> {
+    let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+    let print:Option<Vec<u8>>=db.connection.query_row("SELECT print FROM credit_prints WHERE asset_id=?",[id],|r|r.get(0)).optional()?.flatten();
+    let duration=print.as_deref().and_then(crate::credit_audio::Print::from_bytes).map(|p|p.duration).unwrap_or(0.0);
+    Ok(json!({"state":"ready","segments":[],"rolling_segments":[],"cards":[],"duration":duration,"picture_error":why}))
+}
+/// Whether the picture found closing credits (segments other than the sound's).
+pub(crate) fn seen_closing(document:&Value)->bool {
+    let mut seen=document.clone();
+    if let Some(segments)=seen["segments"].as_array_mut() {segments.retain(|s|s["method"]!=crate::credit_series::AUDIO_METHOD);}
+    closing_start(&seen,document["duration"].as_f64().unwrap_or(0.0)).is_some()
+}
+/// Place closing credits by sound for a series' episodes whose picture showed none: each is
+/// compared with every other episode heard (up to 60). Done again for an episode when the
+/// series has half as many heard episodes again as when it was last compared.
+async fn place_by_sound(s:&Service,entity:&str)->Result<()> {
+    let (prints,wanted)={let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+        let mut statement=db.connection.prepare("SELECT a.id,p.print,c.document FROM library_assets a JOIN credit_prints p ON p.asset_id=a.id AND p.print IS NOT NULL LEFT JOIN credits_analysis c ON c.asset_id=a.id AND c.version=? WHERE json_extract(a.document,'$.entity_id')=? ORDER BY json_extract(a.document,'$.season'),json_extract(a.document,'$.episode')")?;
+        let rows:Vec<(String,Vec<u8>,Option<String>)>=statement.query_map(rusqlite::params![VERSION,entity],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?.collect::<rusqlite::Result<_>>()?;
+        let mut prints=Vec::new();let mut wanted=Vec::new();
+        for (id,bytes,analysis) in rows {
+            let Some(print)=crate::credit_audio::Print::from_bytes(&bytes) else {continue};
+            if let Some(document)=analysis.and_then(|t|serde_json::from_str::<Value>(&t).ok()).filter(|d|d["state"]=="ready" && !seen_closing(d)) {
+                let compared=document["audio_estimate"]["compared"].as_u64().unwrap_or(0) as usize;
+                wanted.push((id.clone(),compared));
+            }
+            prints.push((id,print));
+        }
+        let heard=prints.len().saturating_sub(1);
+        (prints,wanted.into_iter().filter(|(_,compared)|heard>=1 && (*compared==0 || heard*2>=compared*3)).map(|(id,_)|id).collect::<Vec<_>>())
+    };
+    if wanted.is_empty() {return Ok(());}
+    let estimates=tokio::task::spawn_blocking(move || {
+        wanted.iter().filter_map(|id| {
+            let own=&prints.iter().find(|(p,_)|p==id)?.1;
+            let peers:Vec<&crate::credit_audio::Print>=prints.iter().filter(|(p,_)|p!=id).take(60).map(|(_,p)|p).collect();
+            let estimate=crate::credit_audio::estimate(own,&peers);
+            Some((id.clone(),match estimate {
+                Some(e)=>json!({"start":(e.start*1000.0).round()/1000.0,"agreeing":e.agreeing,"compared":e.compared}),
+                None=>json!({"start":null,"compared":peers.len()}),
+            }))
+        }).collect::<Vec<_>>()
+    }).await?;
+    let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+    for (id,estimate) in &estimates {
+        let text:Option<String>=db.connection.query_row("SELECT document FROM credits_analysis WHERE asset_id=? AND version=?",rusqlite::params![id,VERSION],|r|r.get(0)).optional()?;
+        let Some(mut document)=text.and_then(|t|serde_json::from_str::<Value>(&t).ok()) else {continue};
+        document["audio_estimate"]=estimate.clone();
+        db.connection.execute("UPDATE credits_analysis SET document=?,updated=? WHERE asset_id=? AND version=?",rusqlite::params![document.to_string(),now(),id,VERSION])?;
+    }
+    crate::credit_series::resolve_title(&db,entity,VERSION)?;
+    tracing::info!(entity,placed=estimates.iter().filter(|(_,e)|e["start"].is_number()).count(),compared=estimates.len(),"Credits placed by sound");
     Ok(())
 }
 /// Serve an indexed Matroska file as a virtual MP4 to a local analysis helper

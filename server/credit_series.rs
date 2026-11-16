@@ -75,10 +75,21 @@ pub fn resolve(document:&Value, peers:&[Value])->Value {
                 "confidence":((confidence+0.04*agreeing.min(3) as f64).min(0.99)*100.0).round()/100.0}));
         }
     }
-    out["segments"]=Value::Array(merge(segments));
+    let mut segments=merge(segments);
+    // Experimental: where the picture found no closing credits, the closing music the
+    // episode shares with its series (credits.rs place_by_sound) places them.
+    let duration=document["duration"].as_f64().unwrap_or(0.0);
+    let closing=segments.iter().any(|s|s["start"].as_f64().is_some_and(|start|start>=duration*0.5 && start<duration));
+    if let Some(start)=document["audio_estimate"]["start"].as_f64().filter(|s|!closing && *s>=duration*0.5 && *s<duration) {
+        let agreeing=document["audio_estimate"]["agreeing"].as_f64().unwrap_or(0.0);
+        let compared=document["audio_estimate"]["compared"].as_f64().unwrap_or(1.0).max(1.0);
+        segments.push(json!({"start":start,"end":duration,"method":AUDIO_METHOD,"confidence":((0.5+0.5*agreeing/compared).min(0.99)*100.0).round()/100.0}));
+    }
+    out["segments"]=Value::Array(segments);
     out["series_review"]=Value::Array(review);
     out
 }
+pub const AUDIO_METHOD:&str="audio-v1";
 
 fn merge(mut segments:Vec<Value>)->Vec<Value> {
     segments.retain(|s|s["start"].as_f64().zip(s["end"].as_f64()).is_some_and(|(a,b)|a.is_finite()&&b>=a));
@@ -165,6 +176,20 @@ mod tests {
         // Overwhelming evidence still stands on its own.
         let strong=scan(vec![card(1000.0,0.95,&["a1234","b1234","c1234","d1234"])],json!([]));
         assert_eq!(resolve(&strong,&peers)["segments"][0]["start"],1000.0);
+    }
+    #[test]
+    fn closing_music_places_credits_only_where_the_picture_found_none() {
+        let mut heard=scan(vec![],json!([]));
+        heard["audio_estimate"]=json!({"start":2850.0,"agreeing":3,"compared":4});
+        let out=resolve(&heard,&[]);
+        assert_eq!(out["segments"],json!([{"start":2850.0,"end":3000.0,"method":AUDIO_METHOD,"confidence":0.88}]));
+        assert_eq!(resolve(&out,&[]),out);
+        let mut seen=scan(vec![card(2900.0,0.95,&CREW)],json!([]));
+        seen["audio_estimate"]=json!({"start":2850.0,"agreeing":3,"compared":4});
+        assert_eq!(resolve(&seen,&[])["segments"][0]["method"],"cards-v1");
+        assert_eq!(resolve(&seen,&[])["segments"].as_array().map(Vec::len),Some(1));
+        heard["audio_estimate"]=json!({"start":null,"compared":4});
+        assert_eq!(resolve(&heard,&[])["segments"],json!([]));
     }
     #[test]
     fn title_resolution_updates_earlier_episodes() -> Result<()> {

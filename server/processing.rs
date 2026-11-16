@@ -218,6 +218,24 @@ pub(crate) fn retire_obsolete_failures(db:&Database)->Result<usize> {
 pub(crate) fn reopen_outdated(db:&Database)->Result<usize> {
     Ok(db.connection.execute("UPDATE media_processing SET credits_state='pending',stage='credits',state=CASE WHEN state IN ('ready','failed') THEN 'queued' ELSE state END,retry_after=0,attempts=0,completed_at=NULL,error=NULL,updated=? WHERE credits_state IN ('ready','failed','incomplete','skipped') AND state!='running' AND asset_id IN (SELECT asset_id FROM credits_analysis WHERE version<?)",rusqlite::params![now(),crate::credits::VERSION])?)
 }
+/// Experimental closing credits by sound (credits.rs): every episode of a series with an
+/// episode whose closing credits the picture did not find is heard once, as each episode is
+/// compared with the others. Their credits stage reopens until each has been heard.
+pub(crate) fn reopen_for_sound(db:&Database)->Result<usize> {
+    let rows=db.rows("SELECT a.id AS id,json_extract(a.document,'$.entity_id') AS entity,json_extract(a.document,'$.season') AS season,json_extract(a.document,'$.watch_first') AS first,json_extract(a.document,'$.role') AS role,c.document AS analysis,m.revision AS revision,m.credits_state AS credits,m.state AS state,p.revision AS heard FROM library_assets a JOIN media_processing m ON m.asset_id=a.id LEFT JOIN credits_analysis c ON c.asset_id=a.id AND c.version=? LEFT JOIN credit_prints p ON p.asset_id=a.id WHERE json_extract(a.document,'$.available')=1 AND json_extract(a.document,'$.complete')=1 AND json_extract(a.document,'$.season') IS NOT NULL AND json_extract(a.document,'$.entity_id') IS NOT NULL",[crate::credits::VERSION])?;
+    let applicable=|r:&Value| r["role"]!="extra" && (r["season"]!=0 || r["first"]==1) && r["credits"]!="not_applicable";
+    let missing:std::collections::HashSet<&str>=rows.iter().filter(|r|applicable(r)).filter(|r| {
+        !r["analysis"].as_str().and_then(|t|serde_json::from_str::<Value>(t).ok()).is_some_and(|d|d["state"]=="ready" && crate::credits::seen_closing(&d))
+    }).filter_map(|r|r["entity"].as_str()).collect();
+    let mut reopened=0;
+    for r in rows.iter().filter(|r|applicable(r) && r["entity"].as_str().is_some_and(|e|missing.contains(e))) {
+        let (Some(id),Some(revision))=(r["id"].as_str(),r["revision"].as_str()) else {continue};
+        if r["heard"].as_str()==Some(revision) || r["state"]=="running" || !finished(r["credits"].as_str().unwrap_or("")) {continue;}
+        reopened+=db.connection.execute("UPDATE media_processing SET credits_state='pending',stage='credits',state=CASE WHEN state IN ('ready','failed') THEN 'queued' ELSE state END,retry_after=0,attempts=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=? AND revision=? AND state!='running'",rusqlite::params![now(),id,revision])?;
+    }
+    if reopened>0 {tracing::info!(reopened,"Credits: episodes queued to be heard");}
+    Ok(reopened)
+}
 /// Files settled with no subtitle source before speech transcription existed
 /// (or before it reached a verdict) reopen their subtitle stage once; the
 /// transcript record then keeps them settled.
@@ -366,6 +384,7 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
                 not_video(&db,id,&revision)?;
             }
             reopen_outdated(&db)?;
+            reopen_for_sound(&db)?;
             reopen_replaced(&db)?;
             reopen_storage_full(&db)?;
             reopen_for_people_english(&db,&s.data_dir)?;

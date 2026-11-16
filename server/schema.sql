@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS profile_hidden_titles (
 );
 
 CREATE TABLE IF NOT EXISTS credits_analysis (asset_id TEXT PRIMARY KEY, revision TEXT NOT NULL, version INTEGER NOT NULL, document TEXT NOT NULL, updated REAL NOT NULL);
+-- Experimental: each episode's audio fingerprint for finding closing music by sound (credit_audio.rs); `print` is NULL and `error` says why when it could not be made.
+CREATE TABLE IF NOT EXISTS credit_prints (asset_id TEXT PRIMARY KEY, revision TEXT NOT NULL, print BLOB, error TEXT, updated REAL NOT NULL);
 
 -- One revision-bound sign-off record per media file. Artifacts remain caches.
 CREATE TABLE IF NOT EXISTS media_processing (

@@ -26,6 +26,7 @@ mod audio_transcode;
 mod catalog;
 mod config;
 mod container;
+mod credit_audio;
 mod credit_series;
 mod credits;
 mod diagnostics;
@@ -155,6 +156,10 @@ enum Command {
     /// Report each file's container as detected from its content, not its extension.
     #[command(hide = true)]
     SniffContainer { inputs: Vec<PathBuf> },
+    /// Experimental: closing music shared by the episodes given (one series, in order). Prints
+    /// one JSON line per file; fingerprints are kept in `cache`.
+    #[command(hide = true)]
+    CreditAudioProbe { #[arg(long)] cache: PathBuf, #[arg(long, default_value_t = 4)] peers: usize, inputs: Vec<PathBuf> },
     /// List embedded Matroska subtitle tracks, or extract one as WebVTT.
     MatroskaSubtitles {
         #[arg(long)]
@@ -338,6 +343,33 @@ async fn main() -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&matroska::inspect(&input, frames)?)?
             );
+        }
+        Command::CreditAudioProbe { cache, peers, inputs } => {
+            fs::create_dir_all(&cache)?;
+            let mut prints = Vec::new();
+            for input in &inputs {
+                use sha2::Digest;
+                let name: String = sha2::Sha256::digest(input.to_string_lossy().as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+                let key = cache.join(name + ".print");
+                let started = std::time::Instant::now();
+                let print = match fs::read(&key).ok().and_then(|b| credit_audio::Print::from_bytes(&b)) {
+                    Some(p) => Ok(p),
+                    None => media_format::duration(input).ok_or_else(|| anyhow::anyhow!("No duration")).and_then(|d| credit_audio::print(input, d)),
+                };
+                match &print { Ok(p) => { let _ = fs::write(&key, p.to_bytes()); eprintln!("{:.1}s {}", started.elapsed().as_secs_f64(), input.display()) }
+                    Err(e) => eprintln!("failed {}: {e}", input.display()) }
+                prints.push(print.ok());
+            }
+            for (i, input) in inputs.iter().enumerate() {
+                let Some(print) = &prints[i] else { println!("{}", serde_json::json!({"file": input, "error": "unreadable"})); continue };
+                // The nearest episodes on either side.
+                let mut near: Vec<usize> = (0..inputs.len()).filter(|&j| j != i && prints[j].is_some()).collect();
+                near.sort_by_key(|&j| j.abs_diff(i));
+                let chosen: Vec<&credit_audio::Print> = near.iter().take(peers).filter_map(|&j| prints[j].as_ref()).collect();
+                let started = std::time::Instant::now();
+                let estimate = credit_audio::estimate(print, &chosen);
+                println!("{}", serde_json::json!({"file": input, "duration": print.duration, "estimate": estimate, "ms": started.elapsed().as_millis()}));
+            }
         }
         Command::SniffContainer { inputs } => {
             for input in inputs {
