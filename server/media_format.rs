@@ -218,6 +218,10 @@ pub fn outline(path: &Path) -> Result<Value> {
     described["subtitles"] = json!(streams.iter().filter(|s| s["codec_type"] == "subtitle").map(|s| language(s).unwrap_or_else(|| "und".into())).collect::<Vec<_>>());
     Ok(described)
 }
+/// The file's length in seconds, from its container; None when it cannot be read.
+pub fn duration(path: &Path) -> Option<f64> {
+    report(path).ok()?["format"]["duration"].as_str()?.parse::<f64>().ok().filter(|d| d.is_finite() && *d > 0.0)
+}
 fn probe(path: &Path) -> Result<Value> {
     let report = report(path)?;
     let mut described = describe(&report);

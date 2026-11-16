@@ -144,9 +144,15 @@ fn tokens(name: &str) -> std::collections::HashSet<String> {
 /// The best English subtitle of a search: made for this file (hash match) first, then
 /// the release most like the file's name, then the most downloaded. Machine and AI
 /// translations are never chosen; hearing-impaired versions only when nothing else fits.
+#[cfg(test)]
 pub(crate) fn choose(results: &[Value], release: &str, language: &str) -> Option<(u64, String, Value)> {
+    ranked(results, release, language).into_iter().next()
+}
+
+/// Every acceptable subtitle of a search, best first (see `choose`).
+pub(crate) fn ranked(results: &[Value], release: &str, language: &str) -> Vec<(u64, String, Value)> {
     let mine = tokens(release);
-    results.iter().filter_map(|r| {
+    let mut found: Vec<_> = results.iter().filter_map(|r| {
         let a = &r["attributes"];
         // Results name Chinese "zh-CN" while searches ask for "zh-cn".
         if !a["language"].as_str().is_some_and(|l| l.eq_ignore_ascii_case(language)) || a["ai_translated"] == true || a["machine_translated"] == true || a["foreign_parts_only"] == true { return None; }
@@ -161,16 +167,33 @@ pub(crate) fn choose(results: &[Value], release: &str, language: &str) -> Option
         let provenance = json!({"source":"opensubtitles","subtitle_id":r["id"],"file_id":id,"release":a["release"],"language":language,
             "moviehash_match":a["moviehash_match"],"hearing_impaired":a["hearing_impaired"],"download_count":a["download_count"],"fps":a["fps"],"uploader":a["uploader"]["name"],"url":a["url"]});
         Some((score, id, a["release"].as_str().unwrap_or("").to_owned(), provenance))
-    }).max_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, id, release, provenance)| (id, release, provenance))
+    }).collect();
+    found.sort_by(|a, b| b.0.total_cmp(&a.0));
+    found.into_iter().map(|(_, id, release, provenance)| (id, release, provenance)).collect()
 }
+
+/// Whether subtitles whose last cue ends at `last_end` seconds are for a file `duration`
+/// seconds long: they run past most of it and not beyond it. Catches another episode's or
+/// another special's subtitles (OpenSubtitles numbered BSG's 45-minute "The Story So Far"
+/// as the 90-minute Miniseries part 1). Unknown length: taken.
+pub fn fits(last_end: f64, duration: Option<f64>) -> bool {
+    let Some(duration) = duration.filter(|d| *d > 0.0) else { return true };
+    last_end >= duration * 0.6 && last_end <= duration + 120.0
+}
+
+/// Candidates downloaded at most for one lookup, looking for subtitles that fit the file.
+const TRIES: usize = 3;
 
 /// English subtitles for `asset`'s file at `input`, written into `directory` as `name`.
 pub async fn find(data: &Path, asset: &Value, input: &Path, directory: &Path, name: &str) -> Result<Found> {
-    find_language(data, asset, input, directory, name, "en").await
+    find_language(data, asset, input, directory, name, "en", &[]).await
 }
 
 /// Subtitles in `language` ("en" or "zh-cn") for `asset`'s file, written into `directory`.
-pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: &Path, name: &str, language: &str) -> Result<Found> {
+/// Candidates are downloaded best first until one fits the file's length (`fits`), at most
+/// `TRIES`; `refused` are file ids already found not to fit. A candidate that does not fit is
+/// named in the answer's `refused`, so it is not downloaded again.
+pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: &Path, name: &str, language: &str, refused: &[u64]) -> Result<Found> {
     let (code, ours) = match language { "zh-cn" => ("zh-cn", "zh-Hans"), _ => ("en", "en") };
     let Some(c) = credentials(data) else { return Ok(Found::Missing("No OpenSubtitles account".into())) };
     let entity = asset["entity_id"].as_str().unwrap_or("");
@@ -197,14 +220,51 @@ pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: 
     ensure!(reply.status().is_success(), "OpenSubtitles search failed ({})", reply.status());
     let results: Value = reply.json().await?;
     let release = format!("{} {}", asset["torrent_name"].as_str().unwrap_or(""), input.file_name().and_then(|n| n.to_str()).unwrap_or(""));
-    let Some((file_id, chosen, mut provenance)) = choose(results["data"].as_array().map(Vec::as_slice).unwrap_or(&[]), &release, code) else {
-        return Ok(Found::Missing(format!("No {ours} subtitles on OpenSubtitles")));
-    };
+    let candidates: Vec<_> = ranked(results["data"].as_array().map(Vec::as_slice).unwrap_or(&[]), &release, code)
+        .into_iter().filter(|(id, _, _)| !refused.contains(id)).take(TRIES).collect();
+    if candidates.is_empty() { return Ok(Found::Missing(format!("No {ours} subtitles on OpenSubtitles"))) }
+    let measured = input.to_owned();
+    let duration = tokio::task::spawn_blocking(move || crate::media_format::duration(&measured)).await.ok().flatten();
+    let mut misfits: Vec<Value> = Vec::new();
+    let mut unreadable = None;
+    for (file_id, chosen, mut provenance) in candidates {
+        let (cues, text) = match download(data, &client, &c, file_id, ours).await? {
+            Ok(read) => read,
+            Err(why) => { unreadable = Some(why); continue }
+        };
+        let last_end = cues.iter().map(|c| c.end_ms).max().unwrap_or(0) as f64 / 1000.0;
+        if !fits(last_end, duration) {
+            tracing::info!(asset = asset["id"].as_str().unwrap_or(""), language = ours, release = %chosen, last_end, duration, "OpenSubtitles file does not fit this file's length");
+            misfits.push(json!({"file_id": file_id, "release": chosen, "last_cue": last_end}));
+            continue;
+        }
+        let path = directory.join(format!("{name}.{ours}.opensubtitles.srt"));
+        let temporary = directory.join(format!("{name}.{ours}.opensubtitles.srt.tmp"));
+        std::fs::write(&temporary, text)?;
+        std::fs::rename(&temporary, &path)?;
+        tracing::info!(asset = asset["id"].as_str().unwrap_or(""), language = ours, release = %chosen, cues = cues.len(), "Subtitles from OpenSubtitles");
+        provenance["downloaded_at"] = json!(crate::storage::now());
+        provenance["cues"] = json!(cues.len());
+        provenance["fits"] = json!(true);
+        provenance["duration"] = json!(duration);
+        provenance["last_cue"] = json!(last_end);
+        if !misfits.is_empty() { provenance["refused"] = json!(misfits); }
+        return Ok(Found::Ready(path, provenance));
+    }
+    if !misfits.is_empty() {
+        return Ok(Found::Missing(format!("No {ours} subtitles on OpenSubtitles fit this file's length ({} tried)", misfits.len())));
+    }
+    Ok(Found::Missing(unreadable.unwrap_or_else(|| format!("No {ours} subtitles on OpenSubtitles"))))
+}
+
+/// Download one OpenSubtitles file: its cues and text, or why it is no source (Ok(Err)).
+/// Errors: the daily limit, or OpenSubtitles could not be asked.
+async fn download(data: &Path, client: &reqwest::Client, c: &Credentials, file_id: u64, ours: &str) -> Result<Result<(Vec<crate::subtitles::TimedCue>, String), String>> {
     if let Some(until) = limited_until(data) { anyhow::bail!("{LIMIT_REACHED}; downloads reset at {until}"); }
     // Signed in, downloads count against the account (20 a day free); not signed in, against
     // the key's own quota (a paid API package).
     let request = if c.signed_in {
-        let (token, host) = session(&client, &c).await?;
+        let (token, host) = session(client, c).await?;
         client.post(format!("https://{host}/api/v1/download")).bearer_auth(&token)
     } else { client.post(format!("{API}/download")) };
     let reply = request.header("Api-Key", &c.api_key).header("Accept", "application/json")
@@ -225,19 +285,11 @@ pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: 
     ensure!(bytes.len() <= 8 << 20, "Subtitle file too large");
     // A file that cannot be read is no source; the next one is tried.
     let read = crate::text_encoding::decode(&bytes, Some(ours)).and_then(|text| Ok((crate::subtitles::parse_srt(&text)?, text)));
-    let (cues, text) = match read {
-        Ok((cues, text)) if cues.len() >= 20 => (cues, text),
-        Ok(_) => return Ok(Found::Missing("The OpenSubtitles file holds almost nothing".into())),
-        Err(error) => return Ok(Found::Missing(format!("The OpenSubtitles file could not be read: {error}"))),
-    };
-    let path = directory.join(format!("{name}.{ours}.opensubtitles.srt"));
-    let temporary = directory.join(format!("{name}.{ours}.opensubtitles.srt.tmp"));
-    std::fs::write(&temporary, text)?;
-    std::fs::rename(&temporary, &path)?;
-    tracing::info!(asset = asset["id"].as_str().unwrap_or(""), language = ours, release = %chosen, cues = cues.len(), "Subtitles from OpenSubtitles");
-    provenance["downloaded_at"] = json!(crate::storage::now());
-    provenance["cues"] = json!(cues.len());
-    Ok(Found::Ready(path, provenance))
+    Ok(match read {
+        Ok((cues, text)) if cues.len() >= 20 => Ok((cues, text)),
+        Ok(_) => Err("The OpenSubtitles file holds almost nothing".into()),
+        Err(error) => Err(format!("The OpenSubtitles file could not be read: {error}")),
+    })
 }
 
 /// "2026-11-16T00:00:00.000Z" as seconds since the epoch.
@@ -305,6 +357,11 @@ mod tests {
         assert_eq!(choose(&[result(5, "x", false, 1, json!({"language":"fr"}))], "x", "en").map(|c| c.0), None);
         assert_eq!(choose(&[result(6, "x", false, 1, json!({"language":"zh-CN"}))], "x", "zh-cn").map(|c| c.0), Some(6));
         assert_eq!(utc_seconds("2026-11-16T00:00:00.000Z"), Some(1_794_787_200.0));
+        // BSG's Miniseries part 1 (about 91 minutes) against "The Story So Far" (about 44).
+        assert!(!fits(44.0 * 60.0, Some(91.0 * 60.0)));
+        assert!(fits(88.0 * 60.0, Some(91.0 * 60.0)));
+        assert!(!fits(50.0 * 60.0, Some(44.0 * 60.0)), "a longer file's subtitles");
+        assert!(fits(10.0, None));
         assert_eq!(waits_until("OpenSubtitles daily download limit reached; downloads reset at 1794800000"), Some(1_794_800_000.0));
     }
 }

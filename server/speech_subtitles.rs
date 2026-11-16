@@ -349,13 +349,17 @@ pub fn people_decided(data: &Path, asset: &str, revision: &str, tag: &str) -> bo
 
 /// Whether OpenSubtitles gave an answer that stands for this file in `tag`: subtitles, or none
 /// suitable. Not while it could not be asked, nor when its file was refused for cues out of place.
+/// Subtitles taken before they were checked against the file's length are not settled.
 pub fn people_settled(data: &Path, asset: &str, revision: &str, tag: &str) -> bool {
     let record = directory(data).join(format!("{}.{tag}-opensubtitles.json", key(data, asset, revision)));
     let everything = crate::opensubtitles::everything(data);
     std::fs::read(record).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).is_some_and(|saved|
-        saved["state"] == "ready" || (saved["state"] == "missing" && !(everything && saved["set_aside"] == true)
+        (saved["state"] == "ready" && fit_checked(&saved)) || (saved["state"] == "missing" && !(everything && saved["set_aside"] == true)
             && !saved["reason"].as_str().is_some_and(|r| r.ends_with("Subtitle cues are out of order"))))
 }
+
+/// Whether a ready record's subtitles were checked against the file's length.
+fn fit_checked(saved: &Value) -> bool { saved["provenance"]["fits"] == true }
 
 /// Leave a file out of the OpenSubtitles lookup for now, saying why; a later round removes
 /// these records to look again.
@@ -377,10 +381,35 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
     std::fs::create_dir_all(&root)?;
     let name = key(&s.data_dir, id, &revision);
     let record = root.join(format!("{name}.{tag}-opensubtitles.json"));
-    if let Some(saved) = std::fs::read(&record).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
+    let save = |document: Value| -> Result<()> {
+        let temporary = root.join(format!("{name}.{tag}-opensubtitles.json.tmp"));
+        std::fs::write(&temporary, document.to_string())?;
+        std::fs::rename(temporary, &record)?; Ok(())
+    };
+    let mut refused: Vec<u64> = Vec::new();
+    if let Some(mut saved) = std::fs::read(&record).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
         if saved["state"] == "ready" {
             let path = root.join(saved["output"].as_str().unwrap_or_default());
-            if path.is_file() { return Ok(Some(path)); }
+            if path.is_file() {
+                if fit_checked(&saved) { return Ok(Some(path)); }
+                // Taken before subtitles were checked against the file's length: checked now
+                // (BSG's Miniseries part 1 had another special's).
+                let (checked, file) = (path.clone(), input.to_owned());
+                let (fits, last_end, duration) = tokio::task::spawn_blocking(move || {
+                    let last_end = std::fs::read_to_string(&checked).ok().and_then(|t| crate::subtitles::parse_srt(&t).ok())
+                        .map(|cues| cues.iter().map(|c| c.end_ms).max().unwrap_or(0) as f64 / 1000.0).unwrap_or(0.0);
+                    let duration = crate::media_format::duration(&file);
+                    (crate::opensubtitles::fits(last_end, duration), last_end, duration)
+                }).await?;
+                if fits {
+                    saved["provenance"]["fits"] = json!(true);
+                    save(saved)?;
+                    return Ok(Some(path));
+                }
+                tracing::info!(asset = id, tag, last_end, duration, release = saved["provenance"]["release"].as_str().unwrap_or(""), "OpenSubtitles file does not fit this file's length; looking again");
+                refused.extend(saved["provenance"]["file_id"].as_u64());
+                let _ = std::fs::remove_file(&path);
+            }
         }
         // Lookups before version 2 never matched Chinese ("zh-CN" against "zh-cn"): asked again.
         // Files refused for cues out of place are now put in order (Creed's Chinese): asked again.
@@ -390,12 +419,7 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
         if saved["state"] == "missing" && !unordered && (saved["lookup"].as_u64() >= Some(2) || set_aside) { return Ok(None); }
         if saved["after"].as_f64().is_some_and(|t| t > now()) { return Ok(None); }
     }
-    let save = |document: Value| -> Result<()> {
-        let temporary = root.join(format!("{name}.{tag}-opensubtitles.json.tmp"));
-        std::fs::write(&temporary, document.to_string())?;
-        std::fs::rename(temporary, &record)?; Ok(())
-    };
-    match crate::opensubtitles::find_language(&s.data_dir, asset, input, &root, &name, language).await {
+    match crate::opensubtitles::find_language(&s.data_dir, asset, input, &root, &name, language, &refused).await {
         Ok(crate::opensubtitles::Found::Ready(path, provenance)) => {
             save(json!({"state":"ready","asset_id":id,"output":path.file_name().and_then(|n| n.to_str()),"provenance":provenance,"updated":now()}))?;
             Ok(Some(path))
