@@ -445,6 +445,23 @@ final class Store: ObservableObject {
     @Published var busy = false
     @Published var isConnecting = false
     @Published private(set) var networkAvailable = true { didSet { updateDownloadConnection() } }
+    /// Whether the system has a network path, apart from Work offline.
+    private var pathAvailable = true
+    /// Work offline (Settings › Connection): the app acts exactly as with no network (nothing
+    /// is asked of the server; downloads play and keep their progress) until it is turned off.
+    @Published var workOffline = UserDefaults.standard.bool(forKey: "work-offline") {
+        didSet {
+            guard workOffline != oldValue else { return }
+            UserDefaults.standard.set(workOffline, forKey: "work-offline")
+            if workOffline {
+                connectionError = URLError(.notConnectedToInternet).localizedDescription
+                networkAvailable = false
+            } else {
+                networkAvailable = pathAvailable
+                Task { await self.refresh() }
+            }
+        }
+    }
     private func updateDownloadConnection() {
         #if !os(tvOS)
         DownloadQueue.shared.connectionChanged()
@@ -455,12 +472,14 @@ final class Store: ObservableObject {
     private var etaSmoother = TorrentETASmoother()
     init() {
         networkMonitor.pathUpdateHandler = { [weak self] path in
-            let available = path.status == .satisfied
+            let onPath = path.status == .satisfied
             // The interface iOS sends data on (first in its order), for the direct path and relay.
             let dataInterface = path.availableInterfaces.first { [.wifi, .cellular, .wiredEthernet].contains($0.type) }?.name
             let gateways = path.gateways.compactMap { if case .hostPort(.ipv4(let address), _) = $0 { "\(address)" } else { nil } }.sorted().joined(separator: ",")
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                self.pathAvailable = onPath
+                let available = onPath && !self.workOffline
                 #if os(iOS)
                 PunchProbe.preferredInterface = dataInterface
                 PunchProbe.gateways = gateways
@@ -589,7 +608,8 @@ final class Store: ObservableObject {
     func preferredLibraryAsset(_ title: LibraryTitle) -> LibraryAsset? {
         if offlineLibrary {
             if let resume = title.resume, isDownloaded(resume) { return resume }
-            if let local = title.playable.first(where: isDownloaded) { return local }
+            // The next downloaded one not yet watched (progress played offline counts).
+            if let local = title.playable.first(where: { isDownloaded($0) && !$0.watched }) ?? title.playable.first(where: isDownloaded) { return local }
         }
         let chosen = title.resume ?? title.playable.first(where: { !$0.watched }) ?? title.playable.first
         // Another copy of the same film or episode, when this one is on a drive that is away.
@@ -1062,6 +1082,10 @@ final class Store: ObservableObject {
         tunnel?.onClose = nil
         tunnel?.close()
     }
+    #else
+    /// Mac and Apple TV have no relay or direct path of their own.
+    var relayOverTCP: Bool { false }
+    func directEvent(_ text: String) {}
     #endif
     /// A stream (the player) failed on the route in `url`: that route is left and the others
     /// are tried at once. The new route's address, when another way answered within 10 s, for
@@ -1179,6 +1203,7 @@ final class Store: ObservableObject {
         return try await task.value
     }
     func request<T: Decodable>(_ method: String, _ path: String, body: [String: Any]? = nil, timeout: TimeInterval? = nil, address: String? = nil, observer: RouteObserver? = nil) async throws -> T {
+        if workOffline { throw URLError(.notConnectedToInternet) }
         var request = URLRequest(url: try address.map { try ServerRoutes.endpoint($0, path: path) } ?? endpoint(path))
         if let timeout { request.timeoutInterval = timeout }
         request.httpMethod = method
@@ -1223,6 +1248,9 @@ final class Store: ObservableObject {
         let decoded = try decoder.decode(T.self, from: data)
         if method == "GET", path == "/v1/library" || path == "/v1/library/list" {
             await LibraryDiskCache.shared.saveLibrary(data, scope: identity)
+        }
+        if method == "GET", path == "/v1/library/progress" {
+            await LibraryDiskCache.shared.saveLibrary(data, scope: LibraryDiskCache.progressScope(identity))
         }
         return decoded
     }
@@ -1423,9 +1451,12 @@ final class Store: ObservableObject {
             try await resolveProfile()
             guard profileReady else { stage("no profile"); return }
             let identity = profileIdentity
-            if library == nil, let saved = await LibraryDiskCache.shared.library(scope: identity) {
+            if library == nil, var saved = await LibraryDiskCache.shared.library(scope: identity) {
+                // With the progress last received, which the list alone does not carry.
+                let progress = await LibraryDiskCache.shared.progress(scope: identity)
                 guard identity == profileIdentity else { return }
-                library = saved
+                if let progress { saved.apply(progress) }
+                library = withContinueWatchingChoices(saved)
             }
             // Restore browsing before contacting the server. A satisfied network path
             // does not mean the home server is reachable (for example while travelling).
@@ -1482,12 +1513,48 @@ final class Store: ObservableObject {
     /// response fetched before the choice cannot put the title back.
     private var continueWatchingChoices: [String: Bool] = [:]
     private func withContinueWatchingChoices(_ received: MediaLibrary) -> MediaLibrary {
-        guard !continueWatchingChoices.isEmpty else { return received }
         var result = received
         for index in result.titles.indices {
             if let hidden = continueWatchingChoices[result.titles[index].id] { result.titles[index].continueWatchingHidden = hidden }
         }
+        var changed = false
+        return withLocalProgress(result, changed: &changed)
+    }
+    /// Progress made playing downloads on this device that is newer than what Diamond last
+    /// sent (played away from home, or not yet synced): shown on every page, so the episode
+    /// rows and Continue Watching follow what was watched offline.
+    private func withLocalProgress(_ received: MediaLibrary, changed: inout Bool) -> MediaLibrary {
+        #if os(tvOS)
+        return received
+        #else
+        var latest: [String: DownloadStorage.Item] = [:]
+        for item in DownloadQueue.shared.items where item.server == libraryKey && item.progressRecordedAt != nil && item.duration > 0 {
+            if let other = latest[item.assetID], (other.progressRecordedAt ?? .distantPast) >= (item.progressRecordedAt ?? .distantPast) { continue }
+            latest[item.assetID] = item
+        }
+        guard !latest.isEmpty else { return received }
+        var result = received
+        for t in result.titles.indices {
+            for a in result.titles[t].assets.indices {
+                let asset = result.titles[t].assets[a]
+                guard let item = latest[asset.id], let recorded = item.progressRecordedAt?.timeIntervalSince1970,
+                      recorded > asset.lastPlayed + 1 else { continue }
+                result.titles[t].assets[a].position = item.position
+                result.titles[t].assets[a].duration = item.duration
+                result.titles[t].assets[a].watched = item.watched
+                result.titles[t].assets[a].lastPlayed = recorded
+                changed = true
+            }
+        }
         return result
+        #endif
+    }
+    /// After playing a download: show its progress at once.
+    func showLocalProgress() {
+        guard let current = library else { return }
+        var changed = false
+        let next = withLocalProgress(current, changed: &changed)
+        if changed { library = next }
     }
     func setContinueWatchingHidden(_ id: String, hidden: Bool) async {
         let identity=profileIdentity

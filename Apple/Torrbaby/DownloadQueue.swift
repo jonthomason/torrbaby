@@ -751,6 +751,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             }
             reload()
         } catch { self.report(error) }
+        Task { await fetchMissingCredits() }
     }
     func syncProgress() async {
         guard !syncingProgress, let store, store.configured, store.connected, let storage else { return }
@@ -784,11 +785,35 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             // and local deletion must not depend on network availability.
         }
     }
-    func finished(_ id: UUID) {
-        // Shared files remain until an explicit removal when several people use this library.
-        guard let store, store.profiles.count == 1, let profile = store.activeProfile?.id else { return }
+    /// `profile`: who was watching. Works away from home too (the library's users need not be known).
+    func finished(_ id: UUID, profile: String) {
         do { try storage?.removeAfterPlayback(id, profile: profile); reload(); pump() }
         catch { self.report(error) }
+    }
+    /// The credits analysis kept with a download.
+    func credits(_ id: UUID) -> CreditsDetection? {
+        guard let data = storage?.items.first(where: { $0.id == id })?.credits else { return nil }
+        return try? JSONDecoder().decode(CreditsDetection.self, from: data)
+    }
+    func rememberCredits(_ id: UUID, _ analysis: CreditsDetection) {
+        // A finished analysis is not replaced by an unfinished one (the file being re-scanned).
+        if analysis.state != "ready", credits(id)?.state == "ready" { return }
+        guard let data = try? JSONEncoder().encode(analysis) else { return }
+        do { try storage?.rememberCredits(id, data) } catch { self.report(error) }
+    }
+    private var creditsAsked: [UUID: Date] = [:]
+    /// Fetch credits for downloads that have none finished yet, so they are there when the
+    /// device leaves home (at most every 10 minutes for each).
+    func fetchMissingCredits() async {
+        guard let store, store.connected else { return }
+        let server = store.libraryKey
+        for item in storage?.items ?? [] where item.server == server && [.queued, .transferring, .paused, .ready].contains(item.state) {
+            guard credits(item.id)?.state != "ready", Date().timeIntervalSince(creditsAsked[item.id] ?? .distantPast) > 600 else { continue }
+            creditsAsked[item.id] = Date()
+            guard let analysis: CreditsDetection = try? await store.request("GET", "/v1/library/assets/\(item.assetID)/credits", timeout: 10),
+                  store.libraryKey == server else { continue }
+            rememberCredits(item.id, analysis)
+        }
     }
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                 didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {

@@ -942,6 +942,7 @@
     <string name="ui_046725d9aae7" formatted="false">When off, downloads wait for Wi-Fi and never use cellular data, a Personal Hotspot or a Low Data Mode network.</string>
     <string name="ui_abec97b96eea" formatted="false">Who\'s watching?</string>
     <string name="ui_119cbce6316b" formatted="false">Wi-Fi only</string>
+    <string name="ui_73a8bacac686" formatted="false">Work offline</string>
     <string name="ui_70c07ec18ef8" formatted="false">World</string>
     <string name="ui_879e32326c52" formatted="false">Year</string>
     <string name="ui_41bb0474a997" formatted="false">Your library</string>

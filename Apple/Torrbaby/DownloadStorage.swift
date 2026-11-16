@@ -113,6 +113,8 @@ final class DownloadStorage {
             return copy
         }
         var posterKey: String?
+        /// Diamond's credits analysis of the file (its JSON), for playing away from home.
+        var credits: Data? = nil
         var updated = Date()
         var error: String?
     }
@@ -607,10 +609,18 @@ final class DownloadStorage {
             item.profileViewing?[profile] = value
         }
     }
-    /// Called only after the native player's did-play-to-end event and after releasing its file.
+    func rememberCredits(_ id: UUID, _ json: Data) throws {
+        guard items.first(where: { $0.id == id })?.credits != json else { return }
+        try update(id) { $0.credits = json }
+    }
+    /// Called after this person played the file into its closing credits and on to the end or
+    /// the next episode (skipping there keeps it), once the player has released it. Kept when
+    /// pinned, or while someone else who started it on this device has not finished it.
     func removeAfterPlayback(_ id: UUID, profile: String = "profile-jon") throws {
-        guard let item = items.first(where: { $0.id == id }), item.viewing(profile).playbackFinished, item.allViewing.count <= 1,
+        guard let item = items.first(where: { $0.id == id }), item.viewing(profile).playbackFinished,
               !item.pinned, policy.deleteAfterPlayback else { return }
+        let others = item.allViewing.filter { $0.key != profile && ($0.value.position > 0 || $0.value.watched) }
+        guard others.allSatisfy({ $0.value.watched }) else { return }
         try remove(id)
     }
     func remove(_ id: UUID) throws {

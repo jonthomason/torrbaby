@@ -126,6 +126,7 @@ final class PlaybackModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.updateNextEpisodeAvailability()
+                self.notePlayingIntoCredits()
                 self.progressTicks += 1
                 if self.progressTicks % 5 == 0 { self.report() }
             }
@@ -152,13 +153,25 @@ final class PlaybackModel: ObservableObject {
         title = heading.joined
         sequence = 0; starting = false; resumed = false
         credits = nil; creditsAnalysis = nil; offerNextEpisode = false
+        playedIntoCredits = false; lastTick = nil
         creditsTask?.cancel()
+        #if !os(tvOS)
+        // A download carries the credits found when it was made, for playing away from home.
+        if let id = next.localDownloadID, let analysis = DownloadQueue.shared.credits(id) {
+            credits = analysis.closingCredits
+            creditsAnalysis = analysis
+        }
+        #endif
         if let assetID = next.libraryAssetID, store.connected {
             let playbackID = next.id
             creditsTask = Task { @MainActor [weak self] in
                 guard let self else { return }
                 let analysis: CreditsDetection? = try? await self.store.request("GET", "/v1/library/assets/\(assetID)/credits", timeout: 10)
                 guard !Task.isCancelled, self.playback.id == playbackID, let analysis else { return }
+                #if !os(tvOS)
+                if let id = self.playback.localDownloadID { DownloadQueue.shared.rememberCredits(id, analysis) }
+                #endif
+                guard analysis.state == "ready" || self.creditsAnalysis == nil else { return }
                 self.credits = analysis.closingCredits
                 self.creditsAnalysis = analysis
             }
@@ -260,6 +273,19 @@ final class PlaybackModel: ObservableObject {
         load(next)
         return true
     }
+    /// Whether playback went into the closing credits by playing, not by skipping there: a
+    /// download is deleted after it finishes only then (skipping to the end keeps it).
+    private var playedIntoCredits = false
+    private var lastTick: Double?
+    private func notePlayingIntoCredits() {
+        let duration = player.currentItem?.duration.seconds ?? 0
+        let position = player.currentTime().seconds
+        defer { lastTick = position.isFinite ? position : nil }
+        guard !playedIntoCredits, resumed, player.rate > 0, duration.isFinite, duration > 0, position.isFinite, let last = lastTick else { return }
+        let start = creditsAnalysis?.closingStart(duration: duration) ?? EpisodeCredits.offerStart(credits, duration: duration)
+        // One tick of playing, at any speed the player offers; a seek jumps further.
+        if last < start, position >= start, position - last < 6 { playedIntoCredits = true }
+    }
     func updateNextEpisodeAvailability() {
         let duration = player.currentItem?.duration.seconds ?? 0
         let position = player.currentTime().seconds
@@ -296,6 +322,8 @@ final class PlaybackModel: ObservableObject {
                 // Choosing Next Episode during credits is an explicit completion,
                 // including when paused. Use the same watched event as natural EOF.
                 let progressSaved = self.report(ended: true, reachedEnd: true)
+                // Read before the next episode loads and starts its own.
+                let playedThrough = self.playedIntoCredits
                 self.player.pause()
                 #if os(tvOS)
                 await self.advanceTVEpisode(reachedEnd: reachedEnd)
@@ -319,7 +347,8 @@ final class PlaybackModel: ObservableObject {
                                 self.player.replaceCurrentItem(with: nil)
                             } else { self.closeRequested = true }
                         }
-                        if progressSaved, let id = outgoing.localDownloadID { queue.finished(id) }
+                        if progressSaved, playedThrough, let id = outgoing.localDownloadID { queue.finished(id, profile: self.profileAtStart) }
+                        if outgoing.localDownloadID != nil { self.store.showLocalProgress() }
                     } catch is CancellationError {
                         return
                     } catch {
@@ -470,6 +499,9 @@ final class PlaybackModel: ObservableObject {
         let playing = player.rate > 0
         player.pause()
         let saved = report(ended: true, playing: playing)
+        #if !os(tvOS)
+        if playback.localDownloadID != nil { store.showLocalProgress() }
+        #endif
         if !saved, let session = playback.sessionId {
             Task { struct Ended: Decodable { let accepted: Bool }
                 let _: Ended? = try? await store.request("POST", "/v1/playback/end", body: ["session_id": session])
@@ -487,8 +519,8 @@ final class PlaybackModel: ObservableObject {
 }
 
 /// Diamond's credits analysis for one file (GET /v1/library/assets/{id}/credits).
-struct CreditsDetection: Decodable {
-    struct Segment: Decodable { let start: Double; let end: Double }
+struct CreditsDetection: Codable {
+    struct Segment: Codable { let start: Double; let end: Double }
     let state: String
     let segments: [Segment]?
     let duration: Double?

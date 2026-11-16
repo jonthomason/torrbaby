@@ -953,6 +953,7 @@ final class L10n {
     IDS.put("When off, downloads wait for Wi-Fi and never use cellular data, a Personal Hotspot or a Low Data Mode network.", R.string.ui_046725d9aae7);
     IDS.put("Who's watching?", R.string.ui_abec97b96eea);
     IDS.put("Wi-Fi only", R.string.ui_119cbce6316b);
+    IDS.put("Work offline", R.string.ui_73a8bacac686);
     IDS.put("World", R.string.ui_70c07ec18ef8);
     IDS.put("Year", R.string.ui_879e32326c52);
     IDS.put("Your library", R.string.ui_41bb0474a997);

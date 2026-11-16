@@ -56,6 +56,21 @@ struct EpisodeNumber: Codable, Hashable { let season: Int; let episode: Int }
         assert(reopened.items[0].viewing("alex").position == 10)
         assert(reopened.items[0].forProfile("new-person").position == 0)
         assert(reopened.items[0].forProfile("new-person").watched == false)
+        // Deleted after playing to the end, whoever watched, unless someone else on this
+        // device started it and has not finished it.
+        let episode = try reopened.enqueue(server: "http://fixture", assetID: "ep", titleID: "show",
+            title: "Show", name: "E1.mp4", season: 1, episode: 1, revision: "r1", size: 100, fileExtension: "mp4")
+        try reopened.recordPlayback(episode.id, profile: "theresa", position: 400, duration: 1000, reachedEnd: false)
+        try reopened.recordPlayback(episode.id, profile: "profile-jon", position: 1000, duration: 1000, reachedEnd: true)
+        try reopened.removeAfterPlayback(episode.id, profile: "profile-jon")
+        assert(reopened.items.first { $0.id == episode.id }?.state != .removed)
+        try reopened.recordPlayback(episode.id, profile: "theresa", position: 1000, duration: 1000, reachedEnd: true)
+        try reopened.removeAfterPlayback(episode.id, profile: "theresa")
+        assert(reopened.items.first { $0.id == episode.id }?.state == .removed)
+        // Credits kept with the download survive a restart.
+        try reopened.rememberCredits(item.id, Data("{}".utf8))
+        let restarted = try DownloadStorage(root: root)
+        assert(restarted.items.first { $0.id == item.id }?.credits == Data("{}".utf8))
         print("Profile download isolation, migration, persistence, and event ownership passed")
     }
 }

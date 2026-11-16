@@ -474,6 +474,7 @@ private struct ConnectionSettings: View {
             LabeledContent { Text(LocalizedStringKey(store.connectionLabel)) } label: { Text("Status") }
             LabeledContent("Server", value: store.server.isEmpty ? L10n.text("Not configured") : store.serverName.isEmpty ? store.primaryAddress : store.serverName)
         }
+        SwiftUI.Section { Toggle("Work offline", isOn: $store.workOffline) }
         ConnectionStatusSections()
         SwiftUI.Section { Button("Edit connection") { showConnect = true } }
     }

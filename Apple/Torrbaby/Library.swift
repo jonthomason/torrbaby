@@ -1573,6 +1573,20 @@ actor LibraryDiskCache {
         let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
         return try? decoder.decode(MediaLibrary.self, from: Data(bytes: bytes, count: size))
     }
+    /// Where a profile's progress is kept, beside its list.
+    nonisolated static func progressScope(_ scope: String) -> String { "progress|" + scope }
+    func progress(scope: String) -> LibraryProgress? {
+        guard open() else { return nil }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "SELECT payload FROM snapshots WHERE scope=?", -1, &statement, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_text(statement, 1, digest(Self.progressScope(scope)), -1, transient)
+        guard sqlite3_step(statement) == SQLITE_ROW, let bytes = sqlite3_column_blob(statement, 0) else { return nil }
+        let size = Int(sqlite3_column_bytes(statement, 0))
+        guard size > 0, size <= 16 * 1024 * 1024 else { return nil }
+        let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try? decoder.decode(LibraryProgress.self, from: Data(bytes: bytes, count: size))
+    }
     func saveLibrary(_ payload: Data, scope: String) {
         guard payload.count <= 16 * 1024 * 1024, open() else { return }
         var statement: OpaquePointer?
@@ -1582,7 +1596,7 @@ actor LibraryDiskCache {
         _ = payload.withUnsafeBytes { sqlite3_bind_blob(statement, 2, $0.baseAddress, Int32($0.count), transient) }
         sqlite3_bind_double(statement, 3, Date().timeIntervalSince1970)
         guard sqlite3_step(statement) == SQLITE_DONE else { return }
-        sqlite3_exec(database, "DELETE FROM snapshots WHERE scope NOT IN (SELECT scope FROM snapshots ORDER BY updated DESC LIMIT 8)", nil, nil, nil)
+        sqlite3_exec(database, "DELETE FROM snapshots WHERE scope NOT IN (SELECT scope FROM snapshots ORDER BY updated DESC LIMIT 16)", nil, nil, nil)
     }
     /// Carry a profile's library snapshot over to its new scope (the library's name).
     func moveSnapshot(from: String, to: String) {

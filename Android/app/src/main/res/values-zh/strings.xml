@@ -942,6 +942,7 @@
     <string name="ui_046725d9aae7" formatted="false">关闭时，下载会等待 Wi-Fi，不会使用蜂窝数据、个人热点或低数据模式网络。</string>
     <string name="ui_abec97b96eea" formatted="false">谁在观看？</string>
     <string name="ui_119cbce6316b" formatted="false">仅使用 Wi-Fi</string>
+    <string name="ui_73a8bacac686" formatted="false">离线工作</string>
     <string name="ui_70c07ec18ef8" formatted="false">全球</string>
     <string name="ui_879e32326c52" formatted="false">年份</string>
     <string name="ui_41bb0474a997" formatted="false">您的媒体库</string>
