@@ -254,8 +254,11 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
         var waitingObservation: AnyCancellable?
         var backgroundObserver: NSObjectProtocol?
         init(_ parent: MobilePlayerPresentation) { self.parent = parent }
+        /// The playback last closed: the binding can still hold it for a moment after closing,
+        /// which opened it again from its old position and closed it at once ("never played").
+        private var closedID: UUID?
         func presentIfNeeded() {
-            guard let playback = parent.playback, playbackID != playback.id,
+            guard let playback = parent.playback, playbackID != playback.id, closedID != playback.id,
                   let host, host.viewIfLoaded?.window != nil, host.presentedViewController == nil else { return }
             if let previous = Self.active, previous.model != nil {
                 previous.close { [weak self] in self?.presentIfNeeded() }
@@ -276,6 +279,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
             controller.disappeared = { [weak self, weak controller] in
                 guard let self, let controller, !self.pictureInPicture, !self.restoring,
                       controller.isBeingDismissed || controller.presentingViewController == nil else { return }
+                ClientDiagnostics.note("Player closed: its screen was dismissed")
                 self.finish()
             }
             self.controller = controller
@@ -289,7 +293,11 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
             Self.active = self
             backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification,
                                                                          object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.model?.report() }
+                Task { @MainActor in
+                    guard let self, let model = self.model else { return }
+                    ClientDiagnostics.note("App leaving the foreground while the player is open\(self.pictureInPicture ? " in Picture in Picture" : "")")
+                    model.report()
+                }
             }
             errorObservation = model.$error.compactMap { $0 }.sink { [weak self] message in
                 guard let self else { return }
@@ -367,6 +375,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
         }
         private func finish() {
             guard model != nil else { return }
+            closedID = playbackID
             model?.stop()
             controller?.player = nil
             controller?.delegate = nil
@@ -382,17 +391,23 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
             if Self.active === self { Self.active = nil }
         }
         func playerViewControllerWillStartPictureInPicture(_ playerViewController: AVPlayerViewController) {
+            ClientDiagnostics.note("Picture in Picture starting")
             pictureInPicture = true
             controller?.inPictureInPicture = true
             model?.report()
         }
         func playerViewControllerShouldAutomaticallyDismissAtPictureInPictureStart(_ playerViewController: AVPlayerViewController) -> Bool { true }
         func playerViewController(_ playerViewController: AVPlayerViewController, failedToStartPictureInPictureWithError error: Error) {
+            ClientDiagnostics.note("Picture in Picture failed to start: \((error as NSError).domain) \((error as NSError).code) \(error.localizedDescription)")
             pictureInPicture = false
             controller?.inPictureInPicture = false
+            // Its screen may already have been dismissed for Picture in Picture: put it back, or
+            // playback would carry on with nothing to show it and stop when the app is suspended.
+            if playerViewController.presentingViewController == nil, model != nil, !showAgain(playerViewController, then: { _ in }) { finish() }
             parent.store.actionError = error.localizedDescription
         }
         func playerViewControllerDidStopPictureInPicture(_ playerViewController: AVPlayerViewController) {
+            ClientDiagnostics.note("Picture in Picture stopped\(restoring ? ", back to full screen" : "")")
             pictureInPicture = false
             controller?.inPictureInPicture = false
             model?.report()
@@ -402,14 +417,19 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
                                   restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
             guard model != nil else { completionHandler(false); return }
             if playerViewController.presentingViewController != nil { completionHandler(true); return }
+            if !showAgain(playerViewController, then: completionHandler) { completionHandler(false) }
+        }
+        /// Present the player's screen again over whatever is showing. False when nothing can present it.
+        private func showAgain(_ playerViewController: AVPlayerViewController, then done: @escaping (Bool) -> Void) -> Bool {
             var presenter: UIViewController? = host?.viewIfLoaded?.window != nil ? host : window?.rootViewController
             while let presented = presenter?.presentedViewController { presenter = presented }
-            guard let presenter, presenter.viewIfLoaded?.window != nil else { completionHandler(false); return }
+            guard let presenter, presenter.viewIfLoaded?.window != nil, presenter !== playerViewController else { return false }
             restoring = true
             presenter.present(playerViewController, animated: true) { [weak self] in
                 self?.restoring = false
-                completionHandler(true)
+                done(true)
             }
+            return true
         }
     }
     func makeCoordinator() -> Coordinator { Coordinator(self) }
