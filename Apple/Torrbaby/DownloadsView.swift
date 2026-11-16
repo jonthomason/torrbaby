@@ -28,10 +28,11 @@ struct DownloadsView: View {
                     Label(queue.policy.useAvailableSpace ? L10n.format("%@ used · Available space", bytes(queue.used)) : L10n.format("%@ used · %@ limit", bytes(queue.used), bytes(queue.policy.limitBytes)), systemImage: "internaldrive")
                         .font(.subheadline.monospacedDigit()).foregroundStyle(Theme.muted)
                     Spacer()
+                    if queue.items.contains(where: { $0.state == .paused || $0.state == .failed }) || queue.stalled {
+                        Button { queue.resumeAll() } label: { Label("Resume all", systemImage: "arrow.down.circle") }.help("Resume all downloads")
+                    }
                     if queue.items.contains(where: { $0.state == .queued || $0.state == .transferring }) {
                         Button { queue.pauseAll() } label: { Label("Pause all", systemImage: "pause.circle") }.help("Pause all downloads")
-                    } else if queue.items.contains(where: { $0.state == .paused || $0.state == .failed }) {
-                        Button { queue.resumeAll() } label: { Label("Resume all", systemImage: "arrow.down.circle") }.help("Resume all downloads")
                     }
                     Button { settings = true } label: { Image(systemName: "slider.horizontal.3") }.help("Download settings").accessibilityLabel("Download settings")
                 }

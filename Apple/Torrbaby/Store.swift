@@ -562,7 +562,10 @@ final class Store: ObservableObject {
     }
     var configured: Bool { !server.isEmpty && !token.isEmpty }
     /// The server answered the online check. Nothing else decides whether we are online.
-    @Published private(set) var reachable = false
+    /// Reaching the server also starts queued downloads: the queue tries once at launch,
+    /// usually before the server answers, and after an app update every transfer is queued
+    /// again (Theresa's iPad, 2026-11-16, sat at "Queued" until something else changed).
+    @Published private(set) var reachable = false { didSet { if reachable != oldValue { updateDownloadConnection() } } }
     var connected: Bool { networkAvailable && reachable && connectionError == nil }
     var offline: Bool { configured && (!networkAvailable || connectionError != nil) }
     var offlineLibrary: Bool {

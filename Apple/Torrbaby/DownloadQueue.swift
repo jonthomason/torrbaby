@@ -550,9 +550,14 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     func pauseAll() {
         for item in items where item.state == .queued || item.state == .transferring { pause(item.id) }
     }
-    /// Resume every paused or failed download.
+    /// Resume every paused or failed download, and start queued ones that are waiting.
     func resumeAll() {
         for item in items where item.state == .paused || item.state == .failed { resume(item.id) }
+        connectionChanged()
+    }
+    /// Queued downloads with none moving: shown with Resume all, which starts them.
+    var stalled: Bool {
+        items.contains { $0.state == .queued } && !items.contains { $0.state == .transferring && tasks[$0.id] != nil }
     }
     func resume(_ id: UUID) {
         guard tasks[id] == nil else { return }
