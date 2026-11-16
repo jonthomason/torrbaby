@@ -323,10 +323,11 @@ pub fn refresh_capacity(s:&Service)->Result<usize> {
     let preparing=s.virtual_media.preparing();
     s.subtitle_jobs.set_urgent(preparing);
     let config=s.effective_config()?;
-    // Many files at once only help when translation is external; on device it is serial.
-    let idle=if config.external_translation {config.processing_concurrency} else {config.on_device_processing_concurrency};
-    let limit=capacity(config.background_subtitles,preparing,playback_active(s)?,idle);
+    // Every stage runs on all the slots. On-device translation is serial, so it has its own
+    // small lane: a file waiting only for it leaves its slot to other work.
+    let limit=capacity(config.background_subtitles,preparing,playback_active(s)?,config.processing_concurrency);
     s.subtitle_jobs.set_concurrency(limit);
+    s.subtitle_jobs.set_lane(if config.external_translation {limit} else {config.on_device_processing_concurrency.min(limit)});
     s.subtitle_jobs.set_external(config.external_translation);
     Ok(limit)
 }
@@ -347,6 +348,9 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
     let online=drives.online();
     let (selected,excess)={
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+        for id in s.subtitle_jobs.take_translated() {
+            db.connection.execute("UPDATE media_processing SET retry_after=0 WHERE asset_id=? AND state='queued'",[&id])?;
+        }
         for id in &imported {
             db.connection.execute("UPDATE media_processing SET retry_after=0 WHERE asset_id=? AND state='queued'",[id])?;
             let credits_done:bool=db.connection.query_row("SELECT EXISTS(SELECT 1 FROM media_processing WHERE asset_id=? AND credits_state IN ('ready','not_applicable','skipped'))",[id],|r|r.get(0))?;
@@ -404,7 +408,10 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
                 db.connection.execute("UPDATE media_processing SET state='running' WHERE asset_id=?",[job["asset_id"].as_str().unwrap_or("")])?;
             }
         }
-        let rows=db.rows("SELECT asset_id,state,retry_after FROM media_processing",[])?;
+        let rows=db.rows("SELECT asset_id,state,retry_after,detail FROM media_processing",[])?;
+        // A file waiting for a translation slot comes back as soon as the lane has room.
+        let lane_free=s.subtitle_jobs.lane_free();
+        let due=|r:&Value|r["retry_after"].as_f64().unwrap_or(0.0)<=now() || (lane_free && awaiting_lane(r["detail"].as_str().unwrap_or("")));
         let fast:std::collections::HashSet<String>={
             let mut fast=FAST.lock().map_err(|_|anyhow::anyhow!("Processing pool unavailable"))?;
             fast.retain(|id|rows.iter().any(|r|r["asset_id"]==id.as_str() && matches!(r["state"].as_str(),Some("queued"|"running"))));
@@ -417,7 +424,7 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
         for asset in &assets {
             if selected.len()>=limit {break;}
             if is_fast(asset) || selected.iter().any(|a|a["id"]==asset["id"]) {continue;}
-            if rows.iter().any(|r|r["asset_id"]==asset["id"] && r["state"]!="ready" && r["retry_after"].as_f64().unwrap_or(0.0)<=now()) {selected.push(asset.clone());}
+            if rows.iter().any(|r|r["asset_id"]==asset["id"] && r["state"]!="ready" && due(r)) {selected.push(asset.clone());}
         }
         // Claimed files beyond the current limit give their slot back now. Their
         // partial work may be discarded; they restart from their last finished stage.
@@ -466,7 +473,7 @@ async fn warm_playback_index(s:&Service)->Result<()> {
         // Checked every few seconds: the next index starts as soon as the last is built.
         if now()-warmed.1<5.0 {return Ok(());}
         warmed.1=now();}
-    if !s.virtual_media.idle() || !s.virtual_media.can_preindex() || playback_active(s)? {return Ok(());}
+    if !s.virtual_media.background_room() || !s.virtual_media.can_preindex() || playback_active(s)? {return Ok(());}
     let candidates:Vec<Value>={
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
         let played:std::collections::HashMap<String,f64>=db.rows("SELECT media_id,MAX(last_played) AS at FROM profile_playback GROUP BY media_id",[])?
@@ -494,7 +501,7 @@ async fn warm_playback_index(s:&Service)->Result<()> {
             Ok(_)=>tracing::info!(asset=id,"Rebuilding a missing playback index"),
             Err(error)=>tracing::warn!(asset=id,%error,"Playback index warm-up failed"),
         }
-        return Ok(());
+        if !s.virtual_media.background_room() || !s.virtual_media.can_preindex() {return Ok(());}
     }
     Ok(())
 }
@@ -536,6 +543,14 @@ async fn process_file(s:&Service,mut asset:Value)->Result<()> {
     }
     Ok(())
 }
+/// The subtitle work still to do is a translation (queued, waiting or translating).
+fn translation_only(progress:&Value)->bool {
+    progress["target"].as_str().is_some() && matches!(progress["state"].as_str(),Some("queued"|"running"|"interrupted"))
+}
+/// A file released for translation whose translation has not been admitted yet.
+fn awaiting_lane(detail:&str)->bool {
+    serde_json::from_str::<Value>(detail).is_ok_and(|d|translation_only(&d) && (d["id"].is_null() || d["state"]=="interrupted"))
+}
 async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()> {
     let id=asset["id"].as_str().context("Missing asset ID")?;
     let path=Path::new(asset["path"].as_str().context("Missing asset path")?);
@@ -549,6 +564,8 @@ async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()>
     }
     anyhow::ensure!(matches!(container,Container::Matroska|Container::Mp4),"Unsupported media container for processing");
     let mut external=false;
+    // Subtitles waiting only for translation: credits run meanwhile, then the slot is released.
+    let mut translating=None;
     if !finished(prior["subtitles_state"].as_str().unwrap_or("")) {
         let progress=match crate::media_inventory::process(s,asset).await {
             Ok(progress)=>progress,
@@ -573,7 +590,8 @@ async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()>
         }
         // While the external lane translates, use this slot for credits analysis.
         external=state=="external";
-        if !done && !external {return Ok(());}
+        if !done && !external && translation_only(&progress) {translating=Some(progress.clone());}
+        if !done && !external && translating.is_none() {return Ok(());}
     }
     if !finished(prior["credits_state"].as_str().unwrap_or("")) {
         // Specials list as extras (except a watch-first pilot), so no Next Episode offer needs their credits.
@@ -601,6 +619,14 @@ async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()>
             db.connection.execute("UPDATE media_processing SET state='queued',retry_after=?,error=?,updated=? WHERE asset_id=?",rusqlite::params![now()+60.0,credits["error"].as_str(),now(),id])?;
         }
         if !finished(state){return Ok(());}
+    }
+    if let Some(progress)=translating {
+        // Only translation is left: give the slot to other work. The file comes back when
+        // its translation ends, or (not yet started) when the translation lane has room.
+        let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+        db.connection.execute("UPDATE media_processing SET state='queued',stage=?,detail=?,retry_after=?,updated=? WHERE asset_id=? AND revision=?",
+            rusqlite::params![progress["stage"].as_str().unwrap_or("translation"),progress.to_string(),now()+1800.0,now(),id,revision])?;
+        return Ok(());
     }
     if external {
         // Only the returned translation is missing: release the slot until the

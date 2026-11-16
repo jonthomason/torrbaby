@@ -74,6 +74,8 @@ pub struct Manager {
     /// not held open (an open file stops its drive from being ejected).
     reader_use: Mutex<HashMap<String, std::time::Instant>>,
 }
+/// Playback indexes built at once in the background (each reads its whole file).
+const BACKGROUND_BUILDS: usize = 4;
 fn valid(id: &str) -> bool {
     id.len() == 64
         && id
@@ -114,7 +116,7 @@ impl Manager {
             pending: Mutex::new(HashSet::new()),
             background: Mutex::new(HashSet::new()),
             gate: tokio::sync::Semaphore::new(1),
-            background_gate: tokio::sync::Semaphore::new(4),
+            background_gate: tokio::sync::Semaphore::new(BACKGROUND_BUILDS),
             readers: Mutex::new(HashMap::new()),
             reader_use: Mutex::new(HashMap::new()),
         };
@@ -184,12 +186,11 @@ impl Manager {
         readers.retain(|id, reader| Arc::strong_count(reader) > 1 || used.get(id).is_some_and(|at| at.elapsed() < after));
         used.retain(|id, _| readers.contains_key(id));
     }
-    pub fn idle(&self) -> bool {
-        self.pending.lock().is_ok_and(|p| p.is_empty())
-            && self
-                .readers
-                .lock()
-                .is_ok_and(|r| r.values().all(|v| Arc::strong_count(v) == 1))
+    /// Room for another background index build: nothing is being prepared for a
+    /// player, nothing is streaming, and fewer builds run than the background gate admits.
+    pub fn background_room(&self) -> bool {
+        let streaming=self.readers.lock().map_or(true,|r| r.values().any(|v| Arc::strong_count(v) > 1));
+        !streaming && !self.preparing() && self.pending.lock().is_ok_and(|p| p.len() < BACKGROUND_BUILDS)
     }
     fn data(&self) -> &Path { self.root.parent().unwrap_or(&self.root) }
     fn job(&self, id: &str) -> Result<Job> {

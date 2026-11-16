@@ -60,6 +60,13 @@ pub struct Manager {
     imported: Mutex<HashSet<String>>,
     /// Job IDs per asset, so lookups do not read every job record on each call.
     index: Mutex<std::collections::HashMap<String, Vec<String>>>,
+    /// Translation jobs admitted (waiting or translating). On-device translation is
+    /// serial, so it has its own small lane and no other work waits behind it.
+    translating: Mutex<HashSet<String>>,
+    lane: std::sync::atomic::AtomicUsize,
+    lane_gate: tokio::sync::Semaphore,
+    /// Assets whose translation just ended; the queue looks at them again at once.
+    translated: Mutex<Vec<String>>,
 }
 const MAX_CONCURRENCY: usize = 8;
 /// Disk the subtitle store may use. Every finished subtitle stays (the library plays them), so
@@ -197,13 +204,30 @@ impl Manager {
             external: std::sync::atomic::AtomicBool::new(false),
             imported: Mutex::new(HashSet::new()),
             index: Mutex::new(index),
+            translating: Mutex::new(HashSet::new()),
+            lane: std::sync::atomic::AtomicUsize::new(1),
+            lane_gate: tokio::sync::Semaphore::new(MAX_CONCURRENCY),
+            translated: Mutex::new(Vec::new()),
         }))
     }
     pub fn set_urgent(&self, urgent:bool) {
         self.urgent.store(urgent,std::sync::atomic::Ordering::Relaxed);
     }
-    pub fn can_admit(&self)->bool {
-        self.pending.lock().map(|p|p.len()<self.concurrency.load(std::sync::atomic::Ordering::Relaxed)).unwrap_or(false)
+    /// Room for another job of this kind: translations count against the translation
+    /// lane, everything else (reading tracks, OCR) against the processing slots.
+    pub fn can_admit(&self, translation:bool)->bool {
+        let (Ok(pending),Ok(translating))=(self.pending.lock(),self.translating.lock()) else {return false};
+        if translation {translating.len()<self.lane.load(std::sync::atomic::Ordering::Relaxed)}
+        else {pending.len().saturating_sub(translating.len())<self.concurrency.load(std::sync::atomic::Ordering::Relaxed)}
+    }
+    pub fn set_lane(&self, limit:usize) {
+        self.lane.store(limit.min(MAX_CONCURRENCY),std::sync::atomic::Ordering::Relaxed);
+    }
+    /// Whether another translation could start now.
+    pub fn lane_free(&self)->bool { self.can_admit(true) }
+    /// Assets whose translation ended since the last call.
+    pub fn take_translated(&self)->Vec<String> {
+        self.translated.lock().map(|mut t|std::mem::take(&mut *t)).unwrap_or_default()
     }
     pub fn set_concurrency(&self, limit:usize) {
         self.concurrency.store(limit.min(MAX_CONCURRENCY),std::sync::atomic::Ordering::Relaxed);
@@ -559,6 +583,7 @@ impl Manager {
             };
             self.save(&job)?;
             pending.insert(id.clone());
+            if job.target.is_some() { if let Ok(mut t)=self.translating.lock() { t.insert(id.clone()); } }
             let manager = self.clone();
             tokio::spawn(async move {
                 manager.run(job).await;
@@ -614,9 +639,10 @@ impl Manager {
         let result = async {
             // Finishing an imported translation is cheap; it does not wait for a slot.
             let bypass=self.imported.lock().map(|mut i|i.remove(&job.id)).unwrap_or(false);
+            let (gate,limit)=if job.target.is_some() {(&self.lane_gate,&self.lane)} else {(&self.gate,&self.concurrency)};
             let _permit = if bypass {None} else {Some(loop {
-                let permit=self.gate.acquire().await?;
-                if MAX_CONCURRENCY-self.gate.available_permits()<=self.concurrency.load(std::sync::atomic::Ordering::Relaxed) {break permit;}
+                let permit=gate.acquire().await?;
+                if MAX_CONCURRENCY-gate.available_permits()<=limit.load(std::sync::atomic::Ordering::Relaxed) {break permit;}
                 drop(permit);
                 tokio::time::sleep(Duration::from_millis(500)).await;
             })};
@@ -760,6 +786,9 @@ impl Manager {
         }
         if let Ok(mut pending) = self.pending.lock() {
             pending.remove(&job.id);
+        }
+        if self.translating.lock().is_ok_and(|mut t|t.remove(&job.id)) {
+            if let Ok(mut t)=self.translated.lock() { t.push(asset); }
         }
     }
 }
