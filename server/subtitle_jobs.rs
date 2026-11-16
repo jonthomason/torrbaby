@@ -445,13 +445,14 @@ impl Manager {
         Ok(result)
     }
     pub fn artifact(&self, id: &str) -> Result<String> {
-        ensure!(
-            self.status(id)?["state"] == "ready",
-            "Subtitles are not ready"
-        );
+        let status = self.status(id)?;
+        ensure!(status["state"] == "ready", "Subtitles are not ready");
         let data = fs::read(self.root.join(format!("{id}.vtt")))?;
         ensure!(data.len() <= 16_777_216, "Subtitle output too large");
-        String::from_utf8(data).context("Invalid prepared subtitles")
+        let text = String::from_utf8(data).context("Invalid prepared subtitles")?;
+        // Every prepared track leaves through here; misread characters are cleaned on the way.
+        let language = status["target"].as_str().filter(|t| *t != "auto").or(status["source"].as_str()).unwrap_or("");
+        Ok(crate::subtitles::tidy_vtt(&text, language))
     }
     /// Assets whose English translation of Chinese subtitles was made a line at a time
     /// and has not been made again a sentence at a time. Their subtitle stage reopens.

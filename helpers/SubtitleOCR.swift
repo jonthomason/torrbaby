@@ -8,12 +8,13 @@ import UniformTypeIdentifiers
 
 struct Cue: Codable { let file:String;let width:Int;let height:Int;let start_ms:Int;let end_ms:Int?;let forced:Bool }
 struct Manifest: Decodable { let cues:[Cue];let extraction_seconds:Double }
-func image(_ cue:Cue,_ root:URL) throws -> CGImage {
- let data=try Data(contentsOf:root.appendingPathComponent(cue.file))
+func image(_ cue:Cue,_ root:URL,scale:Int=2,threshold:UInt8?=nil) throws -> CGImage {
+ var data=try Data(contentsOf:root.appendingPathComponent(cue.file))
+ if let threshold { data=Data(data.map { $0 < threshold ? 0 : 255 }) }
  guard data.count==cue.width*cue.height, let provider=CGDataProvider(data:data as CFData),let source=CGImage(width:cue.width,height:cue.height,bitsPerComponent:8,bitsPerPixel:8,bytesPerRow:cue.width,space:CGColorSpaceCreateDeviceGray(),bitmapInfo:CGBitmapInfo(rawValue:0),provider:provider,decode:nil,shouldInterpolate:false,intent:.defaultIntent) else {throw NSError(domain:"Image",code:1)}
- let pad=24,scale=2,w=cue.width*scale+pad*2,h=cue.height*scale+pad*2
+ let pad=24,w=cue.width*scale+pad*2,h=cue.height*scale+pad*2
  guard let context=CGContext(data:nil,width:w,height:h,bitsPerComponent:8,bytesPerRow:w,space:CGColorSpaceCreateDeviceGray(),bitmapInfo:0) else {throw NSError(domain:"Image",code:2)}
- context.setFillColor(gray:1,alpha:1);context.fill(CGRect(x:0,y:0,width:w,height:h));context.interpolationQuality = .none
+ context.setFillColor(gray:1,alpha:1);context.fill(CGRect(x:0,y:0,width:w,height:h));context.interpolationQuality = scale == 2 ? .none : .high
  context.draw(source,in:CGRect(x:pad,y:pad,width:cue.width*scale,height:cue.height*scale))
  return context.makeImage()!
 }
@@ -86,6 +87,19 @@ func modelsChanged(_ detail:String) -> Never {
 func recognize(_ request:VNRecognizeTextRequest,_ image:CGImage) {
  do {try VNImageRequestHandler(cgImage:image,options:[:]).perform([request])} catch {modelsChanged(" (\(error))")}
 }
+/// Characters a reading of an English or Chinese subtitle cannot contain: Vision reads a
+/// straight closing quote after a full stop (`pilot."`) as Vietnamese letters, Latin
+/// capitals as Cyrillic, and Chinese characters as kana (ー for 一).
+func misread(_ text:String,_ hint:String) -> Bool {
+ text.unicodeScalars.contains { s in
+  (0x1EA0...0x1EF9).contains(s.value) || (0x0400...0x04FF).contains(s.value) ||
+  ((0x3040...0x30FF).contains(s.value) && s.value != 0x30FB) || (hint == "en" && (0x4E00...0x9FFF).contains(s.value))
+ }
+}
+func lines(_ request:VNRecognizeTextRequest) -> String {
+ let observations=(request.results ?? []).sorted {a,b in abs(a.boundingBox.midY-b.boundingBox.midY)>0.03 ? a.boundingBox.midY>b.boundingBox.midY:a.boundingBox.minX<b.boundingBox.minX}
+ return observations.compactMap {$0.topCandidates(1).first?.string}.joined(separator:"\n").trimmingCharacters(in:.whitespacesAndNewlines)
+}
 struct Output: Codable { let language:String;let method:String;let unreadableCues:Int;let cues:[TextCue] }
 struct TextCue: Codable {let start_ms:Int;let end_ms:Int;let text:String}
 @main struct OCR {
@@ -121,8 +135,19 @@ struct TextCue: Codable {let start_ms:Int;let end_ms:Int;let text:String}
       if hint != "zh-Hans" {recognize(request,padded)}
      }
     }
-    let observations=(request.results ?? []).sorted {a,b in abs(a.boundingBox.midY-b.boundingBox.midY)>0.03 ? a.boundingBox.midY>b.boundingBox.midY:a.boundingBox.minX<b.boundingBox.minX}
-    return observations.compactMap {$0.topCandidates(1).first?.string}.joined(separator:"\n").trimmingCharacters(in:.whitespacesAndNewlines)
+    let text=lines(request)
+    guard misread(text,hint) else { return text }
+    // The same picture drawn another way usually reads cleanly: the grey outline removed
+    // (threshold) or another size. The first clean reading wins; otherwise the server tidies.
+    for (scale,threshold) in [(1,128),(2,100),(3,nil),(2,160),(1,nil)] as [(Int,UInt8?)] {
+     let again=VNRecognizeTextRequest();again.recognitionLevel = .accurate
+     again.recognitionLanguages=hint == "en" ? ["en-US"] : hint == "zh-Hans" ? ["zh-Hans"] : ["en-US","zh-Hans"]
+     again.usesLanguageCorrection=true
+     recognize(again,try image(cue,root,scale:scale,threshold:threshold))
+     let reading=lines(again)
+     if !reading.isEmpty && !misread(reading,hint) { return reading }
+    }
+    return text
    }
    if text.isEmpty {unreadable += 1} else {
     guard text.utf8.count<=16384 else {throw NSError(domain:"Large OCR result",code:1)}

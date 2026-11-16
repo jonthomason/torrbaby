@@ -159,6 +159,67 @@ pub fn plain_text(raw: &str) -> String {
         .replace('\r', "\n")
 }
 
+/// Text that cannot belong to a subtitle line, cleaned where subtitles leave the server
+/// (`tidy_vtt`), not where they are parsed: virtual MP4 bytes come from the stored text,
+/// so a title's file changes only when its cleaned text, and so its job ID, does.
+/// - SubRip files often carry SSA override blocks ({\an8} moves a line to the top, {\a6}
+///   is the older form, {\pos(x,y)}); braces without a backslash ({gunshot}) are text.
+/// - Vision reads a straight closing quote after a full stop or question mark (`pilot."`)
+///   as Vietnamese letters (`pilotiẠỊi`), on discs' English subtitles; such runs are
+///   dropped (with the stray i or l it reads beside them).
+/// - Latin letters read as Cyrillic look-alikes (`"В"`) are put back.
+/// - In Chinese read from the picture, kana that look like characters (ー 一, オ 才, カ 力)
+///   become them; other kana are misreadings and dropped. ・ in names becomes ·.
+pub fn tidy(text: &str, language: &str) -> String {
+    use std::sync::LazyLock;
+    static OVERRIDES: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"\{\\[^}]*\}").expect("valid regex"));
+    static VIETNAMESE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"[iIl]?[\x{1EA0}-\x{1EF9}][\x{1EA0}-\x{1EF9}iIl]*").expect("valid regex")
+    });
+    let text = OVERRIDES.replace_all(text, "");
+    let text = VIETNAMESE.replace_all(&text, "");
+    let chinese = language.starts_with("zh");
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        let mapped = match c {
+            'А' => Some('A'), 'В' => Some('B'), 'Е' => Some('E'), 'К' => Some('K'), 'М' => Some('M'),
+            'Н' => Some('H'), 'О' => Some('O'), 'Р' => Some('P'), 'С' => Some('C'), 'Т' => Some('T'),
+            'Х' => Some('X'), 'а' => Some('a'), 'е' => Some('e'), 'о' => Some('o'), 'р' => Some('p'),
+            'с' => Some('c'), 'у' => Some('y'), 'х' => Some('x'),
+            '・' if chinese => Some('·'),
+            'ー' | 'ｰ' if chinese => Some('一'),
+            'オ' if chinese => Some('才'),
+            'カ' | 'ガ' | 'か' if chinese => Some('力'),
+            'ル' if chinese => Some('儿'),
+            'エ' if chinese => Some('工'),
+            'ロ' if chinese => Some('口'),
+            'ニ' if chinese => Some('二'),
+            'ハ' if chinese => Some('八'),
+            'タ' if chinese => Some('夕'),
+            'ヌ' if chinese => Some('又'),
+            'ト' if chinese => Some('卜'),
+            '\u{3040}'..='\u{30ff}' if chinese => None,
+            other => Some(other),
+        };
+        if let Some(c) = mapped { out.push(c); }
+    }
+    out.lines().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n")
+}
+
+/// `tidy` for a whole prepared WebVTT document. Unchanged text keeps its exact bytes.
+pub fn tidy_vtt(text: &str, language: &str) -> String {
+    let Ok(cues) = parse_srt(text.strip_prefix("WEBVTT\n\n").unwrap_or(text)) else { return text.to_owned() };
+    let mut changed = false;
+    let cues: Vec<TimedCue> = cues.into_iter().filter_map(|cue| {
+        let cleaned = tidy(&cue.text, language);
+        if cleaned != cue.text { changed = true; }
+        (!cleaned.trim().is_empty()).then_some(TimedCue { text: cleaned, ..cue })
+    }).collect();
+    if !changed || cues.is_empty() { return text.to_owned(); }
+    webvtt(&cues)
+}
+
 pub fn parse_srt(input: &str) -> Result<Vec<TimedCue>> {
     ensure!(
         input.len() <= 8_388_608 && !input.contains('\0'),
@@ -627,7 +688,8 @@ pub fn read_sidecar(media: &Path, id: &str) -> Result<String> {
         .find(|track| track.id == id)
         .context("Subtitle track not found")?;
     let path = crate::api::checked_path(media.parent().context("Missing directory")?, &track.name)?;
-    Ok(webvtt(&read_srt_file(&path, track.language.as_deref())?))
+    let language = track.language.clone().unwrap_or_default();
+    Ok(tidy_vtt(&webvtt(&read_srt_file(&path, track.language.as_deref())?), &language))
 }
 
 #[cfg(test)]
@@ -726,6 +788,28 @@ mod sidecar_tests {
         for line in ["I synced the files by noon.", "Are you subscribed?", "The yeti is out there.", "Encoded? By whom?", "Visit www.thefacebook.com"] {
             assert!(!is_release_promo(line), "{line}");
         }
+    }
+
+    #[test]
+    fn misreadings_and_override_blocks_are_tidied() {
+        assert_eq!(tidy("{\\an8}We are Hellfire!", "en"), "We are Hellfire!");
+        assert_eq!(tidy("{\\a6}{\\pos(262,221)}Top", "en"), "Top");
+        assert_eq!(tidy("{gunshot}", "en"), "{gunshot}");
+        assert_eq!(tidy("of a Viper pilotiẠỊi", "en"), "of a Viper pilot");
+        assert_eq!(tidy("of my beingỊẠỊồ", "en"), "of my being");
+        assert_eq!(tidy("looks like, DoctorạẠạ", "en"), "looks like, Doctor");
+        assert_eq!(tidy("from \"A\" to \"В.\"", "en"), "from \"A\" to \"B.\"");
+        assert_eq!(tidy("看起来，医生 ạạạ。", "zh-Hans"), "看起来，医生 。");
+        assert_eq!(tidy("处处露オ扬己", "zh-Hans"), "处处露才扬己");
+        assert_eq!(tidy("一寸ー寸搜", "zh-Hans"), "一寸一寸搜");
+        assert_eq!(tidy("功カ教足", "zh-Hans"), "功力教足");
+        assert_eq!(tidy("史蒂夫・乔布斯", "zh-Hans"), "史蒂夫·乔布斯");
+        assert_eq!(tidy("多谢のとさな", "zh-Hans"), "多谢");
+        assert_eq!(tidy("“Garçon”是男孩的意思。", "zh-Hans"), "“Garçon”是男孩的意思。");
+        let vtt = webvtt(&parse_srt("1\n00:00:01,000 --> 00:00:02,000\nFine & <well>\n").unwrap());
+        assert_eq!(tidy_vtt(&vtt, "en"), vtt, "clean text keeps its bytes");
+        let dirty = webvtt(&parse_srt("1\n00:00:01,000 --> 00:00:02,000\nof a Viper pilotiẠỊi\n\n2\n00:00:03,000 --> 00:00:04,000\nỊẠ\n").unwrap());
+        assert_eq!(tidy_vtt(&dirty, "en"), "WEBVTT\n\n1\n00:00:01.000 --> 00:00:02.000\nof a Viper pilot\n\n");
     }
 
     #[test]

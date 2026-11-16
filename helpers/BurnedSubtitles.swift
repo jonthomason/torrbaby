@@ -166,7 +166,12 @@ func read(_ data: Data, _ width: Int, _ height: Int) -> [Line] {
     request.recognitionLevel = .accurate; request.recognitionLanguages = ["zh-Hans"]; request.usesLanguageCorrection = true
     recognize(request, image)
     return (request.results ?? []).compactMap { observation in
-        guard let best = observation.topCandidates(1).first, best.confidence >= 0.3 else { return nil }
+        guard let first = observation.topCandidates(1).first, first.confidence >= 0.3 else { return nil }
+        // Vision's Chinese recognizer can read a character as kana that looks like it (ー for 一,
+        // オ for 才); a close alternative without kana is the better reading. The server
+        // tidies what remains.
+        let kana: (String) -> Bool = { $0.unicodeScalars.contains { (0x3040...0x30FF).contains($0.value) && $0.value != 0x30FB } }
+        let best = kana(first.string) ? (observation.topCandidates(5).first { !kana($0.string) && $0.confidence >= first.confidence - 0.2 } ?? first) : first
         let box = observation.boundingBox
         return Line(text: best.string, midX: box.midX, midY: box.midY, height: box.height)
     }
