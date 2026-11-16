@@ -1004,3 +1004,18 @@ Paste or choose a picture of the code shown on the new device	粘贴或选择新
 Copy the picture from WeChat, Messages or Photos, then choose Paste picture.	从微信、信息或照片中复制图片，然后选择“粘贴图片”。
 Send this code	发送此设置码
 Could not reach Torrbaby’s relay. Check this device’s internet connection; still trying…	无法连接 Torrbaby 中继。请检查此设备的网络连接；正在继续尝试…
+Unpair this device	取消配对此设备
+Unpair this device?	要取消配对此设备吗？
+Unpair	取消配对
+It stops reaching your server until a connected device allows it again. It then shows its own code to be allowed.	在已连接的设备再次允许之前，它将无法访问你的服务器。之后它会显示自己的设置码等待允许。
+This Mac is no longer paired. Connect it again from the Connection settings.	这台 Mac 已取消配对。请在“连接”设置中重新连接。
+Copy code	拷贝设置码
+Copied	已拷贝
+Send	发送
+No connected device nearby? Copy or send this code as a picture to someone who has one. It stays the same until a connected device allows it.	附近没有已连接的设备？请将此设置码作为图片拷贝或发送给有已连接设备的人。在已连接的设备允许之前，设置码保持不变。
+Scan a connection code instead	改为扫描连接码
+Approve this device from a paired one.	请在已配对的设备上批准此设备。
+Waiting for approval…	正在等待批准…
+Can’t reach your server yet. Still trying…	暂时无法连接服务器，正在继续尝试…
+Read the new device's code	读取新设备的设置码
+A paired device will need to approve it again.	需要已配对的设备再次批准。

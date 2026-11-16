@@ -164,7 +164,7 @@ private struct SettingsQuickRows: View {
         }
         .buttonStyle(.plain)
         .disabled(!store.connected)
-        .sheet(isPresented: $showPairing) { LocalizedInterface { PairingCodeView() } }
+        .sheet(isPresented: $showPairing) { LocalizedInterface { LinkDeviceSheet() } }
         #if os(macOS)
         // The Mac sidebar is narrow: the build sits under its title instead of beside it.
         Label {
@@ -486,7 +486,7 @@ private struct DeviceSettings: View {
         SwiftUI.Section {
             Button { showPairing = true } label: { Label("Link a device", systemImage: "qrcode") }
                 .disabled(!store.connected)
-                .sheet(isPresented: $showPairing) { LocalizedInterface { PairingCodeView() } }
+                .sheet(isPresented: $showPairing) { LocalizedInterface { LinkDeviceSheet() } }
         }
         SwiftUI.Section("Devices") {
             ForEach(store.clients) { client in
@@ -670,45 +670,24 @@ struct ConnectionView: View {
     @State private var importProfile = false
     #if os(iOS)
     @State private var showScanner = false
-    @State private var showAway = false
     #endif
     var body: some View {
         NavigationStack {
             #if os(iOS)
-            VStack(spacing: 24) {
-                Spacer()
-                Image("TorrbabyLogo").resizable().frame(width: 80, height: 80)
-                    .clipShape(RoundedRectangle(cornerRadius: 10)).accessibilityHidden(true)
-                HStack(spacing: 20) {
-                    ZStack {
-                        Image(systemName: "desktopcomputer").font(.system(size: 76, weight: .light))
-                        Image(systemName: "qrcode").font(.system(size: 27)).offset(y: -8)
-                    }
-                    Image(systemName: "arrow.right").font(.title3).foregroundStyle(Theme.muted)
-                    Image(systemName: "iphone.gen3.radiowaves.left.and.right")
-                        .font(.system(size: 58, weight: .light))
-                }.foregroundStyle(Theme.accent).padding(.vertical, 12).accessibilityHidden(true)
-                VStack(spacing: 8) {
+            ScrollView {
+                VStack(spacing: 20) {
+                    Image("TorrbabyLogo").resizable().frame(width: 64, height: 64)
+                        .clipShape(RoundedRectangle(cornerRadius: 10)).accessibilityHidden(true)
                     Text("Link a device").font(.system(size: 28, weight: .bold, design: .rounded))
-                    Text("On your connected device").font(.subheadline).foregroundStyle(Theme.muted)
-                    Label("Settings → Link a device", systemImage: "gearshape").font(.subheadline)
-                }.multilineTextAlignment(.center)
-                Button { showScanner = true } label: {
-                    Label("Scan connection code", systemImage: "qrcode.viewfinder")
-                        .font(.headline).padding(.horizontal, 12).padding(.vertical, 10)
-                }
-                .buttonStyle(MonoButtonStyle(prominent: true)).foregroundStyle(Theme.onAccent)
-                .sheet(isPresented: $showScanner) { LocalizedInterface { PairingScannerView { dismiss() } } }
-                // Nobody connected nearby: this device shows its own code for one to read,
-                // from anywhere (a photo of it sent in WeChat works too).
-                Button { showAway = true } label: { Label("Set up away from home", systemImage: "qrcode") }
-                    .buttonStyle(MonoButtonStyle())
-                    .sheet(isPresented: $showAway) { LocalizedInterface { JoinAwayView { dismiss() } } }
-                Spacer()
-                Spacer().frame(height: 40)
-            }.padding(30).frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Theme.canvas)
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+                    // Not paired: this device shows its own code, for a connected one to allow.
+                    OwnCodeView { dismiss() }
+                    Button("Scan a connection code instead") { showScanner = true }
+                        .font(.subheadline)
+                        .sheet(isPresented: $showScanner) { LocalizedInterface { PairingScannerView { dismiss() } } }
+                }.padding(30).frame(maxWidth: .infinity)
+            }
+            .background(Theme.canvas)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
             #else
             VStack(alignment: .leading, spacing: 24) {
                 Image(systemName: "arrow.down.forward.and.arrow.up.backward.circle.fill").font(.system(size: 55)).foregroundStyle(Theme.accent)

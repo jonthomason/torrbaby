@@ -36,6 +36,7 @@
     <string name="ui_7069e52de595" formatted="false">A file has no path</string>
     <string name="ui_55bce902c827" formatted="false">A file is outside the library</string>
     <string name="ui_0eaf3f3adb83" formatted="false">A file with the same name is already on that drive</string>
+    <string name="ui_f2a6e02b7b4f" formatted="false">A paired device will need to approve it again.</string>
     <string name="ui_eaca5bbaf44c" formatted="false">API TOKEN</string>
     <string name="ui_6b21fb791ac0" formatted="false">About</string>
     <string name="ui_cbd19b5c397e" formatted="false">Actor</string>
@@ -85,6 +86,7 @@
     <string name="ui_0d5a3962c8e0" formatted="false">Another drive is connected where this one belongs. Nothing has been removed.</string>
     <string name="ui_47efa5d4c257" formatted="false">Any resolution</string>
     <string name="ui_dcc38ee5a416" formatted="false">Applies to torrents that use the server\'s default</string>
+    <string name="ui_5942d05a979d" formatted="false">Approve this device from a paired one.</string>
     <string name="ui_ad4f3c956b19" formatted="false">Ask trackers for peers</string>
     <string name="ui_acdac205f5e2" formatted="false">Audio</string>
     <string name="ui_ac9041e76816" formatted="false">Automatic</string>
@@ -110,6 +112,7 @@
     <string name="ui_87f8cd8360cc" formatted="false">Cancel trial</string>
     <string name="ui_24f5f64bb24c" formatted="false">Can’t reach your library right now. Try again in a moment.</string>
     <string name="ui_fe5cb199d204" formatted="false">Can’t reach your server</string>
+    <string name="ui_030a665633af" formatted="false">Can’t reach your server yet. Still trying…</string>
     <string name="ui_60745aef336b" formatted="false">Cast</string>
     <string name="ui_b4e2e1ffb3ed" formatted="false">Cellular</string>
     <string name="ui_6b9dfc21816d" formatted="false">Cellular downloads allowed until</string>
@@ -180,6 +183,8 @@
     <string name="ui_6512ee1541e9" formatted="false">Connection</string>
     <string name="ui_618aac54b120" formatted="false">Connection settings</string>
     <string name="ui_8fca30f77496" formatted="false">Continue watching</string>
+    <string name="ui_8e3df45a49db" formatted="false">Copied</string>
+    <string name="ui_6c10692719e6" formatted="false">Copy code</string>
     <string name="ui_138ab007258c" formatted="false">Copy name</string>
     <string name="ui_07f4355a761d" formatted="false">Copy the picture from WeChat, Messages or Photos, then choose Paste picture.</string>
     <string name="ui_c0d06c3ff543" formatted="false">Could not connect.</string>
@@ -362,6 +367,7 @@
     <string name="ui_50be3afcff74" formatted="false">Interrupted</string>
     <string name="ui_f0a1400a18ca" formatted="false">It finishes setting up by itself within a few seconds, wherever it is.</string>
     <string name="ui_65b63733a6f3" formatted="false">It is connected under another name. Restart the server Mac to put it back. Nothing has been removed.</string>
+    <string name="ui_44fdbb83e417" formatted="false">It stops reaching your server until a connected device allows it again. It then shows its own code to be allowed.</string>
     <string name="ui_16001f72b451" formatted="false">Its drive is not connected</string>
     <string name="ui_eadbdb3346d4" formatted="false">Its files stay on the drive. Torrbaby stops using it.</string>
     <string name="ui_d45a38ad2c16" formatted="false">Its titles return when it is connected again. Nothing has been removed.</string>
@@ -460,6 +466,7 @@
     <string name="ui_b902ca40be7e" formatted="false">No QR code was found in that picture.</string>
     <string name="ui_a66974cfe156" formatted="false">No available next episode</string>
     <string name="ui_7f91412671b3" formatted="false">No confident match yet</string>
+    <string name="ui_d8c1e979f1af" formatted="false">No connected device nearby? Copy or send this code as a picture to someone who has one. It stays the same until a connected device allows it.</string>
     <string name="ui_9e5c2b4cfc49" formatted="false">No connected drive takes new downloads</string>
     <string name="ui_f102e428502b" formatted="false">No connected phone nearby? Take a photo of this code and send it to someone who has one. It works once and expires in 10 minutes.</string>
     <string name="ui_9367342a5e79" formatted="false">No downloads</string>
@@ -578,6 +585,7 @@
     <string name="ui_034f14206811" formatted="false">RATIO</string>
     <string name="ui_03e91053622d" formatted="false">REMAINING</string>
     <string name="ui_794f65e9d206" formatted="false">Ratio</string>
+    <string name="ui_2c84dfc5ede1" formatted="false">Read the new device\'s code</string>
     <string name="ui_41f4b068f102" formatted="false">Reading image subtitles</string>
     <string name="ui_3a421a191f8f" formatted="false">Reading image subtitles (OCR)</string>
     <string name="ui_f65ccbadc5f3" formatted="false">Reading subtitles from the picture</string>
@@ -648,6 +656,7 @@
     <string name="ui_913aba9f96cf" formatted="false">Save settings</string>
     <string name="ui_c0ae8f6ea841" formatted="false">Saved</string>
     <string name="ui_5e024bb2742c" formatted="false">Saving to Quark Drive…</string>
+    <string name="ui_fc301f65ee4a" formatted="false">Scan a connection code instead</string>
     <string name="ui_f6ab55dd3509" formatted="false">Scan again</string>
     <string name="ui_b3b48e971d6e" formatted="false">Scan connection code</string>
     <string name="ui_875f33d23a6c" formatted="false">Scan media library</string>
@@ -685,6 +694,7 @@
     <string name="ui_618cfb0a5361" formatted="false">Select none</string>
     <string name="ui_7bd7fdd7e26b" formatted="false">Select to dismiss</string>
     <string name="ui_9a976fc228b6" formatted="false">Selected</string>
+    <string name="ui_9bc2575c3930" formatted="false">Send</string>
     <string name="ui_ced1931511e9" formatted="false">Send logs automatically</string>
     <string name="ui_0e3a5ba2a15d" formatted="false">Send logs now</string>
     <string name="ui_6195a39f1132" formatted="false">Send this code</string>
@@ -798,6 +808,7 @@
     <string name="ui_196686e4c2fc" formatted="false">The video stream was interrupted. Check the server and network connection.</string>
     <string name="ui_02b324383658" formatted="false">These files are already moving</string>
     <string name="ui_6315e169d054" formatted="false">These settings apply to everyone who uses this server.</string>
+    <string name="ui_3ce9bebcbf1d" formatted="false">This Mac is no longer paired. Connect it again from the Connection settings.</string>
     <string name="ui_a3594939d5f3" formatted="false">This affects the entire download package and everyone’s library.</string>
     <string name="ui_1d3888fca6b7" formatted="false">This code has expired.</string>
     <string name="ui_d81e74ecd0f8" formatted="false">This code has expired. Choose New setup code to show another.</string>
@@ -874,6 +885,9 @@
     <string name="ui_bc7819b34ff8" formatted="false">Unknown</string>
     <string name="ui_63dad5d3a355" formatted="false">Unknown drive</string>
     <string name="ui_b8bef37b7153" formatted="false">Unlimited</string>
+    <string name="ui_9c293ad46574" formatted="false">Unpair</string>
+    <string name="ui_dfd825ba357a" formatted="false">Unpair this device</string>
+    <string name="ui_6fb842dd734b" formatted="false">Unpair this device?</string>
     <string name="ui_e50bad848e4a" formatted="false">Unsupported media container for processing</string>
     <string name="ui_567bfc4dad37" formatted="false">Up next</string>
     <string name="ui_82fb1d5144a8" formatted="false">Up to date</string>
@@ -906,6 +920,7 @@
     <string name="ui_33d30632848d" formatted="false">Waiting</string>
     <string name="ui_819ba5c9dca6" formatted="false">Waiting for Wi-Fi</string>
     <string name="ui_91df8bb76aa2" formatted="false">Waiting for activity</string>
+    <string name="ui_924884106540" formatted="false">Waiting for approval…</string>
     <string name="ui_99c90cff2803" formatted="false">Waiting for connection</string>
     <string name="ui_d1884a2d21c7" formatted="false">Waiting for media identification before moving to the library</string>
     <string name="ui_0736f273254e" formatted="false">Waiting for peers</string>

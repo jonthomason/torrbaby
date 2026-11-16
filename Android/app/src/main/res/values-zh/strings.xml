@@ -36,6 +36,7 @@
     <string name="ui_7069e52de595" formatted="false">有文件缺少路径</string>
     <string name="ui_55bce902c827" formatted="false">有文件位于媒体库之外</string>
     <string name="ui_0eaf3f3adb83" formatted="false">那块硬盘上已有同名文件</string>
+    <string name="ui_f2a6e02b7b4f" formatted="false">需要已配对的设备再次批准。</string>
     <string name="ui_eaca5bbaf44c" formatted="false">API 令牌</string>
     <string name="ui_6b21fb791ac0" formatted="false">关于</string>
     <string name="ui_cbd19b5c397e" formatted="false">演员</string>
@@ -85,6 +86,7 @@
     <string name="ui_0d5a3962c8e0" formatted="false">此位置连接的是另一块硬盘。没有删除任何内容。</string>
     <string name="ui_47efa5d4c257" formatted="false">任意分辨率</string>
     <string name="ui_dcc38ee5a416" formatted="false">适用于使用服务器默认设置的种子</string>
+    <string name="ui_5942d05a979d" formatted="false">请在已配对的设备上批准此设备。</string>
     <string name="ui_ad4f3c956b19" formatted="false">向 Tracker 请求节点</string>
     <string name="ui_acdac205f5e2" formatted="false">音频</string>
     <string name="ui_ac9041e76816" formatted="false">自动</string>
@@ -110,6 +112,7 @@
     <string name="ui_87f8cd8360cc" formatted="false">取消试下载</string>
     <string name="ui_24f5f64bb24c" formatted="false">暂时无法连接到媒体库，请稍后再试。</string>
     <string name="ui_fe5cb199d204" formatted="false">无法连接到你的服务器</string>
+    <string name="ui_030a665633af" formatted="false">暂时无法连接服务器，正在继续尝试…</string>
     <string name="ui_60745aef336b" formatted="false">演员表</string>
     <string name="ui_b4e2e1ffb3ed" formatted="false">蜂窝网络</string>
     <string name="ui_6b9dfc21816d" formatted="false">蜂窝网络下载允许至</string>
@@ -180,6 +183,8 @@
     <string name="ui_6512ee1541e9" formatted="false">连接</string>
     <string name="ui_618aac54b120" formatted="false">连接设置</string>
     <string name="ui_8fca30f77496" formatted="false">继续观看</string>
+    <string name="ui_8e3df45a49db" formatted="false">已拷贝</string>
+    <string name="ui_6c10692719e6" formatted="false">拷贝设置码</string>
     <string name="ui_138ab007258c" formatted="false">复制名称</string>
     <string name="ui_07f4355a761d" formatted="false">从微信、信息或照片中复制图片，然后选择“粘贴图片”。</string>
     <string name="ui_c0d06c3ff543" formatted="false">无法连接。</string>
@@ -362,6 +367,7 @@
     <string name="ui_50be3afcff74" formatted="false">已中断</string>
     <string name="ui_f0a1400a18ca" formatted="false">无论它在哪里，都会在几秒内自行完成设置。</string>
     <string name="ui_65b63733a6f3" formatted="false">它以其他名称连接。请重新启动服务器 Mac 以恢复。没有删除任何内容。</string>
+    <string name="ui_44fdbb83e417" formatted="false">在已连接的设备再次允许之前，它将无法访问你的服务器。之后它会显示自己的设置码等待允许。</string>
     <string name="ui_16001f72b451" formatted="false">所在的硬盘未连接</string>
     <string name="ui_eadbdb3346d4" formatted="false">文件会保留在硬盘上，Torrbaby 将不再使用它。</string>
     <string name="ui_d45a38ad2c16" formatted="false">重新连接后，其中的影片会自动恢复。没有删除任何内容。</string>
@@ -460,6 +466,7 @@
     <string name="ui_b902ca40be7e" formatted="false">这张图片中没有找到二维码。</string>
     <string name="ui_a66974cfe156" formatted="false">暂无可播放的下一集</string>
     <string name="ui_7f91412671b3" formatted="false">尚无可靠匹配</string>
+    <string name="ui_d8c1e979f1af" formatted="false">附近没有已连接的设备？请将此设置码作为图片拷贝或发送给有已连接设备的人。在已连接的设备允许之前，设置码保持不变。</string>
     <string name="ui_9e5c2b4cfc49" formatted="false">没有已连接的硬盘接收新下载</string>
     <string name="ui_f102e428502b" formatted="false">身边没有已连接的手机？请拍下此设置码，发给有已连接手机的人。设置码只能使用一次，10 分钟后失效。</string>
     <string name="ui_9367342a5e79" formatted="false">暂无下载</string>
@@ -578,6 +585,7 @@
     <string name="ui_034f14206811" formatted="false">分享率</string>
     <string name="ui_03e91053622d" formatted="false">剩余</string>
     <string name="ui_794f65e9d206" formatted="false">分享率</string>
+    <string name="ui_2c84dfc5ede1" formatted="false">读取新设备的设置码</string>
     <string name="ui_41f4b068f102" formatted="false">识别图像字幕</string>
     <string name="ui_3a421a191f8f" formatted="false">正在识别图像字幕（OCR）</string>
     <string name="ui_f65ccbadc5f3" formatted="false">正在从画面读取字幕</string>
@@ -648,6 +656,7 @@
     <string name="ui_913aba9f96cf" formatted="false">保存设置</string>
     <string name="ui_c0ae8f6ea841" formatted="false">已保存</string>
     <string name="ui_5e024bb2742c" formatted="false">正在存入夸克网盘…</string>
+    <string name="ui_fc301f65ee4a" formatted="false">改为扫描连接码</string>
     <string name="ui_f6ab55dd3509" formatted="false">重新扫描</string>
     <string name="ui_b3b48e971d6e" formatted="false">扫描连接码</string>
     <string name="ui_875f33d23a6c" formatted="false">扫描媒体库</string>
@@ -685,6 +694,7 @@
     <string name="ui_618cfb0a5361" formatted="false">取消全选</string>
     <string name="ui_7bd7fdd7e26b" formatted="false">选择以忽略</string>
     <string name="ui_9a976fc228b6" formatted="false">已选择</string>
+    <string name="ui_9bc2575c3930" formatted="false">发送</string>
     <string name="ui_ced1931511e9" formatted="false">自动发送日志</string>
     <string name="ui_0e3a5ba2a15d" formatted="false">立即发送日志</string>
     <string name="ui_6195a39f1132" formatted="false">发送此设置码</string>
@@ -798,6 +808,7 @@
     <string name="ui_196686e4c2fc" formatted="false">视频流已中断，请检查服务器和网络连接。</string>
     <string name="ui_02b324383658" formatted="false">这些文件正在移动</string>
     <string name="ui_6315e169d054" formatted="false">这些设置适用于使用此服务器的所有人。</string>
+    <string name="ui_3ce9bebcbf1d" formatted="false">这台 Mac 已取消配对。请在“连接”设置中重新连接。</string>
     <string name="ui_a3594939d5f3" formatted="false">此操作影响整个下载包及所有用户的媒体库。</string>
     <string name="ui_1d3888fca6b7" formatted="false">此代码已过期。</string>
     <string name="ui_d81e74ecd0f8" formatted="false">此设置码已过期。请选择“新设置码”显示新的设置码。</string>
@@ -874,6 +885,9 @@
     <string name="ui_bc7819b34ff8" formatted="false">未知</string>
     <string name="ui_63dad5d3a355" formatted="false">未知的硬盘</string>
     <string name="ui_b8bef37b7153" formatted="false">不限量</string>
+    <string name="ui_9c293ad46574" formatted="false">取消配对</string>
+    <string name="ui_dfd825ba357a" formatted="false">取消配对此设备</string>
+    <string name="ui_6fb842dd734b" formatted="false">要取消配对此设备吗？</string>
     <string name="ui_e50bad848e4a" formatted="false">不支持处理此媒体容器</string>
     <string name="ui_567bfc4dad37" formatted="false">接下来播放</string>
     <string name="ui_82fb1d5144a8" formatted="false">已是最新</string>
@@ -906,6 +920,7 @@
     <string name="ui_33d30632848d" formatted="false">等待中</string>
     <string name="ui_819ba5c9dca6" formatted="false">等待 Wi-Fi</string>
     <string name="ui_91df8bb76aa2" formatted="false">等待活动</string>
+    <string name="ui_924884106540" formatted="false">正在等待批准…</string>
     <string name="ui_99c90cff2803" formatted="false">等待连接</string>
     <string name="ui_d1884a2d21c7" formatted="false">等待识别影片后才能移入媒体库，请选择正确的片名</string>
     <string name="ui_0736f273254e" formatted="false">等待节点</string>

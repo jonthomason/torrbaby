@@ -47,6 +47,7 @@ final class L10n {
     IDS.put("A file has no path", R.string.ui_7069e52de595);
     IDS.put("A file is outside the library", R.string.ui_55bce902c827);
     IDS.put("A file with the same name is already on that drive", R.string.ui_0eaf3f3adb83);
+    IDS.put("A paired device will need to approve it again.", R.string.ui_f2a6e02b7b4f);
     IDS.put("API TOKEN", R.string.ui_eaca5bbaf44c);
     IDS.put("About", R.string.ui_6b21fb791ac0);
     IDS.put("Actor", R.string.ui_cbd19b5c397e);
@@ -96,6 +97,7 @@ final class L10n {
     IDS.put("Another drive is connected where this one belongs. Nothing has been removed.", R.string.ui_0d5a3962c8e0);
     IDS.put("Any resolution", R.string.ui_47efa5d4c257);
     IDS.put("Applies to torrents that use the server's default", R.string.ui_dcc38ee5a416);
+    IDS.put("Approve this device from a paired one.", R.string.ui_5942d05a979d);
     IDS.put("Ask trackers for peers", R.string.ui_ad4f3c956b19);
     IDS.put("Audio", R.string.ui_acdac205f5e2);
     IDS.put("Automatic", R.string.ui_ac9041e76816);
@@ -121,6 +123,7 @@ final class L10n {
     IDS.put("Cancel trial", R.string.ui_87f8cd8360cc);
     IDS.put("Can’t reach your library right now. Try again in a moment.", R.string.ui_24f5f64bb24c);
     IDS.put("Can’t reach your server", R.string.ui_fe5cb199d204);
+    IDS.put("Can’t reach your server yet. Still trying…", R.string.ui_030a665633af);
     IDS.put("Cast", R.string.ui_60745aef336b);
     IDS.put("Cellular", R.string.ui_b4e2e1ffb3ed);
     IDS.put("Cellular downloads allowed until", R.string.ui_6b9dfc21816d);
@@ -191,6 +194,8 @@ final class L10n {
     IDS.put("Connection", R.string.ui_6512ee1541e9);
     IDS.put("Connection settings", R.string.ui_618aac54b120);
     IDS.put("Continue watching", R.string.ui_8fca30f77496);
+    IDS.put("Copied", R.string.ui_8e3df45a49db);
+    IDS.put("Copy code", R.string.ui_6c10692719e6);
     IDS.put("Copy name", R.string.ui_138ab007258c);
     IDS.put("Copy the picture from WeChat, Messages or Photos, then choose Paste picture.", R.string.ui_07f4355a761d);
     IDS.put("Could not connect.", R.string.ui_c0d06c3ff543);
@@ -373,6 +378,7 @@ final class L10n {
     IDS.put("Interrupted", R.string.ui_50be3afcff74);
     IDS.put("It finishes setting up by itself within a few seconds, wherever it is.", R.string.ui_f0a1400a18ca);
     IDS.put("It is connected under another name. Restart the server Mac to put it back. Nothing has been removed.", R.string.ui_65b63733a6f3);
+    IDS.put("It stops reaching your server until a connected device allows it again. It then shows its own code to be allowed.", R.string.ui_44fdbb83e417);
     IDS.put("Its drive is not connected", R.string.ui_16001f72b451);
     IDS.put("Its files stay on the drive. Torrbaby stops using it.", R.string.ui_eadbdb3346d4);
     IDS.put("Its titles return when it is connected again. Nothing has been removed.", R.string.ui_d45a38ad2c16);
@@ -471,6 +477,7 @@ final class L10n {
     IDS.put("No QR code was found in that picture.", R.string.ui_b902ca40be7e);
     IDS.put("No available next episode", R.string.ui_a66974cfe156);
     IDS.put("No confident match yet", R.string.ui_7f91412671b3);
+    IDS.put("No connected device nearby? Copy or send this code as a picture to someone who has one. It stays the same until a connected device allows it.", R.string.ui_d8c1e979f1af);
     IDS.put("No connected drive takes new downloads", R.string.ui_9e5c2b4cfc49);
     IDS.put("No connected phone nearby? Take a photo of this code and send it to someone who has one. It works once and expires in 10 minutes.", R.string.ui_f102e428502b);
     IDS.put("No downloads", R.string.ui_9367342a5e79);
@@ -589,6 +596,7 @@ final class L10n {
     IDS.put("RATIO", R.string.ui_034f14206811);
     IDS.put("REMAINING", R.string.ui_03e91053622d);
     IDS.put("Ratio", R.string.ui_794f65e9d206);
+    IDS.put("Read the new device's code", R.string.ui_2c84dfc5ede1);
     IDS.put("Reading image subtitles", R.string.ui_41f4b068f102);
     IDS.put("Reading image subtitles (OCR)", R.string.ui_3a421a191f8f);
     IDS.put("Reading subtitles from the picture", R.string.ui_f65ccbadc5f3);
@@ -659,6 +667,7 @@ final class L10n {
     IDS.put("Save settings", R.string.ui_913aba9f96cf);
     IDS.put("Saved", R.string.ui_c0ae8f6ea841);
     IDS.put("Saving to Quark Drive…", R.string.ui_5e024bb2742c);
+    IDS.put("Scan a connection code instead", R.string.ui_fc301f65ee4a);
     IDS.put("Scan again", R.string.ui_f6ab55dd3509);
     IDS.put("Scan connection code", R.string.ui_b3b48e971d6e);
     IDS.put("Scan media library", R.string.ui_875f33d23a6c);
@@ -696,6 +705,7 @@ final class L10n {
     IDS.put("Select none", R.string.ui_618cfb0a5361);
     IDS.put("Select to dismiss", R.string.ui_7bd7fdd7e26b);
     IDS.put("Selected", R.string.ui_9a976fc228b6);
+    IDS.put("Send", R.string.ui_9bc2575c3930);
     IDS.put("Send logs automatically", R.string.ui_ced1931511e9);
     IDS.put("Send logs now", R.string.ui_0e3a5ba2a15d);
     IDS.put("Send this code", R.string.ui_6195a39f1132);
@@ -809,6 +819,7 @@ final class L10n {
     IDS.put("The video stream was interrupted. Check the server and network connection.", R.string.ui_196686e4c2fc);
     IDS.put("These files are already moving", R.string.ui_02b324383658);
     IDS.put("These settings apply to everyone who uses this server.", R.string.ui_6315e169d054);
+    IDS.put("This Mac is no longer paired. Connect it again from the Connection settings.", R.string.ui_3ce9bebcbf1d);
     IDS.put("This affects the entire download package and everyone’s library.", R.string.ui_a3594939d5f3);
     IDS.put("This code has expired.", R.string.ui_1d3888fca6b7);
     IDS.put("This code has expired. Choose New setup code to show another.", R.string.ui_d81e74ecd0f8);
@@ -885,6 +896,9 @@ final class L10n {
     IDS.put("Unknown", R.string.ui_bc7819b34ff8);
     IDS.put("Unknown drive", R.string.ui_63dad5d3a355);
     IDS.put("Unlimited", R.string.ui_b8bef37b7153);
+    IDS.put("Unpair", R.string.ui_9c293ad46574);
+    IDS.put("Unpair this device", R.string.ui_dfd825ba357a);
+    IDS.put("Unpair this device?", R.string.ui_6fb842dd734b);
     IDS.put("Unsupported media container for processing", R.string.ui_e50bad848e4a);
     IDS.put("Up next", R.string.ui_567bfc4dad37);
     IDS.put("Up to date", R.string.ui_82fb1d5144a8);
@@ -917,6 +931,7 @@ final class L10n {
     IDS.put("Waiting", R.string.ui_33d30632848d);
     IDS.put("Waiting for Wi-Fi", R.string.ui_819ba5c9dca6);
     IDS.put("Waiting for activity", R.string.ui_91df8bb76aa2);
+    IDS.put("Waiting for approval…", R.string.ui_924884106540);
     IDS.put("Waiting for connection", R.string.ui_99c90cff2803);
     IDS.put("Waiting for media identification before moving to the library", R.string.ui_d1884a2d21c7);
     IDS.put("Waiting for peers", R.string.ui_0736f273254e);
