@@ -483,7 +483,15 @@ struct TorrentSearchView: View {
                     Button("Trials") { showTrials = true }
                 }.padding(.horizontal, 16).padding(.bottom, 8)
                 #endif
-                if let response {
+                if searching {
+                    // The search in progress takes the page, not a small spinner under the box.
+                    VStack(spacing: 14) {
+                        ProgressView().controlSize(.large)
+                        Text("Searching…").font(.title3.weight(.semibold))
+                        // Every share is opened to check its files, which takes a while.
+                        if market == "china" { Text("Searching and checking links…").font(.callout).foregroundStyle(.secondary) }
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let response {
                     if visibleItems.isEmpty && !searching {
                         if !response.providers.isEmpty && response.providers.allSatisfy({ $0.error != nil }) {
                             let limited = response.providers.contains { $0.error?.contains("rate limiting") == true }
@@ -695,11 +703,6 @@ struct TorrentSearchView: View {
                     // "3 of 12 releases" when filters hide some of what was found.
                     let shown = visibleItems.count, found = response.items.count
                     (shown < found ? Text("\(shown) of \(found) releases") : Text("\(shown) releases")).font(.caption).foregroundStyle(.secondary)
-                }
-                if searching {
-                    ProgressView().controlSize(.small)
-                    // Every share is opened to check its files, which takes a while.
-                    if market == "china" { Text("Searching and checking links…").font(.caption).foregroundStyle(.secondary) }
                 }
     }
     private func results(_ items: [TorrentSearchItem], inline: Bool) -> some View {
