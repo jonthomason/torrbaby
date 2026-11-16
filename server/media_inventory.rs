@@ -285,6 +285,7 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
         let bitmap=|track:u64| tracks.iter().any(|t|t["track"]==track && t["sidecar"]!=true && matches!(t["codec"].as_str(),Some("S_HDMV/PGS"|"S_VOBSUB")));
         planned.retain(|(path,track,_,target)| target.is_none() && !(path.as_path()==input && bitmap(*track)));
     } else {
+        people_before_pictures(s,asset,id,&input,&info,&mut planned).await?;
         prefer_people_english(s,asset,id,&input,&info,&mut planned).await?;
         prefer_people_chinese(s,asset,id,&input,&mut planned).await?;
         people_everywhere(s,asset,id,&input,&mut planned).await?;
@@ -360,6 +361,40 @@ async fn prefer_people_english(s:&Service,asset:&Value,id:&str,input:&std::path:
     if let Some(at)=translated {planned[at]=(english,1,"en",None);}
     Ok(())
 }
+/// A picture subtitle track (PGS, VobSub) not read yet is read only when OpenSubtitles has
+/// nothing in its language (the user's rule, 2026-11-16): Chinese people wrote takes the place
+/// of a Chinese track's reading, and an unlabelled track is not read to find its language when
+/// OpenSubtitles has English or Chinese (the other comes by translation on device). A track
+/// already read stays. English tracks: `prefer_people_english`.
+async fn people_before_pictures(s:&Service,asset:&Value,id:&str,input:&std::path::Path,info:&Value,planned:&mut Vec<(std::path::PathBuf,u64,&'static str,Option<&'static str>)>)->Result<()> {
+    let bitmap=|track:u64| info["subtitle_tracks"].as_array().is_some_and(|tracks|tracks.iter().any(|t|t["track"]==track && t["sidecar"]!=true && matches!(t["codec"].as_str(),Some("S_HDMV/PGS"|"S_VOBSUB"))));
+    let unread=|planned:&[(std::path::PathBuf,u64,&'static str,Option<&'static str>)],language:&str|planned.iter().find(|(path,track,l,target)|
+        *l==language && target.is_none() && path.as_path()==input && bitmap(*track)
+        && !s.subtitle_jobs.lookup(id,path,*track,&Some(language.to_owned()),&None).is_some_and(|job|job["state"]=="ready"))
+        .map(|(_,track,_,_)|*track);
+    if let Some(track)=unread(planned,"zh-Hans") {
+        if let Some(chinese)=crate::speech_subtitles::people_chinese(s,asset,input).await? {
+            for entry in planned.iter_mut().filter(|(path,t,l,_)|path.as_path()==input && *t==track && *l=="zh-Hans") {
+                *entry=(chinese.clone(),1,"zh-Hans",entry.3);
+            }
+        }
+    }
+    if let Some(track)=unread(planned,"auto") {
+        let english=crate::speech_subtitles::people_english(s,asset,input).await?;
+        let chinese=crate::speech_subtitles::people_chinese(s,asset,input).await?;
+        let replacement=match (english,chinese) {
+            (Some(en),Some(zh))=>Some(vec![(en,1,"en",None),(zh,1,"zh-Hans",None)]),
+            (Some(en),None)=>Some(vec![(en.clone(),1,"en",None),(en,1,"en",Some("zh-Hans"))]),
+            (None,Some(zh))=>Some(vec![(zh.clone(),1,"zh-Hans",None),(zh,1,"zh-Hans",Some("en"))]),
+            (None,None)=>None,
+        };
+        if let Some(replacement)=replacement {
+            planned.retain(|(path,t,l,_)|!(path.as_path()==input && *t==track && *l=="auto"));
+            planned.extend(replacement);
+        }
+    }
+    Ok(())
+}
 /// A Chinese translation not made yet is replaced by Chinese people wrote, when OpenSubtitles
 /// has some for this file. So is one made on device from English that came from OpenSubtitles
 /// (Parasite's, translated while Chinese downloads were off): it stays until the download is
@@ -383,20 +418,23 @@ async fn people_everywhere(s:&Service,asset:&Value,id:&str,input:&std::path::Pat
     let english=crate::speech_subtitles::people_everywhere(s,asset,input,"en").await?;
     let chinese=crate::speech_subtitles::people_everywhere(s,asset,input,"zh-cn").await?;
     if english.is_none() && chinese.is_none() {return Ok(());}
-    replace_with_people(planned,english.as_deref(),chinese.as_deref(),|path,track|s.subtitle_jobs.lookup(id,path,track,&Some("en".to_owned()),&Some("zh-Hans".to_owned())).is_some_and(|job|job["state"]=="ready"));
+    replace_with_people(planned,english.as_deref(),chinese.as_deref(),|path,track,source,target|s.subtitle_jobs.lookup(id,path,track,&Some(source.to_owned()),&Some(target.to_owned())).is_some_and(|job|job["state"]=="ready"));
     Ok(())
 }
 type Planned=(std::path::PathBuf,u64,&'static str,Option<&'static str>);
-fn replace_with_people(planned:&mut Vec<Planned>,english:Option<&std::path::Path>,chinese:Option<&std::path::Path>,translated:impl Fn(&std::path::Path,u64)->bool) {
+fn replace_with_people(planned:&mut Vec<Planned>,english:Option<&std::path::Path>,chinese:Option<&std::path::Path>,translated:impl Fn(&std::path::Path,u64,&str,&str)->bool) {
     let output=|entry:&Planned|entry.3.unwrap_or(entry.2);
     for entry in planned.iter_mut() {
         match (output(entry),english,chinese) {
             ("en",Some(english),_) => *entry=(english.to_owned(),1,"en",None),
             ("zh-Hans",_,Some(chinese)) => *entry=(chinese.to_owned(),1,"zh-Hans",None),
-            ("zh-Hans",Some(english),None) if entry.2=="en" && !translated(&entry.0,entry.1) => *entry=(english.to_owned(),1,"en",Some("zh-Hans")),
+            ("zh-Hans",Some(english),None) if entry.2=="en" && !translated(&entry.0,entry.1,"en","zh-Hans") => *entry=(english.to_owned(),1,"en",Some("zh-Hans")),
+            ("en",None,Some(chinese)) if entry.2=="zh-Hans" && !translated(&entry.0,entry.1,"zh-Hans","en") => *entry=(chinese.to_owned(),1,"zh-Hans",Some("en")),
             _ => {}
         }
     }
+    // OpenSubtitles wins every contest: an unlabelled track is not read to learn its language.
+    planned.retain(|entry|output(entry)!="auto");
     if let Some(english)=english { if !planned.iter().any(|e|output(e)=="en") {planned.push((english.to_owned(),1,"en",None));} }
     if let Some(chinese)=chinese { if !planned.iter().any(|e|output(e)=="zh-Hans") {planned.push((chinese.to_owned(),1,"zh-Hans",None));} }
     let mut seen=std::collections::HashSet::new();
@@ -482,23 +520,27 @@ mod priority_tests {
         let (video,en,zh)=(PathBuf::from("/m/a.mkv"),Path::new("/t/a.en.opensubtitles.srt"),Path::new("/t/a.zh-Hans.opensubtitles.srt"));
         // A release English track translated to Chinese: both taken from OpenSubtitles.
         let mut planned=vec![(video.clone(),3,"en",None),(video.clone(),3,"en",Some("zh-Hans"))];
-        replace_with_people(&mut planned,Some(en),Some(zh),|_,_|false);
+        replace_with_people(&mut planned,Some(en),Some(zh),|_,_,_,_|false);
         assert_eq!(planned,vec![(en.to_owned(),1,"en",None),(zh.to_owned(),1,"zh-Hans",None)]);
         // No Chinese on OpenSubtitles: a translation already made stays, one not made comes from its English.
         let mut planned=vec![(video.clone(),3,"en",None),(video.clone(),3,"en",Some("zh-Hans"))];
-        replace_with_people(&mut planned,Some(en),None,|_,_|true);
+        replace_with_people(&mut planned,Some(en),None,|_,_,_,_|true);
         assert_eq!(planned,vec![(en.to_owned(),1,"en",None),(video.clone(),3,"en",Some("zh-Hans"))]);
         let mut planned=vec![(video.clone(),3,"en",None),(video.clone(),3,"en",Some("zh-Hans"))];
-        replace_with_people(&mut planned,Some(en),None,|_,_|false);
+        replace_with_people(&mut planned,Some(en),None,|_,_,_,_|false);
         assert_eq!(planned,vec![(en.to_owned(),1,"en",None),(en.to_owned(),1,"en",Some("zh-Hans"))]);
-        // Chinese read from the picture translated to English; only Chinese on OpenSubtitles.
+        // Chinese read from the picture translated to English; only Chinese on OpenSubtitles:
+        // the English is translated from it, so the picture is not read (a translation already made stays).
         let mut planned=vec![(video.clone(),1,"zh-Hans",None),(video.clone(),1,"zh-Hans",Some("en"))];
-        replace_with_people(&mut planned,None,Some(zh),|_,_|false);
+        replace_with_people(&mut planned,None,Some(zh),|_,_,_,_|false);
+        assert_eq!(planned,vec![(zh.to_owned(),1,"zh-Hans",None),(zh.to_owned(),1,"zh-Hans",Some("en"))]);
+        let mut planned=vec![(video.clone(),1,"zh-Hans",None),(video.clone(),1,"zh-Hans",Some("en"))];
+        replace_with_people(&mut planned,None,Some(zh),|_,_,_,_|true);
         assert_eq!(planned,vec![(zh.to_owned(),1,"zh-Hans",None),(video.clone(),1,"zh-Hans",Some("en"))]);
-        // A track of unknown language: OpenSubtitles' languages are added beside it.
-        let mut planned=vec![(video.clone(),2,"auto",Some("auto"))];
-        replace_with_people(&mut planned,Some(en),Some(zh),|_,_|false);
-        assert_eq!(planned.len(),3);
+        // A track of unknown language is not read to learn it: OpenSubtitles' languages take its place.
+        let mut planned=vec![(video.clone(),2,"auto",None),(video.clone(),2,"auto",Some("auto"))];
+        replace_with_people(&mut planned,Some(en),Some(zh),|_,_,_,_|false);
+        assert_eq!(planned,vec![(en.to_owned(),1,"en",None),(zh.to_owned(),1,"zh-Hans",None)]);
     }
 
     #[test]
