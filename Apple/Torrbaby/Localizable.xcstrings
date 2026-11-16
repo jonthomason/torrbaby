@@ -17208,6 +17208,23 @@
           }
         }
       }
+    },
+    "%lld downloads updated": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld downloads updated"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已更新 %lld 个下载"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

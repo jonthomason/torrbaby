@@ -61,6 +61,10 @@ struct DownloadsView: View {
                     HStack { Text(L10n.text(error)).foregroundStyle(.orange); Spacer(); Button { queue.error = nil } label: { Image(systemName: "xmark.circle") } }
                 }
                 let visible = queue.items.filter { $0.state != .removed }
+                // Every download with updated subtitles, updated with one button.
+                if visible.filter({ queue.updates[$0.id] != nil }).count > 1 {
+                    DownloadUpdateOffer(ids: visible.map(\.id))
+                }
                 if visible.isEmpty {
                     ContentUnavailableView("No downloads", systemImage: "arrow.down.circle")
                         .frame(maxWidth: .infinity, minHeight: 320, alignment: .center)
@@ -431,7 +435,7 @@ struct DownloadUpdateOffer: View {
                 Text(pending.count == 1 ? L10n.text("Updated subtitles are available for this download.") : L10n.format("Updated subtitles are available for %lld downloads.", pending.count)).font(.caption).foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 Button {
-                    Task { for id in pending { await queue.applyUpdate(id) } }
+                    Task { if pending.count > 1 { await queue.applyAllUpdates(pending) } else { for id in pending { await queue.applyUpdate(id) } } }
                 } label: {
                     if busy { Label("Updating…", systemImage: "arrow.triangle.2.circlepath") }
                     else {

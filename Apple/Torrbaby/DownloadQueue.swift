@@ -147,6 +147,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     func attach(_ store: Store) { self.store = store; connectionChanged() }
     func connectionChanged() {
         guard restored else { return }
+        updateAtHome()
         for (id, task) in tasks {
             guard items.first(where: { $0.id == id })?.state == .transferring else { continue }
             if store?.connected == true && !waitingForWiFi {
@@ -461,6 +462,31 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     @Published private(set) var updates: [UUID: DownloadStorage.Update] = [:]
     @Published private(set) var updating: Set<UUID> = []
     private var updateChecks: [String: Date] = [:]
+    /// When downloads were last checked for updated subtitles without the page open.
+    private var lastHomeCheck: Date?
+    /// On the home network: the server reached by its home route over Wi-Fi or Ethernet.
+    /// Updates there cost nothing, so they are fetched without asking.
+    var atHome: Bool { store?.connected == true && store?.usingFallback == false && !metered }
+    /// At home, check the finished downloads for updated subtitles (at most every ten
+    /// minutes) and fetch them; away, they wait for the Update button.
+    func updateAtHome() {
+        guard restored, atHome, let library = store?.library, items.contains(where: { $0.state == .ready }) else { return }
+        if let last = lastHomeCheck, Date().timeIntervalSince(last) < 600 { return }
+        lastHomeCheck = Date()
+        Task { await checkForUpdates(library: library) }
+    }
+    /// Fetch the available updates (every one, or those of `ids`), one at a time.
+    func applyAllUpdates(_ ids: [UUID]? = nil) async {
+        let pending = (ids ?? items.map(\.id)).filter { updates[$0] != nil }
+        guard !pending.isEmpty else { return }
+        var done = 0
+        for id in pending {
+            await applyUpdate(id, announce: false)
+            if updates[id] == nil { done += 1 }
+        }
+        if done == 1 { store?.notify("Download updated") }
+        else if done > 1 { store?.notify(L10n.format("%lld downloads updated", done)) }
+    }
     /// Ask the server what it would send today for each finished download of a title, and
     /// note the ones that can be brought up to date by fetching only what changed. It is
     /// easy to download a title before its subtitles have been prepared.
@@ -495,9 +521,10 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         guard let store else { return }
         let wanted = Set(items.filter { $0.server == store.libraryKey && $0.state == .ready }.map(\.titleID))
         for title in library.titles where wanted.contains(title.id) { await checkForUpdates(title: title) }
+        if atHome { await applyAllUpdates() }
     }
     /// Fetch what changed and rewrite the downloaded file in place; the video is not fetched again.
-    func applyUpdate(_ id: UUID) async {
+    func applyUpdate(_ id: UUID, announce: Bool = true) async {
         guard let store, let storage, let update = updates[id], !updating.contains(id),
               let item = items.first(where: { $0.id == id && $0.state == .ready }) else { return }
         updating.insert(id); defer { updating.remove(id) }
@@ -516,7 +543,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             try storage.applyUpdate(id, update, tail: tail)
             updates[id] = nil
             reload()
-            store.notify("Download updated")
+            if announce { store.notify("Download updated") }
         } catch { report(error) }
     }
     /// Pause every download in progress or waiting; nothing is deleted.

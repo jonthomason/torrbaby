@@ -198,6 +198,9 @@ final class Store: ObservableObject {
             titleIndex = Dictionary(titles.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             episodeThumbnails = Dictionary(titles.flatMap(\.assets).map { ($0.id, $0.thumbnail) }, uniquingKeysWith: { first, _ in first })
             ArtworkImages.warm(titles, library: libraryKey)
+            #if !os(tvOS)
+            DownloadQueue.shared.updateAtHome()
+            #endif
         }
     }
     /// Titles and episode thumbnails by id, so each artwork tile finds its revision at once
