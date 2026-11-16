@@ -350,12 +350,22 @@ pub fn people_decided(data: &Path, asset: &str, revision: &str, tag: &str) -> bo
 /// Whether OpenSubtitles gave an answer that stands for this file in `tag`: subtitles, or none
 /// suitable. Not while it could not be asked, nor when its file was refused for cues out of place.
 /// Subtitles taken before they were checked against the file's length are not settled.
-pub fn people_settled(data: &Path, asset: &str, revision: &str, tag: &str) -> bool {
+pub fn people_settled(data: &Path, asset: &str, revision: &str, tag: &str, special: bool) -> bool {
     let record = directory(data).join(format!("{}.{tag}-opensubtitles.json", key(data, asset, revision)));
     let everything = crate::opensubtitles::everything(data);
     std::fs::read(record).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).is_some_and(|saved|
         (saved["state"] == "ready" && fit_checked(&saved)) || (saved["state"] == "missing" && !(everything && saved["set_aside"] == true)
-            && !saved["reason"].as_str().is_some_and(|r| r.ends_with("Subtitle cues are out of order"))))
+            && !saved["reason"].as_str().is_some_and(|r| r.ends_with("Subtitle cues are out of order"))
+            && !ask_again(&saved, special)))
+}
+
+/// The OpenSubtitles lookup version a missing record was made by. Version 3 looks specials up
+/// by their name (a pack's S00E01 is seldom TMDB's), and reads files with a cue that ends
+/// before it starts: records from before that, for those, are asked again.
+const LOOKUP: u64 = 3;
+fn ask_again(saved: &Value, special: bool) -> bool {
+    saved["state"] == "missing" && saved["lookup"].as_u64().unwrap_or(0) < LOOKUP
+        && (special || saved["reason"].as_str().is_some_and(|r| r.ends_with("Subtitle ends before it starts")))
 }
 
 /// Whether a ready record's subtitles were checked against the file's length.
@@ -416,7 +426,8 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
         let unordered = saved["reason"].as_str().is_some_and(|r| r.ends_with("Subtitle cues are out of order"));
         // Set aside (fleet translations, for a later round): that round is every title.
         let set_aside = saved["set_aside"] == true && !crate::opensubtitles::everything(&s.data_dir);
-        if saved["state"] == "missing" && !unordered && (saved["lookup"].as_u64() >= Some(2) || set_aside) { return Ok(None); }
+        let special = asset["season"].as_u64() == Some(0);
+        if saved["state"] == "missing" && !unordered && !ask_again(&saved, special) && (saved["lookup"].as_u64() >= Some(2) || set_aside) { return Ok(None); }
         if saved["after"].as_f64().is_some_and(|t| t > now()) { return Ok(None); }
     }
     match crate::opensubtitles::find_language(&s.data_dir, asset, input, &root, &name, language, &refused).await {
@@ -425,7 +436,7 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
             Ok(Some(path))
         }
         Ok(crate::opensubtitles::Found::Missing(why)) => {
-            save(json!({"state":"missing","asset_id":id,"reason":why,"lookup":2,"updated":now()}))?;
+            save(json!({"state":"missing","asset_id":id,"reason":why,"lookup":LOOKUP,"updated":now()}))?;
             Ok(None)
         }
         Err(error) => {

@@ -197,64 +197,125 @@ pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: 
     let (code, ours) = match language { "zh-cn" => ("zh-cn", "zh-Hans"), _ => ("en", "en") };
     let Some(c) = credentials(data) else { return Ok(Found::Missing("No OpenSubtitles account".into())) };
     let entity = asset["entity_id"].as_str().unwrap_or("");
-    let mut query: Vec<(&str, String)> = Vec::new();
+    let client = client()?;
+    let mut searches: Vec<Vec<(&str, String)>> = Vec::new();
     if let Some(id) = entity.strip_prefix("tmdb:movie:") {
-        query.push(("tmdb_id", id.split(':').next().unwrap_or(id).to_owned()));
+        searches.push(vec![("tmdb_id", id.split(':').next().unwrap_or(id).to_owned())]);
     } else if let Some(id) = entity.strip_prefix("tmdb:tv:") {
         let (Some(season), Some(episode)) = (asset["season"].as_u64(), asset["episode"].as_u64()) else {
             return Ok(Found::Missing("Not an episode OpenSubtitles can look up".into()));
         };
-        query.extend([("parent_tmdb_id", id.to_owned()), ("season_number", season.to_string()), ("episode_number", episode.to_string())]);
+        // Release packs number specials their own way (BSG's pack: S00E01 is the Miniseries,
+        // TMDB's S00E01 "The Story So Far"), so a special is first looked up by its name.
+        if season == 0 {
+            if let Some(found) = input.file_stem().and_then(|n| n.to_str()).and_then(special) {
+                if let Some(search) = special_search(&client, &c, &found).await { searches.push(search); }
+            }
+        }
+        searches.push(vec![("parent_tmdb_id", id.to_owned()), ("season_number", season.to_string()), ("episode_number", episode.to_string())]);
     } else {
         return Ok(Found::Missing("Title not identified on TMDB".into()));
     }
     let hashed = input.to_owned();
-    if let Ok(Ok(hash)) = tokio::task::spawn_blocking(move || movie_hash(&hashed)).await { query.push(("moviehash", hash)); }
-    query.push(("languages", code.into()));
-    // OpenSubtitles redirects any other order of the parameters: send them sorted.
-    query.sort();
-    let client = client()?;
-    let mut url = reqwest::Url::parse(&format!("{API}/subtitles"))?;
-    for (key, value) in &query { url.query_pairs_mut().append_pair(key, value); }
-    let reply = client.get(url).header("Api-Key", &c.api_key).header("Accept", "application/json").send().await.context("OpenSubtitles search")?;
-    ensure!(reply.status().is_success(), "OpenSubtitles search failed ({})", reply.status());
-    let results: Value = reply.json().await?;
+    let hash = tokio::task::spawn_blocking(move || movie_hash(&hashed)).await.ok().and_then(Result::ok);
     let release = format!("{} {}", asset["torrent_name"].as_str().unwrap_or(""), input.file_name().and_then(|n| n.to_str()).unwrap_or(""));
-    let candidates: Vec<_> = ranked(results["data"].as_array().map(Vec::as_slice).unwrap_or(&[]), &release, code)
-        .into_iter().filter(|(id, _, _)| !refused.contains(id)).take(TRIES).collect();
-    if candidates.is_empty() { return Ok(Found::Missing(format!("No {ours} subtitles on OpenSubtitles"))) }
     let measured = input.to_owned();
     let duration = tokio::task::spawn_blocking(move || crate::media_format::duration(&measured)).await.ok().flatten();
     let mut misfits: Vec<Value> = Vec::new();
     let mut unreadable = None;
-    for (file_id, chosen, mut provenance) in candidates {
-        let (cues, text) = match download(data, &client, &c, file_id, ours).await? {
-            Ok(read) => read,
-            Err(why) => { unreadable = Some(why); continue }
-        };
-        let last_end = cues.iter().map(|c| c.end_ms).max().unwrap_or(0) as f64 / 1000.0;
-        if !fits(last_end, duration) {
-            tracing::info!(asset = asset["id"].as_str().unwrap_or(""), language = ours, release = %chosen, last_end, duration, "OpenSubtitles file does not fit this file's length");
-            misfits.push(json!({"file_id": file_id, "release": chosen, "last_cue": last_end}));
-            continue;
+    let mut tried: Vec<u64> = refused.to_vec();
+    for mut query in searches {
+        if let Some(hash) = &hash { query.push(("moviehash", hash.clone())); }
+        query.push(("languages", code.into()));
+        // OpenSubtitles redirects any other order of the parameters: send them sorted.
+        query.sort();
+        let mut url = reqwest::Url::parse(&format!("{API}/subtitles"))?;
+        for (key, value) in &query { url.query_pairs_mut().append_pair(key, value); }
+        let reply = client.get(url).header("Api-Key", &c.api_key).header("Accept", "application/json").send().await.context("OpenSubtitles search")?;
+        ensure!(reply.status().is_success(), "OpenSubtitles search failed ({})", reply.status());
+        let results: Value = reply.json().await?;
+        let candidates: Vec<_> = ranked(results["data"].as_array().map(Vec::as_slice).unwrap_or(&[]), &release, code)
+            .into_iter().filter(|(id, _, _)| !tried.contains(id)).take(TRIES).collect();
+        for (file_id, chosen, mut provenance) in candidates {
+            tried.push(file_id);
+            let (cues, text) = match download(data, &client, &c, file_id, ours).await? {
+                Ok(read) => read,
+                Err(why) => { unreadable = Some(why); continue }
+            };
+            let last_end = cues.iter().map(|c| c.end_ms).max().unwrap_or(0) as f64 / 1000.0;
+            if !fits(last_end, duration) {
+                tracing::info!(asset = asset["id"].as_str().unwrap_or(""), language = ours, release = %chosen, last_end, duration, "OpenSubtitles file does not fit this file's length");
+                misfits.push(json!({"file_id": file_id, "release": chosen, "last_cue": last_end}));
+                continue;
+            }
+            let path = directory.join(format!("{name}.{ours}.opensubtitles.srt"));
+            let temporary = directory.join(format!("{name}.{ours}.opensubtitles.srt.tmp"));
+            std::fs::write(&temporary, text)?;
+            std::fs::rename(&temporary, &path)?;
+            tracing::info!(asset = asset["id"].as_str().unwrap_or(""), language = ours, release = %chosen, cues = cues.len(), "Subtitles from OpenSubtitles");
+            provenance["downloaded_at"] = json!(crate::storage::now());
+            provenance["cues"] = json!(cues.len());
+            provenance["fits"] = json!(true);
+            provenance["duration"] = json!(duration);
+            provenance["last_cue"] = json!(last_end);
+            if !misfits.is_empty() { provenance["refused"] = json!(misfits); }
+            return Ok(Found::Ready(path, provenance));
         }
-        let path = directory.join(format!("{name}.{ours}.opensubtitles.srt"));
-        let temporary = directory.join(format!("{name}.{ours}.opensubtitles.srt.tmp"));
-        std::fs::write(&temporary, text)?;
-        std::fs::rename(&temporary, &path)?;
-        tracing::info!(asset = asset["id"].as_str().unwrap_or(""), language = ours, release = %chosen, cues = cues.len(), "Subtitles from OpenSubtitles");
-        provenance["downloaded_at"] = json!(crate::storage::now());
-        provenance["cues"] = json!(cues.len());
-        provenance["fits"] = json!(true);
-        provenance["duration"] = json!(duration);
-        provenance["last_cue"] = json!(last_end);
-        if !misfits.is_empty() { provenance["refused"] = json!(misfits); }
-        return Ok(Found::Ready(path, provenance));
     }
     if !misfits.is_empty() {
         return Ok(Found::Missing(format!("No {ours} subtitles on OpenSubtitles fit this file's length ({} tried)", misfits.len())));
     }
     Ok(Found::Missing(unreadable.unwrap_or_else(|| format!("No {ours} subtitles on OpenSubtitles"))))
+}
+
+/// A special's series and name from its file name, with the part when it has one:
+/// "Battlestar Galactica (2003) - S00E01 - The Miniseries (1)" gives ("Battlestar Galactica",
+/// "The Miniseries", Some(1)). Release tags in brackets ("(1080p BluRay x265 Celdra)") are dropped.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Special { series: String, title: String, part: Option<u64> }
+pub(crate) fn special(stem: &str) -> Option<Special> {
+    use std::sync::LazyLock;
+    static SPLIT: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"(?i)^(.+?)[ ._-]+S00E\d{1,3}(?:[- ]*E\d{1,3})*[ ._-]+(.+)$").expect("valid regex"));
+    static TAGS: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"(?i)[(\[][^)\]]*(?:\d{3,4}p|bluray|web|hdtv|dvd|x26[45]|hevc)[^)\]]*[)\]]").expect("valid regex"));
+    static YEAR: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\(\d{4}\)").expect("valid regex"));
+    static PART: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\((\d{1,2})\)").expect("valid regex"));
+    let parts = SPLIT.captures(stem)?;
+    let series = YEAR.replace_all(&parts[1].replace(['.', '_'], " "), "").trim().to_owned();
+    let title = TAGS.replace_all(&parts[2].replace(['.', '_'], " "), "").to_string();
+    let part = PART.captures(&title).and_then(|c| c[1].parse().ok());
+    let title = PART.replace_all(&title, " ").split_whitespace().collect::<Vec<_>>().join(" ");
+    (!series.is_empty() && tokens(&title).len() >= 1).then_some(Special { series, title, part })
+}
+
+/// The search for a special by its name: OpenSubtitles' title for it (a movie, an episode
+/// of its own, or a short series whose episodes are the parts), when one shares most of the
+/// special's words. The length check after downloading still refuses a wrong one.
+async fn special_search(client: &reqwest::Client, c: &Credentials, special: &Special) -> Option<Vec<(&'static str, String)>> {
+    let mut url = reqwest::Url::parse(&format!("{API}/features")).ok()?;
+    url.query_pairs_mut().append_pair("query", &format!("{} {}", special.series, special.title));
+    let reply = client.get(url).header("Api-Key", &c.api_key).header("Accept", "application/json").send().await.ok()?;
+    if !reply.status().is_success() { return None }
+    let found: Value = reply.json().await.ok()?;
+    let (kind, imdb) = feature(found["data"].as_array()?, special)?;
+    Some(if kind == "Tvshow" {
+        vec![("parent_imdb_id", imdb.to_string()), ("episode_number", special.part.unwrap_or(1).to_string())]
+    } else {
+        vec![("imdb_id", imdb.to_string())]
+    })
+}
+fn feature(features: &[Value], special: &Special) -> Option<(String, u64)> {
+    let common = |w: &String| !["the", "of", "and", "an"].contains(&w.as_str());
+    let wanted: std::collections::HashSet<String> = tokens(&special.title).into_iter().filter(common).collect();
+    let series: std::collections::HashSet<String> = tokens(&special.series).into_iter().filter(common).collect();
+    if wanted.is_empty() { return None }
+    features.iter().filter_map(|f| {
+        let a = &f["attributes"];
+        let imdb = a["imdb_id"].as_u64()?;
+        let theirs = tokens(a["title"].as_str().unwrap_or(""));
+        if !series.iter().any(|w| theirs.contains(w)) && !a["parent_title"].as_str().is_some_and(|p| series.iter().any(|w| tokens(p).contains(w))) { return None }
+        let alike = wanted.intersection(&theirs).count() as f64 / wanted.len().max(1) as f64;
+        (alike >= 0.5).then(|| (alike, a["subtitles_count"].as_f64().unwrap_or(0.0), a["feature_type"].as_str().unwrap_or("").to_owned(), imdb))
+    }).max_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1))).map(|(_, _, kind, imdb)| (kind, imdb))
 }
 
 /// Download one OpenSubtitles file: its cues and text, or why it is no source (Ok(Err)).
@@ -329,6 +390,29 @@ mod tests {
     }
 
     use super::*;
+    #[test]
+    fn specials_are_looked_up_by_their_name() {
+        let miniseries = special("Battlestar Galactica (2003) - S00E01 - The Miniseries (1)").unwrap();
+        assert_eq!(miniseries, Special { series: "Battlestar Galactica".into(), title: "The Miniseries".into(), part: Some(1) });
+        assert_eq!(special("Battlestar Galactica (2003) - S00E04-E05 - Razor (1080p BluRay x265 Celdra)").unwrap(),
+            Special { series: "Battlestar Galactica".into(), title: "Razor".into(), part: None });
+        assert_eq!(special("Battlestar Galactica (2003) - S00E33 - Razor Minisode (1) Day 4,571 (480p BluRay x265 Celdra)").unwrap().title, "Razor Minisode Day 4,571");
+        assert!(special("Battlestar Galactica (2003) - S01E01 - 33").is_none());
+        let features: Vec<Value> = serde_json::from_str(r#"[
+            {"attributes":{"feature_type":"Movie","title":"Battlestar Galactica: The Plan","imdb_id":1286130,"subtitles_count":122}},
+            {"attributes":{"feature_type":"Tvshow","title":"Battlestar Galactica (The Miniseries)","imdb_id":314979,"subtitles_count":280}},
+            {"attributes":{"feature_type":"Tvshow","title":"Battlestar Galactica: Razor Flashbacks","imdb_id":1334430,"subtitles_count":53}},
+            {"attributes":{"feature_type":"Episode","title":"Day 4,571","parent_title":"Battlestar Galactica: Razor Flashbacks","imdb_id":1336575,"subtitles_count":5}},
+            {"attributes":{"feature_type":"Movie","title":"Planet of the Apes","imdb_id":1,"subtitles_count":9999}}]"#).unwrap();
+        assert_eq!(feature(&features, &miniseries), Some(("Tvshow".into(), 314979)));
+        let plan = special("Battlestar Galactica (2003) - S00E22 - The Plan (1080p BluRay x265 Celdra)").unwrap();
+        assert_eq!(feature(&features, &plan), Some(("Movie".into(), 1286130)));
+        let day = special("Battlestar Galactica (2003) - S00E33 - Razor Minisode (1) Day 4,571 (480p BluRay x265 Celdra)").unwrap();
+        assert_eq!(feature(&features, &day), Some(("Episode".into(), 1336575)));
+        let other = special("Battlestar Galactica (2003) - S00E40 - Blood & Chrome (1080p BluRay x265 Celdra)").unwrap();
+        assert_eq!(feature(&features, &other), None);
+    }
+
     #[test]
     fn the_hash_is_size_plus_the_words_at_both_ends() -> Result<()> {
         let path = std::env::temp_dir().join(format!("torrbaby-hash-{}", std::process::id()));

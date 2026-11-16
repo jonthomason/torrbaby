@@ -280,7 +280,12 @@ pub fn parse_srt(input: &str) -> Result<Vec<TimedCue>> {
             }
             Err(original)
         })?;
-        ensure!(end_ms > start_ms, "Subtitle ends before it starts");
+        // A cue that ends before it starts (a typo in a file people made: OpenSubtitles'
+        // Chinese for BSG S03E09) cannot be shown; the rest of the file can.
+        if end_ms <= start_ms {
+            block.clear();
+            continue;
+        }
         let raw = block[timing_index + 1..].join("\n");
         ensure!(raw.len() <= 16_384, "Subtitle cue too large");
         // Flatten common formatting before translation. Unknown markup remains

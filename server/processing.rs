@@ -81,13 +81,13 @@ fn reopen_for_people_english(db:&Database,data:&Path)->Result<usize> {
 /// replaces the translation when it has some.
 fn reopen_for_people_chinese(db:&Database,data:&Path)->Result<usize> {
     if !crate::opensubtitles::chinese(data) {return Ok(0);}
-    let rows=db.rows("SELECT m.asset_id,m.revision,i.document FROM media_processing m JOIN media_inventory i ON i.asset_id=m.asset_id AND i.revision=m.revision WHERE m.state='ready' AND m.subtitles_state='ready'",[])?;
+    let rows=db.rows("SELECT m.asset_id,m.revision,i.document,json_extract(a.document,'$.season') AS season FROM media_processing m JOIN media_inventory i ON i.asset_id=m.asset_id AND i.revision=m.revision LEFT JOIN library_assets a ON a.id=m.asset_id WHERE m.state='ready' AND m.subtitles_state='ready'",[])?;
     let mut reopened=0;
     for row in rows {
         let (Some(id),Some(revision),Some(document))=(row["asset_id"].as_str(),row["revision"].as_str(),row["document"].as_str()) else{continue};
         let Ok(info)=serde_json::from_str::<Value>(document) else{continue};
         let people=info["prepared"].as_array().is_some_and(|jobs|jobs.iter().any(|j|j["state"]=="ready" && j["language"]=="en" && j["extraction_method"]=="opensubtitles"));
-        if !people || crate::speech_subtitles::people_settled(data,id,revision,"zh") {continue;}
+        if !people || crate::speech_subtitles::people_settled(data,id,revision,"zh",row["season"]==0) {continue;}
         reopened+=db.connection.execute("UPDATE media_processing SET subtitles_state='pending',stage='subtitles',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![now(),id,revision])?;
     }
     if reopened>0 {tracing::info!(reopened,"Titles with English from OpenSubtitles will look for its Chinese");}
@@ -97,11 +97,11 @@ fn reopen_for_people_chinese(db:&Database,data:&Path)->Result<usize> {
 /// both languages is done again, behind titles that have none.
 fn reopen_for_everything(db:&Database,data:&Path)->Result<usize> {
     if !crate::opensubtitles::everything(data) {return Ok(0);}
-    let rows=db.rows("SELECT asset_id,revision FROM media_processing WHERE state='ready' AND subtitles_state IN ('ready','not_applicable','skipped') AND inventory_state='ready'",[])?;
+    let rows=db.rows("SELECT m.asset_id,m.revision,json_extract(a.document,'$.season') AS season FROM media_processing m LEFT JOIN library_assets a ON a.id=m.asset_id WHERE m.state='ready' AND m.subtitles_state IN ('ready','not_applicable','skipped') AND m.inventory_state='ready'",[])?;
     let mut reopened=0;
     for row in rows {
         let (Some(id),Some(revision))=(row["asset_id"].as_str(),row["revision"].as_str()) else{continue};
-        if ["en","zh"].iter().all(|tag|crate::speech_subtitles::people_settled(data,id,revision,tag)) {continue;}
+        if ["en","zh"].iter().all(|tag|crate::speech_subtitles::people_settled(data,id,revision,tag,row["season"]==0)) {continue;}
         let changed=db.connection.execute("UPDATE media_processing SET subtitles_state='pending',stage='subtitles',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![now(),id,revision])?;
         if changed>0 {db.connection.execute("INSERT INTO subtitle_priorities(asset_id,priority) VALUES(?,-1) ON CONFLICT(asset_id) DO NOTHING",[id])?;}
         reopened+=changed;
