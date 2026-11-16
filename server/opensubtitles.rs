@@ -44,8 +44,9 @@ fn yes() -> bool { true }
 struct Session { token: String, host: String, at: std::time::Instant }
 
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
-/// Seconds since the epoch when downloads may start again; 0 when they may now.
-static LIMITED_UNTIL: Mutex<f64> = Mutex::new(0.0);
+/// Seconds since the epoch when downloads may start again (0 when they may now), and whether
+/// that was the signed-in account's quota or the key's own.
+static LIMITED_UNTIL: Mutex<Option<(f64, bool)>> = Mutex::new(None);
 
 pub enum Found {
     /// An SRT written to `path`, and where it came from (kept with the title, not shown).
@@ -66,21 +67,31 @@ pub fn chinese(data: &Path) -> bool { credentials(data).is_some_and(|c| c.chines
 /// Whether English read from text is replaced by English from OpenSubtitles.
 pub fn read_english(data: &Path) -> bool { credentials(data).is_some_and(|c| c.read_english) }
 
-/// When downloads may start again, while the day's are used up.
+/// When downloads may start again, while the day's are used up. A limit applies only to the
+/// quota that reached it: switching to a paid key's quota (or back) is not held up by the
+/// other's (on 2026-11-16 the account's spent 20 would have held the paid 2,000 for a day).
 pub fn limited_until(data: &Path) -> Option<f64> {
-    let mut until = LIMITED_UNTIL.lock().map(|u| *u).unwrap_or(0.0);
-    if until == 0.0 {
+    let stored = LIMITED_UNTIL.lock().ok().and_then(|u| *u).unwrap_or_else(|| {
         // Kept across restarts, so a restart does not ask again and again.
-        until = std::fs::read_to_string(data.join("opensubtitles-limit.txt")).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0.0);
-        if let Ok(mut u) = LIMITED_UNTIL.lock() { *u = until; }
-    }
-    (until > crate::storage::now()).then_some(until)
+        let stored = std::fs::read_to_string(data.join("opensubtitles-limit.txt")).ok().and_then(|t| parse_limit(&t)).unwrap_or((0.0, true));
+        if let Ok(mut u) = LIMITED_UNTIL.lock() { *u = Some(stored); }
+        stored
+    });
+    let signed_in = credentials(data).is_none_or(|c| c.signed_in);
+    (stored.1 == signed_in && stored.0 > crate::storage::now()).then_some(stored.0)
 }
 
-fn limit(data: &Path, until: f64) {
-    if let Ok(mut u) = LIMITED_UNTIL.lock() { *u = until; }
-    let _ = std::fs::write(data.join("opensubtitles-limit.txt"), until.to_string());
-    tracing::info!(until, "OpenSubtitles downloads used up for today");
+/// "<until> account" or "<until> key"; a bare time was written signed in, before the key's quota.
+fn parse_limit(text: &str) -> Option<(f64, bool)> {
+    let mut words = text.split_whitespace();
+    let until = words.next()?.parse().ok()?;
+    Some((until, words.next() != Some("key")))
+}
+
+fn limit(data: &Path, until: f64, signed_in: bool) {
+    if let Ok(mut u) = LIMITED_UNTIL.lock() { *u = Some((until, signed_in)); }
+    let _ = std::fs::write(data.join("opensubtitles-limit.txt"), format!("{until} {}", if signed_in { "account" } else { "key" }));
+    tracing::info!(until, signed_in, "OpenSubtitles downloads used up for today");
 }
 
 fn client() -> Result<reqwest::Client> {
@@ -195,11 +206,11 @@ pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: 
     let reset = || body["reset_time_utc"].as_str().and_then(utc_seconds).unwrap_or(crate::storage::now() + 6.0 * 3600.0);
     if status.as_u16() == 406 || (status.is_success() && body["link"].is_null() && body["remaining"].as_i64().is_some_and(|r| r < 0)) {
         let until = reset();
-        limit(data, until);
+        limit(data, until, c.signed_in);
         anyhow::bail!("{LIMIT_REACHED}; downloads reset at {until}");
     }
     ensure!(status.is_success(), "OpenSubtitles download refused ({status})");
-    if body["remaining"].as_i64().is_some_and(|r| r <= 0) { limit(data, reset()); }
+    if body["remaining"].as_i64().is_some_and(|r| r <= 0) { limit(data, reset(), c.signed_in); }
     tracing::info!(remaining = body["remaining"].as_i64(), "OpenSubtitles downloads left today");
     let link = body["link"].as_str().context("OpenSubtitles gave no download link")?;
     let bytes = client.get(link).send().await.context("OpenSubtitles file")?.error_for_status()?.bytes().await?;
@@ -249,6 +260,14 @@ pub fn waits_until(error: &str) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_limit_holds_only_the_quota_that_reached_it() {
+        assert_eq!(parse_limit("1794787199"), Some((1794787199.0, true)));
+        assert_eq!(parse_limit("1794787199 account\n"), Some((1794787199.0, true)));
+        assert_eq!(parse_limit("1794787199.5 key"), Some((1794787199.5, false)));
+        assert_eq!(parse_limit(""), None);
+    }
+
     use super::*;
     #[test]
     fn the_hash_is_size_plus_the_words_at_both_ends() -> Result<()> {
