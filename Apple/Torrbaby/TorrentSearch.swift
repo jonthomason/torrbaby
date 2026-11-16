@@ -535,10 +535,10 @@ struct TorrentSearchView: View {
         #if os(macOS)
         if trialMode { return false }
         #endif
-        #if os(tvOS)
+        #if os(iOS) || os(tvOS)
+        // iPad lists results full width like iPhone: a release is usually chosen from its row,
+        // and details beside the list were squeezed and loaded for every selection.
         return false
-        #elseif os(iOS)
-        return UIDevice.current.userInterfaceIdiom == .pad && width >= 640
         #else
         return width >= 640
         #endif

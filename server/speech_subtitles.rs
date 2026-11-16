@@ -335,6 +335,13 @@ pub async fn people_english(s: &Service, asset: &Value, input: &Path) -> Result<
     people(s, asset, input, "en").await
 }
 
+/// OpenSubtitles' subtitles in `language` ("en" or "zh-cn") for any title, while every title
+/// is to take them (`opensubtitles::everything`). Looked up once per file, like the others.
+pub async fn people_everywhere(s: &Service, asset: &Value, input: &Path, language: &str) -> Result<Option<PathBuf>> {
+    if !crate::opensubtitles::everything(&s.data_dir) { return Ok(None); }
+    people(s, asset, input, language).await
+}
+
 /// Whether OpenSubtitles has been asked for this file's subtitles in `tag` ("en" or "zh").
 pub fn people_decided(data: &Path, asset: &str, revision: &str, tag: &str) -> bool {
     directory(data).join(format!("{}.{tag}-opensubtitles.json", key(data, asset, revision))).is_file()
@@ -344,8 +351,10 @@ pub fn people_decided(data: &Path, asset: &str, revision: &str, tag: &str) -> bo
 /// suitable. Not while it could not be asked, nor when its file was refused for cues out of place.
 pub fn people_settled(data: &Path, asset: &str, revision: &str, tag: &str) -> bool {
     let record = directory(data).join(format!("{}.{tag}-opensubtitles.json", key(data, asset, revision)));
+    let everything = crate::opensubtitles::everything(data);
     std::fs::read(record).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).is_some_and(|saved|
-        saved["state"] == "ready" || (saved["state"] == "missing" && !saved["reason"].as_str().is_some_and(|r| r.ends_with("Subtitle cues are out of order"))))
+        saved["state"] == "ready" || (saved["state"] == "missing" && !(everything && saved["set_aside"] == true)
+            && !saved["reason"].as_str().is_some_and(|r| r.ends_with("Subtitle cues are out of order"))))
 }
 
 /// Leave a file out of the OpenSubtitles lookup for now, saying why; a later round removes
@@ -376,7 +385,9 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
         // Lookups before version 2 never matched Chinese ("zh-CN" against "zh-cn"): asked again.
         // Files refused for cues out of place are now put in order (Creed's Chinese): asked again.
         let unordered = saved["reason"].as_str().is_some_and(|r| r.ends_with("Subtitle cues are out of order"));
-        if saved["state"] == "missing" && !unordered && (saved["lookup"].as_u64() >= Some(2) || saved["set_aside"] == true) { return Ok(None); }
+        // Set aside (fleet translations, for a later round): that round is every title.
+        let set_aside = saved["set_aside"] == true && !crate::opensubtitles::everything(&s.data_dir);
+        if saved["state"] == "missing" && !unordered && (saved["lookup"].as_u64() >= Some(2) || set_aside) { return Ok(None); }
         if saved["after"].as_f64().is_some_and(|t| t > now()) { return Ok(None); }
     }
     let save = |document: Value| -> Result<()> {

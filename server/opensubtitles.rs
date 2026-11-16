@@ -38,6 +38,11 @@ struct Credentials {
     /// the picture and translated): worth it while the quota is large. Off by default; audio
     /// transcripts and titles without subtitles always use OpenSubtitles.
     #[serde(default)] read_english: bool,
+    /// Every title takes OpenSubtitles' English and Chinese wherever it has them, in place of
+    /// any other source (release tracks, text read from the picture or bitmaps, transcripts,
+    /// translations on device or by the fleet): the user's choice, 2026-11-16, for the paid
+    /// month. What OpenSubtitles lacks keeps what the title has. Off by default.
+    #[serde(default)] everything: bool,
 }
 fn yes() -> bool { true }
 
@@ -66,6 +71,9 @@ pub fn chinese(data: &Path) -> bool { credentials(data).is_some_and(|c| c.chines
 
 /// Whether English read from text is replaced by English from OpenSubtitles.
 pub fn read_english(data: &Path) -> bool { credentials(data).is_some_and(|c| c.read_english) }
+
+/// Whether every title takes OpenSubtitles' subtitles wherever it has them.
+pub fn everything(data: &Path) -> bool { credentials(data).is_some_and(|c| c.everything) }
 
 /// When downloads may start again, while the day's are used up. A limit applies only to the
 /// quota that reached it: switching to a paid key's quota (or back) is not held up by the

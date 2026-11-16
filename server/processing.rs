@@ -93,6 +93,22 @@ fn reopen_for_people_chinese(db:&Database,data:&Path)->Result<usize> {
     if reopened>0 {tracing::info!(reopened,"Titles with English from OpenSubtitles will look for its Chinese");}
     Ok(reopened)
 }
+/// While every title is to take OpenSubtitles' subtitles: each title not yet looked up in
+/// both languages is done again, behind titles that have none.
+fn reopen_for_everything(db:&Database,data:&Path)->Result<usize> {
+    if !crate::opensubtitles::everything(data) {return Ok(0);}
+    let rows=db.rows("SELECT asset_id,revision FROM media_processing WHERE state='ready' AND subtitles_state IN ('ready','not_applicable','skipped') AND inventory_state='ready'",[])?;
+    let mut reopened=0;
+    for row in rows {
+        let (Some(id),Some(revision))=(row["asset_id"].as_str(),row["revision"].as_str()) else{continue};
+        if ["en","zh"].iter().all(|tag|crate::speech_subtitles::people_settled(data,id,revision,tag)) {continue;}
+        let changed=db.connection.execute("UPDATE media_processing SET subtitles_state='pending',stage='subtitles',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![now(),id,revision])?;
+        if changed>0 {db.connection.execute("INSERT INTO subtitle_priorities(asset_id,priority) VALUES(?,-1) ON CONFLICT(asset_id) DO NOTHING",[id])?;}
+        reopened+=changed;
+    }
+    if reopened>0 {tracing::info!(reopened,"Every title will take OpenSubtitles' English and Chinese where it has them");}
+    Ok(reopened)
+}
 /// Subtitle errors a later build no longer has: the subtitle store's old 4,096-file cap, and
 /// a subtitle track in neither English nor Chinese blocking the picture and the speech.
 const RETIRED_SUBTITLE_ERRORS:[&str;5]=[crate::subtitle_jobs::STORAGE_FULL,crate::ocr_subtitles::UNIDENTIFIED_LANGUAGE,
@@ -354,6 +370,7 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
             reopen_storage_full(&db)?;
             reopen_for_people_english(&db,&s.data_dir)?;
             reopen_for_people_chinese(&db,&s.data_dir)?;
+            reopen_for_everything(&db,&s.data_dir)?;
             retire_obsolete_failures(&db)?;
             reopen_untranscribed(&db,&s.data_dir)?;
             reopen_line_translated(&db,&s.subtitle_jobs.line_translated())?;
