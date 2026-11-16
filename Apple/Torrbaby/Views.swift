@@ -529,14 +529,7 @@ struct RootView: View {
             }
         }
         .overlay(alignment: .bottom) {
-            NoticeBanner { hash in
-                var next = Location(section: selection)
-                if let torrent = store.torrents.first(where: { $0.id == hash }) {
-                    next.section = !torrent.completed ? .active : torrent.status == 6 ? .seeding : .complete
-                }
-                next.path.append(hash)
-                navigate(next)
-            }.padding(.bottom, 12)
+            NoticeBanner().padding(.bottom, 12)
         }
         .alert(ActionAlert(store.actionError, fallbackTitle: "Couldn’t complete that action").title, isPresented: Binding(get: { store.actionError != nil }, set: { if !$0 { store.actionError = nil } })) {
             Button("OK") { store.actionError = nil }
@@ -1120,29 +1113,36 @@ struct TransferHistoryView: View {
 struct NoticeBanner: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
-    var showTorrent: (String) -> Void
+    /// How far the banner has been dragged; past 60 points in any direction it goes.
+    @State private var drag: CGSize = .zero
     var body: some View {
         if let notice = store.notices.first {
+            let dismiss = { withAnimation(.easeOut(duration: 0.2)) { store.notices.removeAll { $0.id == notice.id } }; drag = .zero }
             HStack(spacing: 12) {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(notice.title).font(.headline)
                     if !notice.detail.isEmpty { Text(notice.detail).font(.caption).lineLimit(2) }
-                }
+                }.accessibilityElement(children: .combine)
                 Spacer(minLength: 4)
-                if let hash = notice.torrentHash {
-                    Button("Show torrent") {
-                        showTorrent(hash)
-                        store.notices.removeAll { $0.id == notice.id }
-                    }.buttonStyle(MonoButtonStyle())
-                }
-                Button { store.notices.removeAll { $0.id == notice.id } } label: { Image(systemName: "xmark") }
-                    .buttonStyle(.plain).accessibilityLabel("Dismiss notification")
-            }.padding(16).frame(maxWidth: 480)
+                // A large target: the banner covers part of the page until it goes.
+                Button(action: dismiss) {
+                    Image(systemName: "xmark").font(.body.weight(.semibold))
+                        .frame(width: 44, height: 44).background(Theme.canvas.opacity(0.6), in: Circle())
+                        .contentShape(Circle())
+                }.buttonStyle(.plain).accessibilityLabel("Dismiss notification")
+            }.padding(.vertical, 10).padding(.leading, 16).padding(.trailing, 10).frame(maxWidth: 480)
                 .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
                 .shadow(radius: 10).padding(.horizontal)
-                .accessibilityElement(children: .combine)
+                .offset(drag).opacity(1 - min(0.6, Double(max(abs(drag.width), abs(drag.height))) / 200))
+                .gesture(DragGesture(minimumDistance: 8)
+                    .onChanged { drag = $0.translation }
+                    .onEnded { value in
+                        if max(abs(value.translation.width), abs(value.translation.height)) > 60 { dismiss() }
+                        else { withAnimation(.spring(duration: 0.25)) { drag = .zero } }
+                    })
                 .task(id: notice.id) {
+                    drag = .zero
                     do { try await Task.sleep(for: .seconds(6)) } catch { return }
                     store.notices.removeAll { $0.id == notice.id }
                 }

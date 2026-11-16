@@ -349,6 +349,7 @@ final class L10n {
     IDS.put("Generated", R.string.ui_8eefdd52ad2d);
     IDS.put("Generated subtitles", R.string.ui_a1af0d20ca98);
     IDS.put("Genre", R.string.ui_2aa31fca5e4f);
+    IDS.put("Hide keyboard", R.string.ui_a4f9034380e4);
     IDS.put("History", R.string.ui_90ccd6497400);
     IDS.put("Home", R.string.ui_70f8bb9a8a53);
     IDS.put("Ignore", R.string.ui_98f55db57c8e);

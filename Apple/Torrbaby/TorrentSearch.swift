@@ -508,7 +508,7 @@ struct TorrentSearchView: View {
                             if let selectedItem, selectedItem.isCloud {
                                 CloudShareView(item: selectedItem, query: response.query ?? query, embedded: true).id(selectedItem.id)
                             } else if let selectedItem {
-                                TorrentSearchDetail(item: selectedItem, embedded: true, onAdded: { prepareNextSearch = true; focusNextSearch() }).id(selectedItem.id)
+                                TorrentSearchDetail(item: selectedItem, embedded: true, onAdded: { prepareNextSearch = true }).id(selectedItem.id)
                             } else {
                                 ContentUnavailableView("Choose a release", systemImage: "text.magnifyingglass")
                                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -523,7 +523,9 @@ struct TorrentSearchView: View {
             }
         }
         .navigationTitle("Find")
-        .onAppear { if prepareNextSearch { focusNextSearch() } }
+        #if os(iOS)
+        .toolbar { ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("Done") { searchFocused = false } } }
+        #endif
         .onDisappear { work?.cancel(); searching = false }
         .task { if !query.isEmpty && response == nil { search() } }
         #if os(macOS)
@@ -713,17 +715,20 @@ struct TorrentSearchView: View {
             ordinaryRow(item, inline: inline)
             #endif
         }.listStyle(.plain).canvasBackground().disabled(searching)
+        #if os(iOS)
+        .scrollDismissesKeyboard(.immediately)
+        #endif
     }
     @ViewBuilder private func ordinaryRow(_ item: TorrentSearchItem, inline: Bool) -> some View {
             if item.isCloud && !inline {
                 NavigationLink { CloudShareView(item: item, query: response?.query ?? query) } label: { TorrentSearchRow(item: item, ownership: ownership(item), artworkYear: artworkYear(item)) }
             } else if inline {
-                TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true; focusNextSearch() }, ownership: ownership(item), artworkYear: artworkYear(item))
+                TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true }, ownership: ownership(item), artworkYear: artworkYear(item))
                     .contentShape(Rectangle()).onTapGesture { selectedID = item.id }
                     .listRowBackground(selectedID == item.id ? Theme.accent.opacity(0.13) : Color.clear)
                     .accessibilityAddTraits(selectedID == item.id ? .isSelected : [])
             } else {
-                NavigationLink { TorrentSearchDetail(item: item, onAdded: { prepareNextSearch = true }).id(item.id) } label: { TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true; focusNextSearch() }, ownership: ownership(item), artworkYear: artworkYear(item)) }
+                NavigationLink { TorrentSearchDetail(item: item, onAdded: { prepareNextSearch = true }).id(item.id) } label: { TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true }, ownership: ownership(item), artworkYear: artworkYear(item)) }
             }
     }
     #if os(macOS)
@@ -978,6 +983,13 @@ private struct SearchBox: View {
             if !draft.text.isEmpty {
                 Button(action: clear) { Image(systemName: "xmark.circle.fill").font(.title3).foregroundStyle(Theme.muted) }
                     .buttonStyle(.plain).accessibilityLabel("Clear search")
+            }
+            #endif
+            #if os(iOS)
+            // The phone's keyboard has no key of its own to put it away.
+            if focused.wrappedValue {
+                Button { focused.wrappedValue = false } label: { Image(systemName: "keyboard.chevron.compact.down").font(.title3) }
+                    .buttonStyle(.plain).foregroundStyle(Theme.muted).accessibilityLabel("Hide keyboard")
             }
             #endif
             Button(action: search) { Text(LocalizedStringKey(searching ? "Searching…" : "Search")) }

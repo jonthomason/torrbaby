@@ -994,3 +994,4 @@ Downloads stopped: this device ran out of space. Space shown as free can include
 %@ used · %@ free	已用 %@ · 可用 %@
 < 1 MB	< 1 MB
 These downloads need %@ more than this device has free. Delete downloads or free up space, or cancel some.	这些下载所需空间比此设备的可用空间多 %@。请删除下载、释放空间或取消部分下载。
+Hide keyboard	隐藏键盘
