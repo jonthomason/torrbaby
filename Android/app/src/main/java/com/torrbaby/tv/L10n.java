@@ -820,6 +820,7 @@ final class L10n {
     IDS.put("These files are already moving", R.string.ui_02b324383658);
     IDS.put("These settings apply to everyone who uses this server.", R.string.ui_6315e169d054);
     IDS.put("This Mac is no longer paired. Connect it again from the Connection settings.", R.string.ui_3ce9bebcbf1d);
+    IDS.put("This Wi-Fi is intercepting connections. Sign in again.", R.string.ui_e16cf9777123);
     IDS.put("This affects the entire download package and everyone’s library.", R.string.ui_a3594939d5f3);
     IDS.put("This code has expired.", R.string.ui_1d3888fca6b7);
     IDS.put("This code has expired. Choose New setup code to show another.", R.string.ui_d81e74ecd0f8);

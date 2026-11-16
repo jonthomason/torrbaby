@@ -823,6 +823,8 @@ final class Store: ObservableObject {
     /// straight path the relay through bronze carries it.
     private var abtWasConnected = false
     @Published private(set) var abtPath: String?
+    /// ABT says this Wi-Fi is intercepting its connections (a sign-in page): shown on Connection.
+    @Published private(set) var abtIntercepted = false
     var abtDirect: Bool { abtPath == "lan" || abtPath == "punched" || abtPath == "ipv6" }
     private var abtChecking = false
     private var abtLastAsked = Date.distantPast
@@ -845,6 +847,7 @@ final class Store: ObservableObject {
         guard ABT.connected else { return }
         let was = abtDirect
         if path != abtPath { abtPath = path; directEvent("ABT's path to Diamond: \(path ?? "no answer from ABT")") }
+        if ABT.intercepted != abtIntercepted { abtIntercepted = ABT.intercepted; directEvent("ABT: this Wi-Fi \(abtIntercepted ? "is intercepting connections" : "no longer intercepts connections")") }
         if abtDirect != was {
             // Gone: requests must stop going to its name at once. Opened: take it now.
             if !abtDirect, activeServer == ABT.route { activeServer = nil }
@@ -866,7 +869,7 @@ final class Store: ObservableObject {
         directEvent("ABT \(now ? "is on" : "is off")")
         abtWaitedOn = nil
         if !now {
-            abtPath = nil
+            abtPath = nil; abtIntercepted = false
             // Requests must stop going to its name at once, not at the next check.
             if activeServer == ABT.route { activeServer = nil; lastDirectAttempt = .distantPast }
             refreshFullyNext()

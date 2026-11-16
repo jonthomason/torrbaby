@@ -301,7 +301,12 @@ import UIKit
         guard let (data, _) = try? await URLSession.shared.data(for: request),
               let status = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let hosts = status["hosts"] as? [[String: Any]] else { return nil }
+        intercepted = (status["exit"] as? [String: Any])?["intercepted"] as? Bool ?? false
         return hosts.first { $0["device"] as? String == "diamond" }?["path"] as? String ?? "unknown"
     }
+    /// ABT's exit met a certificate that is not its own twice running: this Wi-Fi's sign-in page
+    /// is taking over secure connections (ABT 174 and later; false otherwise). From the last
+    /// `pathToDiamond`.
+    private(set) static var intercepted = false
 }
 #endif

@@ -809,6 +809,7 @@
     <string name="ui_02b324383658" formatted="false">这些文件正在移动</string>
     <string name="ui_6315e169d054" formatted="false">这些设置适用于使用此服务器的所有人。</string>
     <string name="ui_3ce9bebcbf1d" formatted="false">这台 Mac 已取消配对。请在“连接”设置中重新连接。</string>
+    <string name="ui_e16cf9777123" formatted="false">此 Wi-Fi 正在拦截连接。请重新登录。</string>
     <string name="ui_a3594939d5f3" formatted="false">此操作影响整个下载包及所有用户的媒体库。</string>
     <string name="ui_1d3888fca6b7" formatted="false">此代码已过期。</string>
     <string name="ui_d81e74ecd0f8" formatted="false">此设置码已过期。请选择“新设置码”显示新的设置码。</string>

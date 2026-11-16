@@ -809,6 +809,7 @@
     <string name="ui_02b324383658" formatted="false">These files are already moving</string>
     <string name="ui_6315e169d054" formatted="false">These settings apply to everyone who uses this server.</string>
     <string name="ui_3ce9bebcbf1d" formatted="false">This Mac is no longer paired. Connect it again from the Connection settings.</string>
+    <string name="ui_e16cf9777123" formatted="false">This Wi-Fi is intercepting connections. Sign in again.</string>
     <string name="ui_a3594939d5f3" formatted="false">This affects the entire download package and everyone’s library.</string>
     <string name="ui_1d3888fca6b7" formatted="false">This code has expired.</string>
     <string name="ui_d81e74ecd0f8" formatted="false">This code has expired. Choose New setup code to show another.</string>

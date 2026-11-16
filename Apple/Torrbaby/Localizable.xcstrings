@@ -17871,6 +17871,23 @@
           }
         }
       }
+    },
+    "This Wi-Fi is intercepting connections. Sign in again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This Wi-Fi is intercepting connections. Sign in again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此 Wi-Fi 正在拦截连接。请重新登录。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
