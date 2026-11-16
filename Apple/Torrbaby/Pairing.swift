@@ -63,10 +63,7 @@ struct QRPictureSources: View {
         Button { choosingFile = true } label: { Label("File", systemImage: "folder") }
     }
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) { buttons }
-            VStack(spacing: 10) { buttons }
-        }
+        VStack(spacing: 10) { buttons }
         .buttonStyle(MonoButtonStyle(compact: true))
         .onChange(of: photo) { _, item in
             guard let item else { return }
