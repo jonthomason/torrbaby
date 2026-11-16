@@ -17,6 +17,10 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     @Published private(set) var received: [UUID: Int64] = [:]
     @Published var error: String?
     @Published private(set) var used: Int64 = 0
+    /// Free space on the device, as downloads count it; nil when it cannot be read.
+    @Published private(set) var free: Int64?
+    /// What the unfinished downloads still have to fetch.
+    var remaining: Int64 { unfinished.reduce(0) { $0 + max(0, $1.size - (received[$1.id] ?? $1.received)) } }
     @Published private(set) var policy = DownloadStorage.Policy()
     private var storage: DownloadStorage?
     private weak var store: Store?
@@ -176,10 +180,11 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         guard let storage else { return }
         items = storage.items.map { $0.forProfile(store?.activeProfile?.id ?? "") }; policy = storage.policy
         do { used = try storage.accountedBytes(received: received) } catch { self.report(error) }
+        free = try? storage.availableBytes()
     }
     func setPolicy(_ next: DownloadStorage.Policy) {
         do {
-            try storage?.setPolicy(next); reload()
+            try storage?.setPolicy(next); reload(); retryPausedForSpace()
             // Re-admit active requests under the new limits and network policy; a plain pause
             // left the transfer stopped until it was tapped again.
             for id in Array(tasks.keys) { pause(id, requeue: true) }
@@ -389,10 +394,10 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             return true
         }
     }
-    func pause(_ id: UUID, requeue: Bool = false) {
+    func pause(_ id: UUID, requeue: Bool = false, error: String? = nil) {
         if requeue { rerouting.insert(id) } else { rerouting.remove(id) }
         guard let storage, let item = items.first(where: { $0.id == id }) else { return }
-        do { try storage.pause(id, received: received[id] ?? item.received) }
+        do { try storage.pause(id, received: received[id] ?? item.received, error: error) }
         catch { self.report(error); return }
         reload()
         guard let task = tasks[id] else {
@@ -546,6 +551,13 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             if announce { store.notify("Download updated") }
         } catch { report(error) }
     }
+    /// Downloads not finished yet: what Cancel all removes.
+    var unfinished: [DownloadStorage.Item] { items.filter { [.queued, .transferring, .paused, .failed].contains($0.state) } }
+    /// Cancel every download not finished yet, deleting what it had fetched; finished
+    /// downloads stay.
+    func cancelAll() {
+        for item in unfinished { remove(item.id) }
+    }
     /// Pause every download in progress or waiting; nothing is deleted.
     func pauseAll() {
         for item in items where item.state == .queued || item.state == .transferring { pause(item.id) }
@@ -572,7 +584,22 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         catch { self.report(error); return }
         tasks[id]?.cancel(); tasks.removeValue(forKey: id); received.removeValue(forKey: id)
         segmentBase.removeValue(forKey: id); checkpointed.removeValue(forKey: id)
-        reload(); pump()
+        reload()
+        retryPausedForSpace()
+        pump()
+    }
+    /// Downloads stopped for space go back in the queue when room is made (a download
+    /// deleted, the limit raised); the next start checks the space again.
+    func retryPausedForSpace() {
+        guard let storage else { return }
+        for item in items where item.state == .paused && DownloadStorage.pausedForSpace(item.error) { try? storage.queue(item.id) }
+        reload()
+    }
+    /// Why downloads are stopped for space, when any are.
+    var spaceStop: String? {
+        let errors = items.filter { $0.state == .paused && DownloadStorage.pausedForSpace($0.error) }.map(\.error)
+        if errors.isEmpty { return nil }
+        return errors.contains(DownloadStorage.limitReached) && !errors.contains(DownloadStorage.deviceFull) ? DownloadStorage.limitReached : DownloadStorage.deviceFull
     }
     func pin(_ id: UUID, keep: Bool) {
         do { try storage?.pin(id, keep); reload() } catch { self.report(error) }
@@ -752,8 +779,10 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             }
             if let storage = self.storage {
                 do {
-                    if try storage.availableBytes() < self.policy.freeSpaceBytes || !self.policy.permits(used: self.used) {
-                        self.pause(id)
+                    if try storage.availableBytes() < self.policy.keepFree {
+                        self.pause(id, error: DownloadStorage.deviceFull)
+                    } else if !self.policy.permits(used: self.used) {
+                        self.pause(id, error: DownloadStorage.limitReached)
                     }
                 } catch { self.report(error); self.pause(id) }
             }

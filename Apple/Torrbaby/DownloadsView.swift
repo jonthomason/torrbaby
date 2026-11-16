@@ -16,25 +16,62 @@ struct DownloadsView: View {
     @State private var playback: Playback?
     @State private var settings = false
     @State private var preparing = false
+    @State private var confirmingCancel = false
     @AppStorage("downloads.swipeHintSeen") private var swipeHintSeen = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hintRow: UUID?
     @State private var hintOffset: CGFloat = 0
     private func share(_ id: UUID) { shareDownload(id) }
+    /// The device's free space; "< 1 MB" when it is all but gone, rather than "Zero KB".
+    private var freeText: String {
+        guard let free = queue.free else { return "—" }
+        return free < 1_000_000 ? L10n.text("< 1 MB") : bytes(free)
+    }
     var body: some View {
         List {
             SwiftUI.Section {
                 HStack {
-                    Label(queue.policy.useAvailableSpace ? L10n.format("%@ used · Available space", bytes(queue.used)) : L10n.format("%@ used · %@ limit", bytes(queue.used), bytes(queue.policy.limitBytes)), systemImage: "internaldrive")
+                    Label(queue.policy.useAvailableSpace ? L10n.format("%@ used · %@ free", bytes(queue.used), freeText) : L10n.format("%@ used · %@ limit", bytes(queue.used), bytes(queue.policy.limitBytes)), systemImage: "internaldrive")
                         .font(.subheadline.monospacedDigit()).foregroundStyle(Theme.muted)
                     Spacer()
-                    if queue.items.contains(where: { $0.state == .paused || $0.state == .failed }) || queue.stalled {
-                        Button { queue.resumeAll() } label: { Label("Resume all", systemImage: "arrow.down.circle") }.help("Resume all downloads")
-                    }
-                    if queue.items.contains(where: { $0.state == .queued || $0.state == .transferring }) {
-                        Button { queue.pauseAll() } label: { Label("Pause all", systemImage: "pause.circle") }.help("Pause all downloads")
-                    }
                     Button { settings = true } label: { Image(systemName: "slider.horizontal.3") }.help("Download settings").accessibilityLabel("Download settings")
+                }
+                // Downloads that will not fit are said before they stop.
+                if queue.spaceStop == nil, let free = queue.free, queue.remaining > free - queue.policy.keepFree {
+                    Label(L10n.format("These downloads need %@ more than this device has free. Delete downloads or free up space, or cancel some.", bytes(queue.remaining - (free - queue.policy.keepFree))),
+                          systemImage: "exclamationmark.triangle")
+                        .font(.subheadline).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                // Downloads stopped for space say so above everything else, with what to do.
+                if let stop = queue.spaceStop {
+                    Label(stop == DownloadStorage.limitReached
+                          ? L10n.text("Downloads stopped: they reached the storage limit in Download settings. Raise the limit or delete downloads; they continue when there is room.")
+                          : L10n.text("Downloads stopped: this device's storage is full. Delete downloads or free up space; they continue when there is room."),
+                          systemImage: "externaldrive.badge.exclamationmark")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                // Every download at once: resume, pause, or cancel what is not finished.
+                if !queue.unfinished.isEmpty {
+                    HStack(spacing: 18) {
+                        if queue.items.contains(where: { $0.state == .paused || $0.state == .failed }) || queue.stalled {
+                            Button { queue.resumeAll() } label: { Label("Resume all", systemImage: "arrow.down.circle") }.help("Resume all downloads")
+                        }
+                        if queue.items.contains(where: { $0.state == .queued || $0.state == .transferring }) {
+                            Button { queue.pauseAll() } label: { Label("Pause all", systemImage: "pause.circle") }.help("Pause all downloads")
+                        }
+                        do {
+                            Button(role: .destructive) { confirmingCancel = true } label: { Label("Cancel all", systemImage: "xmark.circle") }.help("Cancel all downloads")
+                                .confirmationDialog(L10n.format("Cancel %lld downloads?", queue.unfinished.count), isPresented: $confirmingCancel, titleVisibility: .visible) {
+                                    Button("Cancel all downloads", role: .destructive) { queue.cancelAll() }
+                                    Button("Keep downloading", role: .cancel) {}
+                                } message: {
+                                    Text("Downloads not finished yet are removed from this device. Finished downloads stay.")
+                                }
+                        }
+                        Spacer()
+                    }.buttonStyle(.borderless).font(.subheadline.weight(.semibold))
                 }
                 #if os(iOS)
                 // What the episodes fetched by themselves take, against their own limit.

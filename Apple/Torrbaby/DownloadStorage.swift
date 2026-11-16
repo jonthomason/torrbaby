@@ -21,6 +21,9 @@ final class DownloadStorage {
     struct Policy: Codable {
         var limitBytes: Int64 = 20_000_000_000
         var freeSpaceBytes: Int64 = 0
+        /// Space downloads always leave free on the device (500 MB at least), so the device
+        /// itself keeps working; a larger reserve set in Download settings wins.
+        var keepFree: Int64 { max(freeSpaceBytes, 500_000_000) }
         var useAvailableSpace = true
         var deleteAfterPlayback = true
         /// Kept for the stored format; iPhone and iPad use `meteredUntil` and the Mac ignores it.
@@ -281,7 +284,7 @@ final class DownloadStorage {
             let used = try accountedBytes()
             let free = try availableBytes()
             guard policy.permits(used: used, additional: Int64(data.count)),
-                  free >= policy.freeSpaceBytes, Int64(data.count) <= free - policy.freeSpaceBytes else { return }
+                  free >= policy.keepFree, Int64(data.count) <= free - policy.keepFree else { return }
             try data.write(to: destination, options: .atomic)
         }
         do { try update(id) { $0.posterKey = key } }
@@ -446,6 +449,13 @@ final class DownloadStorage {
         return total
     }
     func availableBytes() throws -> Int64 {
+        #if os(iOS)
+        // What iOS would free for something the person asked for (purgeable caches
+        // included); the plain free-space figure can read near zero on a full iPad.
+        if let important = try? root.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage {
+            return important
+        }
+        #endif
         let info = try fm.attributesOfFileSystem(forPath: root.path)
         guard let free = info[.systemFreeSize] as? NSNumber else { throw StorageError(message: "Cannot check free storage.") }
         return free.int64Value
@@ -470,6 +480,24 @@ final class DownloadStorage {
     }
     /// Reserve final logical sizes once, rather than partial + full size for a resume.
     /// Free-space admission remains conservative enough for a full-file restart.
+    /// Why downloads stop for space: the device itself is full, or they reached the limit
+    /// set in Download settings. Kept as the item's error, so the page can say which.
+    static let deviceFull = "Paused: this device's storage is full."
+    static let limitReached = "Paused: downloads reached the storage limit in Download settings."
+    /// Errors from earlier builds that also meant "no room".
+    static func pausedForSpace(_ error: String?) -> Bool {
+        [deviceFull, limitReached, "Download paused: not enough available storage."].contains(error ?? "")
+    }
+    /// Which of the two stops an item from starting now; nil when it fits.
+    func spaceProblem(_ id: UUID) throws -> String? {
+        if try canStart(id) { return nil }
+        guard items.contains(where: { $0.id == id }) else { return nil }
+        // With a fixed limit, room under the limit but none on the device is still the device.
+        let free = try availableBytes()
+        let item = items.first { $0.id == id }!
+        return free < policy.keepFree + max(0, item.size - ownedPartialBytes(id)) + 1_000_000 ? Self.deviceFull
+            : policy.useAvailableSpace ? Self.deviceFull : Self.limitReached
+    }
     func canStart(_ id: UUID, freeBytes: Int64? = nil) throws -> Bool {
         guard let item = items.first(where: { $0.id == id }), [.queued, .paused, .failed].contains(item.state) else { return false }
         let free = try freeBytes ?? availableBytes()
@@ -487,11 +515,11 @@ final class DownloadStorage {
         let (withOverhead, overheadOverflow) = withItem.addingReportingOverflow(1_000_000)
         let (disk, diskOverflow) = diskNeeded.addingReportingOverflow(item.size)
         guard !overflow && !overheadOverflow && !diskOverflow else { return false }
-        return policy.permits(used: withOverhead) && free >= policy.freeSpaceBytes
-            && disk <= free - policy.freeSpaceBytes
+        return policy.permits(used: withOverhead) && free >= policy.keepFree
+            && disk <= free - policy.keepFree
     }
     func markTransferring(_ id: UUID) throws {
-        guard try canStart(id) else { throw StorageError(message: "Download paused: not enough available storage.") }
+        if let problem = try spaceProblem(id) { throw StorageError(message: problem) }
         try update(id) { $0.state = .transferring; $0.error = nil }
     }
     func resetTransferBytes(_ id: UUID) throws {
@@ -516,10 +544,8 @@ final class DownloadStorage {
         let used = try accountedBytes(excluding: id)
         let localTemporary = temporary.standardizedFileURL.path.hasPrefix(root.path + "/")
         let additional = localTemporary ? 0 : item.size
-        guard policy.permits(used: used, additional: additional),
-              try availableBytes() >= policy.freeSpaceBytes else {
-            throw StorageError(message: "Download paused: not enough available storage.")
-        }
+        guard try availableBytes() >= policy.keepFree else { throw StorageError(message: Self.deviceFull) }
+        guard policy.permits(used: used, additional: additional) else { throw StorageError(message: Self.limitReached) }
         let destination = mediaURL(item)
         guard !fm.fileExists(atPath: destination.path) else { throw StorageError(message: "A downloaded copy already exists.") }
         try fm.moveItem(at: temporary, to: destination)

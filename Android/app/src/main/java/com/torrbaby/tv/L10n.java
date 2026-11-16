@@ -38,6 +38,7 @@ final class L10n {
     IDS.put("1h", R.string.ui_e9c9f7bc39bb);
     IDS.put("24h", R.string.ui_027795961131);
     IDS.put("6h", R.string.ui_8d61fd6a4ee0);
+    IDS.put("< 1 MB", R.string.ui_9d953910a111);
     IDS.put("<1m remaining", R.string.ui_1e568cd5d4d7);
     IDS.put("A copy did not match its original; the original is kept", R.string.ui_f949edb9a2d7);
     IDS.put("A copy on the new drive changed; the original is kept", R.string.ui_472a24314413);
@@ -114,6 +115,8 @@ final class L10n {
     IDS.put("Best match", R.string.ui_86f686f840c0);
     IDS.put("Bytes/sec", R.string.ui_8c84989bcc5e);
     IDS.put("Cancel", R.string.ui_77dfd2135f4d);
+    IDS.put("Cancel all", R.string.ui_ae1f9ef7dc1c);
+    IDS.put("Cancel all downloads", R.string.ui_9d3c3998a770);
     IDS.put("Cancel download", R.string.ui_67bb11d08df2);
     IDS.put("Cancel trial", R.string.ui_87f8cd8360cc);
     IDS.put("Can’t reach your library right now. Try again in a moment.", R.string.ui_24f5f64bb24c);
@@ -271,6 +274,9 @@ final class L10n {
     IDS.put("Downloads", R.string.ui_a862c2b21b5e);
     IDS.put("Downloads are unavailable.", R.string.ui_47bca62b54c5);
     IDS.put("Downloads are waiting for Wi-Fi", R.string.ui_c20a8912f0ca);
+    IDS.put("Downloads not finished yet are removed from this device. Finished downloads stay.", R.string.ui_ef04a41ba7c4);
+    IDS.put("Downloads stopped: they reached the storage limit in Download settings. Raise the limit or delete downloads; they continue when there is room.", R.string.ui_aef3bec28c1e);
+    IDS.put("Downloads stopped: this device's storage is full. Delete downloads or free up space; they continue when there is room.", R.string.ui_9fdc52c81b98);
     IDS.put("Downloads unavailable", R.string.ui_022410e4af2e);
     IDS.put("Downloads wait for Wi-Fi. Allowing cellular also covers a Personal Hotspot or a Low Data Mode network, and ends after 3 hours or when you join Wi-Fi.", R.string.ui_fbe756da9c9b);
     IDS.put("Drive not connected", R.string.ui_9c5da743abfe);
@@ -367,6 +373,7 @@ final class L10n {
     IDS.put("Its files stay on the drive. Torrbaby stops using it.", R.string.ui_eadbdb3346d4);
     IDS.put("Its titles return when it is connected again. Nothing has been removed.", R.string.ui_d45a38ad2c16);
     IDS.put("Junk · delete after seeding", R.string.ui_08c0c7e5fa43);
+    IDS.put("Keep downloading", R.string.ui_032fdc17f648);
     IDS.put("Keep file extensions and episode numbers.", R.string.ui_44d9c7e94283);
     IDS.put("Keep files on server", R.string.ui_0ecad4174400);
     IDS.put("Keep free", R.string.ui_60bcc51c0842);
@@ -525,6 +532,8 @@ final class L10n {
     IDS.put("Pause all downloads", R.string.ui_bd62730fa714);
     IDS.put("Pause download", R.string.ui_1a699ae89a2c);
     IDS.put("Paused", R.string.ui_c7dfb6f1d9c5);
+    IDS.put("Paused: downloads reached the storage limit in Download settings.", R.string.ui_e33f8a71d2c5);
+    IDS.put("Paused: this device's storage is full.", R.string.ui_4a9882fddd4b);
     IDS.put("Peers connected, but no activity for over 5 minutes", R.string.ui_32fbb44008c1);
     IDS.put("Per episode", R.string.ui_b719891b0883);
     IDS.put("Permanently delete these files?", R.string.ui_eed277a1aa9d);

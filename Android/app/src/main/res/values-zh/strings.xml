@@ -27,6 +27,7 @@
     <string name="ui_e9c9f7bc39bb" formatted="false">1 小时</string>
     <string name="ui_027795961131" formatted="false">24 小时</string>
     <string name="ui_8d61fd6a4ee0" formatted="false">6 小时</string>
+    <string name="ui_9d953910a111" formatted="false">&lt; 1 MB</string>
     <string name="ui_1e568cd5d4d7" formatted="false">剩余不足 1 分钟</string>
     <string name="ui_f949edb9a2d7" formatted="false">副本与原文件不一致，原文件已保留</string>
     <string name="ui_472a24314413" formatted="false">新硬盘上的副本已更改，原文件已保留</string>
@@ -103,6 +104,8 @@
     <string name="ui_86f686f840c0" formatted="false">最佳匹配</string>
     <string name="ui_8c84989bcc5e" formatted="false">字节/秒</string>
     <string name="ui_77dfd2135f4d" formatted="false">取消</string>
+    <string name="ui_ae1f9ef7dc1c" formatted="false">全部取消</string>
+    <string name="ui_9d3c3998a770" formatted="false">取消所有下载</string>
     <string name="ui_67bb11d08df2" formatted="false">取消下载</string>
     <string name="ui_87f8cd8360cc" formatted="false">取消试下载</string>
     <string name="ui_24f5f64bb24c" formatted="false">暂时无法连接到媒体库，请稍后再试。</string>
@@ -260,6 +263,9 @@
     <string name="ui_a862c2b21b5e" formatted="false">下载</string>
     <string name="ui_47bca62b54c5" formatted="false">下载功能不可用。</string>
     <string name="ui_c20a8912f0ca" formatted="false">下载正在等待 Wi-Fi</string>
+    <string name="ui_ef04a41ba7c4" formatted="false">尚未完成的下载将从此设备中移除。已完成的下载会保留。</string>
+    <string name="ui_aef3bec28c1e" formatted="false">下载已停止：已达到“下载设置”中的存储上限。请提高上限或删除下载；有空间后会继续。</string>
+    <string name="ui_9fdc52c81b98" formatted="false">下载已停止：此设备的存储空间已满。请删除下载或释放空间；有空间后会继续。</string>
     <string name="ui_022410e4af2e" formatted="false">下载不可用</string>
     <string name="ui_fbe756da9c9b" formatted="false">下载会等待 Wi-Fi。允许蜂窝网络时也包括个人热点和低数据模式网络，3 小时后或连接 Wi-Fi 时结束。</string>
     <string name="ui_9c5da743abfe" formatted="false">硬盘未连接</string>
@@ -356,6 +362,7 @@
     <string name="ui_eadbdb3346d4" formatted="false">文件会保留在硬盘上，Torrbaby 将不再使用它。</string>
     <string name="ui_d45a38ad2c16" formatted="false">重新连接后，其中的影片会自动恢复。没有删除任何内容。</string>
     <string name="ui_08c0c7e5fa43" formatted="false">废弃区 · 做种后删除</string>
+    <string name="ui_032fdc17f648" formatted="false">继续下载</string>
     <string name="ui_44d9c7e94283" formatted="false">请保留文件扩展名和剧集编号。</string>
     <string name="ui_0ecad4174400" formatted="false">保留服务器文件</string>
     <string name="ui_60bcc51c0842" formatted="false">保留空间</string>
@@ -514,6 +521,8 @@
     <string name="ui_bd62730fa714" formatted="false">暂停所有下载</string>
     <string name="ui_1a699ae89a2c" formatted="false">暂停下载</string>
     <string name="ui_c7dfb6f1d9c5" formatted="false">已暂停</string>
+    <string name="ui_e33f8a71d2c5" formatted="false">已暂停：下载已达到“下载设置”中的存储上限。</string>
+    <string name="ui_4a9882fddd4b" formatted="false">已暂停：此设备的存储空间已满。</string>
     <string name="ui_32fbb44008c1" formatted="false">已连接节点，但超过 5 分钟没有活动</string>
     <string name="ui_b719891b0883" formatted="false">每集</string>
     <string name="ui_eed277a1aa9d" formatted="false">永久删除这些文件？</string>
