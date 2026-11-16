@@ -48,12 +48,10 @@ impl Print {
     }
 }
 
-/// The bundled ffmpeg, then Homebrew's: the bundled build has no zlib, so it cannot read
-/// Matroska tracks with compressed frames (BSG's E-AC-3: "Unsupported encoding type").
+/// The server's own ffmpeg, the only one it uses.
 fn ffmpegs() -> Vec<PathBuf> {
-    let bundled = std::env::current_exe().ok().map(|p| p.with_file_name("torrbaby-ffmpeg"));
-    bundled.into_iter().chain(std::env::var_os("TORRBABY_FFMPEG").map(PathBuf::from)).chain([PathBuf::from("/opt/homebrew/bin/ffmpeg")])
-        .filter(|p| p.is_file()).collect()
+    std::env::current_exe().ok().map(|p| p.with_file_name("torrbaby-ffmpeg")).into_iter()
+        .chain(std::env::var_os("TORRBABY_FFMPEG").map(PathBuf::from)).filter(|p| p.is_file()).collect()
 }
 
 /// Decode the tail of `path` (of `duration` seconds) to 8 kHz mono and fingerprint it.
