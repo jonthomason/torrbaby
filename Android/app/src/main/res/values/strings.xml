@@ -265,7 +265,7 @@
     <string name="ui_c20a8912f0ca" formatted="false">Downloads are waiting for Wi-Fi</string>
     <string name="ui_ef04a41ba7c4" formatted="false">Downloads not finished yet are removed from this device. Finished downloads stay.</string>
     <string name="ui_aef3bec28c1e" formatted="false">Downloads stopped: they reached the storage limit in Download settings. Raise the limit or delete downloads; they continue when there is room.</string>
-    <string name="ui_9fdc52c81b98" formatted="false">Downloads stopped: this device\'s storage is full. Delete downloads or free up space; they continue when there is room.</string>
+    <string name="ui_e4d033a982e7" formatted="false">Downloads stopped: this device ran out of space. Space shown as free can include caches iOS has not cleared yet. Delete downloads or free up space; they try again by themselves when there is room.</string>
     <string name="ui_022410e4af2e" formatted="false">Downloads unavailable</string>
     <string name="ui_fbe756da9c9b" formatted="false">Downloads wait for Wi-Fi. Allowing cellular also covers a Personal Hotspot or a Low Data Mode network, and ends after 3 hours or when you join Wi-Fi.</string>
     <string name="ui_9c5da743abfe" formatted="false">Drive not connected</string>

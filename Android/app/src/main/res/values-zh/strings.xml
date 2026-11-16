@@ -265,7 +265,7 @@
     <string name="ui_c20a8912f0ca" formatted="false">下载正在等待 Wi-Fi</string>
     <string name="ui_ef04a41ba7c4" formatted="false">尚未完成的下载将从此设备中移除。已完成的下载会保留。</string>
     <string name="ui_aef3bec28c1e" formatted="false">下载已停止：已达到“下载设置”中的存储上限。请提高上限或删除下载；有空间后会继续。</string>
-    <string name="ui_9fdc52c81b98" formatted="false">下载已停止：此设备的存储空间已满。请删除下载或释放空间；有空间后会继续。</string>
+    <string name="ui_e4d033a982e7" formatted="false">下载已停止：此设备空间已用完。显示的可用空间可能包含 iOS 尚未清理的缓存。请删除下载或释放空间；有空间后会自动重试。</string>
     <string name="ui_022410e4af2e" formatted="false">下载不可用</string>
     <string name="ui_fbe756da9c9b" formatted="false">下载会等待 Wi-Fi。允许蜂窝网络时也包括个人热点和低数据模式网络，3 小时后或连接 Wi-Fi 时结束。</string>
     <string name="ui_9c5da743abfe" formatted="false">硬盘未连接</string>

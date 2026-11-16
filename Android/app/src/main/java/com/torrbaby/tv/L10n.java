@@ -276,7 +276,7 @@ final class L10n {
     IDS.put("Downloads are waiting for Wi-Fi", R.string.ui_c20a8912f0ca);
     IDS.put("Downloads not finished yet are removed from this device. Finished downloads stay.", R.string.ui_ef04a41ba7c4);
     IDS.put("Downloads stopped: they reached the storage limit in Download settings. Raise the limit or delete downloads; they continue when there is room.", R.string.ui_aef3bec28c1e);
-    IDS.put("Downloads stopped: this device's storage is full. Delete downloads or free up space; they continue when there is room.", R.string.ui_9fdc52c81b98);
+    IDS.put("Downloads stopped: this device ran out of space. Space shown as free can include caches iOS has not cleared yet. Delete downloads or free up space; they try again by themselves when there is room.", R.string.ui_e4d033a982e7);
     IDS.put("Downloads unavailable", R.string.ui_022410e4af2e);
     IDS.put("Downloads wait for Wi-Fi. Allowing cellular also covers a Personal Hotspot or a Low Data Mode network, and ends after 3 hours or when you join Wi-Fi.", R.string.ui_fbe756da9c9b);
     IDS.put("Drive not connected", R.string.ui_9c5da743abfe);

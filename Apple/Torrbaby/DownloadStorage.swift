@@ -484,6 +484,18 @@ final class DownloadStorage {
     /// set in Download settings. Kept as the item's error, so the page can say which.
     static let deviceFull = "Paused: this device's storage is full."
     static let limitReached = "Paused: downloads reached the storage limit in Download settings."
+    /// The system's own out-of-space errors ("You can't save the file … because the volume
+    /// "User" is out of space"), said as `deviceFull`; any other error as it is. iOS can
+    /// report space free (caches it will purge) while a write has just failed for want of it.
+    static func describe(_ error: Error) -> String {
+        let ns = error as NSError
+        let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError
+        let full = (ns.domain == NSCocoaErrorDomain && ns.code == NSFileWriteOutOfSpaceError)
+            || (ns.domain == NSPOSIXErrorDomain && ns.code == Int(ENOSPC))
+            || (ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCannotWriteToFile)
+            || (underlying?.domain == NSPOSIXErrorDomain && underlying?.code == Int(ENOSPC))
+        return full ? deviceFull : error.localizedDescription
+    }
     /// Errors from earlier builds that also meant "no room".
     static func pausedForSpace(_ error: String?) -> Bool {
         [deviceFull, limitReached, "Download paused: not enough available storage."].contains(error ?? "")

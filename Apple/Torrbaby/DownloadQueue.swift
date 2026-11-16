@@ -19,6 +19,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     @Published private(set) var used: Int64 = 0
     /// Free space on the device, as downloads count it; nil when it cannot be read.
     @Published private(set) var free: Int64?
+    private var lastSpaceRetry = Date.distantPast
     /// What the unfinished downloads still have to fetch.
     var remaining: Int64 { unfinished.reduce(0) { $0 + max(0, $1.size - (received[$1.id] ?? $1.received)) } }
     @Published private(set) var policy = DownloadStorage.Policy()
@@ -181,6 +182,13 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         items = storage.items.map { $0.forProfile(store?.activeProfile?.id ?? "") }; policy = storage.policy
         do { used = try storage.accountedBytes(received: received) } catch { self.report(error) }
         free = try? storage.availableBytes()
+        // iOS frees its caches by itself: downloads stopped for space try again when it reports
+        // room, at most every five minutes (a write can still fail while caches are freed).
+        if let free, free > policy.keepFree + 1_000_000_000, Date().timeIntervalSince(lastSpaceRetry) > 300,
+           items.contains(where: { $0.state == .paused && DownloadStorage.pausedForSpace($0.error) }) {
+            lastSpaceRetry = Date()
+            DispatchQueue.main.async { self.retryPausedForSpace(); self.pump() }
+        }
     }
     func setPolicy(_ next: DownloadStorage.Policy) {
         do {
@@ -333,7 +341,13 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
         if error is CancellationError { return }
         let ns = error as NSError
         if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled { return }
-        self.error = error.localizedDescription
+        let message = DownloadStorage.describe(error)
+        // Running out of space is said by the storage banner, with what to do.
+        if message == DownloadStorage.deviceFull {
+            for item in items where item.state == .transferring || item.state == .queued { pause(item.id, error: message) }
+            return
+        }
+        self.error = message
     }
     /// Transfers at once. Several small files finish sooner together, and one slow
     /// file no longer holds the rest; more than this mostly splits the same bandwidth.
@@ -390,7 +404,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             tasks[item.id] = task; reload(); task.resume()
             return true
         } catch {
-            try? storage.pause(item.id, received: item.received, error: error.localizedDescription)
+            try? storage.pause(item.id, received: item.received, error: DownloadStorage.describe(error))
             reload()
             return true
         }
@@ -575,6 +589,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     }
     /// Resume every paused or failed download, and start queued ones that are waiting.
     func resumeAll() {
+        error = nil
         for item in items where item.state == .paused || item.state == .failed { resume(item.id) }
         connectionChanged()
     }
@@ -603,6 +618,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     /// deleted, the limit raised); the next start checks the space again.
     func retryPausedForSpace() {
         guard let storage else { return }
+        lastSpaceRetry = Date()
         for item in items where item.state == .paused && DownloadStorage.pausedForSpace(item.error) { try? storage.queue(item.id) }
         reload()
     }
@@ -831,7 +847,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
                     if !keep { storage.discardKept(id) }
                     let kept = storage.keptBytes(id)
                     self.received[id] = kept
-                    try? storage.pause(id, received: kept, error: error.localizedDescription)
+                    try? storage.pause(id, received: kept, error: DownloadStorage.describe(error))
                 }
                 done()
             }

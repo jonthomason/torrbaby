@@ -47,7 +47,7 @@ struct DownloadsView: View {
                 if let stop = queue.spaceStop {
                     Label(stop == DownloadStorage.limitReached
                           ? L10n.text("Downloads stopped: they reached the storage limit in Download settings. Raise the limit or delete downloads; they continue when there is room.")
-                          : L10n.text("Downloads stopped: this device's storage is full. Delete downloads or free up space; they continue when there is room."),
+                          : L10n.text("Downloads stopped: this device ran out of space. Space shown as free can include caches iOS has not cleared yet. Delete downloads or free up space; they try again by themselves when there is room."),
                           systemImage: "externaldrive.badge.exclamationmark")
                         .font(.subheadline.weight(.semibold)).foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)

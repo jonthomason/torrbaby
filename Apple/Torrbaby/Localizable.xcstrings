@@ -17429,6 +17429,23 @@
           }
         }
       }
+    },
+    "Downloads stopped: this device ran out of space. Space shown as free can include caches iOS has not cleared yet. Delete downloads or free up space; they try again by themselves when there is room.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloads stopped: this device ran out of space. Space shown as free can include caches iOS has not cleared yet. Delete downloads or free up space; they try again by themselves when there is room."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下载已停止：此设备空间已用完。显示的可用空间可能包含 iOS 尚未清理的缓存。请删除下载或释放空间；有空间后会自动重试。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
