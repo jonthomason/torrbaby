@@ -476,8 +476,11 @@ final class PlaybackModel: ObservableObject {
         let eligible = playing ?? (player.rate > 0)
         #if !os(tvOS)
         if let id = playback.localDownloadID {
-            return DownloadQueue.shared.report(id, profile: profileAtStart, position: position, duration: duration, reachedEnd: reachedEnd,
-                                               watchedEligible: eligible, creditsStart: creditsAnalysis?.closingStart(duration: duration))
+            let saved = DownloadQueue.shared.report(id, profile: profileAtStart, position: position, duration: duration, reachedEnd: reachedEnd,
+                                                    watchedEligible: eligible, creditsStart: creditsAnalysis?.closingStart(duration: duration))
+            // The library's pages follow as it plays (seen beside Picture in Picture).
+            if saved { store.showLocalProgress() }
+            return saved
         }
         #endif
         guard let session = playback.sessionId else { return false }
