@@ -510,6 +510,8 @@
     <string name="ui_7039298d0ff9" formatted="false">粘贴服务器令牌</string>
     <string name="ui_519e39132bb9" formatted="false">路径</string>
     <string name="ui_781961bc81c2" formatted="false">暂停</string>
+    <string name="ui_6f6099a3d933" formatted="false">全部暂停</string>
+    <string name="ui_bd62730fa714" formatted="false">暂停所有下载</string>
     <string name="ui_1a699ae89a2c" formatted="false">暂停下载</string>
     <string name="ui_c7dfb6f1d9c5" formatted="false">已暂停</string>
     <string name="ui_32fbb44008c1" formatted="false">已连接节点，但超过 5 分钟没有活动</string>
@@ -602,6 +604,8 @@
     <string name="ui_4bb3c04af786" formatted="false">继续播放（剩余 %d 分钟）</string>
     <string name="ui_3fa8514e297a" formatted="false">继续播放第 %d 季 第 %d 集</string>
     <string name="ui_2ca8dc78921f" formatted="false">继续播放第 %d 季 第 %d 集（剩余 %d 分钟）</string>
+    <string name="ui_0399161b9684" formatted="false">全部继续</string>
+    <string name="ui_f340924df21b" formatted="false">继续所有下载</string>
     <string name="ui_b5ed1ec09384" formatted="false">继续下载</string>
     <string name="ui_a15dffd81328" formatted="false">播放结束后继续</string>
     <string name="ui_9f5cd8a2e880" formatted="false">重试</string>

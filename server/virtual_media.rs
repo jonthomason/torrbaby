@@ -398,6 +398,8 @@ impl Manager {
             // Transient failures are rebuilt: storage pressure, and indexes that a
             // concurrent reclaim removed mid-build (before reuse was marked).
             let retry_storage=j.error.as_deref()==Some("Virtual media index storage limit reached")
+                // MP4s with bytes after their last box were refused here; they are now read.
+                || j.error.as_deref()==Some("Prepare native subtitle tracks")
                 || j.error.as_deref()==Some("Playback cache is busy. Please try again shortly.")
                 || j.error.as_deref().is_some_and(|e|e.contains("No such file or directory"))
                 // Earlier builds rejected skewed constant video clocks with this text;

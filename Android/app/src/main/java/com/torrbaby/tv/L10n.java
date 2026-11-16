@@ -521,6 +521,8 @@ final class L10n {
     IDS.put("Paste your server token", R.string.ui_7039298d0ff9);
     IDS.put("Path", R.string.ui_519e39132bb9);
     IDS.put("Pause", R.string.ui_781961bc81c2);
+    IDS.put("Pause all", R.string.ui_6f6099a3d933);
+    IDS.put("Pause all downloads", R.string.ui_bd62730fa714);
     IDS.put("Pause download", R.string.ui_1a699ae89a2c);
     IDS.put("Paused", R.string.ui_c7dfb6f1d9c5);
     IDS.put("Peers connected, but no activity for over 5 minutes", R.string.ui_32fbb44008c1);
@@ -613,6 +615,8 @@ final class L10n {
     IDS.put("Resume (%d min left)", R.string.ui_4bb3c04af786);
     IDS.put("Resume Season %d Ep %d", R.string.ui_3fa8514e297a);
     IDS.put("Resume Season %d Ep %d (%d min remaining)", R.string.ui_2ca8dc78921f);
+    IDS.put("Resume all", R.string.ui_0399161b9684);
+    IDS.put("Resume all downloads", R.string.ui_f340924df21b);
     IDS.put("Resume download", R.string.ui_b5ed1ec09384);
     IDS.put("Resumes after playback", R.string.ui_a15dffd81328);
     IDS.put("Retry", R.string.ui_9f5cd8a2e880);

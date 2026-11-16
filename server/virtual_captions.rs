@@ -121,18 +121,25 @@ fn find<'a>(data: &'a [u8], kind: &[u8; 4]) -> Result<&'a [u8]> {
         .map(|(_, b)| b)
         .context("Missing MP4 box")
 }
-fn moov(source: &Source) -> Result<(u64, Vec<u8>)> {
+/// The movie box (where its type sits, and its contents) and where the file's last box
+/// ends. Some uploads append a few bytes that are no box at all (喜剧之王单口季 ends with 48
+/// bytes of "AntiHash", to defeat duplicate detection): once the movie box is found, a short
+/// tail like that ends the file instead of refusing it.
+fn moov(source: &Source) -> Result<(u64, Vec<u8>, u64)> {
     let size = source.len()?;
     let mut at = 0;
     let mut result = None;
     let mut count = 0;
     while at < size {
         count += 1;
+        let junk = result.is_some() && size - at <= 64 * 1024;
+        if junk && size - at < 8 { break; }
         ensure!(count < 10000 && size - at >= 8, "Invalid MP4 layout");
         let mut h = [0; 16];
         source.read_at(at, &mut h[..8])?;
         let mut n = n32(&h, 0)? as u64;
         let head = if n == 1 {
+            if junk && size - at < 16 { break; }
             ensure!(size - at >= 16, "Truncated box");
             source.read_at(at + 8, &mut h[8..])?;
             n = n64(&h, 8)?;
@@ -140,6 +147,7 @@ fn moov(source: &Source) -> Result<(u64, Vec<u8>)> {
         } else {
             8
         };
+        if junk && (n < head || n > size - at) { break; }
         ensure!(n >= head && n <= size - at, "Unsupported MP4 box size");
         ensure!(
             &h[4..8] != b"moof",
@@ -156,7 +164,8 @@ fn moov(source: &Source) -> Result<(u64, Vec<u8>)> {
         }
         at += n;
     }
-    result.context("Missing movie metadata")
+    let (mask, movie) = result.context("Missing movie metadata")?;
+    Ok((mask, movie, at))
 }
 fn language(tag: &str) -> u16 {
     let tag = tag.to_ascii_lowercase();
@@ -335,7 +344,8 @@ impl Reader {
             });
         }
         ensure!(tracks.len() <= 8, "Too many subtitle tracks");
-        let (mask, movie) = moov(&source)?;
+        // Anything after the last box is left out; the captions follow straight after it.
+        let (mask, movie, base) = moov(&source)?;
         let boxes = children(&movie)?;
         ensure!(
             !boxes.iter().any(|(k, _)| k == b"mvex"),
@@ -519,4 +529,32 @@ pub async fn serve(reader: Reader, port: u16) -> Result<()> {
     );
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+    fn layout(bytes: &[u8]) -> Result<(u64, Vec<u8>, u64)> {
+        let path = std::env::temp_dir().join(format!("torrbaby-mp4-{}-{}", std::process::id(), uuid::Uuid::new_v4()));
+        std::fs::write(&path, bytes)?;
+        let found = moov(&Source::file(&path)?);
+        std::fs::remove_file(&path)?;
+        found
+    }
+    #[test]
+    fn a_short_tail_that_is_no_box_ends_the_file() -> Result<()> {
+        let mut bytes = atom(b"ftyp", b"isom0000");
+        bytes.extend(atom(b"moov", b"movie"));
+        bytes.extend(atom(b"mdat", &[0; 32]));
+        let end = bytes.len() as u64;
+        bytes.extend(b"AntiHashAntiHashAntiHashAntiHashAntiHashAntiHash");
+        let (mask, movie, last) = layout(&bytes)?;
+        assert_eq!((mask, movie.as_slice(), last), (atom(b"ftyp", b"isom0000").len() as u64 + 4, &b"movie"[..], end));
+        // Before the movie box, the same bytes are still refused.
+        let mut early = atom(b"ftyp", b"isom0000");
+        early.extend(b"AntiHashAntiHash");
+        early.extend(atom(b"moov", b"movie"));
+        assert!(layout(&early).is_err());
+        Ok(())
+    }
 }

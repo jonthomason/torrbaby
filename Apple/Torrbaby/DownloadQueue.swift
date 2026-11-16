@@ -519,6 +519,14 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
             store.notify("Download updated")
         } catch { report(error) }
     }
+    /// Pause every download in progress or waiting; nothing is deleted.
+    func pauseAll() {
+        for item in items where item.state == .queued || item.state == .transferring { pause(item.id) }
+    }
+    /// Resume every paused or failed download.
+    func resumeAll() {
+        for item in items where item.state == .paused || item.state == .failed { resume(item.id) }
+    }
     func resume(_ id: UUID) {
         guard tasks[id] == nil else { return }
         do { try storage?.queue(id); reload(); pump() }

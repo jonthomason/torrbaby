@@ -510,6 +510,8 @@
     <string name="ui_7039298d0ff9" formatted="false">Paste your server token</string>
     <string name="ui_519e39132bb9" formatted="false">Path</string>
     <string name="ui_781961bc81c2" formatted="false">Pause</string>
+    <string name="ui_6f6099a3d933" formatted="false">Pause all</string>
+    <string name="ui_bd62730fa714" formatted="false">Pause all downloads</string>
     <string name="ui_1a699ae89a2c" formatted="false">Pause download</string>
     <string name="ui_c7dfb6f1d9c5" formatted="false">Paused</string>
     <string name="ui_32fbb44008c1" formatted="false">Peers connected, but no activity for over 5 minutes</string>
@@ -602,6 +604,8 @@
     <string name="ui_4bb3c04af786" formatted="false">Resume (%d min left)</string>
     <string name="ui_3fa8514e297a" formatted="false">Resume Season %d Ep %d</string>
     <string name="ui_2ca8dc78921f" formatted="false">Resume Season %d Ep %d (%d min remaining)</string>
+    <string name="ui_0399161b9684" formatted="false">Resume all</string>
+    <string name="ui_f340924df21b" formatted="false">Resume all downloads</string>
     <string name="ui_b5ed1ec09384" formatted="false">Resume download</string>
     <string name="ui_a15dffd81328" formatted="false">Resumes after playback</string>
     <string name="ui_9f5cd8a2e880" formatted="false">Retry</string>

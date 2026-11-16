@@ -977,3 +977,7 @@ This code has expired. Choose New setup code to show another.	此设置码已过
 Setting up…	正在设置…
 Your server did not send its identity. Update Torrbaby on the server, then choose New setup code.	服务器未发送其身份信息。请更新服务器上的 Torrbaby，然后选择“新设置码”。
 New setup code	新设置码
+Pause all	全部暂停
+Resume all	全部继续
+Pause all downloads	暂停所有下载
+Resume all downloads	继续所有下载
