@@ -192,11 +192,13 @@ final class L10n {
     IDS.put("Connection settings", R.string.ui_618aac54b120);
     IDS.put("Continue watching", R.string.ui_8fca30f77496);
     IDS.put("Copy name", R.string.ui_138ab007258c);
+    IDS.put("Copy the picture from WeChat, Messages or Photos, then choose Paste picture.", R.string.ui_07f4355a761d);
     IDS.put("Could not connect.", R.string.ui_c0d06c3ff543);
     IDS.put("Could not create folders on this drive", R.string.ui_fcfa6de4b522);
     IDS.put("Could not find your server", R.string.ui_3498c19c828e);
     IDS.put("Could not load users", R.string.ui_47dd74c0c423);
     IDS.put("Could not reach Torrbaby’s relay. Check this TV’s internet connection, then choose New setup code.", R.string.ui_dd5a1a5ba7fd);
+    IDS.put("Could not reach Torrbaby’s relay. Check this device’s internet connection; still trying…", R.string.ui_db822b0454a3);
     IDS.put("Could not refresh.", R.string.ui_3bcad4a3da4b);
     IDS.put("Could not write to this drive", R.string.ui_ec6c4f8da528);
     IDS.put("Couldn’t add release", R.string.ui_5a538c5c5377);
@@ -317,6 +319,7 @@ final class L10n {
     IDS.put("Failed", R.string.ui_09fef5d8d9a3);
     IDS.put("Fallback", R.string.ui_b4a100ebc4c1);
     IDS.put("Fallback address", R.string.ui_97d4488a6fcd);
+    IDS.put("File", R.string.ui_2c3cafa4db3f);
     IDS.put("File list unavailable", R.string.ui_11b2dac9eb17);
     IDS.put("Files and details", R.string.ui_df12077fa702);
     IDS.put("Files are copied and checked before the originals are removed. Watch history and subtitles are kept.", R.string.ui_120041389b39);
@@ -465,6 +468,7 @@ final class L10n {
     IDS.put("Next check: %s", R.string.ui_35da6a009052);
     IDS.put("Next episode", R.string.ui_882f1a46548e);
     IDS.put("Next episode…", R.string.ui_a3047eafa5d4);
+    IDS.put("No QR code was found in that picture.", R.string.ui_b902ca40be7e);
     IDS.put("No available next episode", R.string.ui_a66974cfe156);
     IDS.put("No confident match yet", R.string.ui_7f91412671b3);
     IDS.put("No connected drive takes new downloads", R.string.ui_9e5c2b4cfc49);
@@ -521,11 +525,14 @@ final class L10n {
     IDS.put("Open Torrbaby on your iPhone or iPad and choose Scan connection code.", R.string.ui_1d24f33a5d2e);
     IDS.put("Opening video…", R.string.ui_170cbab1dce2);
     IDS.put("Operation status is unavailable. The server may still be processing it.", R.string.ui_f5713d02fe43);
+    IDS.put("Or use a picture of it: one sent to you in WeChat or as a photo.", R.string.ui_00ba7a2b4852);
     IDS.put("Organize completed downloads", R.string.ui_11bff9c0b568);
     IDS.put("Original", R.string.ui_c0a8060f3b11);
     IDS.put("Original quality · Native player", R.string.ui_7a38047cc7f2);
     IDS.put("Other episodes", R.string.ui_c9d98984ac76);
     IDS.put("PEERS", R.string.ui_ca07ceefc22c);
+    IDS.put("Paste or choose a picture of the code shown on the new device", R.string.ui_aafa767bada4);
+    IDS.put("Paste picture", R.string.ui_6d7a0f94ea60);
     IDS.put("Paste your server token", R.string.ui_7039298d0ff9);
     IDS.put("Path", R.string.ui_519e39132bb9);
     IDS.put("Pause", R.string.ui_781961bc81c2);
@@ -540,6 +547,7 @@ final class L10n {
     IDS.put("Permanently delete these files?", R.string.ui_eed277a1aa9d);
     IDS.put("Permanently delete this torrent’s downloaded files, including partial downloads.", R.string.ui_e9e82aac397b);
     IDS.put("Personal watch history and downloaded copies on other devices are kept.", R.string.ui_01b2675f9904);
+    IDS.put("Photo", R.string.ui_d01d900383e4);
     IDS.put("Picture", R.string.ui_61852524b8f8);
     IDS.put("Play", R.string.ui_5d12bd53552c);
     IDS.put("Play again", R.string.ui_576766d387ec);
@@ -690,6 +698,7 @@ final class L10n {
     IDS.put("Selected", R.string.ui_9a976fc228b6);
     IDS.put("Send logs automatically", R.string.ui_ced1931511e9);
     IDS.put("Send logs now", R.string.ui_0e3a5ba2a15d);
+    IDS.put("Send this code", R.string.ui_6195a39f1132);
     IDS.put("Sending logs…", R.string.ui_d272ac80616f);
     IDS.put("Serif", R.string.ui_a5c78a86fab1);
     IDS.put("Server", R.string.ui_cb0cb170d106);

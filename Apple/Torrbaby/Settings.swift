@@ -670,6 +670,7 @@ struct ConnectionView: View {
     @State private var importProfile = false
     #if os(iOS)
     @State private var showScanner = false
+    @State private var showAway = false
     #endif
     var body: some View {
         NavigationStack {
@@ -698,6 +699,11 @@ struct ConnectionView: View {
                 }
                 .buttonStyle(MonoButtonStyle(prominent: true)).foregroundStyle(Theme.onAccent)
                 .sheet(isPresented: $showScanner) { LocalizedInterface { PairingScannerView { dismiss() } } }
+                // Nobody connected nearby: this device shows its own code for one to read,
+                // from anywhere (a photo of it sent in WeChat works too).
+                Button { showAway = true } label: { Label("Set up away from home", systemImage: "qrcode") }
+                    .buttonStyle(MonoButtonStyle())
+                    .sheet(isPresented: $showAway) { LocalizedInterface { JoinAwayView { dismiss() } } }
                 Spacer()
                 Spacer().frame(height: 40)
             }.padding(30).frame(maxWidth: .infinity, maxHeight: .infinity)

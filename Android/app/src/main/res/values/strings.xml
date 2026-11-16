@@ -181,11 +181,13 @@
     <string name="ui_618aac54b120" formatted="false">Connection settings</string>
     <string name="ui_8fca30f77496" formatted="false">Continue watching</string>
     <string name="ui_138ab007258c" formatted="false">Copy name</string>
+    <string name="ui_07f4355a761d" formatted="false">Copy the picture from WeChat, Messages or Photos, then choose Paste picture.</string>
     <string name="ui_c0d06c3ff543" formatted="false">Could not connect.</string>
     <string name="ui_fcfa6de4b522" formatted="false">Could not create folders on this drive</string>
     <string name="ui_3498c19c828e" formatted="false">Could not find your server</string>
     <string name="ui_47dd74c0c423" formatted="false">Could not load users</string>
     <string name="ui_dd5a1a5ba7fd" formatted="false">Could not reach Torrbaby’s relay. Check this TV’s internet connection, then choose New setup code.</string>
+    <string name="ui_db822b0454a3" formatted="false">Could not reach Torrbaby’s relay. Check this device’s internet connection; still trying…</string>
     <string name="ui_3bcad4a3da4b" formatted="false">Could not refresh.</string>
     <string name="ui_ec6c4f8da528" formatted="false">Could not write to this drive</string>
     <string name="ui_5a538c5c5377" formatted="false">Couldn’t add release</string>
@@ -306,6 +308,7 @@
     <string name="ui_09fef5d8d9a3" formatted="false">Failed</string>
     <string name="ui_b4a100ebc4c1" formatted="false">Fallback</string>
     <string name="ui_97d4488a6fcd" formatted="false">Fallback address</string>
+    <string name="ui_2c3cafa4db3f" formatted="false">File</string>
     <string name="ui_11b2dac9eb17" formatted="false">File list unavailable</string>
     <string name="ui_df12077fa702" formatted="false">Files and details</string>
     <string name="ui_120041389b39" formatted="false">Files are copied and checked before the originals are removed. Watch history and subtitles are kept.</string>
@@ -454,6 +457,7 @@
     <string name="ui_35da6a009052" formatted="false">Next check: %s</string>
     <string name="ui_882f1a46548e" formatted="false">Next episode</string>
     <string name="ui_a3047eafa5d4" formatted="false">Next episode…</string>
+    <string name="ui_b902ca40be7e" formatted="false">No QR code was found in that picture.</string>
     <string name="ui_a66974cfe156" formatted="false">No available next episode</string>
     <string name="ui_7f91412671b3" formatted="false">No confident match yet</string>
     <string name="ui_9e5c2b4cfc49" formatted="false">No connected drive takes new downloads</string>
@@ -510,11 +514,14 @@
     <string name="ui_1d24f33a5d2e" formatted="false">Open Torrbaby on your iPhone or iPad and choose Scan connection code.</string>
     <string name="ui_170cbab1dce2" formatted="false">Opening video…</string>
     <string name="ui_f5713d02fe43" formatted="false">Operation status is unavailable. The server may still be processing it.</string>
+    <string name="ui_00ba7a2b4852" formatted="false">Or use a picture of it: one sent to you in WeChat or as a photo.</string>
     <string name="ui_11bff9c0b568" formatted="false">Organize completed downloads</string>
     <string name="ui_c0a8060f3b11" formatted="false">Original</string>
     <string name="ui_7a38047cc7f2" formatted="false">Original quality · Native player</string>
     <string name="ui_c9d98984ac76" formatted="false">Other episodes</string>
     <string name="ui_ca07ceefc22c" formatted="false">PEERS</string>
+    <string name="ui_aafa767bada4" formatted="false">Paste or choose a picture of the code shown on the new device</string>
+    <string name="ui_6d7a0f94ea60" formatted="false">Paste picture</string>
     <string name="ui_7039298d0ff9" formatted="false">Paste your server token</string>
     <string name="ui_519e39132bb9" formatted="false">Path</string>
     <string name="ui_781961bc81c2" formatted="false">Pause</string>
@@ -529,6 +536,7 @@
     <string name="ui_eed277a1aa9d" formatted="false">Permanently delete these files?</string>
     <string name="ui_e9e82aac397b" formatted="false">Permanently delete this torrent’s downloaded files, including partial downloads.</string>
     <string name="ui_01b2675f9904" formatted="false">Personal watch history and downloaded copies on other devices are kept.</string>
+    <string name="ui_d01d900383e4" formatted="false">Photo</string>
     <string name="ui_61852524b8f8" formatted="false">Picture</string>
     <string name="ui_5d12bd53552c" formatted="false">Play</string>
     <string name="ui_576766d387ec" formatted="false">Play again</string>
@@ -679,6 +687,7 @@
     <string name="ui_9a976fc228b6" formatted="false">Selected</string>
     <string name="ui_ced1931511e9" formatted="false">Send logs automatically</string>
     <string name="ui_0e3a5ba2a15d" formatted="false">Send logs now</string>
+    <string name="ui_6195a39f1132" formatted="false">Send this code</string>
     <string name="ui_d272ac80616f" formatted="false">Sending logs…</string>
     <string name="ui_a5c78a86fab1" formatted="false">Serif</string>
     <string name="ui_cb0cb170d106" formatted="false">Server</string>

@@ -995,3 +995,12 @@ Downloads stopped: this device ran out of space. Space shown as free can include
 < 1 MB	< 1 MB
 These downloads need %@ more than this device has free. Delete downloads or free up space, or cancel some.	这些下载所需空间比此设备的可用空间多 %@。请删除下载、释放空间或取消部分下载。
 Hide keyboard	隐藏键盘
+Paste picture	粘贴图片
+Photo	照片
+File	文件
+No QR code was found in that picture.	这张图片中没有找到二维码。
+Or use a picture of it: one sent to you in WeChat or as a photo.	也可以使用它的图片：例如通过微信收到的图片或照片。
+Paste or choose a picture of the code shown on the new device	粘贴或选择新设备上显示的设置码图片
+Copy the picture from WeChat, Messages or Photos, then choose Paste picture.	从微信、信息或照片中复制图片，然后选择“粘贴图片”。
+Send this code	发送此设置码
+Could not reach Torrbaby’s relay. Check this device’s internet connection; still trying…	无法连接 Torrbaby 中继。请检查此设备的网络连接；正在继续尝试…
