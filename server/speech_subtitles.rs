@@ -120,7 +120,11 @@ fn chinese_name(input: &Path) -> bool {
 /// Assets with an accepted transcript of any version.
 pub fn transcribed_assets(data: &Path) -> std::collections::HashSet<String> {
     let Ok(entries) = std::fs::read_dir(directory(data)) else { return Default::default() };
-    entries.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+    // Transcript records only ("<key>.json"): the OpenSubtitles records beside them
+    // ("<key>.en-opensubtitles.json") also say "ready", and counting them sent every title with
+    // OpenSubtitles' English back to be transcribed, again and again (2026-11-16).
+    entries.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "json")
+        && e.path().file_stem().and_then(|n| n.to_str()).is_some_and(|n| n.len() == 64 && n.bytes().all(|b| b.is_ascii_hexdigit())))
         .filter_map(|e| serde_json::from_slice::<Value>(&std::fs::read(e.path()).ok()?).ok())
         .filter(|record| record["state"] == "ready")
         .filter_map(|record| record["asset_id"].as_str().map(str::to_owned)).collect()

@@ -845,8 +845,11 @@ mod tests {
         assert_eq!(reopen_untranscribed(&db,&data)?,1);
         db.connection.execute("UPDATE media_processing SET state='ready',subtitles_state='not_applicable' WHERE asset_id='silent'",[])?;
         std::fs::write(crate::speech_subtitles::record(&data,"silent","r1"),r#"{"state":"rejected","tried":["en","zh-Hans","picture","opensubtitles"]}"#)?;
+        // OpenSubtitles' records beside transcripts are not transcripts: no reopening for them.
+        std::fs::write(crate::speech_subtitles::directory(&data).join(format!("{}.en-opensubtitles.json","b".repeat(64))),r#"{"state":"ready","asset_id":"subtitled"}"#)?;
+        assert_eq!(reopen_untranscribed(&db,&data)?,0);
         // A finished title transcribed by an older version is redone once.
-        std::fs::write(crate::speech_subtitles::directory(&data).join("old.json"),r#"{"state":"ready","asset_id":"subtitled"}"#)?;
+        std::fs::write(crate::speech_subtitles::directory(&data).join(format!("{}.json","a".repeat(64))),r#"{"state":"ready","asset_id":"subtitled"}"#)?;
         assert_eq!(reopen_untranscribed(&db,&data)?,1);
         std::fs::write(crate::speech_subtitles::record(&data,"subtitled","r1"),r#"{"state":"ready","asset_id":"subtitled","tried":["picture","en","opensubtitles"]}"#)?;
         db.connection.execute("UPDATE media_processing SET state='ready',subtitles_state='ready' WHERE asset_id='subtitled'",[])?;
