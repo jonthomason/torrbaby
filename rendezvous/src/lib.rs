@@ -21,6 +21,16 @@
 //! - TCP (loopback 7444, behind bronze's web server on 443): the relay over TCP, for networks
 //!   that block UDP; see `serve_tcp`.
 //!
+//! Homes: Diamond is the home every existing stream goes to. Other homes (another machine of
+//! the user's, such as the Mac's ABT host agent) each have their own secret in
+//! `homes/<name>.secret` in the state directory, read again whenever a hello matches no known
+//! secret. A home connects as Diamond does (QUIC, ALPN `tbhome`, `TBHOME1 <secret>\n`: the
+//! secret says which home it is), or over TCP 443 by keeping idle upgraded connections here
+//! (`serve_tcp`): bronze puts one device stream on each. A device names its home with a first
+//! line `TBTO1 <name>\n` on a stream (or `X-Torrbaby-Home` on the upgrade); without one it is
+//! Diamond, so nothing changes for Diamond or its devices. Diamond's Connection page counts
+//! only Diamond's streams; other homes' bytes are counted per home.
+//!
 //! Usage, for Diamond's Connection page: the devices connected now (client id, address, since,
 //! bytes relayed) and bytes relayed per day (China time), kept in usage.json in the state
 //! directory. Diamond asks over its own connection with a `TBUSAGE1\n` stream.
@@ -43,6 +53,14 @@ pub const HOME_HELLO: &str = "TBHOME1 ";
 pub const INFO: &[u8] = b"TBINFO1\n";
 pub const NAME: &[u8] = b"TBNAME1 ";
 pub const USAGE: &[u8] = b"TBUSAGE1\n";
+/// A device stream that starts with `TBTO1 <home>\n` goes to that home instead of Diamond.
+pub const TO: &[u8] = b"TBTO1 ";
+/// After `TBHOME1 <secret>\n` and `OK\n`, an idle home connection over TCP gets this every
+/// 20 s, and `CLAIMED` once when a device stream is put on it (raw bytes from then on).
+pub const KEEPALIVE: u8 = b'.';
+pub const CLAIMED: u8 = b'!';
+/// Homes' idle connections over TCP, at most, each.
+const MAX_POOL: usize = 16;
 /// The path the relay over TCP is asked for, through bronze's web server.
 pub const TCP_PATH: &str = "/tbrelay";
 /// Stream reset code when Diamond is not connected.
@@ -192,10 +210,13 @@ pub fn endpoint(socket: std::net::UdpSocket, identity: &Identity) -> Result<quin
     Ok(quinn::Endpoint::new(quinn::EndpointConfig::default(), Some(server), socket, Arc::new(quinn::TokioRuntime))?)
 }
 
-/// Diamond's current connection, shared with every device connection.
+/// The homes' connections, shared with every device connection.
 pub struct Hub {
-    secret: [u8; 32],
-    home: watch::Sender<Option<quinn::Connection>>,
+    diamond: Arc<Home>,
+    /// Every home by name, Diamond ("diamond") included.
+    homes: std::sync::Mutex<std::collections::BTreeMap<String, Arc<Home>>>,
+    /// Where the other homes' secrets are (`homes/` in the state directory).
+    homes_dir: std::sync::Mutex<Option<std::path::PathBuf>>,
     devices: AtomicU64,
     streams: AtomicU64,
     /// The devices connected now, by connection.
@@ -205,6 +226,96 @@ pub struct Hub {
     down: AtomicU64,
     up: AtomicU64,
     days: std::sync::Mutex<Days>,
+}
+
+/// A machine devices are relayed to: Diamond, or another home.
+pub struct Home {
+    name: String,
+    secret: [u8; 32],
+    quic: watch::Sender<Option<quinn::Connection>>,
+    /// Idle connections over TCP, newest last.
+    pool: std::sync::Mutex<Vec<Pooled>>,
+    pooled: tokio::sync::Notify,
+    /// Bytes relayed since start (down: home to devices).
+    down: AtomicU64,
+    up: AtomicU64,
+}
+
+/// An idle home connection over TCP: claimed by sending where to put the stream.
+struct Pooled { id: u64, from: SocketAddr, claim: tokio::sync::oneshot::Sender<tokio::sync::oneshot::Sender<tokio::net::TcpStream>> }
+
+/// Where a device stream goes: a new stream on a home's QUIC connection, or one of its idle
+/// TCP connections.
+enum Upstream { Quic(quinn::SendStream, quinn::RecvStream), Tcp(tokio::net::TcpStream) }
+
+static POOLED_IDS: AtomicU64 = AtomicU64::new(0);
+
+impl Home {
+    fn new(name: &str, secret: &str) -> Arc<Home> {
+        Arc::new(Home { name: name.to_owned(), secret: Sha256::digest(secret.as_bytes()).into(), quic: watch::channel(None).0,
+            pool: Default::default(), pooled: tokio::sync::Notify::new(), down: AtomicU64::new(0), up: AtomicU64::new(0) })
+    }
+
+    fn quic_live(&self) -> Option<quinn::Connection> {
+        self.quic.borrow().as_ref().filter(|c| c.close_reason().is_none()).cloned()
+    }
+
+    fn online(&self) -> bool {
+        self.quic_live().is_some() || self.pool.lock().is_ok_and(|pool| !pool.is_empty())
+    }
+
+    /// The home's public IP, as its standing connection comes from.
+    fn ip(&self) -> Option<IpAddr> {
+        self.quic_live().map(|c| c.remote_address().ip())
+            .or_else(|| self.pool.lock().ok().and_then(|pool| pool.last().map(|p| p.from.ip())))
+    }
+
+    /// A way to the home for one stream, waiting up to `wait` for one (homes reconnect
+    /// within seconds). QUIC first; else an idle connection over TCP.
+    async fn open(&self, wait: Duration) -> Option<Upstream> {
+        let deadline = tokio::time::Instant::now() + wait;
+        let mut seen = self.quic.subscribe();
+        loop {
+            if let Some(connection) = self.quic_live() {
+                return connection.open_bi().await.ok().map(|(send, recv)| Upstream::Quic(send, recv));
+            }
+            while let Some(idle) = self.pool.lock().ok().and_then(|mut pool| pool.pop()) {
+                let (reply, stream) = tokio::sync::oneshot::channel();
+                if idle.claim.send(reply).is_err() { continue }
+                if let Ok(Ok(stream)) = tokio::time::timeout(Duration::from_secs(3), stream).await { return Some(Upstream::Tcp(stream)) }
+            }
+            tokio::select! {
+                _ = seen.changed() => {}
+                _ = self.pooled.notified() => {}
+                _ = tokio::time::sleep(Duration::from_millis(250)) => {}
+            }
+            if tokio::time::Instant::now() >= deadline { return None }
+        }
+    }
+}
+
+/// Compare digests in full rather than stopping at the first difference.
+fn same(a: &[u8; 32], b: &[u8; 32]) -> bool { a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0 }
+
+/// A home's name: lowercase letters, digits and '-', up to 32.
+fn home_name(text: &str) -> Option<String> {
+    let name = text.trim();
+    (!name.is_empty() && name.len() <= 32 && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')).then(|| name.to_owned())
+}
+
+/// Make the secret for home `name` in `dir`/homes (32 random bytes as hex) unless it exists;
+/// returns its path.
+pub fn create_home_secret(dir: &Path, name: &str) -> Result<std::path::PathBuf> {
+    let Some(name) = home_name(name).filter(|n| n != "diamond") else { bail!("Not a home name: {name}") };
+    let homes = dir.join("homes");
+    std::fs::create_dir_all(&homes)?;
+    let path = homes.join(format!("{name}.secret"));
+    if !path.exists() {
+        let mut bytes = [0u8; 32];
+        std::io::Read::read_exact(&mut std::fs::File::open("/dev/urandom")?, &mut bytes)?;
+        write_private(&path, bytes.iter().map(|b| format!("{b:02x}")).collect::<String>().as_bytes())?;
+    }
+    Ok(path)
 }
 
 /// One connected device.
@@ -244,8 +355,51 @@ pub fn china_day(unix: u64) -> String {
 
 impl Hub {
     pub fn new(secret: &str) -> Arc<Hub> {
-        Arc::new(Hub { secret: Sha256::digest(secret.as_bytes()).into(), home: watch::channel(None).0, devices: AtomicU64::new(0), streams: AtomicU64::new(0),
+        let diamond = Home::new("diamond", secret);
+        let homes = std::sync::Mutex::new(std::collections::BTreeMap::from([("diamond".to_owned(), diamond.clone())]));
+        Arc::new(Hub { diamond, homes, homes_dir: Default::default(), devices: AtomicU64::new(0), streams: AtomicU64::new(0),
             connected: Default::default(), down: AtomicU64::new(0), up: AtomicU64::new(0), days: Default::default() })
+    }
+
+    /// The other homes' secrets are in `dir`/homes/<name>.secret: read now, and again when a
+    /// hello matches no known secret (a home added while running).
+    pub fn load_homes(&self, dir: &Path) {
+        if let Ok(mut held) = self.homes_dir.lock() { *held = Some(dir.join("homes")) }
+        self.rescan_homes();
+    }
+
+    fn rescan_homes(&self) {
+        let Some(dir) = self.homes_dir.lock().ok().and_then(|d| d.clone()) else { return };
+        let Ok(entries) = std::fs::read_dir(&dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("secret") { continue }
+            let Some(name) = path.file_stem().and_then(|s| s.to_str()).and_then(home_name).filter(|n| n != "diamond") else { continue };
+            let Ok(secret) = std::fs::read_to_string(&path) else { continue };
+            let secret = secret.trim();
+            if secret.len() < 32 { continue }
+            let digest: [u8; 32] = Sha256::digest(secret.as_bytes()).into();
+            let Ok(mut homes) = self.homes.lock() else { return };
+            // A changed secret is a new home record: the old one's connections stay until they close.
+            if homes.get(&name).is_some_and(|home| same(&home.secret, &digest)) { continue }
+            homes.insert(name.clone(), Home::new(&name, secret));
+            eprintln!("Home {name}: known");
+        }
+    }
+
+    /// The home whose secret was offered, if any.
+    fn home_by_secret(&self, offered: &str) -> Option<Arc<Home>> {
+        let digest: [u8; 32] = Sha256::digest(offered.as_bytes()).into();
+        let find = || self.homes.lock().ok().and_then(|homes| homes.values().find(|home| same(&home.secret, &digest)).cloned());
+        find().or_else(|| { self.rescan_homes(); find() })
+    }
+
+    /// The home a stream names; none named: Diamond.
+    fn named(&self, name: Option<&str>) -> Option<Arc<Home>> {
+        match name {
+            None | Some("diamond") => Some(self.diamond.clone()),
+            Some(name) => self.homes.lock().ok().and_then(|homes| homes.get(name).cloned()),
+        }
     }
 
     /// Keep the per-day totals in `dir`/usage.json: read now, written each minute while
@@ -302,22 +456,7 @@ impl Hub {
         serde_json::json!({"devices": devices, "days": days, "today": china_day(unix_now()), "home_online": self.home_online()})
     }
 
-    /// Diamond's connection, waiting up to `wait` for one (it reconnects within seconds).
-    async fn home(&self, wait: Duration) -> Option<quinn::Connection> {
-        let mut seen = self.home.subscribe();
-        let live = |c: &Option<quinn::Connection>| c.as_ref().is_some_and(|c| c.close_reason().is_none());
-        let found = tokio::time::timeout(wait, seen.wait_for(live)).await.ok()?.ok()?.clone();
-        found
-    }
-
-    fn home_online(&self) -> bool {
-        self.home.borrow().as_ref().is_some_and(|c| c.close_reason().is_none())
-    }
-
-    /// Diamond's public IP, as its standing connection comes from.
-    fn home_ip(&self) -> Option<std::net::IpAddr> {
-        self.home.borrow().as_ref().filter(|c| c.close_reason().is_none()).map(|c| c.remote_address().ip())
-    }
+    fn home_online(&self) -> bool { self.diamond.online() }
 }
 
 /// Accept connections on `endpoint` until it closes.
@@ -355,40 +494,49 @@ async fn home(connection: quinn::Connection, hub: Arc<Hub>) {
         }
         let text = String::from_utf8_lossy(&line);
         let offered = text.trim_end().strip_prefix(HOME_HELLO).unwrap_or("");
-        let digest: [u8; 32] = Sha256::digest(offered.as_bytes()).into();
-        // Compare digests in full rather than stopping at the first difference.
-        if digest.iter().zip(hub.secret).fold(0u8, |acc, (a, b)| acc | (a ^ b)) != 0 { bail!("wrong secret") }
+        let Some(found) = hub.home_by_secret(offered) else { bail!("wrong secret") };
         send.write_all(b"OK\n").await?;
         send.finish()?;
-        anyhow::Ok(())
+        anyhow::Ok(Some(found))
     };
-    match tokio::time::timeout(Duration::from_secs(10), proved).await {
-        Ok(Ok(())) => {}
+    let home = match tokio::time::timeout(Duration::from_secs(10), proved).await {
+        Ok(Ok(Some(home))) => home,
+        Ok(Ok(None)) => return,
         Ok(Err(error)) => { eprintln!("Home {from}: refused: {error}"); connection.close(3u32.into(), b"refused"); return }
         Err(_) => { eprintln!("Home {from}: refused: no hello"); connection.close(3u32.into(), b"refused"); return }
-    }
-    let previous = hub.home.send_replace(Some(connection.clone()));
+    };
+    let previous = home.quic.send_replace(Some(connection.clone()));
     if let Some(previous) = previous { previous.close(4u32.into(), b"replaced") }
-    eprintln!("Home {from}: connected");
+    let diamond = Arc::ptr_eq(&home, &hub.diamond);
+    // Diamond's log lines stay as they were; another home is named.
+    let label = if diamond { format!("Home {from}") } else { format!("Home {} {from}", home.name) };
+    eprintln!("{label}: connected");
     // Diamond's own questions on its connection (it is proved): usage, for its Connection page.
+    // Another home asking gets its own totals.
     let asking = connection.clone();
     let asked = hub.clone();
+    let asker = home.clone();
     tokio::spawn(async move {
         while let Ok((mut send, mut recv)) = asking.accept_bi().await {
-            let hub = asked.clone();
+            let (hub, home) = (asked.clone(), asker.clone());
             tokio::spawn(async move {
                 let Ok(request) = recv.read_to_end(64).await else { return };
-                if request == USAGE { let _ = send.write_all(hub.usage().to_string().as_bytes()).await; }
+                if request == USAGE {
+                    let usage = if diamond { hub.usage() } else {
+                        serde_json::json!({"home": home.name, "down": home.down.load(Ordering::Relaxed), "up": home.up.load(Ordering::Relaxed)})
+                    };
+                    let _ = send.write_all(usage.to_string().as_bytes()).await;
+                }
                 let _ = send.finish();
             });
         }
     });
     let started = Instant::now();
     let reason = connection.closed().await;
-    hub.home.send_if_modified(|held| {
+    home.quic.send_if_modified(|held| {
         if held.as_ref().is_some_and(|c| c.stable_id() == connection.stable_id()) { *held = None; true } else { false }
     });
-    eprintln!("Home {from}: closed after {} s ({reason})", started.elapsed().as_secs());
+    eprintln!("{label}: closed after {} s ({reason})", started.elapsed().as_secs());
 }
 
 async fn device(connection: quinn::Connection, hub: Arc<Hub>) {
@@ -397,13 +545,11 @@ async fn device(connection: quinn::Connection, hub: Arc<Hub>) {
     hub.devices.fetch_add(1, Ordering::Relaxed);
     eprintln!("Device {id} {from}: connected");
     let record = Arc::new(Device { client: Default::default(), address: std::sync::Mutex::new(from), since: unix_now(), down: AtomicU64::new(0), up: AtomicU64::new(0), streams: AtomicU64::new(0), open: AtomicU64::new(0) });
-    if let Ok(mut connected) = hub.connected.lock() { connected.insert(id, record.clone()); }
     let started = Instant::now();
     let mut streams = 0u64;
     while let Ok((send, recv)) = connection.accept_bi().await {
         streams += 1;
         hub.streams.fetch_add(1, Ordering::Relaxed);
-        record.streams.fetch_add(1, Ordering::Relaxed);
         // The address now, not at connect: a device that moved networks migrated its connection.
         let address = connection.remote_address();
         if let Ok(mut held) = record.address.lock() { *held = address }
@@ -415,62 +561,125 @@ async fn device(connection: quinn::Connection, hub: Arc<Hub>) {
         connection.close_reason().map(|r| r.to_string()).unwrap_or_default());
 }
 
-/// One device stream onto one new stream to Diamond, both ways (a QUIC relay stream).
+/// One device stream onto one new stream to its home, both ways (a QUIC relay stream).
 async fn splice(device_send: quinn::SendStream, device_recv: quinn::RecvStream, hub: Arc<Hub>, from: SocketAddr, id: usize, record: Arc<Device>) {
-    let mut device_send = device_send;
-    if let Err(Refused) = relay(device_recv, &mut device_send, hub, from, &format!("Device {id}"), &record).await {
+    let (mut device_send, mut device_recv) = (device_send, device_recv);
+    let mut first = vec![0u8; 4096];
+    let n = match device_recv.read(&mut first).await { Ok(Some(n)) => n, _ => 0 };
+    first.truncate(n);
+    // Listed on Diamond's Connection page once it names itself or uses Diamond (a device of
+    // another home's is not Diamond's to see).
+    let listing = hub.clone();
+    let listed = record.clone();
+    let list = move || {
+        if let Ok(mut connected) = listing.connected.lock() { connected.entry(id).or_insert_with(|| listed.clone()); }
+        listed.streams.fetch_add(1, Ordering::Relaxed);
+        listed
+    };
+    if let Err(Refused) = relay(first, device_recv, &mut device_send, hub, from, &format!("Device {id}"), None, list).await {
         let _ = device_send.reset(HOME_OFFLINE.into());
     }
 }
 
-/// Diamond was not connected: the device's stream is refused.
+/// The home was not connected: the device's stream is refused.
 struct Refused;
 
-/// One device stream (any byte stream) onto one new stream to Diamond, both ways, or bronze's
-/// own answer to TBINFO and TBNAME. The first request line (method and path, never the query,
-/// which can carry signatures) goes to the log; streams encrypted end to end show as such.
-async fn relay<R, W>(mut device_recv: R, device_send: &mut W, hub: Arc<Hub>, from: SocketAddr, who: &str, record: &Arc<Device>) -> Result<(), Refused>
+/// One device stream (any byte stream; `first` is what was read of it so far) onto one new
+/// stream to its home, both ways, or bronze's own answer to TBINFO and TBNAME. The home is
+/// named by a first line `TBTO1 <name>\n` (else `home`, else Diamond). `record` gives the
+/// device's record on Diamond's Connection page, made when first needed: Diamond's streams
+/// only (and TBNAME). The first request line (method and path, never the query, which can
+/// carry signatures) goes to the log; streams encrypted end to end show as such.
+#[allow(clippy::too_many_arguments)]
+async fn relay<R, W>(mut first: Vec<u8>, mut device_recv: R, device_send: &mut W, hub: Arc<Hub>, from: SocketAddr, who: &str, home: Option<String>, record: impl FnOnce() -> Arc<Device>) -> Result<(), Refused>
 where R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let started = Instant::now();
-    let mut first = vec![0u8; 4096];
-    let n = device_recv.read(&mut first).await.unwrap_or(0);
-    if first[..n].starts_with(INFO) {
+    let mut named = home;
+    if first.starts_with(TO) {
+        let mut more = [0u8; 4096];
+        while !first.contains(&b'\n') && first.len() < 128 {
+            let m = device_recv.read(&mut more).await.unwrap_or(0);
+            if m == 0 { break }
+            first.extend_from_slice(&more[..m]);
+        }
+        let Some(end) = first.iter().position(|b| *b == b'\n') else { return Err(Refused) };
+        named = Some(String::from_utf8_lossy(&first[TO.len()..end]).trim().to_owned());
+        first.drain(..=end);
+        if first.is_empty() {
+            let m = device_recv.read(&mut more).await.unwrap_or(0);
+            first.extend_from_slice(&more[..m]);
+        }
+    }
+    let n = first.len();
+    let Some(home) = hub.named(named.as_deref()) else {
+        eprintln!("{who}: stream refused, no home {}", named.unwrap_or_default());
+        return Err(Refused);
+    };
+    let diamond = Arc::ptr_eq(&home, &hub.diamond);
+    if first.starts_with(INFO) {
         // Older clients read only the first two lines; "homeip" is on its own line after them.
-        let mut reply = format!("home {}\nyou {from}\n", if hub.home_online() { "online" } else { "offline" });
-        if let Some(ip) = hub.home_ip() { reply.push_str(&format!("homeip {ip}\n")) }
+        let mut reply = format!("home {}\nyou {from}\n", if home.online() { "online" } else { "offline" });
+        if let Some(ip) = home.ip() { reply.push_str(&format!("homeip {ip}\n")) }
         let _ = device_send.write_all(reply.as_bytes()).await;
         let _ = device_send.shutdown().await;
         return Ok(());
     }
-    if first[..n].starts_with(NAME) {
+    if first.starts_with(NAME) {
         let client = String::from_utf8_lossy(&first[NAME.len()..n]).trim().chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(64).collect::<String>();
-        if let Ok(mut held) = record.client.lock() { *held = client }
+        if let Ok(mut held) = record().client.lock() { *held = client }
         let _ = device_send.shutdown().await;
         return Ok(());
     }
-    let Some(home) = hub.home(Duration::from_secs(5)).await else {
-        eprintln!("{who}: stream refused, Diamond is not connected");
+    let Some(upstream) = home.open(Duration::from_secs(5)).await else {
+        if diamond { eprintln!("{who}: stream refused, Diamond is not connected") } else { eprintln!("{who}: stream refused, home {} is not connected", home.name) }
         return Err(Refused);
     };
-    let Ok((mut home_send, mut home_recv)) = home.open_bi().await else { return Err(Refused) };
+    // Diamond's streams count for its Connection page; another home's for that home only.
+    let none = AtomicU64::new(0);
+    let device = diamond.then(record);
+    let (up_counters, down_counters): ([&AtomicU64; 2], [&AtomicU64; 2]) = match &device {
+        Some(device) => ([&hub.up, &device.up], [&hub.down, &device.down]),
+        None => ([&home.up, &none], [&home.down, &none]),
+    };
     // Encrypted end to end (a TLS handshake): nothing here can be read.
     let line = if first.first() == Some(&0x16) { "(end to end)".to_owned() } else {
         String::from_utf8_lossy(&first[..n]).lines().next().unwrap_or("").split('?').next().unwrap_or("").to_owned()
     };
-    if n > 0 && home_send.write_all(&first[..n]).await.is_err() { return Err(Refused) }
-    hub.up.fetch_add(n as u64, Ordering::Relaxed); record.up.fetch_add(n as u64, Ordering::Relaxed);
-    let up = async {
-        let sent = counted_copy(&mut device_recv, &mut home_send, [&hub.up, &record.up]).await;
-        match sent { Ok(_) => { let _ = home_send.finish(); } Err(_) => { let _ = home_send.reset(0u32.into()); } }
+    let down_bytes = match upstream {
+        Upstream::Quic(mut home_send, mut home_recv) => {
+            if n > 0 && home_send.write_all(&first[..n]).await.is_err() { return Err(Refused) }
+            for counter in up_counters { counter.fetch_add(n as u64, Ordering::Relaxed); }
+            let up = async {
+                let sent = counted_copy(&mut device_recv, &mut home_send, up_counters).await;
+                match sent { Ok(_) => { let _ = home_send.finish(); } Err(_) => { let _ = home_send.reset(0u32.into()); } }
+            };
+            let down = async {
+                let got = counted_copy(&mut home_recv, device_send, down_counters).await;
+                let _ = device_send.shutdown().await;
+                got.unwrap_or(0)
+            };
+            tokio::join!(up, down).1
+        }
+        Upstream::Tcp(tcp) => {
+            let _ = tcp.set_nodelay(true);
+            let (mut home_recv, mut home_send) = tcp.into_split();
+            if n > 0 && home_send.write_all(&first[..n]).await.is_err() { return Err(Refused) }
+            for counter in up_counters { counter.fetch_add(n as u64, Ordering::Relaxed); }
+            let up = async {
+                let _ = counted_copy(&mut device_recv, &mut home_send, up_counters).await;
+                let _ = home_send.shutdown().await;
+            };
+            let down = async {
+                let got = counted_copy(&mut home_recv, device_send, down_counters).await;
+                let _ = device_send.shutdown().await;
+                got.unwrap_or(0)
+            };
+            tokio::join!(up, down).1
+        }
     };
-    let down = async {
-        let got = counted_copy(&mut home_recv, device_send, [&hub.down, &record.down]).await;
-        let _ = device_send.shutdown().await;
-        got.unwrap_or(0)
-    };
-    let (_, down_bytes) = tokio::join!(up, down);
-    eprintln!("{who}: {line} → {down_bytes} bytes in {} ms", started.elapsed().as_millis());
+    if diamond { eprintln!("{who}: {line} → {down_bytes} bytes in {} ms", started.elapsed().as_millis()) }
+    else { eprintln!("{who} → home {}: {line} → {down_bytes} bytes in {} ms", home.name, started.elapsed().as_millis()) }
     Ok(())
 }
 
@@ -527,25 +736,82 @@ async fn tcp_stream(mut tcp: tokio::net::TcpStream, hub: Arc<Hub>) -> Result<()>
         return Ok(());
     }
     tcp.write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n").await?;
-    // One record per device while any of its streams is open.
-    let key = tcp_key(&client, &ip);
-    let record = {
-        let mut connected = hub.connected.lock().map_err(|_| anyhow::anyhow!("lock"))?;
-        connected.entry(key).or_insert_with(|| Arc::new(Device { client: std::sync::Mutex::new(client.clone()), address: std::sync::Mutex::new(from), since: unix_now(),
-            down: AtomicU64::new(0), up: AtomicU64::new(0), streams: AtomicU64::new(0), open: AtomicU64::new(0) })).clone()
-    };
-    record.open.fetch_add(1, Ordering::Relaxed);
-    record.streams.fetch_add(1, Ordering::Relaxed);
+    let mut first = vec![0u8; 4096];
+    let n = tokio::time::timeout(Duration::from_secs(30), tcp.read(&mut first)).await.unwrap_or(Ok(0)).unwrap_or(0);
+    first.truncate(n);
+    // A home keeping an idle connection here, not a device.
+    if first.starts_with(HOME_HELLO.as_bytes()) { return pooled_home(tcp, first, hub, from).await }
+    let home = header("X-Torrbaby-Home");
     hub.streams.fetch_add(1, Ordering::Relaxed);
     TCP_OPEN.fetch_add(1, Ordering::Relaxed);
+    // One record per device while any of its Diamond streams is open.
+    let key = tcp_key(&client, &ip);
+    let made: Arc<std::sync::Mutex<Option<Arc<Device>>>> = Default::default();
+    let (listing, holder, named) = (hub.clone(), made.clone(), client.clone());
+    let record = move || {
+        let record = listing.connected.lock().map(|mut connected| connected.entry(key).or_insert_with(|| Arc::new(Device { client: std::sync::Mutex::new(named.clone()), address: std::sync::Mutex::new(from), since: unix_now(),
+            down: AtomicU64::new(0), up: AtomicU64::new(0), streams: AtomicU64::new(0), open: AtomicU64::new(0) })).clone())
+            .unwrap_or_else(|_| Arc::new(Device { client: Default::default(), address: std::sync::Mutex::new(from), since: unix_now(), down: AtomicU64::new(0), up: AtomicU64::new(0), streams: AtomicU64::new(0), open: AtomicU64::new(0) }));
+        record.open.fetch_add(1, Ordering::Relaxed);
+        record.streams.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut held) = holder.lock() { *held = Some(record.clone()) }
+        record
+    };
     let (recv, mut send) = tcp.into_split();
-    let _ = relay(recv, &mut send, hub.clone(), from, &format!("Device tcp {}", if client.is_empty() { ip.as_str() } else { client.as_str() }), &record).await;
+    let _ = relay(first, recv, &mut send, hub.clone(), from, &format!("Device tcp {}", if client.is_empty() { ip.as_str() } else { client.as_str() }), home, record).await;
     TCP_OPEN.fetch_sub(1, Ordering::Relaxed);
-    if record.open.fetch_sub(1, Ordering::Relaxed) == 1 {
+    let record = made.lock().ok().and_then(|mut held| held.take());
+    if let Some(record) = record && record.open.fetch_sub(1, Ordering::Relaxed) == 1 {
         if let Ok(mut connected) = hub.connected.lock() {
             if connected.get(&key).is_some_and(|held| held.open.load(Ordering::Relaxed) == 0) { connected.remove(&key); }
         }
     }
+    Ok(())
+}
+
+/// A home's idle connection over TCP: after `TBHOME1 <secret>\n` it gets `OK\n`, then
+/// KEEPALIVE every 20 s while idle, and CLAIMED once a device stream is put on it (raw bytes
+/// both ways from then on, the device's first). The home opens another as each is claimed.
+/// Anything the home sends while idle, or its closing, ends it.
+async fn pooled_home(tcp: tokio::net::TcpStream, mut first: Vec<u8>, hub: Arc<Hub>, from: SocketAddr) -> Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut tcp = tcp;
+    while !first.contains(&b'\n') {
+        if first.len() > 256 { bail!("hello too long") }
+        first.push(tokio::time::timeout(Duration::from_secs(10), tcp.read_u8()).await??);
+    }
+    let end = first.iter().position(|b| *b == b'\n').unwrap_or(first.len());
+    if end + 1 != first.len() { bail!("data after the hello") }
+    let text = String::from_utf8_lossy(&first[..end]).into_owned();
+    let Some(home) = hub.home_by_secret(text.trim_end().strip_prefix(HOME_HELLO).unwrap_or("")) else {
+        eprintln!("Home tcp {from}: refused: wrong secret");
+        return Ok(());
+    };
+    let (claim, mut claimed) = tokio::sync::oneshot::channel();
+    let id = POOLED_IDS.fetch_add(1, Ordering::Relaxed);
+    let full = match home.pool.lock() {
+        Ok(mut pool) if pool.len() < MAX_POOL => { pool.push(Pooled { id, from, claim }); false }
+        _ => true,
+    };
+    if full { tcp.write_all(b"FULL\n").await?; return Ok(()) }
+    if tcp.write_all(b"OK\n").await.is_err() { home.pool.lock().map_err(|_| anyhow::anyhow!("lock"))?.retain(|p| p.id != id); return Ok(()) }
+    home.pooled.notify_one();
+    let (mut reader, mut writer) = tcp.into_split();
+    let mut byte = [0u8; 1];
+    let ended = loop {
+        tokio::select! {
+            asked = &mut claimed => {
+                let Ok(reply) = asked else { break "dropped" };
+                if writer.write_all(&[CLAIMED]).await.is_err() { break "closed" }
+                if let Ok(tcp) = reader.reunite(writer) { let _ = reply.send(tcp); }
+                return Ok(());
+            }
+            _ = tokio::time::sleep(Duration::from_secs(20)) => { if writer.write_all(&[KEEPALIVE]).await.is_err() { break "closed" } }
+            _ = reader.read(&mut byte) => break "closed by the home",
+        }
+    };
+    if let Ok(mut pool) = home.pool.lock() { pool.retain(|p| p.id != id) }
+    let _ = ended;
     Ok(())
 }
 

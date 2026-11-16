@@ -102,6 +102,15 @@ pipes serve the Mac's install server as `https://ota.mac.abt.jonthomason.com/` (
   X-Forwarded-For); the client id comes in `X-Torrbaby-Client`. The app (Apple/Direct
   `tcp.rs`) races QUIC with TCP 1.5 s behind and remembers networks where only TCP opened; no
   punching over it. The packet tunnel extension still uses QUIC only.
+- **Other homes (2026-11-16):** tbrendezvous relays to more than Diamond. Each other home has a
+  secret in `homes/<name>.secret` in the state directory (`scripts/deploy_rendezvous.sh
+  --add-home NAME FILE` makes one and copies it to FILE locally; "mac" is ABT's Mac host
+  agent). A home connects like Diamond (QUIC `tbhome`, `TBHOME1 <secret>\n` → `OK\n`; the
+  secret identifies the home) or over TCP 443 by keeping idle upgraded `/tbrelay` connections
+  (`TBHOME1 <secret>\n` → `OK\n`, then `.` every 20 s while idle and `!` when a device stream
+  is put on it; raw both ways after). A device stream names its home with a first line
+  `TBTO1 <name>\n` (or `X-Torrbaby-Home` on a TCP upgrade); without one it goes to Diamond, as
+  before. Diamond's Connection page and day totals count only Diamond's streams.
 
 ## Ports to open on bronze
 

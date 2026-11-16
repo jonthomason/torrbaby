@@ -4,9 +4,11 @@
 //!       (--tcp: the relay over TCP on loopback, behind bronze's web server on 443; 0: off)
 //!   tbrendezvous [--state DIR] info                           print the certificate
 //!       fingerprint and the path of Diamond's secret, making both on first use
+//!   tbrendezvous [--state DIR] add-home NAME                  make another home's secret
+//!       (homes/NAME.secret, kept if it exists) and print its path
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
-use tbrendezvous::{Hub, Identity, endpoint, load_or_create_secret, serve, serve_tcp, stun};
+use tbrendezvous::{Hub, Identity, create_home_secret, endpoint, load_or_create_secret, serve, serve_tcp, stun};
 
 fn main() -> Result<()> {
     let mut state = PathBuf::from("/var/lib/tbrendezvous");
@@ -16,6 +18,7 @@ fn main() -> Result<()> {
     let mut stun_port_2 = 3479u16;
     let mut tcp_port = 7444u16;
     let mut info = false;
+    let mut add_home: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -25,10 +28,15 @@ fn main() -> Result<()> {
             "--quic" => quic_port = args.next().context("--quic needs a port")?.parse()?,
             "--tcp" => tcp_port = args.next().context("--tcp needs a port")?.parse()?,
             "info" => info = true,
+            "add-home" => add_home = Some(args.next().context("add-home needs a name")?),
             other => bail!("Unknown argument {other}"),
         }
     }
     std::fs::create_dir_all(&state).with_context(|| format!("Creating {}", state.display()))?;
+    if let Some(name) = add_home {
+        println!("{}", create_home_secret(&state, &name)?.display());
+        return Ok(());
+    }
     let identity = Identity::load_or_create(&state)?;
     let secret = load_or_create_secret(&state)?;
     if info {
@@ -47,6 +55,7 @@ fn main() -> Result<()> {
         tokio::spawn(stun::serve(stun_socket));
         let hub = Hub::new(&secret);
         hub.keep_usage(&state);
+        hub.load_homes(&state);
         if tcp_port != 0 {
             let listener = tokio::net::TcpListener::bind(("127.0.0.1", tcp_port)).await.with_context(|| format!("TCP port {tcp_port}"))?;
             eprintln!("tbrendezvous: relay over TCP on 127.0.0.1:{tcp_port}");

@@ -7,6 +7,9 @@
 #   scripts/deploy_rendezvous.sh             build, install, restart, check
 #   scripts/deploy_rendezvous.sh --rollback  restore the previous binary
 #   scripts/deploy_rendezvous.sh --info      print the fingerprint (and the secret's path)
+#   scripts/deploy_rendezvous.sh --add-home NAME FILE
+#                                            make another home's secret on bronze (kept if it
+#                                            exists) and copy it to FILE here (mode 600; never print it)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOST="${TB_RENDEZVOUS_HOST:-bronze}"
@@ -29,6 +32,14 @@ case "${1:-}" in
     --info)
         ssh "$HOST" 'sudo /usr/local/bin/tbrendezvous --state /var/lib/private/tbrendezvous info 2>/dev/null \
             || sudo /usr/local/bin/tbrendezvous --state /var/lib/tbrendezvous info'
+        exit 0 ;;
+    --add-home)
+        name="${2:?--add-home needs a name}"; file="${3:?--add-home needs a file to copy the secret to}"
+        state=$(ssh "$HOST" 'test -d /var/lib/private/tbrendezvous && echo /var/lib/private/tbrendezvous || echo /var/lib/tbrendezvous')
+        path=$(ssh "$HOST" "sudo /usr/local/bin/tbrendezvous --state $state add-home '$name' && sudo chown -R --reference=$state $state/homes")
+        mkdir -p "$(dirname "$file")"
+        (umask 077; ssh "$HOST" "sudo cat '$path'" > "$file.new" && mv "$file.new" "$file")
+        echo "Home $name: secret on bronze at $path, copied to $file"
         exit 0 ;;
     "") ;;
     *) echo "Unknown argument $1" >&2; exit 2 ;;
