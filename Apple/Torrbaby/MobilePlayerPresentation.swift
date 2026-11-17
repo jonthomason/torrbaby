@@ -312,9 +312,9 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
                         // AVKit has no call to end it, and showing the screen alone may not; giving the
                         // screen its player again moves the picture out of the floating window.
                         let endPictureInPicture = { [weak self] in
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                                 guard let self, self.pictureInPicture, let controller = self.controller, let player = self.model?.player else { return }
-                                ClientDiagnostics.note("Picture in Picture still on after the player came back: ending it")
+                                ClientDiagnostics.note("Picture in Picture still on with the player back on screen: bringing the picture back to it")
                                 self.restoring = true
                                 controller.player = nil
                                 controller.player = player
@@ -426,7 +426,10 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
             controller?.inPictureInPicture = true
             model?.report()
         }
-        func playerViewControllerShouldAutomaticallyDismissAtPictureInPictureStart(_ playerViewController: AVPlayerViewController) -> Bool { true }
+        /// The player stays on screen under Picture in Picture, showing AVKit's own "playing in
+        /// Picture in Picture" page (as Netflix does): coming back to the app lands there, and the
+        /// picture returns onto it. (Dismissing it left the film floating over the app's pages.)
+        func playerViewControllerShouldAutomaticallyDismissAtPictureInPictureStart(_ playerViewController: AVPlayerViewController) -> Bool { false }
         func playerViewController(_ playerViewController: AVPlayerViewController, failedToStartPictureInPictureWithError error: Error) {
             ClientDiagnostics.note("Picture in Picture failed to start: \((error as NSError).domain) \((error as NSError).code) \(error.localizedDescription)")
             pictureInPicture = false
