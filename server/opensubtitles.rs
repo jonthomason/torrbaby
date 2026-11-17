@@ -23,7 +23,7 @@ const USER_AGENT: &str = "Torrbaby v1.0";
 /// The start of the error a file waits on until the daily downloads reset.
 pub const LIMIT_REACHED: &str = "OpenSubtitles daily download limit reached";
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Clone)]
 struct Credentials {
     api_key: String,
     #[serde(default)] username: String,
@@ -60,8 +60,12 @@ pub enum Found {
     Missing(String),
 }
 
+/// The account file, read once: nothing writes it but a person, and the server is restarted
+/// after an edit. (It was read and parsed for each of the library's files on every pass.)
 fn credentials(data: &Path) -> Option<Credentials> {
-    serde_json::from_slice(&std::fs::read(data.join("opensubtitles.json")).ok()?).ok()
+    static READ: std::sync::LazyLock<Mutex<std::collections::HashMap<std::path::PathBuf, Option<Credentials>>>> = std::sync::LazyLock::new(Default::default);
+    let mut read = READ.lock().ok()?;
+    read.entry(data.to_owned()).or_insert_with(|| std::fs::read(data.join("opensubtitles.json")).ok().and_then(|b| serde_json::from_slice(&b).ok())).clone()
 }
 
 pub fn configured(data: &Path) -> bool { credentials(data).is_some() }

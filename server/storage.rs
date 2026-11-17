@@ -44,6 +44,7 @@ impl Database {
         connection.execute_batch(include_str!("schema.sql"))?;
         add_column(&connection, "processing_failures", "resolution", "TEXT")?;
         let mut database = Self { connection };
+        database.split_state(legacy)?;
         database.migrate_profiles(version)?;
         database.initialize_catalog_revision()?;
         // Fault tolerant: a failed repair is logged and the server starts regardless.
@@ -52,35 +53,96 @@ impl Database {
             Ok(n) => eprintln!("Marked {n} playback records stopped in the closing credits as watched"),
             Err(error) => eprintln!("Repairing playback stopped in the closing credits failed: {error:#}"),
         }
-        let existing: Option<String> = database
-            .connection
-            .query_row("SELECT document FROM organizer_state WHERE id=1", [], |r| {
-                r.get(0)
-            })
-            .optional()?;
-        if existing.is_none() {
-            let state = match legacy.filter(|p| p.exists()) {
-                Some(path) => serde_json::from_slice(&fs::read(path)?)?,
-                None => json!({"jobs":{},"events":[],"settings":{},"scans":[]}),
-            };
-            database.save_state(&state)?;
-        }
         Ok(database)
     }
-    pub fn save_state(&mut self, value: &Value) -> Result<()> {
-        self.connection.execute(
-            "INSERT OR REPLACE INTO organizer_state VALUES(1,?)",
-            [value.to_string()],
-        )?;
+    /// The organizer's state was one JSON document (817 KB on Diamond, nearly all jobs and
+    /// events) that every settings read parsed and every poll, sample and event rewrote whole,
+    /// every few seconds. Now each value is its own row, and jobs and events their own tables.
+    /// This moves an old document (or the first server's JSON file) there once.
+    fn split_state(&mut self, legacy: Option<&Path>) -> Result<()> {
+        let table: bool = self.connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='organizer_state')", [], |r| r.get(0))?;
+        let document: Option<String> = if table {
+            self.connection.query_row("SELECT document FROM organizer_state WHERE id=1", [], |r| r.get(0)).optional()?
+        } else { None };
+        let empty: bool = self.connection.query_row("SELECT NOT EXISTS(SELECT 1 FROM organizer_values)", [], |r| r.get(0))?;
+        let mut state: Value = match (document, legacy.filter(|p| p.exists())) {
+            (Some(text), _) => serde_json::from_str(&text)?,
+            (None, Some(path)) if empty => serde_json::from_slice(&fs::read(path)?)?,
+            _ => { if table { self.connection.execute_batch("DROP TABLE organizer_state")?; } return Ok(()) }
+        };
+        let map = state.as_object_mut().context("Invalid organizer state")?;
+        let jobs = map.remove("jobs");
+        let events = map.remove("events");
+        for retired in ["torrent_activity", "last_poll", "scans", "scan_error"] { map.remove(retired); }
+        let tx = self.connection.transaction()?;
+        for (hash, job) in jobs.as_ref().and_then(Value::as_object).into_iter().flatten() {
+            if !job.is_null() { tx.execute("INSERT OR IGNORE INTO organizer_jobs VALUES(?,?)", params![hash, job.to_string()])?; }
+        }
+        for event in events.as_ref().and_then(Value::as_array).into_iter().flatten() {
+            tx.execute("INSERT INTO organizer_events(document) VALUES(?)", [event.to_string()])?;
+        }
+        for (key, value) in map.iter() {
+            tx.execute("INSERT OR REPLACE INTO organizer_values VALUES(?,?)", params![key, value.to_string()])?;
+        }
+        if table { tx.execute_batch("DROP TABLE organizer_state")?; }
+        tx.commit()?;
         Ok(())
     }
+    /// Only the values that changed are written; a value set to null is removed.
+    pub fn save_state(&mut self, value: &Value) -> Result<()> {
+        let map = value.as_object().context("Organizer state must be an object")?;
+        let tx = self.connection.transaction()?;
+        let stored: Vec<String> = { let mut q = tx.prepare("SELECT key FROM organizer_values")?; q.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()? };
+        for key in stored.iter().filter(|k| map.get(*k).is_none_or(Value::is_null)) {
+            tx.execute("DELETE FROM organizer_values WHERE key=?", [key])?;
+        }
+        for (key, value) in map.iter().filter(|(_, v)| !v.is_null()) {
+            tx.execute("INSERT INTO organizer_values VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE value IS NOT excluded.value", params![key, value.to_string()])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+    /// The organizer's values as one object.
     pub fn state(&self) -> Result<Value> {
-        let text: String = self.connection.query_row(
-            "SELECT document FROM organizer_state WHERE id=1",
-            [],
-            |r| r.get(0),
-        )?;
-        Ok(serde_json::from_str(&text)?)
+        let mut statement = self.connection.prepare("SELECT key,value FROM organizer_values")?;
+        let rows = statement.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut map = serde_json::Map::new();
+        for row in rows { let (key, text) = row?; map.insert(key, serde_json::from_str(&text)?); }
+        Ok(Value::Object(map))
+    }
+    /// A torrent's organizer job, or null.
+    pub fn job(&self, hash: &str) -> Result<Value> {
+        let text: Option<String> = self.connection.query_row("SELECT document FROM organizer_jobs WHERE hash=?", [hash], |r| r.get(0)).optional()?;
+        Ok(text.map(|t| serde_json::from_str(&t)).transpose()?.unwrap_or(Value::Null))
+    }
+    /// Every job, by torrent hash.
+    pub fn jobs(&self) -> Result<Value> {
+        let mut statement = self.connection.prepare("SELECT hash,document FROM organizer_jobs")?;
+        let rows = statement.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut jobs = serde_json::Map::new();
+        for row in rows { let (hash, text) = row?; jobs.insert(hash, serde_json::from_str(&text)?); }
+        Ok(Value::Object(jobs))
+    }
+    /// Written only when it changed; null removes it.
+    pub fn save_job(&self, hash: &str, job: &Value) -> Result<()> {
+        if job.is_null() { self.connection.execute("DELETE FROM organizer_jobs WHERE hash=?", [hash])?; return Ok(()) }
+        self.connection.execute("INSERT INTO organizer_jobs VALUES(?,?) ON CONFLICT(hash) DO UPDATE SET document=excluded.document WHERE document IS NOT excluded.document", params![hash, job.to_string()])?;
+        Ok(())
+    }
+    /// The last thousand events are kept.
+    pub fn add_event(&self, event: &Value) -> Result<()> {
+        self.connection.execute("INSERT INTO organizer_events(document) VALUES(?)", [event.to_string()])?;
+        let id = self.connection.last_insert_rowid();
+        if id % 100 == 0 { self.connection.execute("DELETE FROM organizer_events WHERE id<=?", [id - 1000])?; }
+        Ok(())
+    }
+    /// Oldest first, as the list in the organizer document was.
+    pub fn events(&self) -> Result<Value> {
+        let mut statement = self.connection.prepare("SELECT document FROM (SELECT id,document FROM organizer_events ORDER BY id DESC LIMIT 1000) ORDER BY id")?;
+        let rows = statement.query_map([], |r| r.get::<_, String>(0))?;
+        let mut events = Vec::new();
+        for row in rows { events.push(serde_json::from_str::<Value>(&row?)?); }
+        Ok(Value::Array(events))
     }
     pub fn rows(&self, sql: &str, args: impl rusqlite::Params) -> Result<Vec<Value>> {
         let mut statement = self.connection.prepare(sql)?;
@@ -161,7 +223,7 @@ impl Database {
         let media = format!("{hash}:{index}");
         let session = uuid::Uuid::new_v4().to_string();
         let time = now();
-        tx.execute("INSERT INTO media VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,length=excluded.length", params![media,hash,i64::try_from(index)?,name,i64::try_from(length)?])?;
+        tx.execute("INSERT INTO media VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,length=excluded.length WHERE name IS NOT excluded.name OR length IS NOT excluded.length", params![media,hash,i64::try_from(index)?,name,i64::try_from(length)?])?;
         tx.execute(
             "INSERT OR IGNORE INTO profile_playback(profile_id,media_id) VALUES(?,?)",
             params![profile,media],
@@ -248,7 +310,7 @@ impl Database {
         self.require_profile(profile)?;
         let media = format!("{hash}:{index}");
         let tx = self.connection.transaction()?;
-        tx.execute("INSERT INTO media VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,length=excluded.length", params![media,hash,i64::try_from(index)?,name,i64::try_from(length)?])?;
+        tx.execute("INSERT INTO media VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,length=excluded.length WHERE name IS NOT excluded.name OR length IS NOT excluded.length", params![media,hash,i64::try_from(index)?,name,i64::try_from(length)?])?;
         tx.execute(
             "INSERT OR IGNORE INTO profile_playback(profile_id,media_id) VALUES(?,?)",
             params![profile,media],

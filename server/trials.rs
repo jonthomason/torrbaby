@@ -55,6 +55,10 @@ fn best(candidates:&[Value])->Option<String> {
  .and_then(|c|c["hash"].as_str().map(str::to_owned))
 }
 pub async fn tick(s:&Service)->Result<()> {
+ // Only while a trial runs (nearly never): one cheap query otherwise.
+ let active:bool=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?.connection.query_row(
+  "SELECT EXISTS(SELECT 1 FROM torrent_trials WHERE json_extract(document,'$.state') IN ('starting','running','finishing'))",[],|r|r.get(0))?;
+ if !active {return Ok(());}
  let _lock=LOCK.lock().await;
  let trials=list(s)?;
  for mut v in trials["trials"].as_array().into_iter().flatten().cloned() {

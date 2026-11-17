@@ -391,6 +391,10 @@ async fn advance(s: &Service, operation: &Value) -> Result<()> {
 }
 
 pub async fn tick(s: &Service) -> Result<()> {
+    // Nearly always nothing to do: no wait for the mutation lock (the scan holds it) for that.
+    let unfinished: bool = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?
+        .connection.query_row("SELECT EXISTS(SELECT 1 FROM library_operations WHERE phase!='done')", [], |r| r.get(0))?;
+    if !unfinished { return Ok(()); }
     let _mutation = s.mutation_lock.lock().await;
     let operations = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.library_operations()?;
     for operation in operations {
@@ -454,8 +458,6 @@ impl crate::storage::Database {
         let Some(operation) = self.library_operations()?.into_iter().find(|op|op["package_id"] == hash) else { return Ok(false); };
         if operation["phase"] != "done" { return Ok(false); }
         let id = operation["id"].as_str().context("Missing operation identity")?;
-        let mut state = self.state()?;
-        if let Some(jobs) = state["jobs"].as_object_mut() { jobs.remove(hash); }
         let tx = self.connection.transaction()?;
         tx.execute("INSERT INTO library_operation_archive VALUES(?,?,?,?)",rusqlite::params![id,hash,operation.to_string(),now()])?;
         // Old paths may still be present in the catalog snapshot. A fresh scan must
@@ -464,7 +466,7 @@ impl crate::storage::Database {
         tx.execute("DELETE FROM library_operation_assets WHERE operation_id=?",[id])?;
         tx.execute("DELETE FROM library_operation_runtime WHERE operation_id=?",[id])?;
         tx.execute("DELETE FROM library_operations WHERE id=? AND phase='done'",[id])?;
-        tx.execute("UPDATE organizer_state SET document=? WHERE id=1",[state.to_string()])?;
+        tx.execute("DELETE FROM organizer_jobs WHERE hash=?",[hash])?;
         tx.commit()?;
         Ok(true)
     }

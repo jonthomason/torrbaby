@@ -226,6 +226,14 @@ pub async fn serve(
     // Off in previews and tests: only the live server holds the connection to bronze.
     let rendezvous_task = (!preview).then(|| service.config.rendezvous.clone()).flatten()
         .map(|config| crate::rendezvous::spawn(config, service.config.listen_port));
+    {
+        let db = service.db.lock().map_err(|_| anyhow::anyhow!("Database lock failed"))?;
+        match crate::speech_subtitles::import_records(&db, &service.data_dir) {
+            Ok(0) => {}
+            Ok(moved) => eprintln!("Subtitle records: {moved} moved into the database"),
+            Err(error) => eprintln!("Subtitle records: {error:#}"),
+        }
+    }
     let sampling_service = service.clone();
     let cached_entities = service
         .db
@@ -246,7 +254,7 @@ pub async fn serve(
                 .rpc
                 .call(
                     "session_get",
-                    json!({"fields":["seed_ratio_limit","seed_ratio_limited"]}),
+                    json!({"fields":["seed_ratio_limit","seed_ratio_limited","incomplete_dir","incomplete_dir_enabled"]}),
                 )
                 .await
                 .ok();
@@ -260,6 +268,8 @@ pub async fn serve(
                             eprintln!("Transfer sampling: {error}");
                         }
                     }
+                    let incomplete = policy.as_ref().filter(|p| p["incomplete_dir_enabled"] == true).and_then(|p| p["incomplete_dir"].as_str()).map(std::path::PathBuf::from);
+                    crate::library_watch::sampled(torrents, incomplete.as_deref());
                     if let Ok(mut cache) = sampling_service.torrents.lock() {
                         *cache = Some((Instant::now(), torrents.clone()));
                     }
@@ -1559,7 +1569,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         if let Some(torrents) = cached {
             let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
             let operations = db.library_operations()?;
-            return Ok(library_issues(crate::library_files::annotate_torrents(torrents, &operations), &db.state()?));
+            return Ok(library_issues(crate::library_files::annotate_torrents(torrents, &operations), &db.jobs()?));
         }
         let torrents = s
             .rpc
@@ -1568,7 +1578,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             .take();
         let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
         let operations = db.library_operations()?;
-        return Ok(library_issues(crate::library_files::annotate_torrents(torrents, &operations), &db.state()?));
+        return Ok(library_issues(crate::library_files::annotate_torrents(torrents, &operations), &db.jobs()?));
     }
     let effective = if path == "/v1/status" || path == "/v1/storage" || path.starts_with("/v1/attention") {
         Some(s.effective_config()?)
@@ -1677,7 +1687,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             Ok(json!({"version":env!("CARGO_PKG_VERSION"),"server":{"name":state["server"]["name"],"id":state["server"]["id"],"routes":ROUTES.read().map(|r|r.clone()).unwrap_or_default(),"relay":crate::rendezvous::advertised()},"uptime_seconds":s.started.elapsed().as_secs(),"rendezvous":crate::rendezvous::status(),
                 "settings":{"background_subtitles":config.background_subtitles,"source":config.source,"movies":config.movies,"tv":config.tv,"poll_seconds":config.poll_seconds,"paused":s.preview || config.paused},
                 "storage":crate::drives::Drives::of(&config).report(),
-                "credits_analysis":crate::credits::summary(&db)?,"subtitle_preparation":crate::media_inventory::summary(&db,&s.subtitle_jobs)?,"last_poll":state["last_poll"],"last_error":if s.preview { json!("Migration preview: organizer not enabled") } else {state["last_error"].clone()},"pending_scans":if state["library_scan"]["scanning"] == true {1} else {0},"scan_error":state["library_scan"]["error"],"jobs":state["jobs"]}))
+                "credits_analysis":crate::credits::summary(&db)?,"subtitle_preparation":crate::media_inventory::summary(&db,&s.subtitle_jobs)?,"last_poll":crate::organizer::last_poll(),"last_error":if s.preview { json!("Migration preview: organizer not enabled") } else {state["last_error"].clone()},"pending_scans":if scanning() {1} else {0},"scan_error":state["library_scan"]["error"],"jobs":db.jobs()?}))
         }
         ("PUT","/v1/server") => {
             // The name is the owner's to choose; the id never changes, so devices keep
@@ -1701,7 +1711,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             return crate::rendezvous::usage_named(names).await;
         }
         ("GET","/v1/punch-results") => { drop(db); return Ok(json!({"results": crate::direct::results::summary(&s.data_dir)})); }
-        ("GET","/v1/events") => Ok(db.state()?["events"].take()),
+        ("GET","/v1/events") => db.events(),
         ("GET","/v1/clients") => Ok(json!(db.rows("SELECT clients.*, EXISTS(SELECT 1 FROM device_credentials WHERE client_id=clients.id) AS paired_credential FROM clients ORDER BY last_seen DESC",[])?)),
         ("POST","/v1/clients") => db.register(text(&body,"client_id")?,text(&body,"name")?,text(&body,"platform")?),
         ("GET","/v1/playback") => Ok(json!(db.history(profile)?)),
@@ -1714,7 +1724,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             Ok(json!({"accepted":true}))
         },
         ("POST","/v1/playback/progress") => db.progress_with_evidence(text(&body,"session_id")?,body["sequence"].as_i64().context("Invalid sequence")?,body["position"].as_f64().context("Invalid position")?,body["duration"].as_f64().context("Invalid duration")?, match body.get("ended") {None => false,Some(v)=>v.as_bool().context("ended must be boolean")?}, body.get("watched_eligible").map(|v|v.as_bool().context("watched_eligible must be boolean")).transpose()?.unwrap_or(true), body.get("reached_end").map(|v|v.as_bool().context("reached_end must be boolean")).transpose()?.unwrap_or(false)),
-        ("GET","/v1/rates") => Ok(json!(db.rows("SELECT CAST(time/60 AS INTEGER)*60 AS time,AVG(download) AS download,AVG(upload) AS upload FROM transfer_rates WHERE time>=? GROUP BY CAST(time/60 AS INTEGER) ORDER BY time",[now()-86400.0])?)),
+        ("GET","/v1/rates") => Ok(json!(db.transfer_rates()?)),
         ("GET","/v1/metadata") => {
             let records = db.rows("SELECT document FROM metadata",[])?;
             let values: Result<Vec<Value>> = records.iter().map(|r| Ok(serde_json::from_str(text(r,"document")?)?)).collect();
@@ -2291,10 +2301,10 @@ fn byte_range(header: Option<&str>, size: u64) -> Result<(u64, u64)> {
 
 /// Why a finished download has not been filed into the library, for the
 /// clients' "Needs attention" list (for example, a title waiting to be identified).
-fn library_issues(mut torrents: Value, state: &Value) -> Value {
+fn library_issues(mut torrents: Value, jobs: &Value) -> Value {
     if let Some(rows) = torrents.as_array_mut() {
         for torrent in rows {
-            let job = &state["jobs"][torrent["hash_string"].as_str().unwrap_or("")];
+            let job = &jobs[torrent["hash_string"].as_str().unwrap_or("")];
             if job["phase"] == "blocked" && torrent["percent_done"].as_f64().is_some_and(|done| done >= 1.0) {
                 if let Some(reason) = job["error"].as_str().filter(|reason| !reason.is_empty()) {
                     torrent["library_issue"] = json!(reason);
@@ -2448,8 +2458,18 @@ mod artwork_preparation_tests {
     }
 }
 
+/// Artwork known to be cached, and the library revision and time of the last pass.
+static ARTWORK: std::sync::LazyLock<std::sync::Mutex<(HashSet<String>, String, f64)>> = std::sync::LazyLock::new(Default::default);
+/// Fetches the artwork the library's titles show, when the library changes (and hourly, for
+/// fetches that failed). It looked for every image on disk each minute.
 async fn prefetch_library_artwork(s: &Service) -> Result<()> {
     use futures_util::{stream, StreamExt};
+    let revision = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.part_revision("content")?;
+    {
+        let mut last = ARTWORK.lock().map_err(|_| anyhow::anyhow!("Artwork unavailable"))?;
+        if last.1 == revision && now() - last.2 < 3600.0 { return Ok(()); }
+        last.1 = revision; last.2 = now();
+    }
     let urls = {
         let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
         // visible_assets excludes removal intent; it deliberately includes pending downloads.
@@ -2460,6 +2480,8 @@ async fn prefetch_library_artwork(s: &Service) -> Result<()> {
                 urls.insert(url.to_owned());
             }
         }
+        let known = ARTWORK.lock().map_err(|_| anyhow::anyhow!("Artwork unavailable"))?;
+        urls.retain(|url| !known.0.contains(url));
         urls
     };
     let cache = s.data_dir.join("artwork");
@@ -2468,7 +2490,8 @@ async fn prefetch_library_artwork(s: &Service) -> Result<()> {
         let cache = &cache;
         async move {
             let key = artwork_key(&url);
-            if tokio::fs::try_exists(cache.join(format!("{key}.image"))).await? { return Ok::<(),anyhow::Error>(()); }
+            let have = |url: &str| { if let Ok(mut known) = ARTWORK.lock() { known.0.insert(url.to_owned()); } };
+            if tokio::fs::try_exists(cache.join(format!("{key}.image"))).await? { have(&url); return Ok::<(),anyhow::Error>(()); }
             let state_path = cache.join(format!("{key}.fetch.json"));
             let previous: Value = match tokio::fs::read(&state_path).await {
                 Ok(data) => serde_json::from_slice(&data).unwrap_or(Value::Null),
@@ -2477,7 +2500,7 @@ async fn prefetch_library_artwork(s: &Service) -> Result<()> {
             };
             if previous["retry_at"].as_f64().unwrap_or(0.0) > now() { return Ok(()); }
             match cached_artwork(s, &url).await {
-                Ok(_) => { let _ = tokio::fs::remove_file(state_path).await; }
+                Ok(_) => { have(&url); let _ = tokio::fs::remove_file(state_path).await; }
                 Err(error) => {
                     let attempts = previous["attempts"].as_u64().unwrap_or(0).saturating_add(1);
                     let state = json!({"url":url,"attempts":attempts,"retry_at":now()+artwork_retry_delay(attempts),"error":error.to_string()});
@@ -2495,21 +2518,19 @@ async fn prefetch_library_artwork(s: &Service) -> Result<()> {
     Ok(())
 }
 
+/// Whether a scan is running: in memory. Only a scan's error is
+/// stored (and changes the catalog), so a scan that finds nothing new writes nothing.
+static SCANNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(crate) fn scanning() -> bool { SCANNING.load(std::sync::atomic::Ordering::Relaxed) }
 pub(crate) async fn scan_library(s: &Service) -> Result<()> {
     let Ok(_guard) = s.scan_lock.try_lock() else {
         return Ok(());
     };
     let _mutation = s.mutation_lock.lock().await;
-    let old = {
-        let mut db =
-            s.db.lock()
-                .map_err(|_| anyhow::anyhow!("Database lock failed"))?;
-        let mut state = db.state()?;
-        state["library_scan"] =
-            json!({"scanning":true,"last_scan":state["library_scan"]["last_scan"],"error":null});
-        db.save_state(&state)?;
-        db.documents("assets")?
-    };
+    SCANNING.store(true, std::sync::atomic::Ordering::Relaxed);
+    struct Done; impl Drop for Done { fn drop(&mut self) { SCANNING.store(false, std::sync::atomic::Ordering::Relaxed); } }
+    let _done = Done;
+    let old = s.db.lock().map_err(|_| anyhow::anyhow!("Database lock failed"))?.documents("assets")?;
     let torrents = match s
         .rpc
         .call("torrent_get", json!({"fields":crate::transmission::FIELDS}))
@@ -2554,6 +2575,8 @@ pub(crate) async fn scan_library(s: &Service) -> Result<()> {
                         "match_confidence",
                         "metadata_query",
                         "error",
+                        // Set by link_extras after the scan; kept, or every scan rewrote each extra twice.
+                        "parent_title_id",
                     ] {
                         if let Some(value) = current.get(key) {
                             asset[key] = value.clone();
@@ -2573,8 +2596,10 @@ pub(crate) async fn scan_library(s: &Service) -> Result<()> {
                         }
                     }
                 }
+                // Only a record that changed is written: rewriting every record on every scan
+                // wore the disks and told every client the whole library had changed.
                 tx.execute(
-                    "INSERT OR REPLACE INTO library_assets VALUES(?,?)",
+                    "INSERT INTO library_assets VALUES(?,?) ON CONFLICT(id) DO UPDATE SET document=excluded.document WHERE document IS NOT excluded.document",
                     rusqlite::params![id, asset.to_string()],
                 )?;
             }
@@ -2583,10 +2608,10 @@ pub(crate) async fn scan_library(s: &Service) -> Result<()> {
             }
             tx.commit()?;
             db.link_extras()?;
-            state["library_scan"] = json!({"scanning":false,"last_scan":now(),"error":if inventory.errors.is_empty(){None}else{Some(inventory.errors.join("\n"))}});
+            state["library_scan"] = json!({"error":if inventory.errors.is_empty(){None}else{Some(inventory.errors.join("\n"))}});
         }
         Err(error) => {
-            state["library_scan"] = json!({"scanning":false,"last_scan":state["library_scan"]["last_scan"],"error":error.to_string()})
+            state["library_scan"] = json!({"error":error.to_string()})
         }
     }
     db.save_state(&state)?;
@@ -2628,10 +2653,21 @@ fn drop_superseded_asset(tx: &rusqlite::Transaction, id: &str) -> Result<bool> {
 const BACKFILLED_ENTITY_FIELDS: [&str; 3] = ["series_status", "last_air_date", "cast"];
 fn keep_backfilled(connection: &rusqlite::Connection, id: &str, mut entity: Value) -> Result<Value> {
     use rusqlite::OptionalExtension;
+    // How well a file's name matched belongs to the file (asset), not the title: packs matched
+    // with different confidences rewrote their show's record back and forth every pass.
+    if let Some(fields) = entity.as_object_mut() { fields.remove("match_confidence"); }
     let stored: Option<String> = connection
         .query_row("SELECT document FROM library_entities WHERE id=?", [id], |r| r.get(0))
         .optional()?;
     if let Some(stored) = stored.and_then(|text: String| serde_json::from_str::<Value>(&text).ok()) {
+        // An older copy of the title (a download's saved search result holds one) never
+        // replaces a newer one: the two were written in turn on every pass.
+        let fetched = |v: &Value| v["fetched_at"].as_f64().unwrap_or(0.0);
+        if fetched(&stored) > fetched(&entity) {
+            let mut stored = stored;
+            if let Some(fields) = stored.as_object_mut() { fields.remove("match_confidence"); }
+            return Ok(stored);
+        }
         for field in BACKFILLED_ENTITY_FIELDS {
             let missing = entity[field].is_null() || entity[field].as_str() == Some("");
             let known = !(stored[field].is_null() || stored[field].as_str() == Some(""));
@@ -2685,25 +2721,32 @@ fn save_match(s: &Service, id: &str, entity: Value, confirmed: bool) -> Result<(
     if asset["confirmed"] == true && !confirmed {
         return Ok(());
     }
+    let before = asset.clone();
     crate::scanner::resolve_episode_title(&mut asset, &entity);
     let entity_id = entity["id"].as_str().context("Invalid metadata identity")?.to_owned();
     let entity_id = entity_id.as_str();
     asset["entity_id"] = json!(entity_id);
-    asset["matched_at"] = json!(now());
+    asset["matched_at"] = before["matched_at"].clone();
     asset["status"] = json!("matched");
     asset["match_confidence"] = entity["match_confidence"].clone();
     asset["error"] = Value::Null;
     if confirmed {
         asset["confirmed"] = json!(true);
     }
+    // The same match again (a pack's match is applied to each of its files on every pass)
+    // changes nothing: writing the time of the match each minute told every client that 852
+    // files had changed.
+    let present = |v: &Value| -> Value { v.as_object().map(|o| Value::Object(o.iter().filter(|(_, v)| !v.is_null()).map(|(k, v)| (k.clone(), v.clone())).collect())).unwrap_or(Value::Null) };
+    let unchanged = present(&asset) == present(&before);
+    asset["matched_at"] = if unchanged { before["matched_at"].clone() } else { json!(now()) };
     let tx = db.connection.transaction()?;
     let entity = keep_backfilled(&tx, entity_id, entity)?;
     tx.execute(
-        "INSERT OR REPLACE INTO library_entities VALUES(?,?)",
+        "INSERT INTO library_entities VALUES(?,?) ON CONFLICT(id) DO UPDATE SET document=excluded.document WHERE document IS NOT excluded.document",
         rusqlite::params![entity_id, entity.to_string()],
     )?;
     tx.execute(
-        "INSERT OR REPLACE INTO library_assets VALUES(?,?)",
+        "INSERT INTO library_assets VALUES(?,?) ON CONFLICT(id) DO UPDATE SET document=excluded.document WHERE document IS NOT excluded.document",
         rusqlite::params![id, asset.to_string()],
     )?;
     tx.commit()?;
@@ -3055,16 +3098,7 @@ impl Service {
     pub(crate) fn event(&self, kind: &str, mut data: Value) -> Result<()> {
         data["kind"] = json!(kind);
         data["time"] = json!(now());
-        self.change_state(|state| {
-            if !state["events"].is_array() {
-                state["events"] = json!([]);
-            }
-            let events = state["events"].as_array_mut().unwrap();
-            events.push(data);
-            if events.len() > 1000 {
-                events.drain(..events.len() - 1000);
-            }
-        })
+        self.db.lock().map_err(|_| anyhow::anyhow!("Database lock failed"))?.add_event(&data)
     }
     pub(crate) fn invalidate_torrents(&self) {
         if let Ok(mut cache) = self.torrents.lock() {
@@ -3100,7 +3134,7 @@ fn save_torrent_metadata(s: &Service, record: &Value) -> Result<()> {
     if let Some(id) = record["selected"]["id"].as_str() {
         let entity = keep_backfilled(&tx, id, record["selected"].clone())?;
         tx.execute(
-            "INSERT OR REPLACE INTO library_entities VALUES(?,?)",
+            "INSERT INTO library_entities VALUES(?,?) ON CONFLICT(id) DO UPDATE SET document=excluded.document WHERE document IS NOT excluded.document",
             rusqlite::params![id, entity.to_string()],
         )?;
     }

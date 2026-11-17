@@ -73,7 +73,19 @@ pub struct Manager {
     /// When each cached reader was last asked for. An idle one is closed, so its file is
     /// not held open (an open file stops its drive from being ejected).
     reader_use: Mutex<HashMap<String, std::time::Instant>>,
+    /// The indexes on disk with their sizes and last use, read from disk once and then kept as
+    /// indexes are built, used and removed. (Every check for room walked all 2,841 folders and
+    /// 5,246 files of the cache, every 5 s.)
+    usage: Mutex<Option<Vec<(PathBuf, u64, std::time::SystemTime)>>>,
 }
+/// Index folders removed (reclaimed, purged, rebuilt), for the database's record of which
+/// files have an index (processing drains it).
+static REMOVED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+pub fn take_removed() -> Vec<PathBuf> { REMOVED.lock().map(|mut r| std::mem::take(&mut *r)).unwrap_or_default() }
+/// Index folders built, with their file (asset ID), for the same record.
+static BUILT: Mutex<Vec<(String, PathBuf)>> = Mutex::new(Vec::new());
+pub fn take_built() -> Vec<(String, PathBuf)> { BUILT.lock().map(|mut b| std::mem::take(&mut *b)).unwrap_or_default() }
+fn removed(path: &Path) { if let Ok(mut r) = REMOVED.lock() { r.push(path.to_owned()); } }
 /// Playback indexes built at once in the background (each reads its whole file).
 const BACKGROUND_BUILDS: usize = 4;
 fn valid(id: &str) -> bool {
@@ -119,6 +131,7 @@ impl Manager {
             background_gate: tokio::sync::Semaphore::new(BACKGROUND_BUILDS),
             readers: Mutex::new(HashMap::new()),
             reader_use: Mutex::new(HashMap::new()),
+            usage: Mutex::new(None),
         };
         match manager.migrate_index_keys() {
             Ok(0) => {}
@@ -170,16 +183,19 @@ impl Manager {
         let Ok(background)=self.background.lock() else {return true};
         pending.iter().any(|id|!background.contains(id))
     }
-    /// Whether a file's shared playback index is on disk. Building it reads the
+    /// A file's shared playback index folder, when it is on disk. Building it reads the
     /// whole file, so a missing index is what makes a first play slow.
-    pub fn indexed(&self, asset: &str, input: &Path) -> bool {
-        let Ok(revision) = crate::subtitle_jobs::revision(input) else { return false };
+    pub fn index_of(&self, asset: &str, input: &Path) -> Option<PathBuf> {
+        let revision = crate::subtitle_jobs::revision(input).ok()?;
         let job = Job {
             id: String::new(), asset: asset.into(), input: input.into(), revision, state: String::new(), error: None,
             preparation_version: PREPARATION_VERSION, captions: Vec::new(), missing_audio: None,
         };
-        self.index_path(&job).is_ok_and(|path| path.is_dir())
+        self.index_path(&job).ok().filter(|path| path.is_dir())
     }
+    #[cfg(test)]
+    pub fn indexed(&self, asset: &str, input: &Path) -> bool { self.index_of(asset, input).is_some() }
+    fn forget_usage(&self) { if let Ok(mut usage) = self.usage.lock() { *usage = None; } }
     /// Close cached readers nothing has used for a while and nothing is streaming from.
     pub fn release_idle(&self, after: std::time::Duration) {
         let (Ok(mut readers), Ok(mut used)) = (self.readers.lock(), self.reader_use.lock()) else { return };
@@ -236,7 +252,9 @@ impl Manager {
             let base = self.index_path(&self.job(&id)?)?;
             if base.exists() {
                 ensure!(base.is_dir() && !base.is_symlink(), "Unsafe index path");
-                fs::remove_dir_all(base)?;
+                fs::remove_dir_all(&base)?;
+                removed(&base);
+                self.forget_usage();
             }
             for suffix in ["", ".building"] {
                 let path = self.root.join(format!("{id}{suffix}"));
@@ -414,6 +432,7 @@ impl Manager {
                 // the caller opening its reader.
                 if let Ok(directory)=fs::File::open(self.index_path(&j)?) {
                     let _=directory.set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now()));
+                    self.forget_usage();
                 }
             }
             // A ready index is rebuilt when a converted audio copy can now give it
@@ -430,6 +449,8 @@ impl Manager {
                     if silent || lost {
                         ensure!(base.is_dir() && !base.is_symlink(), "Unsafe index path");
                         fs::remove_dir_all(&base)?;
+                        removed(&base);
+                        self.forget_usage();
                     }
                     // Another job may already have rebuilt the shared index with sound.
                     rebuild = silent || lost || j.missing_audio.is_some() && crate::audio_transcode::wanted(self.data(), &j.asset, &j.revision);
@@ -490,6 +511,7 @@ impl Manager {
         Ok(id)
     }
     fn index_usage(&self) -> Result<Vec<(PathBuf, u64, std::time::SystemTime)>> {
+        if let Ok(usage)=self.usage.lock() && let Some(known)=usage.as_ref() {return Ok(known.clone());}
         let mut entries=Vec::new();
         for entry in fs::read_dir(&self.root)? {
             let entry=entry?;let name=entry.file_name();let name=name.to_string_lossy();
@@ -498,6 +520,7 @@ impl Manager {
             for child in fs::read_dir(entry.path())? {let child=child?;if child.file_type()?.is_file(){size=size.saturating_add(child.metadata()?.len());}}
             entries.push((entry.path(),size,entry.metadata()?.modified()?));
         }
+        if let Ok(mut usage)=self.usage.lock() {*usage=Some(entries.clone());}
         Ok(entries)
     }
     pub fn can_preindex(&self) -> bool {
@@ -524,6 +547,8 @@ impl Manager {
             // Recent readers may still be in flight after leaving the small RAM cache.
             if protected.contains(&path) || modified.elapsed().unwrap_or_default().as_secs()<3600 {continue;}
             fs::remove_dir_all(&path)?;
+            removed(&path);
+            if let Ok(mut usage)=self.usage.lock() && let Some(known)=usage.as_mut() {known.retain(|(p,_,_)|*p!=path);}
             used=used.saturating_sub(size);
         }
         ensure!(used+256*1024*1024<=budget,"Playback cache is busy. Please try again shortly.");
@@ -556,6 +581,8 @@ impl Manager {
             );
             fs::rename(&temporary, &final_path)?;
             fs::File::open(&self.root)?.sync_all()?;
+            self.forget_usage();
+            if is_mkv(&job.input) && let Ok(mut built) = BUILT.lock() { built.push((job.asset.clone(), final_path.clone())); }
         }
         let source = if is_mkv(&job.input) {
             let index = crate::virtual_mkv::Reader::open(&job.input, &final_path)?;
@@ -608,6 +635,8 @@ mod cache_tests {
         assert!(manager.reclaim_indexes().is_err());
         assert!(base.exists());
         fs::File::open(&base)?.set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now()-std::time::Duration::from_secs(7200)))?;
+        // Changed behind the manager's back: it reads the disk again.
+        manager.forget_usage();
         manager.reclaim_indexes()?;
         assert!(!base.exists());
         assert!(manager.can_preindex());

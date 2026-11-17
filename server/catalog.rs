@@ -133,8 +133,15 @@ impl Database {
                 self.connection.execute_batch(&format!("CREATE TRIGGER IF NOT EXISTS catalog_{name}_{table}_{event} AFTER {event} ON {table}{when} BEGIN UPDATE catalog_revisions SET revision=revision+1 WHERE name='{name}'; END;"))?;
             }
         }
-        self.connection.execute_batch("CREATE TRIGGER IF NOT EXISTS catalog_content_scan AFTER UPDATE ON organizer_state WHEN json_extract(OLD.document,'$.library_scan') IS NOT json_extract(NEW.document,'$.library_scan') BEGIN UPDATE catalog_revisions SET revision=revision+1 WHERE name='content'; END;")?;
-        self.connection.execute_batch("CREATE TRIGGER IF NOT EXISTS catalog_revision_scan AFTER UPDATE ON organizer_state WHEN json_extract(OLD.document,'$.library_scan') IS NOT json_extract(NEW.document,'$.library_scan') BEGIN UPDATE catalog_revision SET revision=revision+1 WHERE id=1; END;")?;
+        // Only the scan's error is in the catalog: a scan's start and finish are not changes.
+        for (event, when) in [
+            ("INSERT", "NEW.key='library_scan' AND json_extract(NEW.value,'$.error') IS NOT NULL"),
+            ("UPDATE", "NEW.key='library_scan' AND json_extract(OLD.value,'$.error') IS NOT json_extract(NEW.value,'$.error')"),
+            ("DELETE", "OLD.key='library_scan' AND json_extract(OLD.value,'$.error') IS NOT NULL"),
+        ] {
+            self.connection.execute_batch(&format!("CREATE TRIGGER IF NOT EXISTS catalog_content_scan_{event} AFTER {event} ON organizer_values WHEN {when} BEGIN UPDATE catalog_revisions SET revision=revision+1 WHERE name='content'; END;
+                CREATE TRIGGER IF NOT EXISTS catalog_revision_scan_{event} AFTER {event} ON organizer_values WHEN {when} BEGIN UPDATE catalog_revision SET revision=revision+1 WHERE id=1; END;"))?;
+        }
         Ok(())
     }
 
@@ -342,7 +349,7 @@ impl Database {
         let state = self.state()?;
         let scan = &state["library_scan"];
         Ok(
-            json!({"titles":titles,"last_scan":scan["last_scan"],"scanning":scan["scanning"].as_bool().unwrap_or(false),"error":scan["error"]}),
+            json!({"titles":titles,"error":scan["error"]}),
         )
     }
 }
@@ -471,7 +478,6 @@ mod completion_tests {
         db.connection.execute_batch(include_str!("schema.sql"))?;
         db.migrate_profiles(9)?;
         db.initialize_catalog_revision()?;
-        db.connection.execute("INSERT INTO organizer_state VALUES(1,'{}')",[])?;
         let first=db.catalog_revision()?;
         // A language record following a moved file changes the revision too.
         db.connection.execute("INSERT INTO media_inventory VALUES('a','r1','{}',0)",[])?;
@@ -480,7 +486,7 @@ mod completion_tests {
         assert_ne!(db.catalog_revision()?,inserted);
         db.connection.execute("DELETE FROM media_inventory",[])?;
         let first=if first==db.catalog_revision()? {first} else {db.catalog_revision()?};
-        db.connection.execute("UPDATE organizer_state SET document='{\"last_poll\":42}'",[])?;
+        db.save_state(&json!({"last_error":"x"}))?;
         db.connection.execute("INSERT INTO clients VALUES('test','TV','other',0,0)",[])?;
         assert_eq!(first,db.catalog_revision()?);
         db.connection.execute("INSERT INTO library_assets VALUES('a','{}')",[])?;
@@ -493,7 +499,7 @@ mod completion_tests {
         let changed=db.catalog_revision()?;
         db.initialize_catalog_revision()?;
         assert_eq!(changed,db.catalog_revision()?);
-        db.connection.execute("UPDATE organizer_state SET document='{\"library_scan\":{\"error\":\"failed\"}}'",[])?;
+        db.save_state(&json!({"library_scan":{"error":"failed"}}))?;
         assert_ne!(changed,db.catalog_revision()?);
         Ok(())
     }
@@ -503,7 +509,6 @@ mod completion_tests {
         let mut db = Database { connection: rusqlite::Connection::open_in_memory()? };
         db.connection.execute_batch(include_str!("schema.sql"))?;
         db.migrate_profiles(9)?;
-        db.connection.execute("INSERT INTO organizer_state VALUES(1, ?)", ["{}"])?;
         db.connection.execute("INSERT INTO library_entities VALUES('friends',?)",[r#"{"id":"friends","kind":"tv","title":"Friends"}"#])?;
         for complete in [false, true] {
             let asset = json!({"id":"episode", "available":true,"complete":complete,
@@ -520,7 +525,6 @@ mod completion_tests {
         let mut db = Database { connection: rusqlite::Connection::open_in_memory()? };
         db.connection.execute_batch(include_str!("schema.sql"))?;
         db.migrate_profiles(9)?;
-        db.connection.execute("INSERT INTO organizer_state VALUES(1, ?)", ["{}"])?;
         db.connection.execute("INSERT INTO library_entities VALUES('movie',?)",[r#"{"id":"movie","kind":"movie","title":"Casino Royale"}"#])?;
         db.connection.execute("INSERT INTO library_entities VALUES('show',?)",[r#"{"id":"show","kind":"tv","title":"Friends"}"#])?;
         let assets = [("collection", "movie", "hash-b", 20.0, None), ("single", "movie", "hash-a", 10.0, None),
@@ -583,7 +587,6 @@ mod completion_tests {
         let mut db = Database { connection: rusqlite::Connection::open_in_memory()? };
         db.connection.execute_batch(include_str!("schema.sql"))?;
         db.migrate_profiles(9)?;
-        db.connection.execute("INSERT INTO organizer_state VALUES(1, ?)", ["{}"])?;
         db.connection.execute("INSERT INTO library_entities VALUES('show',?)",[r#"{"id":"show","kind":"tv","title":"Show",
             "episodes":[{"season":0,"episode":22,"title":"Wrong TMDB Special"},{"season":0,"episode":2,"title":"Wrong","airdate":"2006-09-05","duration_minutes":3},{"season":1,"episode":1,"title":"Pilot"}]}"#])?;
         let assets = [("plan", "/Media/Show (2003) - S00E22 - The Plan (1080p BluRay x265 Celdra).mkv", Some(0), None),

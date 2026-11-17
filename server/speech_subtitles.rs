@@ -6,7 +6,7 @@
 //! The result is stored as a private SRT and then flows through the normal
 //! subtitle jobs (extraction, then on-device translation to the other language).
 //! The sources are tried in turn; one that does not apply is rejected quickly.
-use crate::{api::Service, storage::now};
+use crate::{api::Service, storage::{Database, now}};
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use sha2::Digest;
@@ -66,18 +66,56 @@ pub fn method(data: &Path, path: &Path) -> Option<&'static str> {
 /// Named for the file's identity that survives a move or rename (device, inode,
 /// size, modification time), so filing a title does not transcribe it again.
 /// Records made before this used the full revision and keep their names.
-fn key(data: &Path, asset: &str, revision: &str) -> String {
+fn key(db: &Database, asset: &str, revision: &str) -> String {
     let name = |revision: &str| -> String { sha2::Sha256::digest(format!("{VERSION}\0{asset}\0{revision}").as_bytes()).iter().map(|b| format!("{b:02x}")).collect() };
     let legacy = name(revision);
-    if directory(data).join(format!("{legacy}.json")).is_file() { return legacy; }
+    if load(db, &legacy).is_some() { return legacy; }
     name(&revision.split(':').take(5).collect::<Vec<_>>().join(":"))
+}
+
+/// Each file's transcript record ("<key>") and OpenSubtitles records ("<key>.en-opensubtitles",
+/// "<key>.zh-opensubtitles") are rows of subtitle_records; the subtitles they name are files
+/// in `directory`. (They were JSON files beside them, which processing read by the thousand
+/// every few seconds.)
+pub(crate) fn load(db: &Database, name: &str) -> Option<Value> {
+    use rusqlite::OptionalExtension;
+    let text: Option<String> = db.connection.query_row("SELECT document FROM subtitle_records WHERE name=?", [name], |r| r.get(0)).optional().ok()?;
+    serde_json::from_str(&text?).ok()
+}
+pub(crate) fn store(db: &Database, name: &str, document: &Value) -> Result<()> {
+    let kind = name.split_once('.').map_or("transcript", |(_, kind)| kind.trim_end_matches("-opensubtitles"));
+    db.connection.execute("INSERT INTO subtitle_records VALUES(?,?,?,?) ON CONFLICT(name) DO UPDATE SET asset_id=excluded.asset_id,kind=excluded.kind,document=excluded.document",
+        rusqlite::params![name, document["asset_id"].as_str(), kind, document.to_string()])?;
+    Ok(())
+}
+fn database(s: &Service) -> Result<std::sync::MutexGuard<'_, Database>> { s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable")) }
+
+/// Records kept as JSON files by earlier builds move into the database, once.
+pub fn import_records(db: &Database, data: &Path) -> Result<usize> {
+    let Ok(entries) = std::fs::read_dir(directory(data)) else { return Ok(0) };
+    let mut moved = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(file) = path.file_name().and_then(|n| n.to_str()) else { continue };
+        if file.ends_with(".json.tmp") { let _ = std::fs::remove_file(&path); continue; }
+        let Some(name) = file.strip_suffix(".json") else { continue };
+        let (stem, kind) = name.split_once('.').unwrap_or((name, ""));
+        if stem.len() != 64 || !stem.bytes().all(|b| b.is_ascii_hexdigit()) || !["", "en-opensubtitles", "zh-opensubtitles"].contains(&kind) { continue; }
+        let document: Value = match std::fs::read(&path).map_err(anyhow::Error::from).and_then(|b| Ok(serde_json::from_slice(&b)?)) {
+            Ok(document) => document,
+            Err(error) => { tracing::warn!(file, %error, "Subtitle record unreadable; left in place"); continue }
+        };
+        if load(db, name).is_none() { store(db, name, &document)?; }
+        std::fs::remove_file(&path)?;
+        moved += 1;
+    }
+    Ok(moved)
 }
 
 /// Whether transcription already reached a verdict (transcript or rejection)
 /// for this file revision.
-pub fn decided(data: &Path, asset: &str, revision: &str) -> bool {
-    std::fs::read(record(data, asset, revision)).ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .is_some_and(|saved| untried(&saved).is_empty())
+pub fn decided(db: &Database, asset: &str, revision: &str) -> bool {
+    load(db, &key(db, asset, revision)).is_some_and(|saved| untried(&saved).is_empty())
 }
 /// What a file has yet to be tried with. Records from when only English speech was
 /// transcribed carry no list: a rejection then had tried English alone, which is how
@@ -118,20 +156,15 @@ fn chinese_name(input: &Path) -> bool {
     input.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)))
 }
 /// Assets with an accepted transcript of any version.
-pub fn transcribed_assets(data: &Path) -> std::collections::HashSet<String> {
-    let Ok(entries) = std::fs::read_dir(directory(data)) else { return Default::default() };
-    // Transcript records only ("<key>.json"): the OpenSubtitles records beside them
-    // ("<key>.en-opensubtitles.json") also say "ready", and counting them sent every title with
-    // OpenSubtitles' English back to be transcribed, again and again (2026-11-16).
-    entries.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "json")
-        && e.path().file_stem().and_then(|n| n.to_str()).is_some_and(|n| n.len() == 64 && n.bytes().all(|b| b.is_ascii_hexdigit())))
-        .filter_map(|e| serde_json::from_slice::<Value>(&std::fs::read(e.path()).ok()?).ok())
-        .filter(|record| record["state"] == "ready")
-        .filter_map(|record| record["asset_id"].as_str().map(str::to_owned)).collect()
+pub fn transcribed_assets(db: &Database) -> Result<std::collections::HashSet<String>> {
+    // Transcript records only: the OpenSubtitles records also say "ready", and counting them
+    // sent every title with OpenSubtitles' English back to be transcribed, again and again (2026-11-16).
+    let mut statement = db.connection.prepare("SELECT asset_id FROM subtitle_records WHERE kind='transcript' AND asset_id IS NOT NULL AND json_extract(document,'$.state')='ready'")?;
+    let ids = statement.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<_>>()?;
+    Ok(ids)
 }
-pub(crate) fn record(data: &Path, asset: &str, revision: &str) -> PathBuf {
-    directory(data).join(format!("{}.json", key(data, asset, revision)))
-}
+/// The name of a file's transcript record.
+pub(crate) fn record(db: &Database, asset: &str, revision: &str) -> String { key(db, asset, revision) }
 
 /// Accept a helper result as speech in the language it was transcribed in, or not.
 fn verdict(result: &Value, language: &str) -> bool {
@@ -156,8 +189,7 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
     let revision = crate::subtitle_jobs::revision(input)?;
     let root = directory(&s.data_dir);
     std::fs::create_dir_all(&root)?;
-    let name = key(&s.data_dir, id, &revision);
-    let record = root.join(format!("{name}.json"));
+    let (name, stored) = { let db = database(s)?; let name = key(&db, id, &revision); let stored = load(&db, &name); (name, stored) };
     let language_of = |saved: &Value| LANGUAGES.into_iter().find(|l| saved["language"] == *l).unwrap_or("en");
     // Subtitles printed in the picture always come first; the audio is the last resort,
     // transcribed only when the picture holds none. A Chinese name tries Mandarin speech
@@ -166,8 +198,7 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
     let mut tried: Vec<&'static str> = Vec::new();
     // A transcript already made, kept if the picture turns out to hold no subtitles.
     let mut kept: Option<(Value, PathBuf, &'static str)> = None;
-    if let Ok(bytes) = std::fs::read(&record) {
-        let saved: Value = serde_json::from_slice(&bytes)?;
+    if let Some(saved) = stored {
         let left = untried(&saved);
         let language = language_of(&saved);
         let output = root.join(saved["output"].as_str().map(str::to_owned).unwrap_or_else(|| format!("{name}.{language}.srt")));
@@ -184,11 +215,7 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
     }
     if s.virtual_media.preparing() { return Ok(Transcript::Deferred); }
     let _permit = GATE.acquire().await?;
-    let save = |document: &Value| -> Result<()> {
-        let temporary = root.join(format!("{name}.json.tmp"));
-        std::fs::write(&temporary, document.to_string())?;
-        std::fs::rename(temporary, &record)?; Ok(())
-    };
+    let save = |document: &Value| -> Result<()> { store(&*database(s)?, &name, document) };
     // What the record says while nothing has been accepted: the kept transcript, or a rejection.
     let unsettled = |tried: &[&str], reason: &str, stats: &Value| -> Value {
         match &kept {
@@ -310,7 +337,8 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
     }
     if let Some((_, _, Some(path))) = &audio { let _ = std::fs::remove_file(path); }
     if let Some(until) = opensubtitles_after {
-        if let Some(mut saved) = std::fs::read(&record).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
+        let saved = load(&*database(s)?, &name);
+        if let Some(mut saved) = saved {
             saved["opensubtitles_after"] = json!(until);
             save(&saved)?;
         }
@@ -347,8 +375,8 @@ pub async fn people_everywhere(s: &Service, asset: &Value, input: &Path, languag
 }
 
 /// Whether OpenSubtitles has been asked for this file's subtitles in `tag` ("en" or "zh").
-pub fn people_decided(data: &Path, asset: &str, revision: &str, tag: &str) -> bool {
-    directory(data).join(format!("{}.{tag}-opensubtitles.json", key(data, asset, revision))).is_file()
+pub fn people_decided(db: &Database, asset: &str, revision: &str, tag: &str) -> bool {
+    load(db, &format!("{}.{tag}-opensubtitles", key(db, asset, revision))).is_some()
 }
 
 /// Whether OpenSubtitles gave an answer that stands for this file in `tag`: subtitles, or none
@@ -356,10 +384,9 @@ pub fn people_decided(data: &Path, asset: &str, revision: &str, tag: &str) -> bo
 /// reopened on every pass meanwhile, and Spirited Away's picture was read and failed 119 times).
 /// Not when its file was refused for cues out of place.
 /// Subtitles taken before they were checked against the file's length are not settled.
-pub fn people_settled(data: &Path, asset: &str, revision: &str, tag: &str, special: bool) -> bool {
-    let record = directory(data).join(format!("{}.{tag}-opensubtitles.json", key(data, asset, revision)));
-    let everything = crate::opensubtitles::everything(data);
-    std::fs::read(record).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).is_some_and(|saved|
+/// `everything`: opensubtitles::everything, read once by the caller.
+pub fn people_settled(db: &Database, everything: bool, asset: &str, revision: &str, tag: &str, special: bool) -> bool {
+    load(db, &format!("{}.{tag}-opensubtitles", key(db, asset, revision))).is_some_and(|saved|
         (saved["state"] == "ready" && fit_checked(&saved)) || (saved["state"] == "later" && saved["after"].as_f64().is_some_and(|t| t > now()))
             || (saved["state"] == "missing" && !(everything && saved["set_aside"] == true)
             && !saved["reason"].as_str().is_some_and(|r| r.ends_with("Subtitle cues are out of order"))
@@ -382,11 +409,10 @@ fn fit_checked(saved: &Value) -> bool { saved["provenance"]["fits"] == true }
 /// these records to look again.
 pub fn set_aside(s: &Service, asset: &Value, input: &Path, tag: &str, reason: &str) -> Result<()> {
     let id = asset["id"].as_str().context("Missing asset ID")?;
-    let name = key(&s.data_dir, id, &crate::subtitle_jobs::revision(input)?);
-    let root = directory(&s.data_dir);
-    std::fs::create_dir_all(&root)?;
-    let record = root.join(format!("{name}.{tag}-opensubtitles.json"));
-    if !record.is_file() { std::fs::write(&record, json!({"state":"missing","asset_id":id,"reason":reason,"set_aside":true,"updated":now()}).to_string())?; }
+    let revision = crate::subtitle_jobs::revision(input)?;
+    let db = database(s)?;
+    let name = format!("{}.{tag}-opensubtitles", key(&db, id, &revision));
+    if load(&db, &name).is_none() { store(&db, &name, &json!({"state":"missing","asset_id":id,"reason":reason,"set_aside":true,"updated":now()}))?; }
     Ok(())
 }
 
@@ -396,15 +422,11 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
     let revision = crate::subtitle_jobs::revision(input)?;
     let root = directory(&s.data_dir);
     std::fs::create_dir_all(&root)?;
-    let name = key(&s.data_dir, id, &revision);
-    let record = root.join(format!("{name}.{tag}-opensubtitles.json"));
-    let save = |document: Value| -> Result<()> {
-        let temporary = root.join(format!("{name}.{tag}-opensubtitles.json.tmp"));
-        std::fs::write(&temporary, document.to_string())?;
-        std::fs::rename(temporary, &record)?; Ok(())
-    };
+    let (name, stored) = { let db = database(s)?; let name = key(&db, id, &revision); let stored = load(&db, &format!("{name}.{tag}-opensubtitles")); (name, stored) };
+    let record = format!("{name}.{tag}-opensubtitles");
+    let save = |document: Value| -> Result<()> { store(&*database(s)?, &record, &document) };
     let mut refused: Vec<u64> = Vec::new();
-    if let Some(mut saved) = std::fs::read(&record).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
+    if let Some(mut saved) = stored {
         if saved["state"] == "ready" {
             let path = root.join(saved["output"].as_str().unwrap_or_default());
             if path.is_file() {

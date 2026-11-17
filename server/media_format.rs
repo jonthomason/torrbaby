@@ -238,13 +238,20 @@ fn probe(path: &Path) -> Result<Value> {
 /// new files and inventories rebuilt by other stages are picked up in turn.
 pub async fn tick(s: &Service) -> Result<usize> {
     if helper().is_none() { return Ok(0); }
+    // The language records as they were when nothing was left to describe: until one is
+    // written again, there is still nothing (this parsed every record every 15 s).
+    static DRAINED: std::sync::Mutex<Option<(i64, f64)>> = std::sync::Mutex::new(None);
     let pending: Vec<(String, String, String)> = {
         let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+        let written: (i64, f64) = db.connection.query_row("SELECT count(*), COALESCE(max(updated),0) FROM media_inventory", [], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        if DRAINED.lock().is_ok_and(|d| *d == Some(written)) { return Ok(0); }
         let mut statement = db.connection.prepare(
             "SELECT m.asset_id,m.revision,CASE WHEN json_extract(a.document,'$.complete') THEN json_extract(a.document,'$.path') ELSE COALESCE(json_extract(a.document,'$.early_path'),json_extract(a.document,'$.path')) END FROM media_inventory m JOIN library_assets a ON a.id=m.asset_id \
              WHERE json_extract(m.document,'$.state')='ready' AND COALESCE(json_extract(m.document,'$.format_version'),0)<?1 ORDER BY RANDOM() LIMIT 12")?;
         let rows = statement.query_map([VERSION as i64], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?.unwrap_or_default())))?;
-        rows.collect::<rusqlite::Result<_>>()?
+        let pending: Vec<(String, String, String)> = rows.collect::<rusqlite::Result<_>>()?;
+        if pending.is_empty() && let Ok(mut d) = DRAINED.lock() { *d = Some(written); }
+        pending
     };
     let mut described = 0;
     for (id, revision, path) in pending {

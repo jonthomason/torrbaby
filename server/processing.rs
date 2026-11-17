@@ -60,15 +60,15 @@ fn reopen_replaced(db:&Database)->Result<usize> {
 /// from the picture and translated) and that OpenSubtitles has not been asked about: done
 /// again once, so its English replaces them (the user's rule, 2026-11-15). Each waits behind
 /// titles that have no subtitles.
-fn reopen_for_people_english(db:&Database,data:&Path)->Result<usize> {
-    if !crate::opensubtitles::read_english(data) {return Ok(0);}
+fn reopen_for_people_english(db:&Database,flags:Flags)->Result<usize> {
+    if !flags.read_english {return Ok(0);}
     let rows=db.rows("SELECT m.asset_id,m.revision,i.document FROM media_processing m JOIN media_inventory i ON i.asset_id=m.asset_id AND i.revision=m.revision LEFT JOIN library_assets a ON a.id=m.asset_id WHERE m.state='ready' AND m.subtitles_state='ready' AND coalesce(json_extract(a.document,'$.role'),'')!='extra'",[])?;
     let mut reopened=0;
     for row in rows {
         let (Some(id),Some(revision),Some(document))=(row["asset_id"].as_str(),row["revision"].as_str(),row["document"].as_str()) else{continue};
         let Ok(info)=serde_json::from_str::<Value>(document) else{continue};
         let read=info["prepared"].as_array().is_some_and(|jobs|jobs.iter().any(|j|j["state"]=="ready" && j["language"]=="en" && j["extraction_method"]=="ocr"));
-        if !read || crate::speech_subtitles::people_decided(data,id,revision,"en") {continue;}
+        if !read || crate::speech_subtitles::people_decided(db,id,revision,"en") {continue;}
         let changed=db.connection.execute("UPDATE media_processing SET subtitles_state='pending',stage='subtitles',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![now(),id,revision])?;
         if changed>0 {db.connection.execute("INSERT INTO subtitle_priorities(asset_id,priority) VALUES(?,-1) ON CONFLICT(asset_id) DO NOTHING",[id])?;}
         reopened+=changed;
@@ -79,15 +79,15 @@ fn reopen_for_people_english(db:&Database,data:&Path)->Result<usize> {
 /// Titles whose English came from OpenSubtitles and whose Chinese was translated on device
 /// while Chinese downloads were off (Parasite): done again once, so OpenSubtitles' Chinese
 /// replaces the translation when it has some.
-fn reopen_for_people_chinese(db:&Database,data:&Path)->Result<usize> {
-    if !crate::opensubtitles::chinese(data) {return Ok(0);}
+fn reopen_for_people_chinese(db:&Database,flags:Flags)->Result<usize> {
+    if !flags.chinese {return Ok(0);}
     let rows=db.rows("SELECT m.asset_id,m.revision,i.document,json_extract(a.document,'$.season') AS season FROM media_processing m JOIN media_inventory i ON i.asset_id=m.asset_id AND i.revision=m.revision LEFT JOIN library_assets a ON a.id=m.asset_id WHERE m.state='ready' AND m.subtitles_state='ready' AND coalesce(json_extract(a.document,'$.role'),'')!='extra'",[])?;
     let mut reopened=0;
     for row in rows {
         let (Some(id),Some(revision),Some(document))=(row["asset_id"].as_str(),row["revision"].as_str(),row["document"].as_str()) else{continue};
         let Ok(info)=serde_json::from_str::<Value>(document) else{continue};
         let people=info["prepared"].as_array().is_some_and(|jobs|jobs.iter().any(|j|j["state"]=="ready" && j["language"]=="en" && j["extraction_method"]=="opensubtitles"));
-        if !people || crate::speech_subtitles::people_settled(data,id,revision,"zh",row["season"]==0) {continue;}
+        if !people || crate::speech_subtitles::people_settled(db,flags.everything,id,revision,"zh",row["season"]==0) {continue;}
         reopened+=db.connection.execute("UPDATE media_processing SET subtitles_state='pending',stage='subtitles',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![now(),id,revision])?;
     }
     if reopened>0 {tracing::info!(reopened,"Titles with English from OpenSubtitles will look for its Chinese");}
@@ -95,13 +95,13 @@ fn reopen_for_people_chinese(db:&Database,data:&Path)->Result<usize> {
 }
 /// While every title is to take OpenSubtitles' subtitles: each title not yet looked up in
 /// both languages is done again, behind titles that have none.
-fn reopen_for_everything(db:&Database,data:&Path)->Result<usize> {
-    if !crate::opensubtitles::everything(data) {return Ok(0);}
+fn reopen_for_everything(db:&Database,flags:Flags)->Result<usize> {
+    if !flags.everything {return Ok(0);}
     let rows=db.rows("SELECT m.asset_id,m.revision,json_extract(a.document,'$.season') AS season FROM media_processing m LEFT JOIN library_assets a ON a.id=m.asset_id WHERE m.state='ready' AND m.subtitles_state IN ('ready','not_applicable','skipped') AND m.inventory_state='ready' AND coalesce(json_extract(a.document,'$.role'),'')!='extra'",[])?;
     let mut reopened=0;
     for row in rows {
         let (Some(id),Some(revision))=(row["asset_id"].as_str(),row["revision"].as_str()) else{continue};
-        if ["en","zh"].iter().all(|tag|crate::speech_subtitles::people_settled(data,id,revision,tag,row["season"]==0)) {continue;}
+        if ["en","zh"].iter().all(|tag|crate::speech_subtitles::people_settled(db,true,id,revision,tag,row["season"]==0)) {continue;}
         let changed=db.connection.execute("UPDATE media_processing SET subtitles_state='pending',stage='subtitles',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![now(),id,revision])?;
         if changed>0 {db.connection.execute("INSERT INTO subtitle_priorities(asset_id,priority) VALUES(?,-1) ON CONFLICT(asset_id) DO NOTHING",[id])?;}
         reopened+=changed;
@@ -131,6 +131,25 @@ fn reopen_storage_full(db:&Database)->Result<usize> {
     if reopened>0 {tracing::info!(reopened,"Subtitles skipped for an error since fixed will be prepared again");}
     Ok(reopened)
 }
+/// The OpenSubtitles switches the reopening sweeps depend on.
+#[derive(Clone,Copy,PartialEq,Eq,Debug)]
+pub(crate) struct Flags { read_english:bool, chinese:bool, everything:bool }
+impl Flags {
+    fn read(data:&Path)->Self { Self { read_english:crate::opensubtitles::read_english(data), chinese:crate::opensubtitles::chinese(data), everything:crate::opensubtitles::everything(data) } }
+}
+/// The sweeps that look through every finished file's subtitle records for one to do again.
+/// A record only changes when processing itself writes it, so they run at start, when the
+/// OpenSubtitles switches change, and hourly for answers that said "later" (they ran every
+/// 2 s, reading thousands of record files, because processing's own writes looked like
+/// library changes).
+fn sweep(db:&Database,flags:Flags)->Result<()> {
+    reopen_for_people_english(db,flags)?;
+    reopen_for_people_chinese(db,flags)?;
+    reopen_for_everything(db,flags)?;
+    reopen_untranscribed(db)?;
+    Ok(())
+}
+static SWEPT:std::sync::Mutex<Option<(Flags,f64)>>=std::sync::Mutex::new(None);
 /// `skipped`: credits analysis failed. It is optional, so the file finishes without it.
 fn finished(value:&str)->bool {matches!(value,"ready"|"not_applicable"|"skipped")}
 fn sign_off(db:&Database,id:&str,revision:&str)->Result<bool> {
@@ -240,15 +259,15 @@ pub(crate) fn reopen_for_sound(db:&Database)->Result<usize> {
 /// (or before it reached a verdict) reopen their subtitle stage once; the
 /// transcript record then keeps them settled.
 /// Titles transcribed by an older transcript version are redone the same way.
-pub(crate) fn reopen_untranscribed(db:&Database,data:&Path)->Result<usize> {
-    let transcribed=crate::speech_subtitles::transcribed_assets(data);
+pub(crate) fn reopen_untranscribed(db:&Database)->Result<usize> {
+    let transcribed=crate::speech_subtitles::transcribed_assets(db)?;
     // Bonus material is never transcribed (see media_inventory::process).
     let rows=db.rows("SELECT m.asset_id,m.revision,m.subtitles_state FROM media_processing m LEFT JOIN library_assets a ON a.id=m.asset_id WHERE m.inventory_state='ready' AND m.state!='running' AND m.subtitles_state IN ('not_applicable','ready') AND coalesce(json_extract(a.document,'$.role'),'')!='extra'",[])?;
     let rows:Vec<_>=rows.into_iter().filter(|r|r["subtitles_state"]=="not_applicable" || r["asset_id"].as_str().is_some_and(|id|transcribed.contains(id))).collect();
     let mut reopened=0;
     for row in rows {
         let (Some(id),Some(revision))=(row["asset_id"].as_str(),row["revision"].as_str()) else{continue};
-        if crate::speech_subtitles::decided(data,id,revision) {continue;}
+        if crate::speech_subtitles::decided(db,id,revision) {continue;}
         let changed=db.connection.execute("UPDATE media_processing SET subtitles_state='pending',stage='subtitles',state=CASE WHEN state IN ('ready','failed') THEN 'queued' ELSE state END,retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![now(),id,revision])?;
         // A file that already has subtitles (from its audio) is only being checked for
         // subtitles in its picture: that waits behind every file that has none yet.
@@ -311,6 +330,19 @@ fn assets(db:&Database)->Result<Vec<Value>> {
     crate::media_inventory::order_assets(&mut assets,&crate::media_inventory::priorities(db)?);
     Ok(assets)
 }
+/// The queue's files in order, kept until the library or the priorities change: it was
+/// built from every asset and title record, parsed, on every 2-second tick.
+fn queue(db:&Database)->Result<std::sync::Arc<Vec<Value>>> {
+    static QUEUE:std::sync::Mutex<Option<(String,std::sync::Arc<Vec<Value>>)>>=std::sync::Mutex::new(None);
+    let mut priorities:Vec<(String,i64)>=crate::media_inventory::priorities(db)?.into_iter().collect();
+    priorities.sort();
+    let key=format!("{}|{priorities:?}",db.part_revision("content")?);
+    let mut cache=QUEUE.lock().map_err(|_|anyhow::anyhow!("Processing queue unavailable"))?;
+    if let Some((cached,list))=cache.as_ref() && *cached==key {return Ok(list.clone());}
+    let list=std::sync::Arc::new(assets(db)?);
+    *cache=Some((key,list.clone()));
+    Ok(list)
+}
 /// Recent authenticated playback heartbeats, including paused players, reserve capacity.
 pub fn playback_active(s:&Service)->Result<bool> {
     let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
@@ -346,6 +378,7 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
     // Before the database lock: reading the settings takes it.
     let drives=crate::drives::Drives::of(&s.effective_config()?);
     let online=drives.online();
+    let flags=Flags::read(&s.data_dir);
     // Enrollment compares each file's identity with what was prepared for it. The library scan
     // records that identity on the asset (`file_revision`) from the metadata it reads anyway, so
     // a better copy dropped over a file at the same path is seen without processing reading
@@ -356,10 +389,12 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
     let planned: Option<(Vec<Stat>, Vec<(String, String)>, String, bool)> = {
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
         let migrating:bool=db.connection.query_row("SELECT NOT EXISTS(SELECT 1 FROM media_processing)",[],|r|r.get(0))?;
-        let revision=db.catalog_revision()?;
+        // The library's files and titles, not processing's own records (which change every few
+        // seconds while it works, and made this pass run on every tick).
+        let revision=db.part_revision("content")?;
         let due=ENROLLED.lock().map(|e|e.as_ref().is_none_or(|(r,_)|*r!=revision)).unwrap_or(true);
         if due || migrating {
-            let files: Vec<Stat> = assets(&db)?.iter().filter_map(|a| {
+            let files: Vec<Stat> = queue(&db)?.iter().filter_map(|a| {
                 let recorded = a["file_revision"].as_str().filter(|_| a["early"]!=true).map(|r| Ok(r.to_owned()));
                 Some((a["id"].as_str()?.to_owned(), a["path"].as_str()?.to_owned(), a["early"]==true, recorded.unwrap_or(Err(String::new()))))
             }).collect();
@@ -391,7 +426,7 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
             let credits_done:bool=db.connection.query_row("SELECT EXISTS(SELECT 1 FROM media_processing WHERE asset_id=? AND credits_state IN ('ready','not_applicable','skipped'))",[id],|r|r.get(0))?;
             if credits_done {if let Ok(mut fast)=FAST.lock() {fast.insert(id.clone());}}
         }
-        let assets=assets(&db)?;
+        let assets=queue(&db)?;
         let migrating=planned.as_ref().is_some_and(|p| p.3);
         if let Some((files, not_media, revision, _)) = planned {
             for (id, path, early, revision) in &files {
@@ -419,13 +454,13 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
             reopen_for_sound(&db)?;
             reopen_replaced(&db)?;
             reopen_storage_full(&db)?;
-            reopen_for_people_english(&db,&s.data_dir)?;
-            reopen_for_people_chinese(&db,&s.data_dir)?;
-            reopen_for_everything(&db,&s.data_dir)?;
             retire_obsolete_failures(&db)?;
-            reopen_untranscribed(&db,&s.data_dir)?;
             reopen_line_translated(&db,&s.subtitle_jobs.line_translated())?;
             if let Ok(mut e)=ENROLLED.lock() {*e=Some((revision,now()));}
+        }
+        if SWEPT.lock().map(|w|w.is_none_or(|(f,t)|f!=flags || now()-t>=3600.0)).unwrap_or(true) {
+            sweep(&db,flags)?;
+            if let Ok(mut w)=SWEPT.lock() {*w=Some((flags,now()));}
         }
         if migrating {
             let mut unfinished=s.subtitle_jobs.all_statuses()?;
@@ -436,22 +471,24 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
             }
         }
         let rows=db.rows("SELECT asset_id,state,retry_after,detail FROM media_processing",[])?;
+        let by_asset:std::collections::HashMap<&str,&Value>=rows.iter().filter_map(|r|Some((r["asset_id"].as_str()?,r))).collect();
+        let row=|a:&Value|a["id"].as_str().and_then(|id|by_asset.get(id).copied());
         // A file waiting for a translation slot comes back as soon as the lane has room.
         let lane_free=s.subtitle_jobs.lane_free();
         let due=|r:&Value|r["retry_after"].as_f64().unwrap_or(0.0)<=now() || (lane_free && awaiting_lane(r["detail"].as_str().unwrap_or("")));
         let fast:std::collections::HashSet<String>={
             let mut fast=FAST.lock().map_err(|_|anyhow::anyhow!("Processing pool unavailable"))?;
-            fast.retain(|id|rows.iter().any(|r|r["asset_id"]==id.as_str() && matches!(r["state"].as_str(),Some("queued"|"running"))));
+            fast.retain(|id|by_asset.get(id.as_str()).is_some_and(|r|matches!(r["state"].as_str(),Some("queued"|"running"))));
             if limit==0 {Default::default()} else {fast.clone()}
         };
         let is_fast=|a:&Value|a["id"].as_str().is_some_and(|id|fast.contains(id));
-        let running=|a:&Value|!is_fast(a) && rows.iter().any(|r|r["asset_id"]==a["id"] && r["state"]=="running");
+        let running=|a:&Value|!is_fast(a) && row(a).is_some_and(|r|r["state"]=="running");
         // Retain claimed files first; fill idle slots in title/episode priority order.
         let mut selected:Vec<Value>=assets.iter().filter(|a|running(a)).take(limit).cloned().collect();
-        for asset in &assets {
+        for asset in assets.iter() {
             if selected.len()>=limit {break;}
             if is_fast(asset) || selected.iter().any(|a|a["id"]==asset["id"]) {continue;}
-            if rows.iter().any(|r|r["asset_id"]==asset["id"] && r["state"]!="ready" && due(r)) {selected.push(asset.clone());}
+            if row(asset).is_some_and(|r|r["state"]!="ready" && due(r)) {selected.push(asset.clone());}
         }
         // Claimed files beyond the current limit give their slot back now. Their
         // partial work may be discarded; they restart from their last finished stage.
@@ -487,25 +524,49 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
     if limit>0 {warm_playback_index(s).await?;}
     Ok(())
 }
-/// Files whose playback index was rebuilt (or tried) in this run, and when the
-/// last warm-up pass ran.
+/// Files whose index build was started in this run ("id:file identity"): a build that
+/// finishes reports itself (virtual_media::take_built), one that fails is not tried again
+/// until the server restarts. And when the last pass ran.
 static WARMED:std::sync::LazyLock<std::sync::Mutex<(std::collections::HashSet<String>,f64)>>=std::sync::LazyLock::new(Default::default);
 /// Processed Matroska files can lose their playback index (the cache's space reclaim, or
 /// the cache moving to its own drive), and then the next play waits while the whole file
 /// is re-read. Rebuild one missing index at a time, the most recently played and added
 /// first, alongside subtitle work: that work can fill the queue for days, and an index is
 /// only a read of the file.
+///
+/// playback_indexes records each file's index (its folder, or none for a file that needs
+/// none), for the file identity the scan recorded; a removed index removes its row. Only
+/// files without a row are looked at. (This pass used to read every file in the library,
+/// and walk the whole index cache, every 5 s.)
 async fn warm_playback_index(s:&Service)->Result<()> {
+    let (gone,built)=(crate::virtual_media::take_removed(),crate::virtual_media::take_built());
+    if !gone.is_empty() || !built.is_empty() {
+        let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+        for path in &gone {db.connection.execute("DELETE FROM playback_indexes WHERE path=?",[path.to_string_lossy()])?;}
+        // Built for the file as the library knows it now (a playback request builds too).
+        for (id,path) in &built {
+            db.connection.execute("INSERT INTO playback_indexes SELECT id,json_extract(document,'$.file_revision'),?2 FROM library_assets WHERE id=?1 AND json_extract(document,'$.file_revision') IS NOT NULL ON CONFLICT(asset_id) DO UPDATE SET file_revision=excluded.file_revision,path=excluded.path",
+                rusqlite::params![id,path.to_string_lossy()])?;
+        }
+    }
     {let mut warmed=WARMED.lock().map_err(|_|anyhow::anyhow!("Processing pool unavailable"))?;
         // Checked every few seconds: the next index starts as soon as the last is built.
         if now()-warmed.1<5.0 {return Ok(());}
         warmed.1=now();}
-    if !s.virtual_media.background_room() || !s.virtual_media.can_preindex() || playback_active(s)? {return Ok(());}
     let candidates:Vec<Value>={
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+        let recorded:std::collections::HashMap<String,String>=db.rows("SELECT asset_id,file_revision FROM playback_indexes",[])?
+            .iter().filter_map(|r|Some((r["asset_id"].as_str()?.to_owned(),r["file_revision"].as_str()?.to_owned()))).collect();
+        let warmed=WARMED.lock().map_err(|_|anyhow::anyhow!("Processing pool unavailable"))?;
+        let mut list:Vec<Value>=queue(&db)?.iter().filter(|a|a["role"]!="extra" && a["early"]!=true && a["available"]==true && a["complete"]==true)
+            .filter(|a|match (a["id"].as_str(),a["file_revision"].as_str()) {
+                (Some(id),Some(revision))=>recorded.get(id).is_none_or(|r|r!=revision) && !warmed.0.contains(&format!("{id}:{revision}")),
+                _=>false,
+            }).cloned().collect();
+        drop(warmed);
+        if list.is_empty() {return Ok(());}
         let played:std::collections::HashMap<String,f64>=db.rows("SELECT media_id,MAX(last_played) AS at FROM profile_playback GROUP BY media_id",[])?
             .iter().filter_map(|r|Some((r["media_id"].as_str()?.to_owned(),r["at"].as_f64().unwrap_or(0.0)))).collect();
-        let mut list:Vec<Value>=assets(&db)?.into_iter().filter(|a|a["role"]!="extra" && a["available"]==true && a["complete"]==true).collect();
         let recency=|a:&Value|{
             let media=format!("{}:{}",a["torrent_hash"].as_str().unwrap_or(""),a["file_index"].as_i64().unwrap_or(0));
             played.get(&media).copied().unwrap_or(0.0).max(a["added_at"].as_f64().unwrap_or(0.0))
@@ -513,22 +574,25 @@ async fn warm_playback_index(s:&Service)->Result<()> {
         list.sort_by(|a,b|recency(b).total_cmp(&recency(a)));
         list
     };
+    let record=|id:&str,revision:&str,path:Option<&Path>|->Result<()>{
+        s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?.connection.execute(
+            "INSERT INTO playback_indexes VALUES(?,?,?) ON CONFLICT(asset_id) DO UPDATE SET file_revision=excluded.file_revision,path=excluded.path",
+            rusqlite::params![id,revision,path.map(|p|p.to_string_lossy().into_owned())])?;
+        Ok(())
+    };
     for asset in candidates {
-        let Some(id)=asset["id"].as_str() else{continue};
-        let Some(path)=asset["path"].as_str() else{continue};
-        let path=Path::new(path);
-        let Ok(revision)=crate::subtitle_jobs::revision(path) else{continue};
-        let key=format!("{id}:{revision}");
-        if WARMED.lock().is_ok_and(|w|w.0.contains(&key)) || !crate::container::is_matroska(path) {continue;}
-        if asset["early"]==true {continue;}
+        let (Some(id),Some(revision),Some(path))=(asset["id"].as_str(),asset["file_revision"].as_str(),asset["path"].as_str()) else{continue};
+        // Only Matroska files are indexed; the rest are read as they are.
+        if !crate::container::is_matroska(Path::new(path)) {record(id,revision,None)?;continue;}
         let Ok(input)=crate::api::media_file(s,id,0).await else{continue};
-        if s.virtual_media.indexed(id,&input) {continue;}
-        if let Ok(mut warmed)=WARMED.lock() {warmed.0.insert(key);}
+        if let Some(index)=s.virtual_media.index_of(id,&input) {record(id,revision,Some(&index))?;continue;}
+        if !s.virtual_media.background_room() || !s.virtual_media.can_preindex() || playback_active(s)? {return Ok(());}
+        // Recorded when the build reports it has finished.
+        if let Ok(mut warmed)=WARMED.lock() {warmed.0.insert(format!("{id}:{revision}"));}
         match s.virtual_media.prepare_analysis(id,input) {
             Ok(_)=>tracing::info!(asset=id,"Rebuilding a missing playback index"),
             Err(error)=>tracing::warn!(asset=id,%error,"Playback index warm-up failed"),
         }
-        if !s.virtual_media.background_room() || !s.virtual_media.can_preindex() {return Ok(());}
     }
     Ok(())
 }
@@ -704,9 +768,11 @@ pub fn summary(db:&Database,jobs:&crate::subtitle_jobs::Manager)->Result<Value> 
     let mut queue=Vec::new();let mut running=Vec::new();let mut scanned=0;let mut completed=0;let mut failed=0;
     let entities:std::collections::HashMap<String,Value>=db.documents("entities")?.into_iter()
         .filter_map(|e|e["id"].as_str().map(|id|(id.to_owned(),e.clone()))).collect();
-    for asset in assets(db)? {
+    let by_asset:std::collections::HashMap<&str,&Value>=rows.iter().filter_map(|r|Some((r["asset_id"].as_str()?,r))).collect();
+    let listed=self::queue(db)?;
+    for asset in listed.iter() {
         let id=asset["id"].as_str().unwrap_or("");
-        let row=rows.iter().find(|r|r["asset_id"]==id);
+        let row=by_asset.get(id).copied();
         let mut detail:Value=row.and_then(|r|r["detail"].as_str()).and_then(|v|serde_json::from_str(v).ok()).unwrap_or(json!({}));
         let mut state=row.and_then(|r|r["state"].as_str()).unwrap_or("queued");
         let mut stage=row.and_then(|r|r["stage"].as_str()).unwrap_or("inventory");
@@ -746,7 +812,7 @@ pub fn summary(db:&Database,jobs:&crate::subtitle_jobs::Manager)->Result<Value> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn database()->Result<Database>{let db=Database{connection:rusqlite::Connection::open_in_memory()?};db.connection.execute_batch(include_str!("schema.sql"))?;crate::storage::add_column(&db.connection,"processing_failures","resolution","TEXT")?;Ok(db)}
+    fn database()->Result<Database>{let db=Database{connection:rusqlite::Connection::open_in_memory()?};db.connection.execute_batch(include_str!("schema.sql"))?;crate::storage::add_column(&db.connection,"processing_failures","resolution","TEXT")?;let mut db=db;db.migrate_profiles(9)?;db.initialize_catalog_revision()?;Ok(db)}
     #[test]
     fn failure_history_survives_retries_and_completion()->Result<()> {
         let db=database()?;enroll(&db,"episode","r1")?;
@@ -921,34 +987,31 @@ mod tests {
     #[test]
     fn files_without_subtitles_reopen_once_for_transcription()->Result<()> {
         let db=database()?;
-        let data=std::env::temp_dir().join(format!("torrbaby-transcribe-{}",uuid::Uuid::new_v4()));
         for id in ["silent","advert","subtitled"] {enroll(&db,id,"r1")?;}
         db.connection.execute("UPDATE media_processing SET state='ready',stage='complete',inventory_state='ready',subtitles_state='not_applicable',credits_state='ready',completed_at=1",[])?;
         db.connection.execute("UPDATE media_processing SET inventory_state='not_applicable' WHERE asset_id='advert'",[])?;
         db.connection.execute("UPDATE media_processing SET subtitles_state='ready' WHERE asset_id='subtitled'",[])?;
-        assert_eq!(reopen_untranscribed(&db,&data)?,1);
+        assert_eq!(reopen_untranscribed(&db)?,1);
         let row=db.rows("SELECT state,subtitles_state,credits_state FROM media_processing WHERE asset_id='silent'",[])?.remove(0);
         assert_eq!((row["state"].as_str(),row["subtitles_state"].as_str(),row["credits_state"].as_str()),(Some("queued"),Some("pending"),Some("ready")));
         // Once transcription reaches a verdict the file stays settled.
         db.connection.execute("UPDATE media_processing SET state='ready',subtitles_state='not_applicable' WHERE asset_id='silent'",[])?;
-        std::fs::create_dir_all(crate::speech_subtitles::directory(&data))?;
-        std::fs::write(crate::speech_subtitles::record(&data,"silent","r1"),r#"{"state":"rejected","tried":["en","zh-Hans","picture","opensubtitles"]}"#)?;
-        assert_eq!(reopen_untranscribed(&db,&data)?,0);
+        crate::speech_subtitles::store(&db,&crate::speech_subtitles::record(&db,"silent","r1"),&serde_json::from_str(r#"{"state":"rejected","tried":["en","zh-Hans","picture","opensubtitles"]}"#)?)?;
+        assert_eq!(reopen_untranscribed(&db)?,0);
         // Rejected before OpenSubtitles was a source: reopened for it once.
-        std::fs::write(crate::speech_subtitles::record(&data,"silent","r1"),r#"{"state":"rejected","tried":["en","zh-Hans","picture"]}"#)?;
-        assert_eq!(reopen_untranscribed(&db,&data)?,1);
+        crate::speech_subtitles::store(&db,&crate::speech_subtitles::record(&db,"silent","r1"),&serde_json::from_str(r#"{"state":"rejected","tried":["en","zh-Hans","picture"]}"#)?)?;
+        assert_eq!(reopen_untranscribed(&db)?,1);
         db.connection.execute("UPDATE media_processing SET state='ready',subtitles_state='not_applicable' WHERE asset_id='silent'",[])?;
-        std::fs::write(crate::speech_subtitles::record(&data,"silent","r1"),r#"{"state":"rejected","tried":["en","zh-Hans","picture","opensubtitles"]}"#)?;
+        crate::speech_subtitles::store(&db,&crate::speech_subtitles::record(&db,"silent","r1"),&serde_json::from_str(r#"{"state":"rejected","tried":["en","zh-Hans","picture","opensubtitles"]}"#)?)?;
         // OpenSubtitles' records beside transcripts are not transcripts: no reopening for them.
-        std::fs::write(crate::speech_subtitles::directory(&data).join(format!("{}.en-opensubtitles.json","b".repeat(64))),r#"{"state":"ready","asset_id":"subtitled"}"#)?;
-        assert_eq!(reopen_untranscribed(&db,&data)?,0);
+        crate::speech_subtitles::store(&db,&format!("{}.en-opensubtitles","b".repeat(64)),&json!({"state":"ready","asset_id":"subtitled"}))?;
+        assert_eq!(reopen_untranscribed(&db)?,0);
         // A finished title transcribed by an older version is redone once.
-        std::fs::write(crate::speech_subtitles::directory(&data).join(format!("{}.json","a".repeat(64))),r#"{"state":"ready","asset_id":"subtitled"}"#)?;
-        assert_eq!(reopen_untranscribed(&db,&data)?,1);
-        std::fs::write(crate::speech_subtitles::record(&data,"subtitled","r1"),r#"{"state":"ready","asset_id":"subtitled","tried":["picture","en","opensubtitles"]}"#)?;
+        crate::speech_subtitles::store(&db,&"a".repeat(64),&json!({"state":"ready","asset_id":"subtitled"}))?;
+        assert_eq!(reopen_untranscribed(&db)?,1);
+        crate::speech_subtitles::store(&db,&crate::speech_subtitles::record(&db,"subtitled","r1"),&serde_json::from_str(r#"{"state":"ready","asset_id":"subtitled","tried":["picture","en","opensubtitles"]}"#)?)?;
         db.connection.execute("UPDATE media_processing SET state='ready',subtitles_state='ready' WHERE asset_id='subtitled'",[])?;
-        assert_eq!(reopen_untranscribed(&db,&data)?,0);
-        std::fs::remove_dir_all(data)?;
+        assert_eq!(reopen_untranscribed(&db)?,0);
         Ok(())
     }
     #[test]

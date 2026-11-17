@@ -86,7 +86,7 @@ pub fn sync(db: &mut Database, body: Value) -> Result<Value> {
         .context("Missing media name")?
         .to_string_lossy();
     let media = format!("{hash}:{index}");
-    tx.execute("INSERT INTO media VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,length=excluded.length",
+    tx.execute("INSERT INTO media VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,length=excluded.length WHERE name IS NOT excluded.name OR length IS NOT excluded.length",
         params![media,hash,i64::try_from(index)?,name,i64::try_from(length)?])?;
     tx.execute(
         "INSERT OR IGNORE INTO profile_playback(profile_id,media_id) VALUES(?,?)",

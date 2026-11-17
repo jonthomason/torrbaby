@@ -69,19 +69,10 @@ fn owned(t: &Value) -> Result<HashSet<PathBuf>> {
         .collect()
 }
 fn job(s: &Service, hash: &str) -> Result<Value> {
-    Ok(s.db
-        .lock()
-        .map_err(|_| anyhow::anyhow!("Database lock failed"))?
-        .state()?["jobs"][hash]
-        .clone())
+    s.db.lock().map_err(|_| anyhow::anyhow!("Database lock failed"))?.job(hash)
 }
 fn save_job(s: &Service, hash: &str, value: Value) -> Result<()> {
-    s.change_state(|state| {
-        if !state["jobs"].is_object() {
-            state["jobs"] = json!({});
-        }
-        state["jobs"][hash] = value;
-    })
+    s.db.lock().map_err(|_| anyhow::anyhow!("Database lock failed"))?.save_job(hash, &value)
 }
 
 pub async fn action(s: &Service, hash: &str, action: &str, body: &Value) -> Result<Value> {
@@ -528,6 +519,9 @@ pub async fn apply_private_seeding(s: &Service) {
     }
 }
 
+/// When the organizer last looked at the torrents: shown in status, not stored.
+static LAST_POLL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub fn last_poll() -> Option<f64> { Some(f64::from_bits(LAST_POLL.load(std::sync::atomic::Ordering::Relaxed))).filter(|t| *t > 0.0) }
 pub async fn tick(s: &Service) -> Result<()> {
     apply_queue_policy(s).await;
     // Before the pause check: seeding obligations do not pause with automation.
@@ -535,10 +529,9 @@ pub async fn tick(s: &Service) -> Result<()> {
     let _guard = s.mutation_lock.lock().await;
     let config = s.effective_config()?;
     let all = torrents(s).await?;
-    s.change_state(|state| {
-        state["last_poll"] = json!(now());
-        state["last_error"] = Value::Null;
-    })?;
+    LAST_POLL.store(now().to_bits(), std::sync::atomic::Ordering::Relaxed);
+    // Written only when it changes (save_state compares).
+    s.change_state(|state| state["last_error"] = Value::Null)?;
     let drives = Drives::of(&config);
     let online = drives.online();
     tend_session(s, &drives).await;
@@ -941,10 +934,7 @@ async fn auto_name(s: &Service, config: &Config, hash: &str) -> Result<()> {
             let Some(entity) = entities.iter().find(|e| e["id"] == asset["entity_id"]) else {
                 continue;
             };
-            let confidence = asset["match_confidence"]
-                .as_str()
-                .or_else(|| entity["match_confidence"].as_str())
-                .unwrap_or("");
+            let confidence = asset["match_confidence"].as_str().unwrap_or("");
             if asset["confirmed"] != true
                 && !["exact_title_year", "exact_unique_title"].contains(&confidence)
             {
