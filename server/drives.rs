@@ -171,6 +171,15 @@ pub fn write_marker(media: &Path, id: &str) -> std::io::Result<()> {
 /// shares usually compose it, and a Mac OS Extended drive lists every name decomposed,
 /// however it was written. Both spellings open the same file on these drives, so only
 /// what Torrbaby remembers and compares needs to agree.
+/// Whether two folders Transmission or a record names are the same place: a trailing slash
+/// ("…/Downloads/") or another Unicode spelling is not a different folder. (Compared as text, a
+/// trailing slash held Outlander's season 4 in Downloads for days, its move "awaiting verification".)
+pub fn same_place(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    match (a.as_str(), b.as_str()) {
+        (Some(a), Some(b)) => spelled(Path::new(a)) == spelled(Path::new(b)),
+        _ => a == b,
+    }
+}
 pub fn spelled(path: &Path) -> PathBuf {
     match path.to_str() { Some(text) => PathBuf::from(spelling(text)), None => path.to_path_buf() }
 }

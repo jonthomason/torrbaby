@@ -16,7 +16,7 @@ pub fn list(s:&Service)->Result<Value> {
  Ok(json!({"trials":rows.iter().map(|r|serde_json::from_str::<Value>(r["document"].as_str().unwrap_or("{}"))).collect::<std::result::Result<Vec<_>,_>>()?}))
 }
 fn owned(c:&Value,t:&Value)->bool {
- c["hash"].as_str().is_some_and(|h|h==t["hash_string"].as_str().unwrap_or("")) && c["directory"]==t["download_dir"] && trial_path(t["download_dir"].as_str().unwrap_or(""))
+ c["hash"].as_str().is_some_and(|h|h==t["hash_string"].as_str().unwrap_or("")) && crate::drives::same_place(&c["directory"],&t["download_dir"]) && trial_path(t["download_dir"].as_str().unwrap_or(""))
 }
 pub async fn create(s:&Service,body:&Value)->Result<Value> {
  let _lock=LOCK.lock().await;
@@ -81,7 +81,7 @@ async fn advance(s:&Service,v:&mut Value)->Result<()> {
    let dir=v["candidates"][i]["directory"].as_str().context("Missing trial directory")?.to_owned();
    // Reconcile an add that succeeded immediately before a crash/timeout.
    let all=crate::organizer::torrents(s).await?;
-   let recovered=all.iter().find(|t|t["download_dir"]==dir);
+   let recovered=all.iter().find(|t|crate::drives::same_place(&t["download_dir"],&json!(dir)));
    let result=if let Some(t)=recovered {Ok(json!({"torrent_added":{"hash_string":t["hash_string"]}}))} else {
     std::fs::create_dir_all(&dir)?;
     let mut body=v["candidates"][i]["source"].clone();body["paused"]=json!(true);
@@ -100,7 +100,7 @@ async fn advance(s:&Service,v:&mut Value)->Result<()> {
     Err(e)=>{
      // A timed-out add may have succeeded. Reconcile before relinquishing ownership.
      let current=crate::organizer::torrents(s).await?;
-     if let Some(t)=current.iter().find(|t|t["download_dir"]==dir){v["candidates"][i]["hash"]=t["hash_string"].clone();v["candidates"][i]["state"]=json!("ready");}
+     if let Some(t)=current.iter().find(|t|crate::drives::same_place(&t["download_dir"],&json!(dir))){v["candidates"][i]["hash"]=t["hash_string"].clone();v["candidates"][i]["state"]=json!("ready");}
      else {v["candidates"][i]["error"]=json!(e.to_string());v["candidates"][i]["state"]=json!("error");}
     }
    }
@@ -144,7 +144,7 @@ async fn advance(s:&Service,v:&mut Value)->Result<()> {
    // The winner joins its own drive's downloads: a rename, never a copy across drives.
    let drives=crate::drives::Drives::of(&s.effective_config()?);
    let destination=drives.drive_of(Path::new(t["download_dir"].as_str().unwrap_or(""))).unwrap_or(drives.primary()).downloads.to_string_lossy().into_owned();
-   if t["download_dir"]!=destination {
+   if !crate::drives::same_place(&t["download_dir"],&json!(destination)) {
     ensure!(owned(c,&t),"Trial ownership changed; cleanup stopped");
     for file in t["files"].as_array().into_iter().flatten() {
      let name=file["name"].as_str().context("Invalid torrent filename")?;

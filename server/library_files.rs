@@ -274,6 +274,32 @@ fn verify_no_shared_files(preview: &Value, torrents: &[Value]) -> Result<()> {
     Ok(())
 }
 
+/// A torrent deleted with its files is gone from the library too: its files' records, what
+/// processing kept for them (languages, credits, subtitle records and the subtitles they name,
+/// playback indexes) and its organizer job. Watch history stays. Without this, a deleted
+/// download's episodes stayed in the library as missing files and in the processing queue for
+/// ever, and adding the torrent again was skipped as "ignored" (2026-11-17: 216 records).
+/// `only_missing`: keep any record whose file is still on disk.
+pub fn forget_package(s: &Service, hash: &str, only_missing: bool) -> Result<usize> {
+    let (assets, outputs) = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.forget_package(hash, only_missing)?;
+    if !assets.is_empty() {
+        let purge = |what: &str, result: Result<()>| if let Err(error) = result { tracing::warn!(hash, %error, what, "Caches of a deleted download not removed"); };
+        purge("streams", s.hls.purge_assets(&assets));
+        purge("playback indexes", s.virtual_media.purge_assets(&assets));
+        purge("subtitles", s.subtitle_jobs.purge_assets(&assets));
+        let root = crate::speech_subtitles::directory(&s.data_dir);
+        for output in outputs {
+            match std::fs::remove_file(root.join(&output)) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => tracing::warn!(hash, output, %error, "Subtitles of a deleted download not removed"),
+            }
+        }
+        tracing::info!(hash, records = assets.len(), "Deleted download forgotten by the library");
+    }
+    Ok(assets.len())
+}
+
 fn purge_caches(s: &Service, preview: &Value) -> Result<()> {
     let assets = preview["assets"].as_array().context("Missing affected assets")?.iter()
         .filter_map(|a|a["asset_id"].as_str().map(str::to_owned)).collect();
@@ -311,7 +337,7 @@ async fn advance(s: &Service, operation: &Value) -> Result<()> {
             if torrent["download_dir"].as_str() == destination.to_str() {
                 return advance("verifying");
             }
-            ensure!(torrent["download_dir"] == original["download_dir"],"Torrent moved to an unexpected location");
+            ensure!(crate::drives::same_place(&torrent["download_dir"], &original["download_dir"]),"Torrent moved to an unexpected location");
             let remaining = validate_owned_files(&original,&roots)?;
             ensure!(remaining.len() == original["files"].as_array().context("Operation has no file list")?.len(),"Waiting for the in-progress move to finish");
             ensure!(std::fs::read_dir(&destination)?.all(|e|e.is_ok_and(|e|e.file_name() == ".torrbaby-operation")),"Waiting for the in-progress move to finish");
@@ -344,7 +370,7 @@ async fn advance(s: &Service, operation: &Value) -> Result<()> {
         "seeding" => {
             let hash = manifest["torrent_hash"].as_str().context("Missing torrent hash")?;
             let torrent = organizer::torrent(s,hash).await?;
-            ensure!(torrent["download_dir"] == manifest["download_dir"],"Junk location changed; files are retained");
+            ensure!(crate::drives::same_place(&torrent["download_dir"], &manifest["download_dir"]),"Junk location changed; files are retained");
             // Paused, queued, stalled, and unavailable states are never completion.
             if torrent["is_finished"] == true && organizer::complete(&torrent) {
                 advance("detaching")
@@ -440,6 +466,38 @@ fn delete_owned_files(preview: &Value, roots: &[PathBuf]) -> Result<()> {
 }
 
 impl crate::storage::Database {
+    /// The records of a torrent's files and their per-file data, in one transaction. Returns
+    /// the asset IDs and the subtitle files their records named (names in the transcripts folder).
+    pub fn forget_package(&mut self, hash: &str, only_missing: bool) -> Result<(std::collections::BTreeSet<String>, Vec<String>)> {
+        let tx = self.connection.transaction()?;
+        let mut assets = std::collections::BTreeSet::new();
+        {
+            let mut statement = tx.prepare("SELECT id, json_extract(document,'$.path') FROM library_assets WHERE json_extract(document,'$.torrent_hash')=?")?;
+            for row in statement.query_map([hash], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))? {
+                let (id, path) = row?;
+                if only_missing && path.is_some_and(|p| Path::new(&p).exists()) { continue; }
+                assets.insert(id);
+            }
+        }
+        let mut outputs = Vec::new();
+        for id in &assets {
+            {
+                let mut statement = tx.prepare("SELECT json_extract(document,'$.output') FROM subtitle_records WHERE asset_id=? AND json_extract(document,'$.output') IS NOT NULL")?;
+                for output in statement.query_map([id], |r| r.get::<_, String>(0))? { outputs.push(output?); }
+            }
+            for table in ["media_inventory", "credits_analysis", "credit_prints", "media_processing", "processing_failures", "subtitle_priorities", "subtitle_records", "playback_indexes", "library_assets"] {
+                let column = if table == "library_assets" { "id" } else { "asset_id" };
+                tx.execute(&format!("DELETE FROM {table} WHERE {column}=?"), [id])?;
+            }
+        }
+        let left: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM library_assets WHERE json_extract(document,'$.torrent_hash')=?)", [hash], |r| r.get(0))?;
+        if !left {
+            tx.execute("DELETE FROM metadata WHERE hash=?", [hash])?;
+            tx.execute("DELETE FROM organizer_jobs WHERE hash=?", [hash])?;
+        }
+        tx.commit()?;
+        Ok((assets, outputs))
+    }
     pub fn archived_confirmation(&self, asset: &str, action: &str, token: &str) -> Result<Option<Value>> {
         for row in self.rows("SELECT document FROM library_operation_archive", [])? {
             let operation: Value = serde_json::from_str(row["document"].as_str().context("Invalid archived operation")?)?;
@@ -720,4 +778,27 @@ mod tests {
         };
         let result = run(); std::fs::remove_dir_all(root)?; result
     }
+    #[test]
+    fn a_deleted_download_is_forgotten_with_its_files_data_but_not_watch_history() -> Result<()> {
+        let mut db = crate::storage::Database { connection: rusqlite::Connection::open_in_memory()? };
+        db.connection.execute_batch(include_str!("schema.sql"))?;
+        db.migrate_profiles(9)?;
+        db.initialize_catalog_revision()?;
+        for (id, hash, path) in [("gone", "dead", "/nowhere/Show.S01E01.mkv"), ("other", "alive", "/nowhere/Film.mkv")] {
+            db.connection.execute("INSERT INTO library_assets VALUES(?,?)", rusqlite::params![id, json!({"id":id,"torrent_hash":hash,"path":path}).to_string()])?;
+            db.connection.execute("INSERT INTO media_inventory VALUES(?,'r','{}',0)", [id])?;
+            db.connection.execute("INSERT INTO subtitle_records VALUES(?,?,'transcript',?)", rusqlite::params![format!("{id}-record"), id, json!({"output":format!("{id}.en.srt")}).to_string()])?;
+        }
+        db.connection.execute("INSERT INTO media VALUES('dead:0','dead',0,'Show',1)", [])?;
+        db.save_job("dead", &json!({"phase":"ignored"}))?;
+        let (assets, outputs) = db.forget_package("dead", false)?;
+        assert_eq!((assets.into_iter().collect::<Vec<_>>(), outputs), (vec!["gone".to_owned()], vec!["gone.en.srt".to_owned()]));
+        let left: Vec<String> = db.rows("SELECT id FROM library_assets", [])?.iter().filter_map(|r| r["id"].as_str().map(str::to_owned)).collect();
+        assert_eq!(left, ["other"]);
+        let count = |sql: &str| -> Result<i64> { Ok(db.connection.query_row(sql, [], |r| r.get(0))?) };
+        assert_eq!((count("SELECT count(*) FROM media_inventory")?, count("SELECT count(*) FROM subtitle_records")?, count("SELECT count(*) FROM media")?), (1, 1, 1), "watch history stays");
+        assert!(db.job("dead")?.is_null());
+        Ok(())
+    }
+
 }

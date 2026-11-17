@@ -166,11 +166,10 @@ pub async fn action(s: &Service, hash: &str, action: &str, body: &Value) -> Resu
                 }
             }
         };
-        save_job(
-            s,
-            hash,
-            json!({"hash":hash,"name":t["name"],"phase":"ignored"}),
-        )?;
+        // Gone from Transmission: no job is kept for it (an "ignored" one made adding the same
+        // torrent again be skipped). Deleted with its files, it is gone from the library too.
+        if delete { crate::library_files::forget_package(s, hash, false)?; }
+        save_job(s, hash, Value::Null)?;
         s.event("torrent_removed", json!({"hash":hash,"delete_data":delete}))?;
         s.invalidate_torrents();
         return Ok(result);
@@ -279,8 +278,12 @@ pub(crate) async fn add_at(s: &Service, body: &Value, directory:Option<&Path>) -
     let result = added?;
     if directory.is_none() { if let Some(hash) = result["torrent_added"]["hash_string"].as_str()
         .or_else(||result["torrent_duplicate"]["hash_string"].as_str()) {
-        s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?
-            .restore_completed_package(&hash.to_ascii_lowercase())?;
+        let mut db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+        db.restore_completed_package(&hash.to_ascii_lowercase())?;
+        // Added again: a job left from when it was ignored or removed no longer holds it back.
+        if result["torrent_added"].is_object() && db.job(&hash.to_ascii_lowercase())?["phase"] == "ignored" {
+            db.save_job(&hash.to_ascii_lowercase(), &Value::Null)?;
+        }
     }
     }
     if let Some(key)=body["listing_key"].as_str().filter(|s|!s.is_empty() && s.len()<2048) {
@@ -519,6 +522,25 @@ pub async fn apply_private_seeding(s: &Service) {
     }
 }
 
+/// Once after a start: downloads removed before removal forgot them (their job left
+/// "ignored", their torrent gone): records whose files are gone are forgotten, and the job.
+fn forget_removed(s: &Service, all: &[Value]) {
+    static DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if all.is_empty() || DONE.swap(true, std::sync::atomic::Ordering::Relaxed) { return; }
+    let present: HashSet<String> = all.iter().filter_map(|t| t["hash_string"].as_str().map(str::to_ascii_lowercase)).collect();
+    let Ok(jobs) = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable")).and_then(|db| db.jobs()) else { return };
+    for (hash, job) in jobs.as_object().into_iter().flatten() {
+        if job["phase"] != "ignored" || present.contains(&hash.to_ascii_lowercase()) { continue; }
+        match crate::library_files::forget_package(s, hash, true) {
+            Ok(n) => {
+                if n > 0 { tracing::info!(hash, records = n, "Forgot a download removed earlier"); }
+                let _ = save_job(s, hash, Value::Null);
+            }
+            Err(error) => tracing::warn!(hash, %error, "Could not forget a removed download"),
+        }
+    }
+}
+
 /// When the organizer last looked at the torrents: shown in status, not stored.
 static LAST_POLL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub fn last_poll() -> Option<f64> { Some(f64::from_bits(LAST_POLL.load(std::sync::atomic::Ordering::Relaxed))).filter(|t| *t > 0.0) }
@@ -532,6 +554,7 @@ pub async fn tick(s: &Service) -> Result<()> {
     LAST_POLL.store(now().to_bits(), std::sync::atomic::Ordering::Relaxed);
     // Written only when it changes (save_state compares).
     s.change_state(|state| state["last_error"] = Value::Null)?;
+    forget_removed(s, &all);
     let drives = Drives::of(&config);
     let online = drives.online();
     tend_session(s, &drives).await;
@@ -819,7 +842,7 @@ async fn advance(
     let source = PathBuf::from(text(&job, "source")?);
     let destination = PathBuf::from(text(&job, "destination")?);
     let payload = job["files"].as_array().context("Missing job files")?;
-    let mut moved = t["download_dir"] == job["destination"] && complete(t);
+    let mut moved = crate::drives::same_place(&t["download_dir"], &job["destination"]) && complete(t);
     if moved {
         for file in payload {
             let name = text(file, "name")?;
@@ -847,7 +870,7 @@ async fn advance(
     if now() - job["attempted"].as_f64().unwrap_or(0.0) < 300.0 {
         return Ok(());
     }
-    if t["download_dir"] != job["source"] {
+    if !crate::drives::same_place(&t["download_dir"], &job["source"]) {
         bail!("Move awaiting verification; torrent location changed");
     }
     if !complete(t) {
