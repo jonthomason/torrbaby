@@ -1583,7 +1583,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         ("GET","/v1/library/revision") => Ok(json!({"revision":db.catalog_revision()?,"content":db.part_revision("content")?,"progress":db.part_revision("progress")?})),
         ("GET","/v1/library/list") => db.catalog_list(profile),
         ("GET","/v1/library/progress") => db.catalog_progress(profile),
-        ("GET","/v1/processing") => crate::processing::summary(&db),
+        ("GET","/v1/processing") => crate::processing::summary(&db,&s.subtitle_jobs),
         ("GET","/v1/processing/failures") => Ok(json!({
             "failures":db.rows("SELECT * FROM processing_failures ORDER BY resolved_at IS NULL DESC,last_seen DESC",[])?,
             "patterns":db.rows("SELECT stage,error,COUNT(*) AS affected_files,SUM(occurrences) AS occurrences FROM processing_failures WHERE resolved_at IS NULL GROUP BY stage,error ORDER BY affected_files DESC",[])?

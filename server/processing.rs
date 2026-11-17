@@ -658,17 +658,23 @@ fn name(asset:&Value,entity:Option<&Value>)->Value {
     };
     json!({"show":show,"season":asset["season"],"episode":asset["episode"],"episode_name":episode_name})
 }
-pub fn summary(db:&Database)->Result<Value> {
+pub fn summary(db:&Database,jobs:&crate::subtitle_jobs::Manager)->Result<Value> {
     let rows=db.rows("SELECT * FROM media_processing",[])?;
+    let translating=jobs.translating_now();
     let mut queue=Vec::new();let mut running=Vec::new();let mut scanned=0;let mut completed=0;let mut failed=0;
     let entities:std::collections::HashMap<String,Value>=db.documents("entities")?.into_iter()
         .filter_map(|e|e["id"].as_str().map(|id|(id.to_owned(),e.clone()))).collect();
     for asset in assets(db)? {
         let id=asset["id"].as_str().unwrap_or("");
         let row=rows.iter().find(|r|r["asset_id"]==id);
-        let detail:Value=row.and_then(|r|r["detail"].as_str()).and_then(|v|serde_json::from_str(v).ok()).unwrap_or(json!({}));
-        let state=row.and_then(|r|r["state"].as_str()).unwrap_or("queued");
-        let stage=row.and_then(|r|r["stage"].as_str()).unwrap_or("inventory");
+        let mut detail:Value=row.and_then(|r|r["detail"].as_str()).and_then(|v|serde_json::from_str(v).ok()).unwrap_or(json!({}));
+        let mut state=row.and_then(|r|r["state"].as_str()).unwrap_or("queued");
+        let mut stage=row.and_then(|r|r["stage"].as_str()).unwrap_or("inventory");
+        // Translating in its own lane after giving its slot back: shown as running.
+        if let Some(job)=translating.get(id).filter(|_|state=="queued") {
+            state="running";stage="translation";
+            detail=json!({"target":job["target"],"extraction_method":job["method"],"completed_cues":job["completed_cues"],"total_cues":job["total_cues"]});
+        }
         let title=asset["path"].as_str().and_then(|p|Path::new(p).file_stem()).and_then(|p|p.to_str()).unwrap_or(id);
         let cues=detail["completed_cues"].as_u64().unwrap_or(0);let total=detail["total_cues"].as_u64().unwrap_or(0);
         let named=name(&asset,asset["entity_id"].as_str().and_then(|e|entities.get(e)));
@@ -821,7 +827,10 @@ mod tests {
         // Only the advert's failure is retired; the real (damaged) video still fails visibly.
         let open=db.rows("SELECT asset_id FROM processing_failures WHERE resolved_at IS NULL",[])?;
         assert_eq!(open.len(),1);assert_eq!(open[0]["asset_id"],"movie");
-        let queue=summary(&db)?;
+        let root=std::env::temp_dir().join(format!("torrbaby-summary-{}",std::process::id()));
+        let jobs=crate::subtitle_jobs::Manager::new(&root.join("subtitles"))?;
+        let queue=summary(&db,&jobs)?;
+        let _=std::fs::remove_dir_all(&root);
         assert_eq!(queue["failed"],1);
         assert!(queue["queue"].as_array().unwrap().iter().all(|a|a["asset_id"]=="movie"));
         Ok(())

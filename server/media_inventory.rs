@@ -507,8 +507,8 @@ fn generated(job:&Value)->bool {
 }
 
 /// Compatibility endpoint: one row per file, backed by the same durable queue.
-pub fn summary(db: &Database, _jobs: &crate::subtitle_jobs::Manager) -> Result<Value> {
-    crate::processing::summary(db)
+pub fn summary(db: &Database, jobs: &crate::subtitle_jobs::Manager) -> Result<Value> {
+    crate::processing::summary(db, jobs)
 }
 
 #[cfg(test)]

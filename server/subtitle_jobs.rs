@@ -223,6 +223,13 @@ impl Manager {
     pub fn set_lane(&self, limit:usize) {
         self.lane.store(limit.min(MAX_CONCURRENCY),std::sync::atomic::Ordering::Relaxed);
     }
+    /// Translations being made now, by asset: their file may have given its processing slot
+    /// back, so the queue's own state does not show them.
+    pub fn translating_now(&self)->std::collections::HashMap<String,Value> {
+        let ids:Vec<String>=self.translating.lock().map(|t|t.iter().cloned().collect()).unwrap_or_default();
+        ids.iter().filter_map(|id|self.read(id).ok()).filter(|j|j.state=="running")
+            .map(|j|(j.asset_id.clone(),json!({"target":j.target,"method":j.extraction_method,"completed_cues":j.completed_cues,"total_cues":j.total_cues}))).collect()
+    }
     /// Whether another translation could start now.
     pub fn lane_free(&self)->bool { self.can_admit(true) }
     /// Assets whose translation ended since the last call.

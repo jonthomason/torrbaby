@@ -352,13 +352,16 @@ pub fn people_decided(data: &Path, asset: &str, revision: &str, tag: &str) -> bo
 }
 
 /// Whether OpenSubtitles gave an answer that stands for this file in `tag`: subtitles, or none
-/// suitable. Not while it could not be asked, nor when its file was refused for cues out of place.
+/// suitable; or it could not be asked and the time to ask again has not come (the title was
+/// reopened on every pass meanwhile, and Spirited Away's picture was read and failed 119 times).
+/// Not when its file was refused for cues out of place.
 /// Subtitles taken before they were checked against the file's length are not settled.
 pub fn people_settled(data: &Path, asset: &str, revision: &str, tag: &str, special: bool) -> bool {
     let record = directory(data).join(format!("{}.{tag}-opensubtitles.json", key(data, asset, revision)));
     let everything = crate::opensubtitles::everything(data);
     std::fs::read(record).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).is_some_and(|saved|
-        (saved["state"] == "ready" && fit_checked(&saved)) || (saved["state"] == "missing" && !(everything && saved["set_aside"] == true)
+        (saved["state"] == "ready" && fit_checked(&saved)) || (saved["state"] == "later" && saved["after"].as_f64().is_some_and(|t| t > now()))
+            || (saved["state"] == "missing" && !(everything && saved["set_aside"] == true)
             && !saved["reason"].as_str().is_some_and(|r| r.ends_with("Subtitle cues are out of order"))
             && !ask_again(&saved, special)))
 }
@@ -447,7 +450,7 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
             let message = error.to_string();
             let after = crate::opensubtitles::waits_until(&message).unwrap_or(now() + 3600.0);
             tracing::info!(asset = id, language, %message, "OpenSubtitles later; going on with what the title has");
-            save(json!({"state":"later","asset_id":id,"after":after,"updated":now()}))?;
+            save(json!({"state":"later","asset_id":id,"after":after,"reason":message,"updated":now()}))?;
             Ok(None)
         }
     }
