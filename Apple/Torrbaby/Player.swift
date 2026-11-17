@@ -253,15 +253,22 @@ final class PlaybackModel: ObservableObject {
             }
         }
     }
-    /// The playback last tried again on another route (once each).
-    private var retriedPlayback: UUID?
-    /// A stream that failed is tried again, once, on the next way to the server that answers
-    /// (the relay through bronze failed on an airport's Wi-Fi while ABT had a path), from where
-    /// it was. False when there is no other way, or it was already tried.
+    /// When this playback was last tried again on another route, and how many times in a row
+    /// that failed within a minute.
+    private var retriedAt: (UUID, Date, Int)?
+    /// A stream that failed is tried again on the next way to the server that answers (the relay
+    /// through bronze failed on an airport's Wi-Fi while ABT had a path; a direct path went quiet
+    /// at a hotel), from where it was, with no message: a change of route is not an error. Again
+    /// each time a route goes, unless three tries in a row each failed within a minute. False
+    /// when there is no other way.
     private func retryOnAnotherRoute(_ item: AVPlayerItem) async -> Bool {
         let failed = playback
-        guard !failed.url.isFileURL, retriedPlayback != failed.id else { return false }
-        retriedPlayback = failed.id
+        guard !failed.url.isFileURL else { return false }
+        let quick = retriedAt.map { $0.0 == failed.id && Date().timeIntervalSince($0.1) < 60 } ?? false
+        let streak = quick ? (retriedAt?.2 ?? 0) + 1 : 1
+        guard streak <= 3 else { return false }
+        retriedAt = (failed.id, Date(), streak)
+        ClientDiagnostics.note("Stream failed; trying again on another route (\(streak))")
         let position = player.currentTime().seconds
         guard let route = await store.routeAfterStreamFailure(failed.url), playback.id == failed.id, player.currentItem === item,
               var parts = URLComponents(url: failed.url, resolvingAgainstBaseURL: false),

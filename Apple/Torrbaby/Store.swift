@@ -1052,9 +1052,34 @@ final class Store: ObservableObject {
                 directOpenedAt = Date()
                 directEvent("open on port \(tunnel.port)")
                 directNote = "open since \(Date().formatted(date: .omitted, time: .shortened)), \(tunnel.how)"
+                watchDirect(port: tunnel.port)
             } catch {
                 directNote = "not available: \(error.localizedDescription)"
                 directEvent("failed: \(error.localizedDescription)")
+            }
+        }
+    }
+    /// A punched path can open and then carry nothing back (a hotel's NAT, 2026-11-17: Diamond
+    /// answered and the replies never came; each request waited out its 45 s). While it is open
+    /// it is asked for /v1/ping every 5 s; two missed answers drop it, which ends the requests
+    /// on it and sends them again over the relay, and the player reloads on the relay where it was.
+    private var directWatch: Task<Void, Never>?
+    private func watchDirect(port: UInt16) {
+        directWatch?.cancel()
+        let route = "http://127.0.0.1:\(port)"
+        directWatch = Task { @MainActor [weak self] in
+            var missed = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard let self, !Task.isCancelled, self.directRoute == route else { return }
+                do {
+                    let _: ServerPing = try await self.request("GET", "/v1/ping", timeout: 4, address: route)
+                    missed = 0
+                } catch {
+                    guard self.directRoute == route else { return }
+                    missed += 1
+                    if missed >= 2 { self.dropDirect("no answer for 10 s"); return }
+                }
             }
         }
     }
@@ -1094,6 +1119,7 @@ final class Store: ObservableObject {
     func dropDirect(_ reason: String) {
         guard directTunnel != nil || directRoute != nil else { return }
         let tunnel = directTunnel
+        directWatch?.cancel(); directWatch = nil
         directTunnel = nil; directRoute = nil; directOpenedAt = nil
         directNote = reason
         directEvent("dropped: \(reason)")
@@ -1243,10 +1269,13 @@ final class Store: ObservableObject {
             // The direct path failed: back to Tailscale at once (the next try uses it).
             if throughDirect, let network = error as? URLError, network.code != .cancelled {
                 dropDirect("failed: \(network.code.rawValue)")
-                // The direct path died under this request (a carrier switch behind a hotspot):
-                // a read is asked again at once over the route underneath (the relay), so the
-                // switch costs a moment rather than an error. Changes are never repeated.
-                if method == "GET", activeServer != nil {
+                // The direct path died under this request (a carrier switch behind a hotspot, a
+                // path gone quiet): it is asked again at once over the route underneath (the
+                // relay), so the switch costs a moment rather than an error. A change is sent again
+                // too: its answer was lost, and Torrbaby's changes are safe to repeat (progress
+                // carries its event id, registering and marking watched set a state).
+                let lost: Set<URLError.Code> = [.networkConnectionLost, .timedOut, .cannotConnectToHost, .notConnectedToInternet, .cannotFindHost]
+                if method == "GET" || lost.contains(network.code), activeServer != nil {
                     directEvent("retried \(path.split(separator: "?").first ?? "") over \(routeLabel(activeServer ?? ""))")
                     return try await self.request(method, path, body: body, timeout: timeout, address: nil, observer: observer)
                 }
