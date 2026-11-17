@@ -124,6 +124,29 @@ struct ConnectionStatusSections: View {
     }
     #endif
 
+    #if os(iOS)
+    /// ABT's way to Diamond in words, with how long ago it last answered when that is a while.
+    private var abtDetail: String {
+        guard let path = store.abtPath else { return "not known yet" }
+        var text: String
+        switch path {
+        case "lan": text = "direct (home network)"
+        case "punched": text = "direct (punched)"
+        case "ipv6": text = "direct (IPv6)"
+        case "punching": text = "punching…" + (ABT.punching.map { " \($0)" } ?? "")
+        case "checking": text = "network changed, checking…"
+        case "lost": text = "punched path closed; the relay is used until ABT punches again"
+        case "bronze": text = "through bronze (the app's own relay is used)"
+        case "exit": text = "through shadow only (not used for Diamond; the relay is used)"
+        default: text = "none yet (the relay is used; never through ABT's exit)"
+        }
+        if let at = ABT.answeredAt, store.abtDirect || path == "bronze" {
+            let age = Int(Date().timeIntervalSince(at))
+            if age > 10 { text += " · last answered \(age) s ago" }
+        }
+        return text
+    }
+    #endif
     private var summary: String {
         switch store.path {
         case .home: return ms("home")
@@ -148,7 +171,7 @@ struct ConnectionStatusSections: View {
             #if os(iOS)
             row("Torrbaby tunnel", kind: "tunnel", inUse: store.path == .tunnel, detail: tunnel.installed ? tunnel.statusText + (tunnel.connected ? (tunnelPaths.map { "\n\($0)" } ?? "") : "") : "not installed")
             if ABT.connected || store.path == .abt {
-                row("ABT", kind: "abt", inUse: store.path == .abt, detail: ABT.connected ? "on; its path to \(server): " + (store.abtPath.map { $0 == "lan" ? "home network" : $0 == "punched" ? "punched" : $0 == "ipv6" ? "IPv6" : "none yet (the relay is used; never through ABT's exit)" } ?? "not known yet") : "off")
+                row("ABT", kind: "abt", inUse: store.path == .abt, detail: ABT.connected ? "on; its path to \(server): " + abtDetail : "off")
                 if ABT.connected && store.abtIntercepted {
                     Text("This Wi-Fi is intercepting connections. Sign in again.").foregroundStyle(.red)
                 }

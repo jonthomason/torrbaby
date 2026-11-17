@@ -293,7 +293,8 @@ import UIKit
     }
     /// ABT's own account of how it reaches Diamond now, from the page its tunnel answers on
     /// the device itself: "lan" (home network), "punched", "ipv6" (straight over IPv6), "exit" (no straight path) or
-    /// "unknown"; nil when ABT did not answer.
+    /// "unknown"; from ABT 209 also "punching", "bronze", "checking" (network changing) or "lost"
+    /// (a punched path closed); nil when ABT did not answer.
     static func pathToDiamond() async -> String? {
         guard let url = URL(string: "http://status.abt.jonthomason.com/") else { return nil }
         var request = URLRequest(url: url)
@@ -302,8 +303,19 @@ import UIKit
               let status = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let hosts = status["hosts"] as? [[String: Any]] else { return nil }
         intercepted = (status["exit"] as? [String: Any])?["intercepted"] as? Bool ?? false
-        return hosts.first { $0["device"] as? String == "diamond" }?["path"] as? String ?? "unknown"
+        guard let diamond = hosts.first(where: { $0["device"] as? String == "diamond" }) else { return "unknown" }
+        let path = diamond["path"] as? String ?? "unknown"
+        punching = diamond["punching"] as? String
+        answeredAt = (diamond["answeredAt"] as? Double).map { Date(timeIntervalSince1970: $0) }
+        // ABT 209 and later: its state wins over the path ("checking" the moment the network
+        // changes, so a punched path whose network has gone stops reading "punched").
+        guard let state = diamond["state"] as? String else { return path }
+        return state == "direct" ? path : state
     }
+    /// ABT's current punch step toward Diamond, while one runs (ABT 209 and later).
+    private(set) static var punching: String?
+    /// When something last got through on ABT's direct or bronze path to Diamond.
+    private(set) static var answeredAt: Date?
     /// ABT's exit met a certificate that is not its own twice running: this Wi-Fi's sign-in page
     /// is taking over secure connections (ABT 174 and later; false otherwise). From the last
     /// `pathToDiamond`.
