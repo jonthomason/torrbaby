@@ -31,6 +31,15 @@
 //! Diamond, so nothing changes for Diamond or its devices. Diamond's Connection page counts
 //! only Diamond's streams; other homes' bytes are counted per home.
 //!
+//! Punch hints, shared by every app and home: a home (Diamond, the Mac's ABT host) reports each
+//! punch outcome on its proved connection with a stream `TBPUNCH1 <json>` (the device's public
+//! address, its kind, the spray used, whether it got through, and how long it took). Bronze keeps
+//! them (punches.jsonl in the state directory, 30 days) by the device's network: its IPv4 /24 or
+//! IPv6 /56, since a hotel or carrier NAT hands out addresses from a pool. A device asks with a
+//! `TBHINTS1\n` stream and gets the record for the network bronze sees it on; a home asks with
+//! `TBHINTS1 <address>\n`. TBINFO's reply carries `spread random` when a predicted spray (a port
+//! window, or STUN's exact ports) failed on that network and none got through after it.
+//!
 //! Usage, for Diamond's Connection page: the devices connected now (client id, address, since,
 //! bytes relayed) and bytes relayed per day (China time), kept in usage.json in the state
 //! directory. Diamond asks over its own connection with a `TBUSAGE1\n` stream.
@@ -53,6 +62,8 @@ pub const HOME_HELLO: &str = "TBHOME1 ";
 pub const INFO: &[u8] = b"TBINFO1\n";
 pub const NAME: &[u8] = b"TBNAME1 ";
 pub const USAGE: &[u8] = b"TBUSAGE1\n";
+pub const PUNCH: &[u8] = b"TBPUNCH1 ";
+pub const HINTS: &[u8] = b"TBHINTS1";
 /// A device stream that starts with `TBTO1 <home>\n` goes to that home instead of Diamond.
 pub const TO: &[u8] = b"TBTO1 ";
 /// After `TBHOME1 <secret>\n` and `OK\n`, an idle home connection over TCP gets this every
@@ -226,6 +237,84 @@ pub struct Hub {
     down: AtomicU64,
     up: AtomicU64,
     days: std::sync::Mutex<Days>,
+    hints: std::sync::Mutex<hints::Store>,
+}
+
+/// Punch outcomes by the device's network, shared by every app and home (see the top).
+pub mod hints {
+    use serde_json::{Value, json};
+    use std::net::IpAddr;
+    use std::path::PathBuf;
+
+    /// Outcomes are kept this long, and at most this many.
+    const KEEP_SECONDS: u64 = 30 * 86400;
+    const KEEP: usize = 20_000;
+
+    /// The network an address belongs to: its IPv4 /24 or IPv6 /56.
+    pub fn prefix(ip: IpAddr) -> String {
+        match ip {
+            IpAddr::V4(v4) => { let o = v4.octets(); format!("{}.{}.{}.0/24", o[0], o[1], o[2]) }
+            IpAddr::V6(v6) => {
+                let s = v6.segments();
+                format!("{:x}:{:x}:{:x}:{:x}00::/56", s[0], s[1], s[2], s[3] >> 8)
+            }
+        }
+    }
+
+    #[derive(Default)]
+    pub struct Store { pub(crate) outcomes: Vec<Value>, pub(crate) file: Option<PathBuf> }
+
+    impl Store {
+        /// Read `file` (dropping what is too old) and keep appending to it.
+        pub fn load(&mut self, file: PathBuf, now: u64) {
+            let text = std::fs::read_to_string(&file).unwrap_or_default();
+            self.outcomes = text.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok())
+                .filter(|v| v["at"].as_u64().is_some_and(|at| at + KEEP_SECONDS >= now)).collect();
+            let start = self.outcomes.len().saturating_sub(KEEP);
+            self.outcomes.drain(..start);
+            // Rewritten without the old lines.
+            let body: String = self.outcomes.iter().map(|v| format!("{v}\n")).collect();
+            let temporary = file.with_extension("jsonl.tmp");
+            if std::fs::write(&temporary, body).is_ok() { let _ = std::fs::rename(&temporary, &file); }
+            self.file = Some(file);
+        }
+
+        /// One reported outcome from home `host`, cleaned to the fields kept. None when it is not one.
+        pub fn add(&mut self, report: &Value, host: &str, now: u64) -> Option<Value> {
+            let ip: IpAddr = report["address"].as_str()?.trim().parse().ok()?;
+            let word = |key: &str, allowed: &[&str]| report[key].as_str().filter(|v| allowed.contains(v)).map(str::to_owned);
+            let spread = word("spread", &["window", "exact", "random", "ipv6", "lan"])?;
+            let ok = report["ok"].as_bool()?;
+            let ms = |key: &str| report[key].as_u64().filter(|v| *v < 600_000);
+            let app: String = report["app"].as_str().unwrap_or("").chars().filter(|c| c.is_ascii_alphanumeric()).take(16).collect();
+            let outcome = json!({"prefix": prefix(ip), "kind": word("kind", &["wifi", "cellular", "wired", "unknown"]).unwrap_or_else(|| "unknown".into()),
+                "spread": spread, "ok": ok, "punch_ms": ms("punch_ms"), "quic_ms": ms("quic_ms"), "host": host, "app": app, "at": now});
+            if let Some(file) = &self.file {
+                use std::io::Write;
+                if let Ok(mut out) = std::fs::OpenOptions::new().create(true).append(true).open(file) { let _ = writeln!(out, "{outcome}"); }
+            }
+            self.outcomes.push(outcome.clone());
+            if self.outcomes.len() > KEEP { let extra = self.outcomes.len() - KEEP; self.outcomes.drain(..extra); }
+            Some(outcome)
+        }
+
+        /// What is known of `ip`'s network: the spread to start with, and its recent outcomes.
+        pub fn for_address(&self, ip: IpAddr, now: u64) -> Value {
+            let prefix = prefix(ip);
+            let recent: Vec<&Value> = self.outcomes.iter().filter(|v| v["prefix"] == prefix.as_str() && v["at"].as_u64().is_some_and(|at| at + KEEP_SECONDS >= now)).collect();
+            json!({"prefix": prefix, "spread": spread(&recent), "outcomes": recent.iter().rev().take(20).collect::<Vec<_>>()})
+        }
+    }
+
+    /// "random" when a predicted spray (window or exact) failed on the network and no predicted
+    /// spray got through after it; else null (nothing learned: the device decides as before).
+    pub fn spread(recent: &[&Value]) -> Value {
+        let predicted = |v: &&&Value| matches!(v["spread"].as_str(), Some("window" | "exact"));
+        match recent.iter().filter(predicted).last() {
+            Some(last) if last["ok"] == false => json!("random"),
+            _ => Value::Null,
+        }
+    }
 }
 
 /// A machine devices are relayed to: Diamond, or another home.
@@ -358,7 +447,22 @@ impl Hub {
         let diamond = Home::new("diamond", secret);
         let homes = std::sync::Mutex::new(std::collections::BTreeMap::from([("diamond".to_owned(), diamond.clone())]));
         Arc::new(Hub { diamond, homes, homes_dir: Default::default(), devices: AtomicU64::new(0), streams: AtomicU64::new(0),
-            connected: Default::default(), down: AtomicU64::new(0), up: AtomicU64::new(0), days: Default::default() })
+            connected: Default::default(), down: AtomicU64::new(0), up: AtomicU64::new(0), days: Default::default(), hints: Default::default() })
+    }
+
+    /// Keep punch outcomes in `dir`/punches.jsonl (see `hints`).
+    pub fn keep_hints(&self, dir: &Path) {
+        if let Ok(mut hints) = self.hints.lock() { hints.load(dir.join("punches.jsonl"), unix_now()) }
+    }
+
+    /// What is known of the network `ip` is on (see `hints`).
+    pub fn hints_for(&self, ip: IpAddr) -> serde_json::Value {
+        self.hints.lock().map(|h| h.for_address(ip, unix_now())).unwrap_or_default()
+    }
+
+    /// Home `host` reports a punch outcome.
+    pub fn report_punch(&self, report: &serde_json::Value, host: &str) -> bool {
+        self.hints.lock().ok().and_then(|mut h| h.add(report, host, unix_now())).is_some()
     }
 
     /// The other homes' secrets are in `dir`/homes/<name>.secret: read now, and again when a
@@ -520,8 +624,15 @@ async fn home(connection: quinn::Connection, hub: Arc<Hub>) {
         while let Ok((mut send, mut recv)) = asking.accept_bi().await {
             let (hub, home) = (asked.clone(), asker.clone());
             tokio::spawn(async move {
-                let Ok(request) = recv.read_to_end(64).await else { return };
-                if request == USAGE {
+                let Ok(request) = recv.read_to_end(4096).await else { return };
+                if request.starts_with(PUNCH) {
+                    let stored = serde_json::from_slice::<serde_json::Value>(&request[PUNCH.len()..]).ok().is_some_and(|report| hub.report_punch(&report, &home.name));
+                    let _ = send.write_all(if stored { b"OK\n".as_slice() } else { b"NO\n".as_slice() }).await;
+                } else if request.starts_with(HINTS) {
+                    let asked = String::from_utf8_lossy(&request[HINTS.len()..]).trim().parse::<IpAddr>();
+                    let reply = asked.map(|ip| hub.hints_for(ip)).unwrap_or_else(|_| serde_json::json!({"error": "TBHINTS1 <address>"}));
+                    let _ = send.write_all(reply.to_string().as_bytes()).await;
+                } else if request == USAGE {
                     let usage = if diamond { hub.usage() } else {
                         serde_json::json!({"home": home.name, "down": home.down.load(Ordering::Relaxed), "up": home.up.load(Ordering::Relaxed)})
                     };
@@ -621,7 +732,13 @@ where R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin {
         // Older clients read only the first two lines; "homeip" is on its own line after them.
         let mut reply = format!("home {}\nyou {from}\n", if home.online() { "online" } else { "offline" });
         if let Some(ip) = home.ip() { reply.push_str(&format!("homeip {ip}\n")) }
+        if let Some(spread) = hub.hints_for(from.ip())["spread"].as_str() { reply.push_str(&format!("spread {spread}\n")) }
         let _ = device_send.write_all(reply.as_bytes()).await;
+        let _ = device_send.shutdown().await;
+        return Ok(());
+    }
+    if first.starts_with(HINTS) {
+        let _ = device_send.write_all(hub.hints_for(from.ip()).to_string().as_bytes()).await;
         let _ = device_send.shutdown().await;
         return Ok(());
     }

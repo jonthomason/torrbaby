@@ -321,3 +321,34 @@ async fn pooled_wrong(server: SocketAddr) {
     stream.read_to_end(&mut rest).await.unwrap();
     assert!(rest.is_empty(), "closed without OK");
 }
+
+/// A home reports punch outcomes; a device on that network is told to spray random ports, and
+/// both can read what is known of it. One success with a predicted spray clears the advice.
+#[tokio::test]
+async fn punch_outcomes_become_hints_for_the_network() {
+    let (server, secret) = start();
+    let diamond = home(server, &secret).await.unwrap();
+    let device = connect(server, ALPN_RELAY).await;
+    assert!(!ask(&device, INFO).await.unwrap().contains("spread"));
+    let report = |body: serde_json::Value| { let diamond = diamond.clone(); async move {
+        let (mut send, mut recv) = diamond.open_bi().await.unwrap();
+        send.write_all(&[PUNCH, body.to_string().as_bytes()].concat()).await.unwrap();
+        send.finish().unwrap();
+        String::from_utf8(recv.read_to_end(16).await.unwrap()).unwrap()
+    }};
+    // Another address on the same /24 (a NAT pool): the device is on 127.0.0.1.
+    assert_eq!(report(serde_json::json!({"address": "127.0.0.20", "kind": "wifi", "spread": "window", "ok": false, "app": "abt"})).await, "OK\n");
+    assert_eq!(report(serde_json::json!({"address": "not an address", "spread": "window", "ok": false})).await, "NO\n");
+    assert!(ask(&device, INFO).await.unwrap().lines().any(|l| l == "spread random"));
+    let hints: serde_json::Value = serde_json::from_str(&ask(&device, HINTS).await.unwrap()).unwrap();
+    assert_eq!(hints["prefix"], "127.0.0.0/24");
+    assert_eq!(hints["outcomes"][0]["host"], "diamond");
+    // A home asks about an address.
+    let (mut send, mut recv) = diamond.open_bi().await.unwrap();
+    send.write_all(b"TBHINTS1 127.0.0.99\n").await.unwrap();
+    send.finish().unwrap();
+    let asked: serde_json::Value = serde_json::from_slice(&recv.read_to_end(1 << 16).await.unwrap()).unwrap();
+    assert_eq!(asked["spread"], "random");
+    report(serde_json::json!({"address": "127.0.0.21", "spread": "window", "ok": true, "punch_ms": 80})).await;
+    assert!(!ask(&device, INFO).await.unwrap().contains("spread"));
+}

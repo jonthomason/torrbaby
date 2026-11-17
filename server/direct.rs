@@ -69,6 +69,7 @@ pub mod results {
         if !file(data).exists() { backfill(data) }
         let line = json!({"at": crate::storage::now(), "carrier": carrier(ip), "kind": kind, "spread": spread, "ok": punched_ms.is_some(), "ms": punched_ms});
         if let Ok(mut out) = std::fs::OpenOptions::new().create(true).append(true).open(file(data)) { let _ = writeln!(out, "{line}"); }
+        crate::rendezvous::report_punch(ip, kind, spread, punched_ms);
     }
 
     /// Per carrier and connection kind over the last 30 days: punched, failed, median time, and

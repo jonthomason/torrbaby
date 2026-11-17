@@ -112,7 +112,11 @@ pub fn punch(plan: &Plan, mut report: impl FnMut(&Report)) -> Result<Punched, Fa
     let mut steps: Vec<u16> = ports.windows(2).map(|w| w[1] - w[0]).collect();
     steps.sort_unstable();
     let median_step = steps.get(steps.len() / 2).copied().unwrap_or(0);
-    let random_spray = plan.random_from.contains(&ip);
+    // An address, or a network "a.b.c.0/24" (bronze's hint): a hotel or carrier NAT hands out
+    // addresses from a pool, so what failed from one fails from its neighbours.
+    let network = ip.rsplit_once('.').map(|(n, _)| format!("{n}.0/24")).unwrap_or_default();
+    let random_spray = plan.random_from.iter().any(|from| *from == ip || *from == network
+        || from.rsplit_once('.').map(|(n, _)| format!("{n}.0/24")) == Some(network.clone()));
     // One port per socket, handed out far apart: no window predicts them, and none is needed.
     let exact = !per_destination && !pairs.is_empty() && median_step > 512 && !random_spray;
     let random = random_spray || per_destination;

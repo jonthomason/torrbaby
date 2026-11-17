@@ -55,6 +55,7 @@ fn main() -> Result<()> {
         tokio::spawn(stun::serve(stun_socket));
         let hub = Hub::new(&secret);
         hub.keep_usage(&state);
+        hub.keep_hints(&state);
         hub.load_homes(&state);
         if tcp_port != 0 {
             let listener = tokio::net::TcpListener::bind(("127.0.0.1", tcp_port)).await.with_context(|| format!("TCP port {tcp_port}"))?;

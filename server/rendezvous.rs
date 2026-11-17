@@ -37,6 +37,23 @@ pub async fn usage() -> Result<Value> {
     tokio::time::timeout(Duration::from_secs(10), asked).await.context("The rendezvous did not answer")?
 }
 
+/// Tell bronze how a punch from a device went, for the hints every app and home share (bronze
+/// keeps them by the device's network; see rendezvous/src/lib.rs). Best effort, in the background.
+pub fn report_punch(address: &str, kind: &str, spread: &str, punched_ms: Option<u64>) {
+    let Some(connection) = CONNECTION.lock().ok().and_then(|held| held.clone()).filter(|c| c.close_reason().is_none()) else { return };
+    let line = json!({"address": address, "kind": kind, "spread": spread, "ok": punched_ms.is_some(), "punch_ms": punched_ms, "app": "torrbaby"});
+    tokio::spawn(async move {
+        let sent = async {
+            let (mut send, mut recv) = connection.open_bi().await?;
+            send.write_all(format!("TBPUNCH1 {line}").as_bytes()).await?;
+            send.finish()?;
+            let _ = recv.read_to_end(16).await;
+            anyhow::Ok(())
+        };
+        let _ = tokio::time::timeout(Duration::from_secs(10), sent).await;
+    });
+}
+
 fn set(update: impl FnOnce(&mut Value)) {
     if let Ok(mut held) = STATE.lock() {
         let value = held.get_or_insert_with(|| json!({}));

@@ -129,6 +129,17 @@ final class RelayTunnel: @unchecked Sendable {
         }.value
     }
 
+    /// Bronze's shared punch hint for the network this device is on (learned from every app's
+    /// and home's punches there): "random" when a predicted spray failed there and none got
+    /// through since. Nil when the relay is not open or nothing is known.
+    static func spreadHint() async -> String? {
+        await Task.detached { () -> String? in
+            var buffer = [CChar](repeating: 0, count: 256)
+            guard tbdirect_relay_info(&buffer, buffer.count) > 0 else { return nil }
+            return String(cString: buffer).split(separator: "\n").first { $0.hasPrefix("spread ") }.map { String($0.dropFirst(7)) }
+        }.value
+    }
+
     private func watch() {
         watcher = Task.detached { [weak self] in
             while !Task.isCancelled {
@@ -195,7 +206,14 @@ final class DirectTunnel: @unchecked Sendable {
         let began = Date()
         do {
             // The Rust library punches, asks Diamond (over `signal`) and opens QUIC itself.
-            punched = try await DirectPunch.run(stun: stun, signal: signal, token: store.token, randomFrom: windowFailedFrom, lean: false) { r in
+            // What every app and home learned on this network, from bronze: where a predicted
+            // spray failed, start with random ports (the relay's view of this device's address).
+            var randomFrom = windowFailedFrom
+            if await RelayTunnel.spreadHint() == "random", let seen = store.relayPublicAddress?.split(separator: ":").dropLast().joined(separator: ":"), !seen.isEmpty {
+                randomFrom.insert(seen)
+                record { $0.diagnosis = "bronze: predicted ports failed on this network before" }
+            }
+            punched = try await DirectPunch.run(stun: stun, signal: signal, token: store.token, randomFrom: randomFrom, lean: false) { r in
                 Task { @MainActor in
                     record {
                         $0.step = r.step.hasPrefix("asking Diamond") ? "asking Diamond to start (over \(label))" : r.step
