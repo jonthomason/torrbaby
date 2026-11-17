@@ -304,19 +304,8 @@ pub async fn serve(
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             }
         }));
-        let scanner = service.clone();
-        workers.push(tokio::spawn(async move {
-            loop {
-                if let Err(error) = scan_library(&scanner).await {
-                    let _ = scanner.change_state(|state| {
-                        state["library_scan"]["scanning"] = json!(false);
-                        state["library_scan"]["error"] = json!(error.to_string());
-                    });
-                    eprintln!("Library scan: {error}");
-                }
-                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-            }
-        }));
+        // The library is scanned when its files change (library_watch), not every minute.
+        workers.push(tokio::spawn(crate::library_watch::run(service.clone())));
         let metadata = service.clone();
         workers.push(tokio::spawn(async move {
             loop {

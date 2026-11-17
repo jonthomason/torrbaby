@@ -34,6 +34,7 @@ mod diagnostics;
 mod dolby;
 mod hls;
 mod lan;
+mod library_watch;
 mod matroska;
 mod media_format;
 mod media_inventory;
