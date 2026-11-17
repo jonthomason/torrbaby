@@ -48,7 +48,7 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring"]
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 # The secure path to Diamond (punch, spray, identity, end-to-end encryption): ABT's shared
 # abt-link (ABT owns it; move the rev to update).
-abt-link = { git = "https://github.com/jonthomason/abt.git", rev = "be32d14dd0441941c305d0c5aad67e2b43c7968a", default-features = false, features = ["host"] }
+abt-link = { git = "https://github.com/jonthomason/abt.git", rev = "70d531c4ad9bda4fa1e33abff579df73444967ed", default-features = false, features = ["host"] }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls", "ring"] }
 
 

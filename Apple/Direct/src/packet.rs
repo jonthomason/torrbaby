@@ -1,14 +1,12 @@
 //! The packet tunnel's half: the iPhone/iPad Network Extension hands every IP packet sent to
 //! Diamond's tunnel address here. A userspace TCP stack (ipstack) turns them back into TCP
-//! connections, and each connection becomes a QUIC stream on the direct path, exactly as the
-//! app's loopback proxy does. Diamond pipes each stream to its own HTTP port, so it needs no
-//! change for the tunnel.
+//! connections, and each goes to Diamond through Torrbaby's link (proxy.rs: abt-link's route,
+//! in process): Diamond on this network at home, else the direct path, else the relay through
+//! bronze. Diamond pipes each stream to its own HTTP port, so it needs no change for the tunnel.
 //!
-//! The point is the direct path: the extension owns the punched socket and its QUIC
-//! connection, and iOS keeps the extension running while Torrbaby is suspended, so the path
-//! to Diamond stays open (and is punched again on a network change) with the app in the
-//! background. Background downloads, which iOS fetches itself, go straight to Diamond through
-//! it. The relay through bronze carries a stream only while there is no direct path.
+//! iOS keeps the extension running while Torrbaby is suspended, so the path to Diamond stays
+//! open (and is punched again on a network change) with the app in the background. Background
+//! downloads, which iOS fetches itself, go straight to Diamond through it.
 use std::pin::Pin;
 use std::sync::Mutex;
 use std::task::{Context, Poll};
@@ -50,21 +48,6 @@ impl AsyncWrite for Packets {
     fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> { Poll::Ready(Ok(())) }
 }
 
-/// Where a TCP connection from the tunnel goes: a stream on a QUIC connection (the direct
-/// path or the relay), or, at home, a plain TCP connection to Diamond on this network.
-#[derive(Clone)]
-pub enum Route {
-    /// The direct path: QUIC to Diamond's own identity.
-    Quic(quinn::Connection),
-    /// The relay through bronze: each stream is wrapped in TLS to Diamond (crate::e2e).
-    Relay(quinn::Connection),
-    Lan(std::net::SocketAddr),
-}
-pub type Carrier = Box<dyn Fn() -> Option<Route> + Send + Sync>;
-/// Whether a connection on `route` should make way: it is on the relay, and the direct path
-/// or Diamond on this network is now open.
-pub type Superseded = Box<dyn Fn(&Route) -> bool + Send + Sync>;
-
 /// The running stack: packets in through `input`, packets out through the receiver given to
 /// `start`'s caller.
 pub struct Stack {
@@ -73,7 +56,8 @@ pub struct Stack {
 }
 
 impl Stack {
-    /// Start the stack. `carrier` is asked for a route whenever a TCP connection arrives;
+    /// Start the stack. Each TCP connection that arrives goes to Diamond through the link (see
+    /// `route`), waiting up to `wait` while it has no path;
     /// while it has none (the path is being punched) the connection waits up to `wait`.
     ///
     /// A connection carried by the relay is closed once a better route has been open for 2 s
@@ -81,12 +65,10 @@ impl Stack {
     /// Players hold one connection for as long as they can: video started while the path was
     /// being punched (just back from the background, a new network) otherwise stayed on the
     /// relay to the end, at the relay's speed, with the direct path open and unused.
-    pub fn start(mtu: u16, carrier: Carrier, superseded: Superseded, wait: Duration) -> Option<(Stack, mpsc::UnboundedReceiver<Vec<u8>>)> {
+    pub fn start(mtu: u16, wait: Duration) -> Option<(Stack, mpsc::UnboundedReceiver<Vec<u8>>)> {
         let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().ok()?;
         let (input, incoming) = mpsc::channel(1024);
         let (outgoing, output) = mpsc::unbounded_channel();
-        let carrier = std::sync::Arc::new(carrier);
-        let superseded = std::sync::Arc::new(superseded);
         runtime.spawn(async move {
             let mut config = ipstack::IpStackConfig::default();
             config.mtu_unchecked(mtu);
@@ -101,9 +83,7 @@ impl Stack {
             RUNNING.store(true, std::sync::atomic::Ordering::SeqCst);
             while let Ok(stream) = stack.accept().await {
                 let ipstack::IpStackStream::Tcp(tcp) = stream else { continue };
-                let carrier = carrier.clone();
-                let superseded = superseded.clone();
-                tokio::spawn(route(tcp, carrier, superseded, wait));
+                tokio::spawn(route(tcp, wait));
             }
             // The stack's own task ended (a panic inside it): the extension restarts it.
             RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -120,74 +100,26 @@ impl Stack {
     }
 }
 
-/// A client's connection to Diamond, wherever it came from (the packet tunnel's TCP stack, or a
-/// loopback proxy's listener): `carrier` is asked for a route, waiting up to `wait` while there
-/// is none (the paths are opening, or dormant), and the connection is carried on it. A
-/// connection on the relay makes way (is closed toward the client, which reconnects) once
-/// `superseded` says a better route has been open for 2 s.
-pub async fn route<C>(tcp: C, carrier: std::sync::Arc<Carrier>, superseded: std::sync::Arc<Superseded>, wait: Duration)
+/// A client's connection to Diamond from the packet tunnel's TCP stack: through the link
+/// (abt-link's route, which picks the path, retries a connection whose path does not open on
+/// the next one, and ends a relayed one once the direct path has been chosen for 2 s, so the
+/// client asks again on it). While the link has no path (opening, or dormant and waking) the
+/// connection waits up to `wait`.
+pub async fn route<C>(tcp: C, wait: Duration)
 where C: AsyncRead + AsyncWrite + Unpin + Send + 'static {
     let started = tokio::time::Instant::now();
-    // Counted while waiting: a dormant tunnel (idle, no keepalives) wakes for it.
     stats::add(&stats::FLOWS_WAITING, 1);
-    let route = loop {
-        if let Some(route) = carrier() { break Some(route) }
+    let stream = loop {
+        if let Some(stream) = crate::proxy::connect().await { break Some(stream) }
         if started.elapsed() >= wait { break None }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(250)).await;
     };
     stats::FLOWS_WAITING.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-    let Some(route) = route else { return uncarried(tcp).await };
-    // A better route open at two checks a second apart: this one makes way.
-    let moved = {
-        let route = route.clone();
-        async move {
-            let mut seen = 0;
-            loop {
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                seen = if superseded(&route) { seen + 1 } else { 0 };
-                if seen >= 2 { return }
-            }
-        }
-    };
-    match route {
-        Route::Quic(connection) => {
-            let Ok((mut send, mut recv)) = connection.open_bi().await else { return uncarried(tcp).await };
-            let complete = carry(tcp, &mut send, &mut recv, moved).await;
-            // A connection abandoned midway: tell QUIC to discard what it holds
-            // for this stream, or that data keeps the connection's receive
-            // allowance and, added up over many abandoned requests (video
-            // seeks), stalls every stream.
-            if !complete { let _ = recv.stop(0u32.into()); }
-        }
-        Route::Relay(connection) => {
-            let Ok((send, recv)) = connection.open_bi().await else { return uncarried(tcp).await };
-            match crate::e2e::wrap(send, recv).await {
-                crate::e2e::Wrapped::Encrypted(stream) => {
-                    let (mut from_diamond, mut to_diamond) = tokio::io::split(stream);
-                    carry(tcp, &mut to_diamond, &mut from_diamond, moved).await;
-                }
-                crate::e2e::Wrapped::Plain(mut send, mut recv) => {
-                    // Plain only until Diamond's identity is pinned (crate::e2e).
-                    let moved = async { tokio::select! { _ = moved => {}, _ = crate::e2e::pinned_now() => {} } };
-                    let complete = carry(tcp, &mut send, &mut recv, moved).await;
-                    if !complete { let _ = recv.stop(0u32.into()); }
-                }
-                crate::e2e::Wrapped::Failed => uncarried(tcp).await,
-            }
-        }
-        Route::Lan(address) => {
-            let connected = tokio::time::timeout(Duration::from_secs(3), tokio::net::TcpStream::connect(address)).await;
-            let Ok(Ok(diamond)) = connected else { return uncarried(tcp).await };
-            let _ = diamond.set_nodelay(true);
-            stats::add(&stats::FLOWS_LAN, 1);
-            let (mut from_diamond, mut to_diamond) = diamond.into_split();
-            carry(tcp, &mut to_diamond, &mut from_diamond, moved).await;
-        }
-    }
+    let Some(stream) = stream else { return uncarried(tcp).await };
+    let (mut from_diamond, mut to_diamond) = tokio::io::split(stream);
+    carry(tcp, &mut to_diamond, &mut from_diamond, std::future::pending::<()>()).await;
 }
 
-/// A connection nothing could carry: closed toward iOS at once (dropping it tells iOS
-/// nothing), so the client fails over or retries instead of waiting.
 async fn uncarried<C: AsyncWrite + Unpin>(tcp: C) {
     use tokio::io::AsyncWriteExt;
     stats::add(&stats::FLOWS_UNCARRIED, 1);

@@ -1,40 +1,39 @@
-//! Away from home without a packet tunnel (the Android TV app): one loopback port whose every
-//! connection goes to Diamond by the best route open, and a maintainer that keeps the routes
-//! open. The app's base URL (http://127.0.0.1:<port>) stays the same whatever happens beneath
-//! it: the relay opening, a direct path punched or lost, a new network, dormancy.
+//! Torrbaby's link to Diamond away from home, for every client (the iPhone/iPad app and its
+//! packet tunnel, the Android TV app): one stable loopback port, and in-process connections for
+//! the packet tunnel, each going to Diamond by the best path that works now. The base URL
+//! (http://127.0.0.1:<port>) stays the same whatever happens beneath it.
 //!
-//! Routing is the packet tunnel's (packet::route with crate::carrier/superseded): the direct
-//! path while it is open, else the relay through bronze (each stream TLS end to end to
-//! Diamond's pinned identity); a connection on the relay makes way once the direct path opens.
+//! The path is ABT's shared abt-link (the user, 2026-11-17: ABT's code, used by Torrbaby when
+//! ABT is not installed; "No legacy code"): its route takes Diamond on this network (`home`),
+//! else the direct path once it has proved healthy (checked every 2 s, dropped after two
+//! missed checks, so the connections on it end and are asked again over the relay), else the
+//! relay through bronze, end to end encrypted to Diamond's identity; connections on the relay
+//! move to the direct path once it has been chosen for 2 s. Punches come from abt-link's
+//! policy (one at a time, waits after failures, random ports at once where predicted ones
+//! failed, bronze's shared hints, at most 2 minutes between tries while relayed).
 //!
-//! The maintainer is PacketTunnelProvider.maintain() (iOS, Swift) in Rust, so other clients
-//! share it:
-//! - the relay is kept open; every 6 s bronze is asked (TBINFO) for this device's public
-//!   address and Diamond's. The same address means this device is behind Diamond's own NAT,
-//!   where a punch can only hairpin: relay only, no punching. (At home the app itself finds
-//!   Diamond by Bonjour and stops the proxy.)
-//! - a direct path is punched (punch.rs: STUN on bronze, POST /v1/direct through the relay,
-//!   QUIC to Diamond's pinned identity on the winning socket) when there is none. After a
-//!   failure: 5 s, 15 s, 30 s, then every minute where punching has worked on this network or
-//!   on this carrier before; else 1, 2, 5, then 15 min, with a gentler spray. A predicted window
-//!   that failed from a public address is followed by random ports from there.
-//! - a new public address under an open direct path (a carrier switch behind a hotspot):
-//!   the relay is first reconnected over the current network to compare like with like, then
-//!   the path is punched again.
-//! - a network change (told by the app, `network`) that holds for 3 s drops the direct path
-//!   and moves the relay onto a socket on the new network (QUIC migration).
-//! - nothing open for `idle` (2 min): both paths are let go (no keepalives) until a connection
-//!   waits, which wakes them within about a second.
-use crate::{RELAY, TUNNEL, alive, packet, punch};
-use std::collections::{HashSet, VecDeque};
+//! What stays Torrbaby's (`Keeper`, every 3 s):
+//! - the relay through bronze (relay.rs: QUIC, or TCP 443 where UDP is blocked) kept open,
+//!   and let go after `idle` with nothing carried (no keepalives) until the next connection,
+//!   which opens it again within about a second;
+//! - a network change (told by the app, `network`) that holds for 3 s: the relay moves to the
+//!   new network and the route drops its direct path and asks for a punch;
+//! - every 6 s, bronze's view (TBINFO): behind Diamond's own address no punch is tried (it
+//!   could only hairpin); a new public address under the direct path (a carrier switch behind
+//!   a hotspot) drops it.
+use crate::relay::{Bronze, BronzeHints, BronzeRelay};
+use abt_link::device::policy::{Advice, Attempt, Policy, Reporter};
+use abt_link::device::{Failure, HttpSignal, Opened, Plan};
+use abt_link::route::{Route, RouteConfig, State};
+use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
-/// How the proxy reaches bronze and Diamond.
-#[derive(Clone)]
+/// How the link reaches bronze and Diamond.
+#[derive(Clone, PartialEq)]
 pub struct Config {
     /// bronze's relay ("ip:port") and its certificate fingerprint.
     pub relay: String,
@@ -46,18 +45,23 @@ pub struct Config {
     /// This device's token for Diamond, which punching asks with (POST /v1/direct). Empty:
     /// relay only (a TV claiming its setup has no token yet).
     pub token: String,
-    /// Where carriers that have punched are remembered across restarts; none: in memory.
+    /// Diamond's identity (SHA-256 of its certificate): relayed streams are TLS to it end to
+    /// end, and the direct path must present it. None only while pairing through the relay.
+    pub pinned: Option<String>,
+    /// Where the punch memory is kept across restarts; none: in memory.
     pub state_dir: Option<PathBuf>,
-    /// Nothing open this long: the paths are let go until the next connection.
+    /// Nothing carried this long: the relay is let go until the next connection.
     pub idle: Duration,
     /// How long `start` waits for the relay to open before giving up.
     pub open_wait: Duration,
+    /// The packet tunnel extension (50 MB in all): smaller buffers.
+    pub lean: bool,
 }
 
 impl Config {
     pub fn new(relay: &str, relay_fingerprint: &str) -> Config {
         Config { relay: relay.into(), relay_fingerprint: relay_fingerprint.trim().to_lowercase(), stun: String::new(), stun2: None,
-            token: String::new(), state_dir: None, idle: Duration::from_secs(120), open_wait: Duration::from_secs(7) }
+            token: String::new(), pinned: crate::pinned(), state_dir: None, idle: Duration::from_secs(120), open_wait: Duration::from_secs(7), lean: false }
     }
     fn stun(&self) -> String {
         if !self.stun.is_empty() { return self.stun.clone() }
@@ -65,39 +69,40 @@ impl Config {
     }
 }
 
-/// What the status line shows, kept by the maintainer.
+/// What the keeper knows, for the status and the punches.
 #[derive(Default)]
 struct Status {
     state: String,
-    /// How the open direct path was made.
-    punched: String,
-    last_punch: String,
-    next_punch: Option<Instant>,
-    punching: bool,
-    dormant: bool,
     public_ip: String,
+    home_ip: String,
+    behind_diamonds_nat: bool,
 }
 
 struct Shared {
     config: Mutex<Config>,
     status: Mutex<Status>,
     stopped: AtomicBool,
+    /// Counts network changes: a punch's retry is for the network it began on.
+    epoch: AtomicU64,
 }
 
-struct Proxy {
+struct Link {
     runtime: tokio::runtime::Runtime,
-    port: u16,
+    route: Arc<Route>,
+    bronze: Arc<Bronze>,
+    policy: Arc<Policy>,
     shared: Arc<Shared>,
 }
 
-static PROXY: Mutex<Option<Proxy>> = Mutex::new(None);
+static LINK: Mutex<Option<Link>> = Mutex::new(None);
 /// The network the app says it is on: a signature that changes with the network, and the
-/// interface's name. Kept whether or not the proxy runs.
+/// interface's name. Kept whether or not the link runs.
 static NETWORK: Mutex<(String, String)> = Mutex::new((String::new(), String::new()));
 static NOTES: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
 static LOGGER: Mutex<Option<fn(&str)>> = Mutex::new(None);
 
-/// Where each line of what the maintainer does goes (Android: logcat), besides `notes`.
+/// Where each line of what the link does goes (Android: logcat; iOS: the extension's log),
+/// besides `notes`.
 pub fn set_logger(logger: fn(&str)) { if let Ok(mut held) = LOGGER.lock() { *held = Some(logger) } }
 
 fn note(line: &str) {
@@ -109,73 +114,88 @@ fn note(line: &str) {
     if let Some(logger) = logger { logger(line) }
 }
 
-/// The maintainer's recent lines, oldest first.
+/// The link's recent lines, oldest first.
 pub fn notes() -> Vec<String> { NOTES.lock().map(|n| n.iter().cloned().collect()).unwrap_or_default() }
 
-/// Start the proxy (or, already running for this relay, take the new token and STUN) and
-/// return its loopback port; 0 when the relay did not open within `open_wait`. Blocks until
-/// then: call it off the main thread, and not from inside an async task.
+/// Start the link (or, already running for this relay and identity, take the new token and
+/// STUN) and return its loopback port; 0 when the relay did not open within `open_wait`.
+/// Blocks until then: call it off the main thread, and not from inside an async task.
 pub fn start(config: Config) -> u16 {
-    if let Ok(held) = PROXY.lock() && let Some(proxy) = held.as_ref() {
-        let mut current = proxy.shared.config.lock().unwrap_or_else(|e| e.into_inner());
-        if current.relay == config.relay && current.relay_fingerprint == config.relay_fingerprint {
+    if let Ok(held) = LINK.lock() && let Some(link) = held.as_ref() {
+        let mut current = link.shared.config.lock().unwrap_or_else(|e| e.into_inner());
+        if current.relay == config.relay && current.relay_fingerprint == config.relay_fingerprint && current.pinned == config.pinned && current.lean == config.lean {
             *current = config;
-            return proxy.port;
+            return link.route.port();
         }
     }
     stop();
-    let Ok(relay) = config.relay.parse::<SocketAddr>() else { note(&format!("proxy: bronze's address is not valid: {}", config.relay)); return 0 };
-    let Ok(runtime) = tokio::runtime::Builder::new_multi_thread().worker_threads(2).thread_name("tbproxy").enable_all().build() else { return 0 };
-    let Ok(listener) = runtime.block_on(tokio::net::TcpListener::bind("127.0.0.1:0")) else { return 0 };
-    let Ok(port) = listener.local_addr().map(|a| a.port()) else { return 0 };
+    let Ok(relay) = config.relay.parse::<SocketAddr>() else { note(&format!("link: bronze's address is not valid: {}", config.relay)); return 0 };
+    let Ok(runtime) = tokio::runtime::Builder::new_multi_thread().worker_threads(2).thread_name("tblink").enable_all().build() else { return 0 };
+    let bronze = Arc::new(Bronze::new(relay, &config.relay_fingerprint, config.lean));
+    bronze.set_interface(&NETWORK.lock().map(|n| n.1.clone()).unwrap_or_default());
+    let route_config = RouteConfig { host: "diamond".into(), pinned: config.pinned.clone(), ..RouteConfig::default() };
+    let Ok(route) = runtime.block_on(Route::start(route_config, Arc::new(BronzeRelay(bronze.clone())), None)) else { runtime.shutdown_background(); return 0 };
+    let policy = Policy::new();
+    if let Some(dir) = &config.state_dir { policy.keep_memory(dir.join("punch-memory.json")) }
     let open_wait = config.open_wait;
-    let shared = Arc::new(Shared { config: Mutex::new(config), status: Mutex::new(Status { state: "starting".into(), ..Status::default() }), stopped: AtomicBool::new(false) });
-    runtime.spawn(async move {
-        let carrier: Arc<packet::Carrier> = Arc::new(Box::new(crate::carrier));
-        let superseded: Arc<packet::Superseded> = Arc::new(Box::new(crate::superseded));
-        loop {
-            match listener.accept().await {
-                Ok((tcp, _)) => {
-                    let _ = tcp.set_nodelay(true);
-                    // Up to 20 s for a route: a dormant proxy wakes and opens the relay meanwhile.
-                    tokio::spawn(packet::route(tcp, carrier.clone(), superseded.clone(), Duration::from_secs(20)));
-                }
-                // Out of descriptors, say: a moment, then on.
-                Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
-            }
-        }
-    });
-    runtime.spawn(Keeper::new(shared.clone(), relay).run());
-    if let Ok(mut held) = PROXY.lock() { *held = Some(Proxy { runtime, port, shared }) }
-    note(&format!("proxy: loopback port {port}, relay {relay}"));
-    let deadline = Instant::now() + open_wait;
-    while Instant::now() < deadline {
-        if alive(&RELAY) { return port }
-        std::thread::sleep(Duration::from_millis(50));
+    let shared = Arc::new(Shared { config: Mutex::new(config), status: Mutex::new(Status { state: "starting".into(), ..Status::default() }),
+        stopped: AtomicBool::new(false), epoch: AtomicU64::new(0) });
+    let port = route.port();
+    note(&format!("link: loopback port {port}, relay {relay}"));
+    // The relay first: punches are asked of Diamond through it.
+    let opened = runtime.block_on(async { tokio::time::timeout(open_wait, bronze.open()).await.unwrap_or(false) });
+    if !opened {
+        note(&format!("link: the relay at {relay} did not open; stopped"));
+        route.stop();
+        runtime.shutdown_background();
+        return 0;
     }
-    note(&format!("proxy: the relay at {relay} did not open; stopped"));
-    stop();
-    0
+    note(&format!("relay open{}", if bronze.over_tcp() { " over TCP 443 (UDP to bronze did not get through)" } else { "" }));
+    {
+        let _inside = runtime.enter();
+        let attempt = Arc::new(Punch { shared: shared.clone(), route: Arc::downgrade(&route) });
+        route.punch_with(policy.clone(), attempt, Arc::new(BronzeHints(bronze.clone())));
+    }
+    runtime.spawn(Keeper { shared: shared.clone(), route: route.clone(), bronze: bronze.clone(), last_info: None, network: String::new(),
+        pending: None, last_bytes: 0, last_busy: Instant::now(), punched_from: None }.run());
+    if let Ok(mut held) = LINK.lock() { *held = Some(Link { runtime, route, bronze, policy, shared }) }
+    port
 }
 
-/// Whether the proxy is running.
-pub fn running() -> bool { PROXY.lock().ok().is_some_and(|held| held.is_some()) }
+/// Whether the link is running.
+pub fn running() -> bool { LINK.lock().ok().is_some_and(|held| held.is_some()) }
 
-/// Stop the proxy, the direct path and the relay.
+/// The loopback port, while running.
+pub fn port() -> Option<u16> { LINK.lock().ok().and_then(|held| held.as_ref().map(|l| l.route.port())) }
+
+/// Stop the link: the route, its direct path and the relay.
 pub fn stop() {
-    let proxy = PROXY.lock().ok().and_then(|mut held| held.take());
-    if let Some(proxy) = proxy {
-        proxy.shared.stopped.store(true, Ordering::SeqCst);
-        proxy.runtime.shutdown_background();
-        crate::stop(&TUNNEL);
-        crate::stop(&RELAY);
-        note("proxy: stopped");
+    let link = LINK.lock().ok().and_then(|mut held| held.take());
+    if let Some(link) = link {
+        link.shared.stopped.store(true, Ordering::SeqCst);
+        link.route.stop();
+        link.runtime.shutdown_background();
+        note("link: stopped");
     }
+}
+
+/// A connection to Diamond for the packet tunnel, in process (no loopback hop): by the path
+/// the route chooses. None while the link is not running or no path answers.
+pub async fn connect() -> Option<tokio::io::DuplexStream> {
+    let route = LINK.lock().ok().and_then(|held| held.as_ref().map(|l| l.route.clone()))?;
+    route.connect(None).await.ok().map(|(stream, _)| stream)
+}
+
+/// Diamond's address on this network while the device is at home (the packet tunnel finds it):
+/// connections go straight to it. None: away.
+pub fn home(address: Option<SocketAddr>) {
+    let route = LINK.lock().ok().and_then(|held| held.as_ref().map(|l| l.route.clone()));
+    if let Some(route) = route { route.home(address) }
 }
 
 /// The network changed (or was first seen): `signature` identifies it (interface, addresses,
-/// gateway), `interface` is its name ("wlan0", "eth0", "rmnet0"). A change that holds for 3 s
-/// drops the direct path and moves the relay.
+/// gateway), `interface` is its name ("en0", "pdp_ip0", "wlan0"). A change that holds for 3 s
+/// moves the relay and drops the direct path.
 pub fn network(signature: &str, interface: &str) {
     let changed = NETWORK.lock().map(|mut held| {
         let changed = held.0 != signature;
@@ -185,340 +205,196 @@ pub fn network(signature: &str, interface: &str) {
     if changed { note(&format!("network: {signature}")) }
 }
 
-/// One line for the log: the routes, what the maintainer is doing, the last punch, and what
-/// the proxy carried.
+/// The app is back from the background (iOS suspended it, so the direct path's keepalives
+/// stopped): the route drops its direct path and asks for a punch.
+pub fn resumed() {
+    let route = LINK.lock().ok().and_then(|held| held.as_ref().map(|l| l.route.clone()));
+    if let Some(route) = route { route.network_changed() }
+}
+
+/// The link now, as JSON for the app's Connection page: {"state": "home" | "direct" | "relay" |
+/// "down" | "stopped", "rtt_ms", "last_answered_s", "relay": "quic" | "tcp" | "closed" |
+/// "dormant", "public_ip", "behind_diamonds_nat", "punching", "last_punch": {"ok", "summary",
+/// "at", "next_try"}, "note", "bytes": {"home", "direct", "relay"}, "notes"}.
+pub fn state() -> serde_json::Value {
+    use serde_json::json;
+    let held = LINK.lock().ok().and_then(|held| held.as_ref().map(|l| (l.route.clone(), l.bronze.clone(), l.policy.clone(), l.shared.clone(), l.runtime.handle().clone())));
+    let Some((route, bronze, policy, shared, handle)) = held else { return json!({"state": "stopped", "notes": notes()}) };
+    let (state, rtt, answered) = match route.state() {
+        State::Home => ("home", None, None),
+        State::Direct { rtt_ms, last_answered, .. } => ("direct", Some(rtt_ms), Some(last_answered.elapsed().as_secs())),
+        State::Relay => ("relay", None, None),
+        State::Down => ("down", None, None),
+    };
+    let relay_alive = handle.block_on(bronze.alive());
+    let relay = if bronze.dormant() { "dormant" } else if !relay_alive { "closed" } else if bronze.over_tcp() { "tcp" } else { "quic" };
+    let stats = route.stats();
+    let bytes = |p: abt_link::route::PathBytes| json!({"sent": p.sent, "received": p.received});
+    let status = shared.status.lock().unwrap_or_else(|e| e.into_inner());
+    json!({
+        "state": state, "rtt_ms": rtt, "last_answered_s": answered, "relay": relay, "relay_line": handle.block_on(bronze.line()),
+        "public_ip": status.public_ip, "home_ip": status.home_ip, "behind_diamonds_nat": status.behind_diamonds_nat, "keeper": status.state,
+        "punching": policy.punching("diamond"), "note": policy.note(),
+        "last_punch": policy.last("diamond").map(|l| json!({"ok": l.ok, "summary": l.summary, "at": l.at, "next_try": l.next_try})),
+        "bytes": {"home": bytes(stats.home), "direct": bytes(stats.direct), "relay": bytes(stats.relay)},
+        "notes": notes(),
+    })
+}
+
+/// One line for the log.
 pub fn status() -> String {
-    use packet::stats::*;
-    let held = PROXY.lock().ok().and_then(|held| held.as_ref().map(|p| (p.port, p.shared.clone())));
-    let Some((port, shared)) = held else { return "proxy stopped".into() };
-    let s = shared.status.lock().unwrap_or_else(|e| e.into_inner());
-    let direct = if alive(&TUNNEL) { format!("direct open ({})", s.punched) } else { "direct closed".into() };
-    let relay = if alive(&RELAY) { "relay open" } else { "relay closed" };
-    let e2e = if crate::e2e::pinned().is_some() { "end to end to Diamond" } else { "not end to end yet" };
-    let mut line = format!("port {port}: {direct}, {relay} ({e2e}){}; {}", if s.dormant { ", dormant" } else { "" }, s.state);
-    if s.punching { line.push_str("; punching now") }
-    if !s.last_punch.is_empty() { line.push_str(&format!("; last punch {}", s.last_punch)) }
-    if let Some(next) = s.next_punch && next > Instant::now() && !alive(&TUNNEL) {
-        line.push_str(&format!("; next punch in {} s", (next - Instant::now()).as_secs()))
-    }
-    if !s.public_ip.is_empty() { line.push_str(&format!("; public address {}", s.public_ip)) }
-    let network = NETWORK.lock().map(|n| n.0.clone()).unwrap_or_default();
-    if !network.is_empty() { line.push_str(&format!("; network {network}")) }
-    line.push_str(&format!("; connections open {} (opened {}, waiting {}, moved to the direct path {}, uncarried {}, abandoned {}), down {} KB, up {} KB",
-        get(&FLOWS_OPEN), get(&FLOWS_OPENED), get(&FLOWS_WAITING), get(&FLOWS_MOVED), get(&FLOWS_UNCARRIED), get(&FLOWS_ABANDONED),
-        get(&STREAM_DOWN) / 1024, get(&STREAM_UP) / 1024));
-    line.push_str(&crate::paths_line());
+    let state = state();
+    let mut line = format!("{}, relay {}", state["state"].as_str().unwrap_or("?"), state["relay"].as_str().unwrap_or("?"));
+    if let Some(rtt) = state["rtt_ms"].as_u64() { line.push_str(&format!(" (direct rtt {rtt} ms)")) }
+    if let Some(punching) = state["punching"].as_str() { line.push_str(&format!("; punching: {punching}")) }
+    if let Some(summary) = state["last_punch"]["summary"].as_str() { line.push_str(&format!("; last punch {summary}")) }
+    if let Some(keeper) = state["keeper"].as_str().filter(|k| !k.is_empty()) { line.push_str(&format!("; {keeper}")) }
     line
 }
 
-/// A punch's outcome, from its blocking thread.
-enum Outcome {
-    Opened { summary: String, public_address: String, quic_ms: u64 },
-    Failed(punch::Failure),
-    /// The network changed (or the proxy stopped) while it ran: not used, not counted.
-    Stale,
+/// One punch toward Diamond, for the route: the opened QUIC becomes its direct path.
+struct Punch {
+    shared: Arc<Shared>,
+    route: Weak<Route>,
 }
 
+impl Attempt for Punch {
+    type Path = Opened;
+
+    async fn attempt(&self, host: &str, advice: Advice, report: Reporter) -> Result<(Opened, String), Failure> {
+        let config = self.shared.config.lock().map(|c| c.clone()).map_err(|_| Failure::new("the link stopped"))?;
+        if config.token.is_empty() { return Err(Failure::new("relay only: no device token to ask Diamond for a direct path")) }
+        if self.shared.status.lock().is_ok_and(|s| s.behind_diamonds_nat) {
+            return Err(Failure::new("same public address as Diamond: a punch could only hairpin, so the relay carries everything here"));
+        }
+        let route = self.route.upgrade().ok_or_else(|| Failure::new("the link stopped"))?;
+        let interface = NETWORK.lock().map(|n| n.1.clone()).unwrap_or_default();
+        let mut plan = Plan::from_json(&serde_json::json!({
+            "stun": config.stun(), "stun2": config.stun2, "interface": interface, "lean": config.lean, "pinned": config.pinned,
+        }));
+        plan.random_from = advice.random_from;
+        plan.pool = advice.pool;
+        // Diamond is asked through the route itself (the relay, while there is no direct path).
+        let signal = HttpSignal { base: format!("http://127.0.0.1:{}", route.port()), token: config.token.clone() };
+        let named = host.to_string();
+        let opened = tokio::task::spawn_blocking(move || abt_link::device::punch_to(&named, &plan, &signal, |r| report(r)))
+            .await
+            .map_err(|_| Failure::new("the punch stopped unexpectedly"))?
+            .map_err(|failure| Failure { message: failure.explained(), ..failure })?;
+        let summary = format!("{}, QUIC in {} ms", opened.summary, opened.quic_ms);
+        note(&format!("direct path open: {summary}"));
+        Ok((opened, summary))
+    }
+
+    fn opened(&self, _host: &str, _path: Opened) {}
+
+    fn retry_check(&self, _host: &str) -> impl Fn() -> bool + Send + 'static {
+        let (shared, route, epoch) = (self.shared.clone(), self.route.clone(), self.shared.epoch.load(Ordering::SeqCst));
+        move || !shared.stopped.load(Ordering::SeqCst) && shared.epoch.load(Ordering::SeqCst) == epoch && route.upgrade().is_some_and(|r| !r.straight())
+    }
+
+    fn relayed(&self, _host: &str) -> bool {
+        self.route.upgrade().is_some_and(|r| matches!(r.state(), State::Relay))
+    }
+}
+
+/// The relay, network changes and bronze's view, every 3 s.
 struct Keeper {
     shared: Arc<Shared>,
-    relay: SocketAddr,
-    /// The relay's own loopback port (plain relay streams): signalling goes over it.
-    relay_port: u16,
-    dormant: bool,
-    last_busy: Instant,
+    route: Arc<Route>,
+    bronze: Arc<Bronze>,
     last_info: Option<Instant>,
-    /// The public IP the direct path was punched from.
-    punched_from: Option<String>,
-    /// bronze saw another address than the direct path's, and the relay was reconnected over
-    /// the current network to compare like with like.
-    relay_reopened_for_mismatch: bool,
-    /// Failed punches on this network, and when the next may start.
-    punch_failures: usize,
-    next_punch: Instant,
-    punched_on_this_network: bool,
-    public_ip: Option<String>,
-    /// Same public address as Diamond: relay only.
-    behind_diamonds_nat: bool,
-    /// Public addresses a predicted spray failed from: random ports from there next time.
-    window_failed_from: HashSet<String>,
     /// The network acted on, and a different one waiting to hold for 3 s.
     network: String,
     pending: Option<(String, Instant)>,
-    /// Counts network changes: a punch begun on an older network is not used.
-    epoch: Arc<AtomicU64>,
-    punch: Option<tokio::task::JoinHandle<Outcome>>,
+    /// Bytes carried on any path at the last look, and when they last grew.
+    last_bytes: u64,
+    last_busy: Instant,
+    /// The public address the direct path was punched from.
+    punched_from: Option<String>,
 }
 
 impl Keeper {
-    fn new(shared: Arc<Shared>, relay: SocketAddr) -> Keeper {
-        Keeper { shared, relay, relay_port: 0, dormant: false, last_busy: Instant::now(), last_info: None, punched_from: None,
-            relay_reopened_for_mismatch: false, punch_failures: 0, next_punch: Instant::now(), punched_on_this_network: false,
-            public_ip: None, behind_diamonds_nat: false, window_failed_from: HashSet::new(), network: String::new(), pending: None,
-            epoch: Arc::new(AtomicU64::new(0)), punch: None }
-    }
-
     fn state(&self, text: &str) { if let Ok(mut s) = self.shared.status.lock() { s.state = text.into() } }
 
-    /// Each second: network changes and a finished punch; the paths every 3 s, and at once
-    /// while a connection waits for one.
     async fn run(mut self) {
-        let mut ticks: u64 = 0;
-        loop {
-            self.watch_network();
-            self.finish_punch().await;
-            if ticks % 3 == 0 || packet::stats::get(&packet::stats::FLOWS_WAITING) > 0 { self.maintain().await }
-            ticks += 1;
-            tokio::time::sleep(Duration::from_secs(1)).await;
+        while !self.shared.stopped.load(Ordering::SeqCst) {
+            self.watch_network().await;
+            self.maintain().await;
+            tokio::time::sleep(Duration::from_secs(3)).await;
         }
     }
 
-    fn watch_network(&mut self) {
-        let signature = NETWORK.lock().map(|n| n.0.clone()).unwrap_or_default();
+    async fn watch_network(&mut self) {
+        let (signature, interface) = NETWORK.lock().map(|n| n.clone()).unwrap_or_default();
         if signature.is_empty() { return }
         if self.network.is_empty() { self.network = signature; return }
         if signature == self.network { self.pending = None; return }
         match &self.pending {
-            Some((waiting, since)) if *waiting == signature => if since.elapsed() >= Duration::from_secs(3) { self.network_changed(signature) },
-            _ => self.pending = Some((signature, Instant::now())),
+            Some((waiting, since)) if *waiting == signature && since.elapsed() >= Duration::from_secs(3) => {}
+            Some((waiting, _)) if *waiting == signature => return,
+            _ => { self.pending = Some((signature, Instant::now())); return }
         }
-    }
-
-    /// A different network has held for 3 s: the direct path's hole was for the old one. The
-    /// relay moves with QUIC to a socket on the new network (bronze has a public address and
-    /// simply answers the new one); only if it cannot move is it opened again.
-    fn network_changed(&mut self, signature: String) {
-        self.epoch.fetch_add(1, Ordering::SeqCst);
-        crate::stop(&TUNNEL);
-        let moved = !self.dormant && alive(&RELAY) && std::net::UdpSocket::bind("0.0.0.0:0").is_ok_and(crate::relay_rebind);
-        if !moved { crate::stop(&RELAY) }
+        // A different network has held for 3 s: the direct path's hole was for the old one.
+        self.shared.epoch.fetch_add(1, Ordering::SeqCst);
+        self.bronze.set_interface(&interface);
+        let moved = !self.bronze.dormant() && self.bronze.rebind().await;
+        if !moved { self.bronze.close(self.bronze.dormant()).await }
+        self.route.network_changed();
         note(&format!("network changed ({} → {signature}): direct path dropped, relay {}", self.network,
-            if moved { "moved to the new network" } else if self.dormant { "stays closed (dormant)" } else { "reopening" }));
+            if moved { "moved to the new network" } else if self.bronze.dormant() { "stays closed (dormant)" } else { "reopening" }));
         self.network = signature;
         self.pending = None;
-        self.punched_from = None; self.behind_diamonds_nat = false; self.relay_reopened_for_mismatch = false;
-        self.punch_failures = 0; self.next_punch = Instant::now(); self.punched_on_this_network = false; self.public_ip = None;
+        self.punched_from = None;
         self.last_info = None;
-        if let Ok(mut s) = self.shared.status.lock() { s.next_punch = None; s.public_ip.clear() }
+        if let Ok(mut s) = self.shared.status.lock() { s.public_ip.clear(); s.behind_diamonds_nat = false }
     }
 
     async fn maintain(&mut self) {
-        // A punch is under way (up to about 30 s): its outcome is taken by finish_punch.
-        if self.punch.is_some() { return }
-        let open = packet::stats::get(&packet::stats::FLOWS_OPEN);
-        let waiting = packet::stats::get(&packet::stats::FLOWS_WAITING);
-        if open > 0 || waiting > 0 { self.last_busy = Instant::now() }
+        let stats = self.route.stats();
+        let bytes = stats.home.sent + stats.home.received + stats.direct.sent + stats.direct.received + stats.relay.sent + stats.relay.received;
+        if bytes != self.last_bytes { self.last_bytes = bytes; self.last_busy = Instant::now() }
         let idle = self.shared.config.lock().map(|c| c.idle).unwrap_or(Duration::from_secs(120));
-        if self.dormant {
-            if waiting == 0 { return }
-            self.dormant = false;
-            self.last_busy = Instant::now();
-            if let Ok(mut s) = self.shared.status.lock() { s.dormant = false }
-            note("a connection is waiting: waking (opening the relay)");
-        } else if self.last_busy.elapsed() > idle {
-            // Battery and bronze: with nothing open, the paths' keepalives are not worth it.
-            self.dormant = true;
-            crate::stop(&TUNNEL);
-            crate::stop(&RELAY);
-            self.punched_from = None;
-            if let Ok(mut s) = self.shared.status.lock() { s.dormant = true }
+        if self.bronze.dormant() {
+            // The next connection opens the relay again itself (relay.rs).
+            if self.last_busy.elapsed() < idle { note("a connection woke the link"); }
+            else { return }
+        } else if self.last_busy.elapsed() > idle && !matches!(self.route.state(), State::Home) {
+            // Battery and bronze: with nothing carried, the relay's keepalives are not worth it.
+            self.bronze.close(true).await;
             self.state("dormant: idle, nothing sent until the next connection");
-            note(&format!("idle for {} s: paths let go, no keepalives, until the next connection", idle.as_secs()));
+            note(&format!("idle for {} s: relay let go, no keepalives, until the next connection", idle.as_secs()));
             return
         }
-        if !alive(&RELAY) { self.open_relay().await }
-        // Every 6 s, bronze's view: behind Diamond's NAT, or the public address moved (a carrier
-        // switch behind a hotspot, invisible from here) and the direct path's hole is for the old one.
-        if alive(&RELAY) && self.last_info.is_none_or(|at| at.elapsed() > Duration::from_secs(6)) {
-            self.last_info = Some(Instant::now());
-            if let Some((ip, home_ip)) = info().await {
-                self.public_ip = Some(ip.clone());
-                if let Ok(mut s) = self.shared.status.lock() { s.public_ip = ip.clone() }
-                if home_ip.as_deref() == Some(ip.as_str()) {
-                    // Behind Diamond's own NAT a punch can only hairpin, which gets through one
-                    // way at best: the relay carries everything here.
-                    if !self.behind_diamonds_nat { note(&format!("same public address as Diamond ({ip}): relay only, no punching")) }
-                    crate::stop(&TUNNEL);
-                    self.punched_from = None;
-                    self.behind_diamonds_nat = true;
-                    self.state("behind Diamond's own network address: relay only");
-                    return
-                }
-                if self.behind_diamonds_nat { note(&format!("public address {ip} is no longer Diamond's: direct paths may be punched")) }
-                self.behind_diamonds_nat = false;
-                match self.punched_from.clone() {
-                    Some(from) if alive(&TUNNEL) && from != ip => {
-                        if !self.relay_reopened_for_mismatch {
-                            note(&format!("bronze sees {ip}, the direct path is from {from}: reconnecting the relay over the current network first"));
-                            crate::stop(&RELAY);
-                            self.relay_reopened_for_mismatch = true;
-                            return
-                        }
-                        note(&format!("public address changed ({from} → {ip}): punching again"));
-                        crate::stop(&TUNNEL);
-                        self.punched_from = None;
-                        self.next_punch = Instant::now();
-                        self.relay_reopened_for_mismatch = false;
-                    }
-                    _ => self.relay_reopened_for_mismatch = false,
-                }
-            }
+        if !self.bronze.alive().await {
+            note("relay: connecting");
+            if self.bronze.open().await { self.state("relay open"); note("relay open") }
+            else { self.state("relay: bronze did not answer"); return }
         }
-        if alive(&TUNNEL) || self.behind_diamonds_nat || !alive(&RELAY) { return }
-        let config = self.shared.config.lock().map(|c| c.clone()).ok();
-        let Some(config) = config else { return };
-        if config.token.is_empty() { self.state("relay only: no device token to ask Diamond for a direct path"); return }
-        // After a failure, the backoff; a path that dropped is tried at once.
-        if Instant::now() < self.next_punch { self.state("relay; waiting to punch again"); return }
-        self.start_punch(config);
-    }
-
-    async fn open_relay(&mut self) {
-        let config = self.shared.config.lock().map(|c| c.clone()).ok();
-        let Some(config) = config else { return };
-        let relay = self.relay;
-        note(&format!("relay: connecting to {relay}"));
-        let port = tokio::task::spawn_blocking(move || {
-            crate::stop(&RELAY);
-            let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") else { return 0 };
-            crate::open_on(&RELAY, socket, relay, config.relay_fingerprint, b"tbrelay", "torrbaby-rendezvous", 5, crate::RELAY_TIMING, crate::APP_WINDOWS)
-        }).await.unwrap_or(0);
-        self.relay_port = port;
-        if port == 0 {
-            self.state(&format!("relay: could not reach {relay}"));
-            note(&format!("relay: could not reach {relay}"));
-        } else {
-            self.state("relay open");
-            note(&format!("relay open (signalling on loopback port {port})"));
+        // Every 6 s, bronze's view of this device and of Diamond.
+        if self.last_info.is_some_and(|at| at.elapsed() < Duration::from_secs(6)) { return }
+        self.last_info = Some(Instant::now());
+        let Some(reply) = self.bronze.ask(b"TBINFO1\n").await else { return };
+        let text = String::from_utf8_lossy(&reply).to_string();
+        let field = |name: &str| text.lines().find_map(|l| l.strip_prefix(name)).map(str::to_owned);
+        let ip = field("you ").map(|you| you.rsplit_once(':').map(|(ip, _)| ip.trim_matches(['[', ']']).to_owned()).unwrap_or(you)).unwrap_or_default();
+        let home_ip = field("homeip ").unwrap_or_default();
+        let behind = !ip.is_empty() && ip == home_ip;
+        let was_behind = self.shared.status.lock().map(|s| s.behind_diamonds_nat).unwrap_or(false);
+        if let Ok(mut s) = self.shared.status.lock() { s.public_ip = ip.clone(); s.home_ip = home_ip; s.behind_diamonds_nat = behind }
+        if behind && !was_behind { note(&format!("same public address as Diamond ({ip}): relay only, no punching")); self.state("behind Diamond's own network address: relay only") }
+        if !behind && was_behind { note(&format!("public address {ip} is no longer Diamond's: direct paths may be punched")); self.route.network_changed() }
+        // A new public address under the direct path (a carrier switch behind a hotspot, which
+        // the device cannot see): its hole is for the old one.
+        match (&self.punched_from, self.route.state()) {
+            (Some(from), State::Direct { .. }) if *from != ip && !ip.is_empty() => {
+                note(&format!("public address changed ({from} → {ip}): direct path dropped"));
+                self.punched_from = None;
+                self.route.network_changed();
+            }
+            (None, State::Direct { .. }) => self.punched_from = Some(ip),
+            (_, State::Direct { .. }) => {}
+            _ => self.punched_from = None,
         }
     }
-
-    /// Carriers where a punch has worked: the kind of connection and the public IP's first two
-    /// parts (China Mobile punches on cellular, but a hotspot on it may never).
-    fn carrier_key(&self, ip: &str) -> String {
-        let interface = NETWORK.lock().map(|n| n.1.clone()).unwrap_or_default();
-        let kind = if ["rmnet", "ccmni", "pdp"].iter().any(|p| interface.starts_with(p)) { "cellular" } else { "wifi" };
-        format!("{kind} {}", ip.split('.').take(2).collect::<Vec<_>>().join("."))
-    }
-    fn carriers_file(&self) -> Option<PathBuf> {
-        self.shared.config.lock().ok().and_then(|c| c.state_dir.clone()).map(|dir| dir.join("punchable-carriers.txt"))
-    }
-    fn remembered_carriers(&self) -> Vec<String> {
-        let held = REMEMBERED.lock().map(|r| r.clone()).unwrap_or_default();
-        let Some(file) = self.carriers_file() else { return held };
-        let mut carriers: Vec<String> = std::fs::read_to_string(file).unwrap_or_default().lines().map(str::to_owned).filter(|l| !l.is_empty()).collect();
-        for c in held { if !carriers.contains(&c) { carriers.push(c) } }
-        carriers
-    }
-    fn remember_carrier(&self, ip: &str) {
-        let key = self.carrier_key(ip);
-        let mut carriers = self.remembered_carriers();
-        if carriers.contains(&key) { return }
-        carriers.push(key);
-        let keep: Vec<String> = carriers.iter().rev().take(64).rev().cloned().collect();
-        if let Ok(mut held) = REMEMBERED.lock() { *held = keep.clone() }
-        if let Some(file) = self.carriers_file() { let _ = std::fs::write(file, keep.join("\n") + "\n"); }
-    }
-    /// Six failures in a row even here: treated as a network that does not punch.
-    fn punchable(&self) -> bool {
-        if self.punch_failures >= 6 { return false }
-        self.punched_on_this_network || self.public_ip.as_ref().is_some_and(|ip| self.remembered_carriers().contains(&self.carrier_key(ip)))
-    }
-
-    fn start_punch(&mut self, config: Config) {
-        let gentle = self.punch_failures > 0 && !self.punchable();
-        let interface = NETWORK.lock().map(|n| n.1.clone()).unwrap_or_default();
-        let mut plan = punch::Plan::from_json(&serde_json::json!({
-            "stun": config.stun(), "stun2": config.stun2.clone(),
-            "interface": interface, "random_from": self.window_failed_from.iter().cloned().collect::<Vec<_>>(),
-            "sockets": if gentle { 96 } else { 192 }, "interval_ms": if gentle { 400 } else { 200 }, "lean": true,
-        }));
-        plan.pinned = crate::e2e::pinned();
-        let signal = punch::HttpSignal { base: format!("http://127.0.0.1:{}", self.relay_port), token: config.token.clone() };
-        note(&format!("punching a direct path{}", if gentle { " (gently: this network has not punched yet)" } else { "" }));
-        self.state("relay; punching a direct path");
-        if let Ok(mut s) = self.shared.status.lock() { s.punching = true }
-        let (epoch, at, shared) = (self.epoch.clone(), self.epoch.load(Ordering::SeqCst), self.shared.clone());
-        let current = move || epoch.load(Ordering::SeqCst) == at && !shared.stopped.load(Ordering::SeqCst);
-        self.punch = Some(tokio::task::spawn_blocking(move || {
-            // What bronze knows of this network (its pool, failed predictions), over the relay.
-            punch::apply_hints(&mut plan, crate::relay_hints());
-            // Over IPv6 first, where both ends have it: nothing to punch. If QUIC does not
-            // open there, the punch follows.
-            if let Some(found) = punch::ipv6(&plan, &signal) {
-                note("direct: trying IPv6");
-                if !current() { return Outcome::Stale }
-                crate::stop(&TUNNEL);
-                let started = Instant::now();
-                let (summary, public_address) = (found.summary.clone(), found.public_address.clone());
-                if crate::open_on(&TUNNEL, found.socket, found.server, found.fingerprint, b"tbdirect", "torrbaby-direct", 4, crate::LEAN_TIMING, crate::APP_WINDOWS) != 0 {
-                    if !current() { crate::stop(&TUNNEL); return Outcome::Stale }
-                    return Outcome::Opened { summary, public_address, quic_ms: started.elapsed().as_millis() as u64 };
-                }
-                note("direct: QUIC did not open over IPv6; punching instead");
-            }
-            let punched = match punch::punch(&plan, &signal, |r| note(&format!("direct: {}", r.step))) {
-                Ok(punched) => punched,
-                Err(failure) => return if current() { Outcome::Failed(failure) } else { Outcome::Stale },
-            };
-            if !current() { return Outcome::Stale }
-            crate::stop(&TUNNEL);
-            let started = Instant::now();
-            // Keepalives every 5 s and a 15 s idle limit, as in the iOS extension (this process
-            // is not suspended either): a dead path fails over to the relay quickly.
-            let port = crate::open_on(&TUNNEL, punched.socket, punched.server, punched.fingerprint, b"tbdirect", "torrbaby-direct", 8, crate::LEAN_TIMING, crate::APP_WINDOWS);
-            if port == 0 {
-                return Outcome::Failed(punch::Failure { no_quic: true, ..punch::Failure::new("Punched, but QUIC did not open on the punched socket within 8 s") })
-            }
-            if !current() { crate::stop(&TUNNEL); return Outcome::Stale }
-            Outcome::Opened { summary: punched.summary, public_address: punched.public_address, quic_ms: started.elapsed().as_millis() as u64 }
-        }));
-    }
-
-    async fn finish_punch(&mut self) {
-        if !self.punch.as_ref().is_some_and(|p| p.is_finished()) { return }
-        let Some(handle) = self.punch.take() else { return };
-        if let Ok(mut s) = self.shared.status.lock() { s.punching = false }
-        match handle.await {
-            Ok(Outcome::Opened { summary, public_address, quic_ms }) => {
-                self.punched_from = Some(public_address.clone());
-                self.punch_failures = 0;
-                self.next_punch = Instant::now();
-                self.punched_on_this_network = true;
-                self.remember_carrier(&public_address);
-                if let Ok(mut s) = self.shared.status.lock() { s.punched = summary.clone(); s.last_punch = format!("opened: {summary}"); s.next_punch = None }
-                self.state("direct path open");
-                note(&format!("direct open: {summary}, QUIC {quic_ms} ms"));
-            }
-            Ok(Outcome::Failed(failure)) => {
-                if let Some(address) = failure.window_failed_at { self.window_failed_from.insert(address); }
-                self.punch_failures += 1;
-                let punchable = self.punchable();
-                let waits = if punchable { [5, 15, 30, 60] } else { [60, 120, 300, 900] };
-                let wait = waits[self.punch_failures.min(4) - 1];
-                self.next_punch = Instant::now() + Duration::from_secs(wait);
-                if let Ok(mut s) = self.shared.status.lock() { s.last_punch = format!("failed: {}", failure.message); s.next_punch = Some(self.next_punch) }
-                self.state("relay; waiting to punch again");
-                note(&format!("direct failed: {}", failure.message));
-                note(&format!("next punch in {} (failure {} on this network, {})", if wait < 60 { format!("{wait} s") } else { format!("{} min", wait / 60) },
-                    self.punch_failures, if punchable { "which punches: bronze only bridges" } else { "which has not punched yet" }));
-            }
-            Ok(Outcome::Stale) => note("punch result not used: the network changed meanwhile"),
-            Err(_) => { self.punch_failures += 1; self.next_punch = Instant::now() + Duration::from_secs(60); note("the punch stopped unexpectedly") }
-        }
-    }
-}
-
-/// Carriers that punched, while there is no state directory to keep them in.
-static REMEMBERED: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
-/// bronze's view over the relay: this device's public IP and Diamond's (when connected).
-async fn info() -> Option<(String, Option<String>)> {
-    let reply = tokio::task::spawn_blocking(crate::relay_info).await.ok()??;
-    let text = String::from_utf8_lossy(&reply);
-    let (mut ip, mut home) = (None, None);
-    for line in text.lines() {
-        if let Some(you) = line.strip_prefix("you ") { ip = you.trim().rsplit_once(':').map(|(host, _)| host.to_owned()) }
-        if let Some(home_ip) = line.strip_prefix("homeip ") { home = Some(home_ip.trim().to_owned()) }
-    }
-    ip.map(|ip| (ip, home))
 }

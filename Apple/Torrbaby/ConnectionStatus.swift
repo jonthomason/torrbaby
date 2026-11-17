@@ -118,7 +118,7 @@ struct ConnectionStatusSections: View {
     private var relayReachable: String {
         if tunnel.connected, let state = tunnelRelay { return state == "open" ? "reachable (in the tunnel)" : "\(state) (in the tunnel)" }
         if let connected = store.relayServerConnected {
-            return (store.relayRoute != nil || tunnel.connected ? "reachable" : "closed") + (connected ? ", \(server) connected" : ", \(server) NOT connected")
+            return (store.linkRoute != nil || tunnel.connected ? "reachable" : "closed") + (connected ? ", \(server) connected" : ", \(server) NOT connected")
         }
         return store.relayAddress.isEmpty ? "unknown" : "not checked yet"
     }
@@ -154,7 +154,7 @@ struct ConnectionStatusSections: View {
         case .abt: return ms("abt")
         case .direct:
             #if os(iOS)
-            return ms("direct") + (store.directOpenedAt.map { " · since \(clock($0))" } ?? "")
+            return store.linkState?.rttMs.map { "\($0) ms" } ?? ms("direct")
             #else
             return ""
             #endif
@@ -180,14 +180,11 @@ struct ConnectionStatusSections: View {
             // old checks would read as failures, so they say so instead, and the relay line shows
             // the tunnel's own relay.
             if store.path == .abt {
-                row("Direct (in the app)", kind: "direct", inUse: false, detail: "not used: ABT carries traffic", showCheck: false)
-                row("Relay via bronze", kind: "relay", inUse: false, detail: "not used: ABT carries traffic", showCheck: false)
+                row("Torrbaby link", kind: "relay", inUse: false, detail: "not used: ABT carries traffic", showCheck: false)
             } else if tunnel.connected {
-                row("Direct (in the app)", kind: "direct", inUse: false, detail: "not used: the Torrbaby tunnel carries traffic", showCheck: false)
-                row("Relay via bronze", kind: "relay", inUse: false, detail: "in the tunnel: " + (tunnelRelay ?? "state not known yet"), showCheck: false)
+                row("Torrbaby link", kind: "relay", inUse: false, detail: "in the Torrbaby tunnel: " + (tunnelPaths ?? "state not known yet").replacingOccurrences(of: "\n", with: " · "), showCheck: false)
             } else {
-                row("Direct (in the app)", kind: "direct", inUse: store.path == .direct, detail: store.directRoute == nil ? (store.directWhyNot ?? "") : "open" + (store.directOpenedAt.map { " since \(clock($0))" } ?? ""))
-                row("Relay via bronze", kind: "relay", inUse: store.path == .relay, detail: relayDetail)
+                row("Torrbaby link", kind: store.path == .direct ? "direct" : "relay", inUse: store.path == .direct || store.path == .relay, detail: linkDetail)
             }
             #endif
             if store.tailscaleInUse {
@@ -196,16 +193,25 @@ struct ConnectionStatusSections: View {
         } header: { Text(verbatim: "Ways to \(server)") }
     }
 
-    private var relayDetail: String {
+    /// Torrbaby's link in one line: the path it takes, the relay, and the last punch.
+    private var linkDetail: String {
         var parts: [String] = []
+        #if os(iOS)
+        if let state = store.linkState {
+            switch state.state {
+            case "direct": parts.append("direct" + (state.rttMs.map { ", \($0) ms" } ?? ""))
+            case "relay": parts.append("through bronze's relay" + (state.punching.map { "; punching: \($0)" } ?? ""))
+            case "home": parts.append("straight to \(server) on this network")
+            default: parts.append("no path answers now")
+            }
+            parts.append("relay " + (state.relay == "tcp" ? "over TCP 443 (this network blocks UDP)" : state.relay ?? "?"))
+            if let punch = state.lastPunch { parts.append("last punch: \(punch.summary)") }
+            if let address = state.publicIp, !address.isEmpty { parts.append("this network's public address \(address)") }
+        } else {
+            parts.append(store.linkRoute == nil ? "not running" : "starting")
+        }
+        #endif
         parts.append(store.relayAddress.isEmpty ? "bronze's address not known yet" : "bronze \(store.relayAddress)")
-        parts.append(store.relayRoute == nil ? "relay closed" : "relay open")
-        #if os(iOS)
-        if store.relayRoute != nil && store.relayOverTCP { parts.append("over TCP 443 (this network blocks UDP)") }
-        #endif
-        #if os(iOS)
-        if let address = store.relayPublicAddress { parts.append("this network's public address \(address)") }
-        #endif
         if let connected = store.relayServerConnected { parts.append(connected ? "\(server) connected to bronze" : "\(server) NOT connected to bronze") }
         return parts.joined(separator: " · ")
     }
@@ -230,32 +236,34 @@ struct ConnectionStatusSections: View {
     }
 
     #if os(iOS)
+    /// Torrbaby's link (ABT's shared abt-link): what it is doing, its punches and its relay.
     @ViewBuilder private var directSection: some View {
         SwiftUI.Section {
-            if store.directRoute != nil {
-                labeled("State", "open" + (store.directOpenedAt.map { " since \(clock($0))" } ?? ""))
+            if let state = store.linkState {
+                labeled("Path", state.state + (state.rttMs.map { ", \($0) ms round trip" } ?? "") + (state.lastAnsweredS.map { $0 > 10 ? ", last answered \($0) s ago" : "" } ?? ""))
+                if let punching = state.punching { labeled("Punching now", punching) }
+                if let punch = state.lastPunch {
+                    labeled("Last punch", (punch.ok ? "opened: " : "failed: ") + punch.summary + (punch.at.map { " (\(clock(Date(timeIntervalSince1970: $0))))" } ?? ""))
+                    if let next = punch.nextTry, next > Date().timeIntervalSince1970 { labeled("Next try", "in \(Int(next - Date().timeIntervalSince1970)) s") }
+                }
+                if let note = state.note, !note.isEmpty { labeled("Punch", note) }
+                if let line = state.relayLine { labeled("Relay", line) }
+                if state.behindDiamondsNat == true { labeled("Network", "same public address as \(server): relay only, no punching") }
+                if let bytes = state.bytes {
+                    let carried = ["home", "direct", "relay"].compactMap { key in bytes[key].flatMap { $0.received + $0.sent > 0 ? "\(key) ↓ \(Self.bytes($0.received)) ↑ \(Self.bytes($0.sent))" : nil } }
+                    labeled("Carried", carried.isEmpty ? "nothing yet" : carried.joined(separator: " · "))
+                }
+                if let notes = state.notes, !notes.isEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(verbatim: "Link log").font(.caption).foregroundStyle(.secondary)
+                        ForEach(Array(notes.suffix(12).enumerated()), id: \.offset) { Text(verbatim: $0.element).font(.caption2.monospaced()).foregroundStyle(.secondary) }
+                    }.selectableText()
+                }
+                Button { TorrbabyLink.resumed() } label: { Text(verbatim: "Punch again now") }.disabled(!store.usingFallback)
             } else {
-                labeled("State", store.directWhyNot ?? "")
-                if let next = store.nextDirectTry { labeled("Next try", "\(clock(next)) (in \(Int(next.timeIntervalSinceNow)) s)") }
+                labeled("State", store.linkRoute == nil ? (store.usingFallback ? "not running" : "not needed: on the home network") : "starting")
             }
-            if let attempt = store.directAttempt {
-                labeled("Last attempt", "\(clock(attempt.started)) over \(attempt.signal)" + (attempt.finished.map { ", took \(String(format: "%.1f", $0.timeIntervalSince(attempt.started))) s" } ?? ", still running"))
-                labeled("Step", attempt.ok ? "open" : attempt.failure == nil ? attempt.step : "failed while \(attempt.step)")
-                if let failure = attempt.failure { labeled("Why", failure) }
-                if let view = attempt.serverView { labeled("Diamond saw", view) }
-                labeled("Network", attempt.interface.map { $0 == "en0" ? "Wi-Fi (en0)" : $0 == "pdp_ip0" ? "cellular (pdp_ip0)" : $0 } ?? "none")
-                if let address = attempt.publicAddress { labeled("This network's public address", "\(address) (\(attempt.answered) of \(attempt.asked) sockets answered STUN)") }
-                if let diagnosis = attempt.diagnosis { labeled("This network's NAT", diagnosis) }
-                if let window = attempt.window { labeled("Ports Diamond sprays", window) }
-                if let server = attempt.server { labeled("Diamond's public address", server) }
-                if let ms = attempt.punchMs { labeled("Punch", "\(ms) ms") }
-                if let ms = attempt.quicMs { labeled("QUIC handshake", "\(ms) ms") }
-            }
-            Button(store.directRoute == nil ? "Try direct now" : "Reconnect direct") {
-                if store.directRoute != nil { store.dropDirect("reconnect requested") }
-                store.tryDirectNow()
-            }.disabled(!store.connected || !store.usingFallback)
-        } header: { Text(verbatim: "Direct (in the app): details") }
+        } header: { Text(verbatim: "Torrbaby link: details") }
     }
 
     /// Torrbaby's packet tunnel: for devices without Tailscale (iOS connects one VPN at a time,
@@ -371,9 +379,6 @@ struct ConnectionStatusSections: View {
                 HStack { Text(LocalizedStringKey(sendingLogs ? "Sending logs…" : "Send logs now")); if sendingLogs { Spacer(); ProgressView() } }
             }.disabled(sendingLogs)
             if let logResult { Text(verbatim: logResult).font(.caption).foregroundStyle(.secondary).selectableText() }
-            #if os(iOS)
-            NavigationLink { DirectConnectionTest() } label: { Text(verbatim: "Hole punch test (diagnostic)") }
-            #endif
         }
     }
 
@@ -402,16 +407,9 @@ struct ConnectionStatusSections: View {
             if let check = store.routeChecks[kind] { lines.append("\(title): \(check.ok ? "ok" : "failed") at \(clock(check.at)), \(check.detail)\(check.ms.map { ", \($0) ms" } ?? "")") }
         }
         #if os(iOS)
-        lines.append("Relay: \(relayDetail)")
-        lines.append("Direct: \(store.directRoute == nil ? (store.directWhyNot ?? "") : "open")")
-        if let attempt = store.directAttempt {
-            lines.append("Last direct attempt \(clock(attempt.started)) over \(attempt.signal): step \(attempt.step), \(attempt.failure ?? (attempt.ok ? "open" : "running"))")
-            lines.append("  NAT: \(attempt.diagnosis ?? "?"), spray \(attempt.spread ?? "?")")
-            lines.append("  network \(attempt.interface ?? "none"), public \(attempt.publicAddress ?? "?") (\(attempt.answered)/\(attempt.asked)), window \(attempt.window ?? "?"), Diamond \(attempt.server ?? "?"), punch \(attempt.punchMs.map(String.init) ?? "-") ms, QUIC \(attempt.quicMs.map(String.init) ?? "-") ms")
-            if let view = attempt.serverView { lines.append("  Diamond saw: \(view)") }
-        }
+        lines.append("Link: \(linkDetail)")
+        lines += (store.linkState?.notes ?? []).map { "  link: \($0)" }
         lines.append(versions)
-        lines.append(store.directDiagnostics)
         lines.append("Torrbaby tunnel: \(tunnel.statusText)" + (tunnel.lastDisconnect.map { ", last disconnect: \($0)" } ?? ""))
         lines.append("Tunnel log:")
         lines += TunnelLog.read(60).map { "  \($0)" }

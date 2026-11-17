@@ -118,7 +118,8 @@ enum ClientLogs {
         lines.append("Downloads: at home \(queue.atHome) (connected \(store.connected), fallback \(store.usingFallback), metered \(queue.metered)); primary \(store.primaryAddress); \(queue.updates.count) update(s) waiting")
         #endif
         #if os(iOS)
-        lines.append(store.directDiagnostics)
+        lines.append("Route \(store.activeServer ?? "none"), link \(store.linkRoute ?? "not running")" + (store.linkState.map { ": \($0.state), relay \($0.relay ?? "?")" + ($0.lastPunch.map { ", last punch \($0.summary)" } ?? "") + ($0.punching.map { ", punching: \($0)" } ?? "") } ?? ""))
+        lines += (store.linkState?.notes ?? []).map { "  link: \($0)" }
         lines.append("Torrbaby tunnel: \(PacketTunnel.shared.statusText)" + (PacketTunnel.shared.lastDisconnect.map { ", last disconnect: \($0)" } ?? ""))
         lines.append("Events:")
         lines += store.directEvents.map { "  \($0)" }

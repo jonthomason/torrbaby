@@ -274,7 +274,7 @@ struct OwnCodeView: View {
             // Nothing is pinned yet on a new device: the claim goes plain, and its reply is sealed.
             var routes = home.addresses
             #if os(iOS)
-            if let relay = await store.ensureRelay() { routes.append(relay) }
+            if let link = await store.ensureLink() { routes.append(link) }
             #endif
             var reached = false
             for route in routes {
