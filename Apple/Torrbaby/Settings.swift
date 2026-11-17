@@ -23,7 +23,6 @@ struct AutomationView: View {
                                 Image(systemName: status.settings.paused ? "pause.circle.fill" : "sparkles").font(.title).foregroundStyle(Theme.accent)
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(LocalizedStringKey(status.settings.paused ? "Paused" : "Running")).font(.headline)
-                                    Text("Checks every \(Int(status.settings.pollSeconds)) seconds").font(.caption).foregroundStyle(Theme.muted)
                                 }
                                 Spacer()
                                 Button(LocalizedStringKey(status.settings.paused ? "Resume" : "Pause")) { store.toggleAutomation() }.buttonStyle(MonoButtonStyle())
@@ -525,7 +524,6 @@ private struct LibrarySettings: View {
     @State private var source = ""
     @State private var movies = ""
     @State private var tv = ""
-    @State private var interval = 30.0
     @State private var saved = false
     var body: some View { statusContent.modifier(NeedsServerStatus()) }
     @ViewBuilder private var statusContent: some View {
@@ -534,7 +532,6 @@ private struct LibrarySettings: View {
                 if let status = store.status {
                     Toggle("Organize completed downloads", isOn: Binding(get: { !status.settings.paused }, set: { _ in store.toggleAutomation() })).disabled(store.busy)
                 }
-                Stepper("Check every \(Int(interval)) seconds", value: $interval, in: 5...3600, step: 5)
             }
             DrivesSettings()
             // The single set of folders from before drives; with a drive list, each drive has its own.
@@ -550,23 +547,23 @@ private struct LibrarySettings: View {
                 }
             }
             }
+            if !(store.status?.settings.source.isEmpty ?? true) {
             SwiftUI.Section {
                 Button(LocalizedStringKey(saved ? "Saved" : "Save settings")) {
                     store.perform {
-                        let folders = !(store.status?.settings.source.isEmpty ?? true)
-                        try await store.send("PATCH", "/v1/settings", body: folders ? ["source": source, "movies": movies, "tv": tv, "poll_seconds": interval] : ["poll_seconds": interval])
+                        try await store.send("PATCH", "/v1/settings", body: ["source": source, "movies": movies, "tv": tv])
                         saved = true
                     }
                 }.disabled(store.busy || !store.connected)
             }
+            }
         }
         .onAppear {
-            if let s = store.status?.settings { source = s.source; movies = s.movies; tv = s.tv; interval = s.pollSeconds }
+            if let s = store.status?.settings { source = s.source; movies = s.movies; tv = s.tv }
         }
         .onChange(of: source) { _, _ in saved = false }
         .onChange(of: movies) { _, _ in saved = false }
         .onChange(of: tv) { _, _ in saved = false }
-        .onChange(of: interval) { _, _ in saved = false }
     }
 }
 

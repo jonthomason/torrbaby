@@ -116,7 +116,6 @@ struct Torrent: Codable, Identifiable, Hashable {
 struct DaemonSettings: Codable {
     var backgroundSubtitles: Bool?
     var paused: Bool
-    var pollSeconds: Double
     var source: String
     var movies: String
     var tv: String
