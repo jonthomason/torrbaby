@@ -307,9 +307,27 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
                                                                      object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in
                     guard let self, let model = self.model, let controller = self.controller else { return }
-                    if self.pictureInPicture, controller.presentingViewController == nil {
+                    if self.pictureInPicture {
                         ClientDiagnostics.note("Back in the app during Picture in Picture: the player comes back full screen")
-                        if !self.showAgain(controller, then: { _ in model.redrawPicture("back from Picture in Picture") }) { model.redrawPicture("back in the app") }
+                        // Its screen first (over whatever is showing), then Picture in Picture is ended:
+                        // AVKit has no call to end it, and showing the screen alone may not; giving the
+                        // screen its player again moves the picture out of the floating window.
+                        let endPictureInPicture = { [weak self] in
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                guard let self, self.pictureInPicture, let controller = self.controller, let player = self.model?.player else { return }
+                                ClientDiagnostics.note("Picture in Picture still on after the player came back: ending it")
+                                self.restoring = true
+                                controller.player = nil
+                                controller.player = player
+                                self.restoring = false
+                                self.pictureInPicture = false
+                                controller.inPictureInPicture = false
+                                model.redrawPicture("back from Picture in Picture")
+                            }
+                        }
+                        if controller.presentingViewController != nil { endPictureInPicture() }
+                        else if self.showAgain(controller, then: { _ in endPictureInPicture() }) {}
+                        else { model.redrawPicture("back in the app") }
                     } else if controller.presentingViewController != nil {
                         model.redrawPicture("back in the app")
                     }
