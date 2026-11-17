@@ -349,10 +349,7 @@ impl Database {
         let state = self.state()?;
         let scan = &state["library_scan"];
         Ok(
-            // Installed Apple clients up to 354 require `scanning` (a non-optional Bool) to decode
-            // the library; without it the whole library fails to load. Remove it once every client
-            // is on a build that no longer declares it.
-            json!({"titles":titles,"scanning":crate::api::scanning(),"error":scan["error"]}),
+            json!({"titles":titles,"error":scan["error"]}),
         )
     }
 }
