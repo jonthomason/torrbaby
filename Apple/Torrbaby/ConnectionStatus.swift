@@ -82,7 +82,10 @@ struct ConnectionStatusSections: View {
                 }
             }.padding(.vertical, 4)
             #if os(iOS)
-            LabeledContent { Text(verbatim: relayReachable) } label: { Text(verbatim: "Relay") }
+            // Only where the relay matters: carrying traffic, or the way back when nothing else answers.
+            if [.relay, .direct, .offline].contains(store.path) {
+                LabeledContent { Text(verbatim: relayReachable) } label: { Text(verbatim: "Relay") }
+            }
             #endif
         } header: { Text(verbatim: "Connected by") } footer: {
             // Which builds are running: the first thing to know when reading a screenshot.
@@ -134,7 +137,8 @@ struct ConnectionStatusSections: View {
             #endif
         case .relay: return ms("relay")
         case .tailscale: return ms("tailscale")
-        case .offline: return store.connectionError ?? ""
+        // Connected, but the route in use has closed: the next check finds another way.
+        case .offline: return store.connected ? "the way in use closed; finding another" : store.offlineReason ?? store.connectionError ?? ""
         }
     }
 

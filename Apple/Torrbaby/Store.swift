@@ -434,6 +434,9 @@ final class Store: ObservableObject {
     }
     @Published var events: [AuditEvent] = []
     @Published var connectionError: String? { didSet { updateDownloadConnection() } }
+    /// Why the app is offline, for Settings → Connection (English diagnostics, like its other
+    /// lines): the system's own text for -1009 says nothing about what happened.
+    @Published private(set) var offlineReason: String?
     @Published var torrentError: String?
     @Published var libraryOperations: [PendingLibraryOperation] = []
     @Published var libraryOperationsError: String?
@@ -455,6 +458,7 @@ final class Store: ObservableObject {
             UserDefaults.standard.set(workOffline, forKey: "work-offline")
             if workOffline {
                 connectionError = URLError(.notConnectedToInternet).localizedDescription
+                offlineReason = "Work offline is on"
                 networkAvailable = false
             } else {
                 networkAvailable = pathAvailable
@@ -486,7 +490,15 @@ final class Store: ObservableObject {
                 #endif
                 let restored = !self.networkAvailable && available
                 // A restored Wi-Fi/cellular path still needs a successful server probe.
-                if !available { self.connectionError = URLError(.notConnectedToInternet).localizedDescription }
+                if !available {
+                    self.connectionError = URLError(.notConnectedToInternet).localizedDescription
+                    // A VPN coming up or going down (ABT reconnecting) takes the device's network away for a moment.
+                    var reason = "this device reported no network"
+                    #if os(iOS)
+                    if ABT.connected { reason += " (ABT is on: its VPN may be reconnecting)" }
+                    #endif
+                    self.offlineReason = reason
+                }
                 #if os(iOS)
                 self.networkChanged()
                 self.abtChanged()
@@ -708,6 +720,9 @@ final class Store: ObservableObject {
         if active == ABT.route { return .abt }
         if directRoute != nil { return .direct }
         if relayRoute != nil && active == relayRoute { return .relay }
+        // A route that has since closed (a relay or direct path's local port) is not Tailscale:
+        // on iPhone and iPad Tailscale is retired once the relay is known. The next check finds a way.
+        if routeKind(active) == "tailscale" && !tailscaleInUse { return .offline }
         #endif
         return usingFallback ? .tailscale : .home
     }
@@ -972,7 +987,7 @@ final class Store: ObservableObject {
     var directWhyNot: String? {
         if directRoute != nil { return nil }
         if directAttempting { return "trying now…" }
-        if !connected { return "not tried: offline (the online check has to succeed first, over the relay or Tailscale)" }
+        if !connected { return "not tried: offline (Diamond has to answer first, at home, over ABT or over the relay)" }
         if !usingFallback { return "not needed: on the home network" }
         if let failure = directAttempt?.failure { return failure }
         return directNote.isEmpty ? "not tried yet" : directNote
@@ -1461,6 +1476,13 @@ final class Store: ObservableObject {
             // Restore browsing before contacting the server. A satisfied network path
             // does not mean the home server is reachable (for example while travelling).
             guard networkAvailable else { throw URLError(.notConnectedToInternet) }
+            #if os(iOS)
+            // The route in use closed under us (a relay or direct port that is gone): find a way now.
+            if let active = activeServer, routeKind(active) == "tailscale", !tailscaleInUse {
+                directEvent("route \(active) is gone; checking again")
+                activeServer = nil; lastFullRefresh = .distantPast
+            }
+            #endif
             let full = !polling || !connected || Date().timeIntervalSince(lastFullRefresh) >= Self.fullRefreshInterval
             if full {
                 // Connected means the server answers. Everything else loads on its own, at
@@ -1491,7 +1513,7 @@ final class Store: ObservableObject {
         } catch {
             // A refresh cut short (the app went to the background, the view changed) says
             // nothing about the server; showing it read "cancelled" and flashed Offline.
-            if !Self.cancelled(error) { connectionError = error.localizedDescription }
+            if !Self.cancelled(error) { connectionError = error.localizedDescription; offlineReason = "no way to Diamond answered (last: \(Self.describe(error)))" }
         }
     }
     /// Every view that reads the store redraws when any published value is assigned, so the
