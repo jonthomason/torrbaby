@@ -164,8 +164,6 @@ extension MediaLibrary {
 }
 struct MediaLibrary: Decodable {
     var titles: [LibraryTitle]
-    let lastScan: Double?
-    let scanning: Bool
     let error: String?
 }
 struct EpisodeNumber: Codable, Hashable {
