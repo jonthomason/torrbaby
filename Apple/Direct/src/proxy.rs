@@ -427,22 +427,24 @@ impl Keeper {
     fn start_punch(&mut self, config: Config) {
         let gentle = self.punch_failures > 0 && !self.punchable();
         let interface = NETWORK.lock().map(|n| n.1.clone()).unwrap_or_default();
-        let plan = punch::Plan {
-            stun: config.stun(), stun2: config.stun2.clone(), signal: format!("http://127.0.0.1:{}", self.relay_port), token: config.token.clone(),
-            interface: (!interface.is_empty()).then_some(interface),
-            random_from: self.window_failed_from.iter().cloned().collect(),
-            sockets: if gentle { 96 } else { 192 },
-            interval: Duration::from_millis(if gentle { 400 } else { 200 }),
-        };
+        let mut plan = punch::Plan::from_json(&serde_json::json!({
+            "stun": config.stun(), "stun2": config.stun2.clone(),
+            "interface": interface, "random_from": self.window_failed_from.iter().cloned().collect::<Vec<_>>(),
+            "sockets": if gentle { 96 } else { 192 }, "interval_ms": if gentle { 400 } else { 200 }, "lean": true,
+        }));
+        plan.pinned = crate::e2e::pinned();
+        let signal = punch::HttpSignal { base: format!("http://127.0.0.1:{}", self.relay_port), token: config.token.clone() };
         note(&format!("punching a direct path{}", if gentle { " (gently: this network has not punched yet)" } else { "" }));
         self.state("relay; punching a direct path");
         if let Ok(mut s) = self.shared.status.lock() { s.punching = true }
         let (epoch, at, shared) = (self.epoch.clone(), self.epoch.load(Ordering::SeqCst), self.shared.clone());
         let current = move || epoch.load(Ordering::SeqCst) == at && !shared.stopped.load(Ordering::SeqCst);
         self.punch = Some(tokio::task::spawn_blocking(move || {
+            // What bronze knows of this network (its pool, failed predictions), over the relay.
+            punch::apply_hints(&mut plan, crate::relay_hints());
             // Over IPv6 first, where both ends have it: nothing to punch. If QUIC does not
             // open there, the punch follows.
-            if let Some(found) = punch::ipv6(&plan) {
+            if let Some(found) = punch::ipv6(&plan, &signal) {
                 note("direct: trying IPv6");
                 if !current() { return Outcome::Stale }
                 crate::stop(&TUNNEL);
@@ -454,7 +456,7 @@ impl Keeper {
                 }
                 note("direct: QUIC did not open over IPv6; punching instead");
             }
-            let punched = match punch::punch(&plan, |r| note(&format!("direct: {}", r.step))) {
+            let punched = match punch::punch(&plan, &signal, |r| note(&format!("direct: {}", r.step))) {
                 Ok(punched) => punched,
                 Err(failure) => return if current() { Outcome::Failed(failure) } else { Outcome::Stale },
             };
@@ -465,7 +467,7 @@ impl Keeper {
             // is not suspended either): a dead path fails over to the relay quickly.
             let port = crate::open_on(&TUNNEL, punched.socket, punched.server, punched.fingerprint, b"tbdirect", "torrbaby-direct", 8, crate::LEAN_TIMING, crate::APP_WINDOWS);
             if port == 0 {
-                return Outcome::Failed(punch::Failure { message: "Punched, but QUIC did not open on the punched socket within 8 s".into(), session: None, window_failed_at: None })
+                return Outcome::Failed(punch::Failure { no_quic: true, ..punch::Failure::new("Punched, but QUIC did not open on the punched socket within 8 s") })
             }
             if !current() { crate::stop(&TUNNEL); return Outcome::Stale }
             Outcome::Opened { summary: punched.summary, public_address: punched.public_address, quic_ms: started.elapsed().as_millis() as u64 }

@@ -267,6 +267,23 @@ pub(crate) fn relay_info() -> Option<Vec<u8>> {
     })
 }
 
+/// bronze's punch hints for the network this device is on (TBHINTS1 over the open relay): the
+/// addresses punches came from there and whether predicted ports failed. None without a relay.
+/// Blocks up to 3 s; not to be called from inside an async task.
+pub(crate) fn relay_hints() -> Option<serde_json::Value> {
+    let held = RELAY.lock().ok().and_then(|held| held.as_ref().map(|t| (t.runtime.handle().clone(), t.connection.clone())));
+    let (handle, connection) = held?;
+    let reply = handle.block_on(async move {
+        tokio::time::timeout(Duration::from_secs(3), async move {
+            let (mut send, mut recv) = connection.open_bi().await.ok()?;
+            send.write_all(b"TBHINTS1\n").await.ok()?;
+            send.finish().ok()?;
+            recv.read_to_end(1 << 16).await.ok()
+        }).await.ok().flatten()
+    })?;
+    serde_json::from_slice(&reply).ok()
+}
+
 /// Diamond's address on this network while the device is at home (set by the extension):
 /// tunnel connections go straight to it, with no QUIC and nothing through bronze. So the
 /// tunnel's address works everywhere, and a background download keeps one address whether
@@ -446,19 +463,16 @@ pub extern "C" fn tbdirect_free(text: *mut c_char) {
 pub fn punch_json(request: String, mut report: impl FnMut(&punch::Report)) -> serde_json::Value {
     use serde_json::json;
     let request: serde_json::Value = serde_json::from_str(&request).unwrap_or_default();
-    let string = |key: &str| request[key].as_str().unwrap_or("").to_owned();
-    let plan = punch::Plan {
-        stun: string("stun"), stun2: request["stun2"].as_str().map(str::to_owned), signal: string("signal"), token: string("token"),
-        interface: request["interface"].as_str().filter(|s| !s.is_empty()).map(str::to_owned),
-        random_from: request["random_from"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect(),
-        sockets: request["sockets"].as_u64().unwrap_or(192).clamp(1, 512) as usize,
-        interval: std::time::Duration::from_millis(request["interval_ms"].as_u64().unwrap_or(200).clamp(50, 2000)),
-    };
+    // The plan as the app sends it, with Diamond's pinned identity and bronze's hints for this network.
+    let mut plan = punch::Plan::from_json(&request);
+    if plan.pinned.is_none() { plan.pinned = e2e::pinned() }
+    punch::apply_hints(&mut plan, relay_hints());
+    let signal = punch::HttpSignal::from_json(&request);
     let lean = request["lean"].as_bool().unwrap_or(false);
     let mut last = punch::Report::default();
     // Over IPv6 first, where both ends have it: nothing to punch, and it opens in a second.
     // If QUIC does not open there (IPv6 that does not carry UDP end to end), the punch follows.
-    if let Some(found) = punch::ipv6(&plan) {
+    if let Some(found) = punch::ipv6(&plan, &signal) {
         tbdirect_stop();
         let started = std::time::Instant::now();
         let (summary, public_address) = (found.summary.clone(), found.public_address.clone());
@@ -469,7 +483,7 @@ pub fn punch_json(request: String, mut report: impl FnMut(&punch::Report)) -> se
                 "quic_ms": started.elapsed().as_millis() as u64, "report": last.json()});
         }
     }
-    let outcome = punch::punch(&plan, |r| { last = r.clone(); report(r) });
+    let outcome = punch::punch(&plan, &signal, |r| { last = r.clone(); report(r) });
     match outcome {
         Err(failure) => json!({"ok": false, "failure": failure.message, "session": failure.session, "window_failed_at": failure.window_failed_at, "report": last.json()}),
         Ok(punched) => {

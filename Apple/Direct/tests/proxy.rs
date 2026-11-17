@@ -55,7 +55,7 @@ fn relay(runtime: &tokio::runtime::Runtime, info: String, answer: Option<serde_j
                             loop {
                                 let Ok(Some(n)) = recv.read(&mut buffer).await else { break };
                                 head.extend_from_slice(&buffer[..n]);
-                                if head.starts_with(b"TBINFO1\n") || head.starts_with(b"TBNAME1 ") { break }
+                                if head.starts_with(b"TBINFO1\n") || head.starts_with(b"TBNAME1 ") || head.starts_with(b"TBHINTS1") { break }
                                 let text = String::from_utf8_lossy(&head).to_string();
                                 if let Some(split) = text.find("\r\n\r\n") {
                                     let length: usize = text.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap_or(0))).unwrap_or(0);
@@ -67,6 +67,10 @@ fn relay(runtime: &tokio::runtime::Runtime, info: String, answer: Option<serde_j
                                 let _ = send.write_all(info.as_bytes()).await;
                                 let _ = send.finish();
                             } else if head.starts_with(b"TBNAME1 ") {
+                            } else if head.starts_with(b"TBHINTS1") {
+                                // bronze's punch hints for this network: nothing known here.
+                                let _ = send.write_all(br#"{"prefix":"127.0.0.0/24","spread":null,"outcomes":[]}"#).await;
+                                let _ = send.finish();
                             } else if head.starts_with(b"POST /v1/direct ") {
                                 let text = String::from_utf8_lossy(&head).to_string();
                                 assert!(text.contains("Authorization: Bearer device-token"), "the token goes with the request");

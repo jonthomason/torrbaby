@@ -1,0 +1,4 @@
+# abt-punch comes from the private ABT repository: fetched with the system's git, which has
+# the GitHub credentials (cargo's own git client does not).
+[net]
+git-fetch-with-cli = true

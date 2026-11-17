@@ -3,6 +3,19 @@
 version = 4
 
 [[package]]
+name = "abt-punch"
+version = "0.1.0"
+source = "git+https://github.com/jonthomason/abt.git?rev=489c5766d6fb1267a359602e6e4c356c39c06072#489c5766d6fb1267a359602e6e4c356c39c06072"
+dependencies = [
+ "quinn",
+ "rustls",
+ "serde_json",
+ "sha2",
+ "socket2 0.5.10",
+ "tokio",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -410,7 +423,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2",
+ "socket2 0.6.5",
  "thiserror",
  "tokio",
  "tracing",
@@ -448,7 +461,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2",
+ "socket2 0.6.5",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -659,6 +672,16 @@ dependencies = [
 
 [[package]]
 name = "socket2"
+version = "0.5.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e22376abed350d73dd1cd119b57ffccad95b4e585a7cda43e286245ce23c0678"
+dependencies = [
+ "libc",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "socket2"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
@@ -705,6 +728,7 @@ dependencies = [
 name = "tbdirect"
 version = "0.1.0"
 dependencies = [
+ "abt-punch",
  "ipstack",
  "libc",
  "quinn",
@@ -788,7 +812,7 @@ dependencies = [
  "mio",
  "pin-project-lite",
  "signal-hook-registry",
- "socket2",
+ "socket2 0.6.5",
  "tokio-macros",
  "windows-sys 0.61.2",
 ]

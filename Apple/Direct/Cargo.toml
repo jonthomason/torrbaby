@@ -11,6 +11,8 @@ crate-type = ["staticlib", "rlib"]
 doctest = false
 
 [dependencies]
+# The punch (both NATs) and the host's spray: ABT's, shared (ABT owns it; move the rev to update).
+abt-punch = { git = "https://github.com/jonthomason/abt.git", rev = "489c5766d6fb1267a359602e6e4c356c39c06072", default-features = false, features = ["device"] }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls", "ring"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "macros", "sync"] }

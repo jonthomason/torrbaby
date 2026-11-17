@@ -218,9 +218,10 @@ pub async fn serve(
         }
     });
     if let Err(error) = crate::direct::load_identity(&service.data_dir) { eprintln!("Identity: {error:#}") }
+    crate::direct::report_outcomes();
     // Off in previews and tests, like the connection to bronze: one server holds the port.
     if !preview {
-        if let Err(error) = crate::direct::ipv6::start(crate::direct::IPV6_PORT, service.config.listen_port) { eprintln!("Direct over IPv6: {error:#}") }
+        if let Err(error) = crate::direct::ipv6::start(crate::direct::IPV6_PORT, service.config.listen_port, None) { eprintln!("Direct over IPv6: {error:#}") }
     }
     // Off in previews and tests: only the live server holds the connection to bronze.
     let rendezvous_task = (!preview).then(|| service.config.rendezvous.clone()).flatten()
