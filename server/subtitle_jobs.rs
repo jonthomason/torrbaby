@@ -84,16 +84,12 @@ pub(crate) fn failed_for_fixed_cause(error: &str) -> bool {
 pub(crate) fn revision(path: &Path) -> Result<String> {
     let m = path.metadata()?;
     ensure!(m.is_file(), "Media is not a file");
-    Ok(format!(
-        "{}:{}:{}:{}:{}:{}:{}",
-        m.dev(),
-        m.ino(),
-        m.len(),
-        m.mtime(),
-        m.mtime_nsec(),
-        m.ctime(),
-        m.ctime_nsec()
-    ))
+    Ok(revision_of(&m))
+}
+/// A file's identity from metadata already read (the library scan records it on each asset as
+/// `file_revision`, so processing need not read the disk again).
+pub(crate) fn revision_of(m: &std::fs::Metadata) -> String {
+    format!("{}:{}:{}:{}:{}:{}:{}", m.dev(), m.ino(), m.len(), m.mtime(), m.mtime_nsec(), m.ctime(), m.ctime_nsec())
 }
 /// What a revision says about the file's content: its size and modification time to the
 /// second (a move keeps both; a Mac OS Extended drive keeps no finer time). Caches that

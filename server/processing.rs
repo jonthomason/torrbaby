@@ -346,18 +346,23 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
     // Before the database lock: reading the settings takes it.
     let drives=crate::drives::Drives::of(&s.effective_config()?);
     let online=drives.online();
-    // Enrollment stats every media file: done before the database lock is taken, so requests
-    // never wait on disks (a pass under the lock made every request wait about a second each
-    // minute, longer while drives woke). Repeated only when the catalog changes or once a
-    // minute (to notice files replaced in place), not every tick.
+    // Enrollment compares each file's identity with what was prepared for it. The library scan
+    // records that identity on the asset (`file_revision`) from the metadata it reads anyway, so
+    // a better copy dropped over a file at the same path is seen without processing reading
+    // every file itself (it used to, once a minute, under the database lock). Only a file the
+    // scan has not recorded (a finished file inside a package still downloading) is read here,
+    // before the lock. Done when the catalog changes (each scan, file operations), not by a timer.
     type Stat = (String, String, bool, std::result::Result<String, String>);
     let planned: Option<(Vec<Stat>, Vec<(String, String)>, String, bool)> = {
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
         let migrating:bool=db.connection.query_row("SELECT NOT EXISTS(SELECT 1 FROM media_processing)",[],|r|r.get(0))?;
         let revision=db.catalog_revision()?;
-        let due=ENROLLED.lock().map(|e|e.as_ref().is_none_or(|(r,t)|*r!=revision || now()-t>=60.0)).unwrap_or(true);
+        let due=ENROLLED.lock().map(|e|e.as_ref().is_none_or(|(r,_)|*r!=revision)).unwrap_or(true);
         if due || migrating {
-            let files: Vec<Stat> = assets(&db)?.iter().filter_map(|a| Some((a["id"].as_str()?.to_owned(), a["path"].as_str()?.to_owned(), a["early"]==true, Err(String::new())))).collect();
+            let files: Vec<Stat> = assets(&db)?.iter().filter_map(|a| {
+                let recorded = a["file_revision"].as_str().filter(|_| a["early"]!=true).map(|r| Ok(r.to_owned()));
+                Some((a["id"].as_str()?.to_owned(), a["path"].as_str()?.to_owned(), a["early"]==true, recorded.unwrap_or(Err(String::new()))))
+            }).collect();
             let not_media: Vec<(String, String)> = db.documents("assets")?.iter().filter(|a|crate::container::tagged_not_media(a) && a["available"]==true)
                 .filter_map(|a| Some((a["id"].as_str()?.to_owned(), a["path"].as_str()?.to_owned()))).collect();
             Some((files, not_media, revision, migrating))
@@ -365,7 +370,9 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
     };
     let planned = match planned {
         Some((files, not_media, revision, migrating)) => Some(tokio::task::spawn_blocking(move || {
-            let files: Vec<Stat> = files.into_iter().map(|(id, path, early, _)| {
+            let files: Vec<Stat> = files.into_iter().map(|(id, path, early, recorded)| {
+                // Recorded by the scan: no disk read.
+                if recorded.is_ok() { return (id, path, early, recorded) }
                 let revision = crate::subtitle_jobs::revision(Path::new(&path)).map_err(|e| e.to_string());
                 (id, path, early, revision)
             }).collect();

@@ -436,6 +436,13 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
         asset["available"] = json!(metadata.is_some());
         if metadata.is_none() { asset["complete"] = json!(false); }
         tag_container(&mut asset, &path, metadata.as_ref());
+        // The file's identity, from the metadata this scan already read: processing compares it
+        // with what it prepared (a better copy dropped over the old file at the same path)
+        // without reading every file again itself.
+        match metadata.as_ref().filter(|m| m.is_file()) {
+            Some(m) => asset["file_revision"] = json!(crate::subtitle_jobs::revision_of(m)),
+            None => { asset.as_object_mut().unwrap().remove("file_revision"); }
+        }
         asset["seen_at"] = json!(now());
         if info["torrent_present"] != true || asset["size"].as_u64().unwrap_or(0) == 0 {
             asset["size"] = json!(metadata.as_ref().map(|m|m.len()).unwrap_or(0));
