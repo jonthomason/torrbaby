@@ -1546,7 +1546,18 @@ extension Store {
         else if !connected { throw URLError(.notConnectedToInternet) }
         // The player reads the file's tracks (subtitles in the picture, picture shape); the
         // list leaves them out, so a title started without opening its page loads them now.
-        if startSession, titleIndex[titleID]?.assets.first(where: { $0.id == asset.id })?.mediaInfo == nil { await loadDetails(titleID) }
+        // Waited for 3 s at most: they only refine the picture and subtitles, and a slow path
+        // (a crawling direct path, 2026-11-17) made Resume spin for a minute waiting for them.
+        if startSession, titleIndex[titleID]?.assets.first(where: { $0.id == asset.id })?.mediaInfo == nil {
+            let loading = Task { await self.loadDetails(titleID) }
+            _ = await withTaskGroup(of: Bool.self) { group in
+                group.addTask { await loading.value; return true }
+                group.addTask { try? await Task.sleep(for: .seconds(3)); return false }
+                let first = await group.next() ?? false
+                group.cancelAll()
+                return first
+            }
+        }
         let serverAtStart = server
         let profileAtStart = profileIdentity
         let base = "/v1/library/assets/\(asset.id)"
