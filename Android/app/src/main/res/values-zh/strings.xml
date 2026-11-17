@@ -37,6 +37,7 @@
     <string name="ui_55bce902c827" formatted="false">有文件位于媒体库之外</string>
     <string name="ui_0eaf3f3adb83" formatted="false">那块硬盘上已有同名文件</string>
     <string name="ui_f2a6e02b7b4f" formatted="false">需要已配对的设备再次批准。</string>
+    <string name="ui_d401731ae866" formatted="false">ABT</string>
     <string name="ui_eaca5bbaf44c" formatted="false">API 令牌</string>
     <string name="ui_6b21fb791ac0" formatted="false">关于</string>
     <string name="ui_cbd19b5c397e" formatted="false">演员</string>
@@ -177,10 +178,19 @@
     <string name="ui_21b5f5d88904" formatted="false">连接到 Torrbaby 服务器</string>
     <string name="ui_c2f9b7b4897f" formatted="false">已连接</string>
     <string name="ui_182627e396c6" formatted="false">以其他名称连接</string>
+    <string name="ui_ea81648d34d6" formatted="false">已通过 ABT 连接，直连</string>
+    <string name="ui_fdc3f2a785fe" formatted="false">已通过 ABT 连接，家庭网络</string>
+    <string name="ui_3736441a608f" formatted="false">已通过 ABT 连接，中继</string>
+    <string name="ui_f5f9d39a0d08" formatted="false">已通过 Tailscale 连接</string>
+    <string name="ui_408d5189beb6" formatted="false">已通过 Torrbaby 连接，家庭网络</string>
+    <string name="ui_31dd3d9b2dfc" formatted="false">已直连</string>
+    <string name="ui_ce8afaed4421" formatted="false">已通过家庭网络连接</string>
+    <string name="ui_fef332f9ab65" formatted="false">已通过中继连接</string>
     <string name="ui_9449502ae14e" formatted="false">已连接 · 不用于新下载</string>
     <string name="ui_ca7e4b990121" formatted="false">正在连接 Torrbaby 中继…</string>
     <string name="ui_fd3e79699426" formatted="false">正在连接…</string>
     <string name="ui_6512ee1541e9" formatted="false">连接</string>
+    <string name="ui_ab30a5cd5d8b" formatted="false">连接详情</string>
     <string name="ui_618aac54b120" formatted="false">连接设置</string>
     <string name="ui_8fca30f77496" formatted="false">继续观看</string>
     <string name="ui_8e3df45a49db" formatted="false">已拷贝</string>
@@ -236,6 +246,7 @@
     <string name="ui_a23975400420" formatted="false">已允许此设备</string>
     <string name="ui_d56e2646caaa" formatted="false">设备已关联</string>
     <string name="ui_df485c871329" formatted="false">设备</string>
+    <string name="ui_bc81524a554d" formatted="false">直连</string>
     <string name="ui_0f3409cf286f" formatted="false">直连失败</string>
     <string name="ui_a92b0db10b42" formatted="false">直连测试</string>
     <string name="ui_8a32dc8fe550" formatted="false">直连可用</string>
@@ -349,6 +360,7 @@
     <string name="ui_a4f9034380e4" formatted="false">隐藏键盘</string>
     <string name="ui_90ccd6497400" formatted="false">历史记录</string>
     <string name="ui_70f8bb9a8a53" formatted="false">首页</string>
+    <string name="ui_3c44197b81c9" formatted="false">家庭网络</string>
     <string name="ui_98f55db57c8e" formatted="false">忽略</string>
     <string name="ui_114d8bdfc753" formatted="false">整理时忽略</string>
     <string name="ui_d86fde95dbbf" formatted="false">忽略整理</string>
@@ -490,6 +502,7 @@
     <string name="ui_0180f27718d1" formatted="false">所有试下载均无进展</string>
     <string name="ui_d839d62a2b1e" formatted="false">暂无试下载</string>
     <string name="ui_6eef6648406c" formatted="false">无</string>
+    <string name="ui_d99a2ed19083" formatted="false">无（未使用隧道）</string>
     <string name="ui_98070d393c9e" formatted="false">文件内没有</string>
     <string name="ui_2d4f57f93a15" formatted="false">它们都不符合你选择的分辨率或其他筛选条件。</string>
     <string name="ui_fadae5312047" formatted="false">它们都不符合你选择的分辨率。</string>
@@ -593,11 +606,13 @@
     <string name="ui_b10fbdb5d835" formatted="false">可以观看</string>
     <string name="ui_1bded3d08e57" formatted="false">重新向 Tracker 通告</string>
     <string name="ui_72d5617f3f47" formatted="false">近期活动</string>
+    <string name="ui_8b65e36bced8" formatted="false">最近事件</string>
     <string name="ui_5369634238e2" formatted="false">最近添加</string>
     <string name="ui_de23e71b8ca8" formatted="false">最近观看</string>
     <string name="ui_9ef937556efe" formatted="false">推荐</string>
     <string name="ui_56e3badc4e6c" formatted="false">刷新</string>
     <string name="ui_564fe5e2d6a3" formatted="false">刷新媒体库</string>
+    <string name="ui_9f537f977fa2" formatted="false">中继</string>
     <string name="ui_d41f56cea1ac" formatted="false">资源</string>
     <string name="ui_91315eed232f" formatted="false">上映日期</string>
     <string name="ui_e1490e4ce2b7" formatted="false">资源标签</string>
@@ -782,6 +797,7 @@
     <string name="ui_1197e8e3035f" formatted="false">传输历史</string>
     <string name="ui_09bb08ece119" formatted="false">剧集</string>
     <string name="ui_ac32c5b119ff" formatted="false">剧集</string>
+    <string name="ui_619c010a490e" formatted="false">Tailscale</string>
     <string name="ui_987f5ab80eb3" formatted="false">目标上传/下载分享率</string>
     <string name="ui_919ccc119f64" formatted="false">正在测试直连…</string>
     <string name="ui_c3328c39b0e2" formatted="false">文本</string>
@@ -843,6 +859,7 @@
     <string name="ui_476e06db8f10" formatted="false">要移除这块硬盘，请先将其中的全部内容移到另一块硬盘。</string>
     <string name="ui_eafdcec8c9d0" formatted="false">要移除此硬盘，请先在各影片的“管理文件”中将其移到另一块硬盘。</string>
     <string name="ui_39cd0e4ab4aa" formatted="false">等待中的设置码太多。请几分钟后再试。</string>
+    <string name="ui_2004ef109737" formatted="false">Torrbaby</string>
     <string name="ui_7fc3a24d77a0" formatted="false">Torrbaby 会在硬盘上创建 Media 文件夹，内含 Downloads、Movies 和 TV，并保存一个小文件用于识别这块硬盘。</string>
     <string name="ui_625fdd6c399e" formatted="false">Torrbaby 传输速度</string>
     <string name="ui_fecc14ee3002" formatted="false">Torrbaby 隧道</string>
@@ -877,6 +894,8 @@
     <string name="ui_bcabdf3a5848" formatted="false">请尝试更短的片名或其他来源。</string>
     <string name="ui_042c862e4467" formatted="false">重试</string>
     <string name="ui_8310b022d173" formatted="false">重新连接</string>
+    <string name="ui_67ec7d482d82" formatted="false">隧道来源</string>
+    <string name="ui_45bae8964548" formatted="false">隧道状态</string>
     <string name="ui_3c45be13a1a6" formatted="false">上传</string>
     <string name="ui_9241930fa68d" formatted="false">上传历史</string>
     <string name="ui_c096eba0f2ba" formatted="false">上传中</string>

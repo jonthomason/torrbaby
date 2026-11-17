@@ -414,6 +414,11 @@ private struct GeneralSettings: View {
     @State private var magnetStatus: String?
     #endif
     var body: some View {
+        // Settings opens here: the build and how this device is connected come first.
+        SwiftUI.Section {
+            ConnectionSummaryRow()
+            LabeledContent { Text(verbatim: AppRelease.description.replacingOccurrences(of: "Version ", with: "")).monospacedDigit().textSelection(.enabled) } label: { Text("Version") }
+        }
         SwiftUI.Section("Interface language") { InterfaceLanguageSettings() }
         #if os(macOS)
         SwiftUI.Section("Menu bar") {
@@ -469,14 +474,8 @@ private struct ConnectionSettings: View {
     @EnvironmentObject var store: Store
     @Binding var showConnect: Bool
     var body: some View {
-        // Routes are set at pairing and kept up to date by the server; there is nothing to edit.
-        SwiftUI.Section {
-            LabeledContent { Text(LocalizedStringKey(store.connectionLabel)) } label: { Text("Status") }
-            LabeledContent("Server", value: store.server.isEmpty ? L10n.text("Not configured") : store.serverName.isEmpty ? store.primaryAddress : store.serverName)
-        }
-        SwiftUI.Section { Toggle("Work offline", isOn: $store.workOffline) }
-        ConnectionStatusSections()
-        SwiftUI.Section { Button("Edit connection") { showConnect = true } }
+        // Simple at the top (the user, 2026-11-17); the technical account is under Connection details.
+        ConnectionOverview(showConnect: $showConnect)
     }
 }
 

@@ -429,3 +429,191 @@ struct ConnectionStatusSections: View {
         #endif
     }
 }
+
+/// How this device reaches the server, in a few words: "Connected via ABT, direct",
+/// "Connected via relay", "Offline". The same line heads Settings → General and Settings →
+/// Connection; the second adds the tunnel's source and way (ConnectionWay).
+struct ConnectionWay {
+    enum Source { case abt, torrbaby, none }
+    enum Way { case home, direct, relay, tailscale }
+    let source: Source
+    let way: Way?
+    let connecting: Bool
+
+    @MainActor init(store: Store, tunnelState: String?) {
+        guard store.connected else {
+            source = .none; way = nil
+            // Before the first answer, or while ABT is finding its path after a network change.
+            #if os(iOS)
+            // With ABT on, the app waits for ABT to find its way to Diamond.
+            let abtBusy = ABT.connected
+            #else
+            let abtBusy = false
+            #endif
+            connecting = !store.workOffline && store.networkAvailable && (store.connectionError == nil || abtBusy)
+            return
+        }
+        connecting = false
+        switch store.path {
+        case .abt:
+            source = .abt
+            #if os(iOS)
+            switch store.abtPath {
+            case "lan": way = .home
+            case "bronze": way = .relay
+            default: way = .direct
+            }
+            #else
+            way = .direct
+            #endif
+        case .tunnel:
+            source = .torrbaby
+            let state = tunnelState ?? ""
+            way = state.contains("At home") ? .home : state.contains("Direct path: open") ? .direct : .relay
+        case .direct: source = .torrbaby; way = .direct
+        case .relay: source = .torrbaby; way = .relay
+        case .home: source = .none; way = .home
+        case .tailscale: source = .none; way = .tailscale
+        case .offline: source = .none; way = nil
+        }
+    }
+
+    var text: String {
+        guard let way else { return connecting ? "Connecting…" : "Offline" }
+        switch (source, way) {
+        case (.abt, .home): return "Connected via ABT, home network"
+        case (.abt, .direct): return "Connected via ABT, direct"
+        case (.abt, _): return "Connected via ABT, relay"
+        case (.torrbaby, .home): return "Connected via Torrbaby, home network"
+        case (.torrbaby, .direct): return "Connected via direct"
+        case (.torrbaby, _): return "Connected via relay"
+        case (_, .home): return "Connected via home network"
+        case (_, .direct): return "Connected via direct"
+        case (_, .relay): return "Connected via relay"
+        case (_, .tailscale): return "Connected via Tailscale"
+        }
+    }
+    var icon: (String, Color) {
+        guard let way else { return connecting ? ("arrow.triangle.2.circlepath", .orange) : ("wifi.slash", .red) }
+        switch way {
+        case .home: return ("house.fill", .green)
+        case .direct: return ("bolt.horizontal.fill", .green)
+        case .relay, .tailscale: return ("arrow.triangle.branch", .green)
+        }
+    }
+    var sourceText: String {
+        switch source { case .abt: "ABT"; case .torrbaby: "Torrbaby"; case .none: way == nil ? "None" : "None (no tunnel)" }
+    }
+    var wayText: String {
+        switch way {
+        case .home: "Home network"
+        case .direct: "Direct"
+        case .relay: "Relay"
+        case .tailscale: "Tailscale"
+        case nil: connecting ? "Connecting…" : "Offline"
+        }
+    }
+}
+
+/// The one-line status, with how long ago ABT's path last answered when that is a while.
+struct ConnectionSummaryRow: View {
+    @EnvironmentObject var store: Store
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    #if os(iOS)
+    @ObservedObject private var tunnel = PacketTunnel.shared
+    #endif
+    @State private var tunnelState: String?
+    @State private var tick = 0
+    var body: some View {
+        let _ = tick
+        let way = ConnectionWay(store: store, tunnelState: tunnelState)
+        HStack(spacing: 12) {
+            Image(systemName: way.icon.0).font(.title3).foregroundStyle(way.icon.1).frame(width: 28)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(LocalizedStringKey(way.text)).font(.headline)
+                if let quiet = quietSeconds { Text(L10n.format("Last answered %lld s ago", quiet)).font(.caption).foregroundStyle(.secondary) }
+            }
+        }.padding(.vertical, 2)
+        .task {
+            while !Task.isCancelled {
+                #if os(iOS)
+                tunnelState = tunnel.connected ? await tunnel.ask() : nil
+                #endif
+                tick &+= 1
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+    /// Seconds since ABT's path last answered, when ABT carries the app and that is over 10 s.
+    private var quietSeconds: Int? {
+        #if os(iOS)
+        guard store.path == .abt, let at = ABT.answeredAt else { return nil }
+        let age = Int(Date().timeIntervalSince(at))
+        return age > 10 ? age : nil
+        #else
+        return nil
+        #endif
+    }
+}
+
+/// Settings → Connection: the status, the tunnel's source and way, Work offline, logs, and the
+/// last few connection events. The full technical account is one step further in.
+struct ConnectionOverview: View {
+    @EnvironmentObject var store: Store
+    @Binding var showConnect: Bool
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    #if os(iOS)
+    @ObservedObject private var tunnel = PacketTunnel.shared
+    #endif
+    @State private var tunnelState: String?
+    @AppStorage(ClientLogs.automaticKey) private var automaticLogs = false
+    @State private var sendingLogs = false
+    @State private var logResult: String?
+    var body: some View {
+        let way = ConnectionWay(store: store, tunnelState: tunnelState)
+        SwiftUI.Section { ConnectionSummaryRow() }
+        SwiftUI.Section { Toggle("Work offline", isOn: $store.workOffline) }
+        #if os(iOS)
+        SwiftUI.Section {
+            LabeledContent { Text(LocalizedStringKey(way.sourceText)) } label: { Text("Tunnel source") }
+            LabeledContent { Text(LocalizedStringKey(way.wayText)) } label: { Text("Tunnel status") }
+            if ABT.connected && store.abtIntercepted {
+                Text("This Wi-Fi is intercepting connections. Sign in again.").foregroundStyle(.red)
+            }
+        }
+        .task {
+            while !Task.isCancelled {
+                tunnelState = tunnel.connected ? await tunnel.ask() : nil
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+        #endif
+        SwiftUI.Section {
+            Toggle("Send logs automatically", isOn: $automaticLogs)
+            Button {
+                sendingLogs = true; logResult = nil
+                Task {
+                    do { logResult = L10n.text("Logs sent") + " · " + (try await ClientLogs.send(store: store, report: ClientLogs.report(store))) }
+                    catch { logResult = L10n.text("Couldn’t send logs") + " · " + error.localizedDescription }
+                    sendingLogs = false
+                }
+            } label: {
+                HStack { Text(LocalizedStringKey(sendingLogs ? "Sending logs…" : "Send logs now")); if sendingLogs { Spacer(); ProgressView() } }
+            }.disabled(sendingLogs)
+            if let logResult { Text(verbatim: logResult).font(.caption).foregroundStyle(.secondary).selectableText() }
+        }
+        #if os(iOS)
+        if !store.directEvents.isEmpty {
+            SwiftUI.Section("Recent events") {
+                ForEach(store.directEvents.suffix(8).reversed(), id: \.self) { Text(verbatim: $0).font(.caption2.monospaced()).foregroundStyle(.secondary).selectableText() }
+            }
+        }
+        #endif
+        SwiftUI.Section {
+            NavigationLink {
+                Form { ConnectionStatusSections() }.formStyle(.grouped).canvasBackground().navigationTitle(L10n.text("Connection details"))
+            } label: { Text("Connection details") }
+            Button("Edit connection") { showConnect = true }
+        }
+    }
+}

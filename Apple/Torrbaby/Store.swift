@@ -732,8 +732,11 @@ final class Store: ObservableObject {
         if !primaryAddress.isEmpty { targets.append(("home", primaryAddress)) }
         if !fallbackServer.isEmpty && tailscaleInUse { targets.append(("tailscale", fallbackServer)) }
         #if os(iOS)
-        if let relay = await ensureRelay() { targets.append(("relay", relay)) }
-        else if !relayAddress.isEmpty { noteRoute("relay", RouteCheck(ok: false, ms: nil, detail: "could not open the relay to \(relayAddress)")) }
+        // With ABT on, the app's own relay is not opened even to test it: ABT carries everything.
+        if !ABT.connected {
+            if let relay = await ensureRelay() { targets.append(("relay", relay)) }
+            else if !relayAddress.isEmpty { noteRoute("relay", RouteCheck(ok: false, ms: nil, detail: "could not open the relay to \(relayAddress)")) }
+        }
         if let direct = directRoute { targets.append(("direct", direct)) }
         if PacketTunnel.shared.connected { targets.append(("tunnel", PacketTunnel.route)) }
         if ABT.connected { targets.append(("abt", ABT.route)) }
@@ -860,7 +863,10 @@ final class Store: ObservableObject {
     @Published private(set) var abtPath: String?
     /// ABT says this Wi-Fi is intercepting its connections (a sign-in page): shown on Connection.
     @Published private(set) var abtIntercepted = false
-    var abtDirect: Bool { abtPath == "lan" || abtPath == "punched" || abtPath == "ipv6" }
+    /// ABT can carry the app to Diamond: a straight path (home network, punched, IPv6), or its
+    /// own relay through bronze (the user, 2026-11-17: depend on ABT to fall back to bronze).
+    /// Never ABT's exit: video does not go through the US.
+    var abtDirect: Bool { abtPath == "lan" || abtPath == "punched" || abtPath == "ipv6" || abtPath == "bronze" }
     private var abtChecking = false
     private var abtLastAsked = Date.distantPast
     private var abtWatch: Task<Void, Never>?
@@ -1148,16 +1154,15 @@ final class Store: ObservableObject {
             addresses.removeAll { $0 == Self.relayCandidate }
             addresses.append(PacketTunnel.route)
         }
-        // ABT, when it is on and has a straight path to Diamond (home network or punched),
-        // likewise. Without one its name is left out and the relay through bronze stays in:
-        // Torrbaby is never carried through ABT's exit.
+        // ABT, when it is on, carries everything to Diamond (the user, 2026-11-17: "With ABT on,
+        // we use it for all our tunneling to diamond"): its straight path or its relay through
+        // bronze. The app's own relay and direct path are only for devices without ABT. Never
+        // ABT's exit (video does not go through the US): until ABT has a way, the app waits.
         if ABT.connected {
             watchABT()
             await waitForABTPath()
-            if abtDirect {
-                addresses.removeAll { $0 == Self.relayCandidate }
-                addresses.append(ABT.route)
-            }
+            addresses.removeAll { $0 == Self.relayCandidate }
+            if abtDirect { addresses.append(ABT.route) }
         }
         #if DEBUG
         // Simulator checks of the relay from home: -relayOnly YES leaves home and Tailscale out.

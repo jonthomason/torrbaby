@@ -37,6 +37,7 @@
     <string name="ui_55bce902c827" formatted="false">A file is outside the library</string>
     <string name="ui_0eaf3f3adb83" formatted="false">A file with the same name is already on that drive</string>
     <string name="ui_f2a6e02b7b4f" formatted="false">A paired device will need to approve it again.</string>
+    <string name="ui_d401731ae866" formatted="false">ABT</string>
     <string name="ui_eaca5bbaf44c" formatted="false">API TOKEN</string>
     <string name="ui_6b21fb791ac0" formatted="false">About</string>
     <string name="ui_cbd19b5c397e" formatted="false">Actor</string>
@@ -177,10 +178,19 @@
     <string name="ui_21b5f5d88904" formatted="false">Connect to your Torrbaby server</string>
     <string name="ui_c2f9b7b4897f" formatted="false">Connected</string>
     <string name="ui_182627e396c6" formatted="false">Connected under another name</string>
+    <string name="ui_ea81648d34d6" formatted="false">Connected via ABT, direct</string>
+    <string name="ui_fdc3f2a785fe" formatted="false">Connected via ABT, home network</string>
+    <string name="ui_3736441a608f" formatted="false">Connected via ABT, relay</string>
+    <string name="ui_f5f9d39a0d08" formatted="false">Connected via Tailscale</string>
+    <string name="ui_408d5189beb6" formatted="false">Connected via Torrbaby, home network</string>
+    <string name="ui_31dd3d9b2dfc" formatted="false">Connected via direct</string>
+    <string name="ui_ce8afaed4421" formatted="false">Connected via home network</string>
+    <string name="ui_fef332f9ab65" formatted="false">Connected via relay</string>
     <string name="ui_9449502ae14e" formatted="false">Connected · not used for new downloads</string>
     <string name="ui_ca7e4b990121" formatted="false">Connecting to Torrbaby’s relay…</string>
     <string name="ui_fd3e79699426" formatted="false">Connecting…</string>
     <string name="ui_6512ee1541e9" formatted="false">Connection</string>
+    <string name="ui_ab30a5cd5d8b" formatted="false">Connection details</string>
     <string name="ui_618aac54b120" formatted="false">Connection settings</string>
     <string name="ui_8fca30f77496" formatted="false">Continue watching</string>
     <string name="ui_8e3df45a49db" formatted="false">Copied</string>
@@ -236,6 +246,7 @@
     <string name="ui_a23975400420" formatted="false">Device allowed</string>
     <string name="ui_d56e2646caaa" formatted="false">Device linked</string>
     <string name="ui_df485c871329" formatted="false">Devices</string>
+    <string name="ui_bc81524a554d" formatted="false">Direct</string>
     <string name="ui_0f3409cf286f" formatted="false">Direct connection failed</string>
     <string name="ui_a92b0db10b42" formatted="false">Direct connection test</string>
     <string name="ui_8a32dc8fe550" formatted="false">Direct connection works</string>
@@ -349,6 +360,7 @@
     <string name="ui_a4f9034380e4" formatted="false">Hide keyboard</string>
     <string name="ui_90ccd6497400" formatted="false">History</string>
     <string name="ui_70f8bb9a8a53" formatted="false">Home</string>
+    <string name="ui_3c44197b81c9" formatted="false">Home network</string>
     <string name="ui_98f55db57c8e" formatted="false">Ignore</string>
     <string name="ui_114d8bdfc753" formatted="false">Ignore for organization</string>
     <string name="ui_d86fde95dbbf" formatted="false">Ignore organization</string>
@@ -490,6 +502,7 @@
     <string name="ui_0180f27718d1" formatted="false">No trial made progress</string>
     <string name="ui_d839d62a2b1e" formatted="false">No trials yet</string>
     <string name="ui_6eef6648406c" formatted="false">None</string>
+    <string name="ui_d99a2ed19083" formatted="false">None (no tunnel)</string>
     <string name="ui_98070d393c9e" formatted="false">None in the file</string>
     <string name="ui_2d4f57f93a15" formatted="false">None of them match the resolution or other filters you have chosen.</string>
     <string name="ui_fadae5312047" formatted="false">None of them match the resolution you have chosen.</string>
@@ -593,11 +606,13 @@
     <string name="ui_b10fbdb5d835" formatted="false">Ready to watch</string>
     <string name="ui_1bded3d08e57" formatted="false">Reannounce to trackers</string>
     <string name="ui_72d5617f3f47" formatted="false">Recent activity</string>
+    <string name="ui_8b65e36bced8" formatted="false">Recent events</string>
     <string name="ui_5369634238e2" formatted="false">Recently added</string>
     <string name="ui_de23e71b8ca8" formatted="false">Recently watched</string>
     <string name="ui_9ef937556efe" formatted="false">Recommended</string>
     <string name="ui_56e3badc4e6c" formatted="false">Refresh</string>
     <string name="ui_564fe5e2d6a3" formatted="false">Refresh library</string>
+    <string name="ui_9f537f977fa2" formatted="false">Relay</string>
     <string name="ui_d41f56cea1ac" formatted="false">Release</string>
     <string name="ui_91315eed232f" formatted="false">Release date</string>
     <string name="ui_e1490e4ce2b7" formatted="false">Release tags</string>
@@ -782,6 +797,7 @@
     <string name="ui_1197e8e3035f" formatted="false">TRANSFER HISTORY</string>
     <string name="ui_09bb08ece119" formatted="false">TV Shows</string>
     <string name="ui_ac32c5b119ff" formatted="false">TV shows</string>
+    <string name="ui_619c010a490e" formatted="false">Tailscale</string>
     <string name="ui_987f5ab80eb3" formatted="false">Target upload/download ratio</string>
     <string name="ui_919ccc119f64" formatted="false">Testing direct connection…</string>
     <string name="ui_c3328c39b0e2" formatted="false">Text</string>
@@ -843,6 +859,7 @@
     <string name="ui_476e06db8f10" formatted="false">To remove this drive, first move everything on it to another drive.</string>
     <string name="ui_eafdcec8c9d0" formatted="false">To remove this drive, first move its titles to another drive from each title’s Manage Files.</string>
     <string name="ui_39cd0e4ab4aa" formatted="false">Too many setup codes waiting. Try again in a few minutes.</string>
+    <string name="ui_2004ef109737" formatted="false">Torrbaby</string>
     <string name="ui_7fc3a24d77a0" formatted="false">Torrbaby makes a Media folder on the drive, with Downloads, Movies and TV inside, and keeps a small file there to recognise the drive.</string>
     <string name="ui_625fdd6c399e" formatted="false">Torrbaby transfer rates</string>
     <string name="ui_fecc14ee3002" formatted="false">Torrbaby tunnel</string>
@@ -877,6 +894,8 @@
     <string name="ui_bcabdf3a5848" formatted="false">Try a shorter title or another source.</string>
     <string name="ui_042c862e4467" formatted="false">Try again</string>
     <string name="ui_8310b022d173" formatted="false">Try reconnecting</string>
+    <string name="ui_67ec7d482d82" formatted="false">Tunnel source</string>
+    <string name="ui_45bae8964548" formatted="false">Tunnel status</string>
     <string name="ui_3c45be13a1a6" formatted="false">UPLOAD</string>
     <string name="ui_9241930fa68d" formatted="false">UPLOAD HISTORY</string>
     <string name="ui_c096eba0f2ba" formatted="false">UPLOADING</string>

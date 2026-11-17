@@ -1025,3 +1025,23 @@ Work offline	离线工作
 %lld running	%lld 个进行中
 %@ per min	每分钟 %@
 Video does not go through Tailscale's relay in the US	视频不经过 Tailscale 在美国的中继
+Connected via ABT, home network	已通过 ABT 连接，家庭网络
+Connected via ABT, direct	已通过 ABT 连接，直连
+Connected via ABT, relay	已通过 ABT 连接，中继
+Connected via Torrbaby, home network	已通过 Torrbaby 连接，家庭网络
+Connected via direct	已直连
+Connected via relay	已通过中继连接
+Connected via home network	已通过家庭网络连接
+Connected via Tailscale	已通过 Tailscale 连接
+Last answered %lld s ago	%lld 秒前最后响应
+ABT	ABT
+Torrbaby	Torrbaby
+None (no tunnel)	无（未使用隧道）
+Home network	家庭网络
+Direct	直连
+Relay	中继
+Tailscale	Tailscale
+Recent events	最近事件
+Connection details	连接详情
+Tunnel source	隧道来源
+Tunnel status	隧道状态

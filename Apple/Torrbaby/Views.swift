@@ -512,6 +512,8 @@ struct RootView: View {
                     else if screen.id.hasPrefix("files:") { LibraryFileManagement(assetID: String(screen.id.dropFirst(6))) }
                     else if screen.id.hasPrefix("title:") { LibraryDetail(titleID: String(screen.id.dropFirst(6))) }
                     else if screen.id == "processing" { SubtitleQueueView() }
+                    else if screen.id == "general" { SettingsPageView(page: .general, showConnect: $showConnect) }
+                    else if screen.id == "connection" { SettingsPageView(page: .connection, showConnect: $showConnect) }
                 }
             }
         }

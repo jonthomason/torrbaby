@@ -48,6 +48,7 @@ final class L10n {
     IDS.put("A file is outside the library", R.string.ui_55bce902c827);
     IDS.put("A file with the same name is already on that drive", R.string.ui_0eaf3f3adb83);
     IDS.put("A paired device will need to approve it again.", R.string.ui_f2a6e02b7b4f);
+    IDS.put("ABT", R.string.ui_d401731ae866);
     IDS.put("API TOKEN", R.string.ui_eaca5bbaf44c);
     IDS.put("About", R.string.ui_6b21fb791ac0);
     IDS.put("Actor", R.string.ui_cbd19b5c397e);
@@ -188,10 +189,19 @@ final class L10n {
     IDS.put("Connect to your Torrbaby server", R.string.ui_21b5f5d88904);
     IDS.put("Connected", R.string.ui_c2f9b7b4897f);
     IDS.put("Connected under another name", R.string.ui_182627e396c6);
+    IDS.put("Connected via ABT, direct", R.string.ui_ea81648d34d6);
+    IDS.put("Connected via ABT, home network", R.string.ui_fdc3f2a785fe);
+    IDS.put("Connected via ABT, relay", R.string.ui_3736441a608f);
+    IDS.put("Connected via Tailscale", R.string.ui_f5f9d39a0d08);
+    IDS.put("Connected via Torrbaby, home network", R.string.ui_408d5189beb6);
+    IDS.put("Connected via direct", R.string.ui_31dd3d9b2dfc);
+    IDS.put("Connected via home network", R.string.ui_ce8afaed4421);
+    IDS.put("Connected via relay", R.string.ui_fef332f9ab65);
     IDS.put("Connected · not used for new downloads", R.string.ui_9449502ae14e);
     IDS.put("Connecting to Torrbaby’s relay…", R.string.ui_ca7e4b990121);
     IDS.put("Connecting…", R.string.ui_fd3e79699426);
     IDS.put("Connection", R.string.ui_6512ee1541e9);
+    IDS.put("Connection details", R.string.ui_ab30a5cd5d8b);
     IDS.put("Connection settings", R.string.ui_618aac54b120);
     IDS.put("Continue watching", R.string.ui_8fca30f77496);
     IDS.put("Copied", R.string.ui_8e3df45a49db);
@@ -247,6 +257,7 @@ final class L10n {
     IDS.put("Device allowed", R.string.ui_a23975400420);
     IDS.put("Device linked", R.string.ui_d56e2646caaa);
     IDS.put("Devices", R.string.ui_df485c871329);
+    IDS.put("Direct", R.string.ui_bc81524a554d);
     IDS.put("Direct connection failed", R.string.ui_0f3409cf286f);
     IDS.put("Direct connection test", R.string.ui_a92b0db10b42);
     IDS.put("Direct connection works", R.string.ui_8a32dc8fe550);
@@ -360,6 +371,7 @@ final class L10n {
     IDS.put("Hide keyboard", R.string.ui_a4f9034380e4);
     IDS.put("History", R.string.ui_90ccd6497400);
     IDS.put("Home", R.string.ui_70f8bb9a8a53);
+    IDS.put("Home network", R.string.ui_3c44197b81c9);
     IDS.put("Ignore", R.string.ui_98f55db57c8e);
     IDS.put("Ignore for organization", R.string.ui_114d8bdfc753);
     IDS.put("Ignore organization", R.string.ui_d86fde95dbbf);
@@ -501,6 +513,7 @@ final class L10n {
     IDS.put("No trial made progress", R.string.ui_0180f27718d1);
     IDS.put("No trials yet", R.string.ui_d839d62a2b1e);
     IDS.put("None", R.string.ui_6eef6648406c);
+    IDS.put("None (no tunnel)", R.string.ui_d99a2ed19083);
     IDS.put("None in the file", R.string.ui_98070d393c9e);
     IDS.put("None of them match the resolution or other filters you have chosen.", R.string.ui_2d4f57f93a15);
     IDS.put("None of them match the resolution you have chosen.", R.string.ui_fadae5312047);
@@ -604,11 +617,13 @@ final class L10n {
     IDS.put("Ready to watch", R.string.ui_b10fbdb5d835);
     IDS.put("Reannounce to trackers", R.string.ui_1bded3d08e57);
     IDS.put("Recent activity", R.string.ui_72d5617f3f47);
+    IDS.put("Recent events", R.string.ui_8b65e36bced8);
     IDS.put("Recently added", R.string.ui_5369634238e2);
     IDS.put("Recently watched", R.string.ui_de23e71b8ca8);
     IDS.put("Recommended", R.string.ui_9ef937556efe);
     IDS.put("Refresh", R.string.ui_56e3badc4e6c);
     IDS.put("Refresh library", R.string.ui_564fe5e2d6a3);
+    IDS.put("Relay", R.string.ui_9f537f977fa2);
     IDS.put("Release", R.string.ui_d41f56cea1ac);
     IDS.put("Release date", R.string.ui_91315eed232f);
     IDS.put("Release tags", R.string.ui_e1490e4ce2b7);
@@ -793,6 +808,7 @@ final class L10n {
     IDS.put("TRANSFER HISTORY", R.string.ui_1197e8e3035f);
     IDS.put("TV Shows", R.string.ui_09bb08ece119);
     IDS.put("TV shows", R.string.ui_ac32c5b119ff);
+    IDS.put("Tailscale", R.string.ui_619c010a490e);
     IDS.put("Target upload/download ratio", R.string.ui_987f5ab80eb3);
     IDS.put("Testing direct connection…", R.string.ui_919ccc119f64);
     IDS.put("Text", R.string.ui_c3328c39b0e2);
@@ -854,6 +870,7 @@ final class L10n {
     IDS.put("To remove this drive, first move everything on it to another drive.", R.string.ui_476e06db8f10);
     IDS.put("To remove this drive, first move its titles to another drive from each title’s Manage Files.", R.string.ui_eafdcec8c9d0);
     IDS.put("Too many setup codes waiting. Try again in a few minutes.", R.string.ui_39cd0e4ab4aa);
+    IDS.put("Torrbaby", R.string.ui_2004ef109737);
     IDS.put("Torrbaby makes a Media folder on the drive, with Downloads, Movies and TV inside, and keeps a small file there to recognise the drive.", R.string.ui_7fc3a24d77a0);
     IDS.put("Torrbaby transfer rates", R.string.ui_625fdd6c399e);
     IDS.put("Torrbaby tunnel", R.string.ui_fecc14ee3002);
@@ -888,6 +905,8 @@ final class L10n {
     IDS.put("Try a shorter title or another source.", R.string.ui_bcabdf3a5848);
     IDS.put("Try again", R.string.ui_042c862e4467);
     IDS.put("Try reconnecting", R.string.ui_8310b022d173);
+    IDS.put("Tunnel source", R.string.ui_67ec7d482d82);
+    IDS.put("Tunnel status", R.string.ui_45bae8964548);
     IDS.put("UPLOAD", R.string.ui_3c45be13a1a6);
     IDS.put("UPLOAD HISTORY", R.string.ui_9241930fa68d);
     IDS.put("UPLOADING", R.string.ui_c096eba0f2ba);
