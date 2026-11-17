@@ -543,6 +543,12 @@ async fn process_file(s:&Service,mut asset:Value)->Result<()> {
     }
     Ok(())
 }
+/// A file finished one of the queues the Processing page counts.
+fn finished_queue(db:&Database,queue:&str)->Result<()> {
+    db.connection.execute("INSERT INTO processing_events(stage,at) VALUES(?,?)",rusqlite::params![queue,now()])?;
+    db.connection.execute("DELETE FROM processing_events WHERE at<?",[now()-86400.0])?;
+    Ok(())
+}
 /// The subtitle work still to do is a translation (queued, waiting or translating).
 fn translation_only(progress:&Value)->bool {
     progress["target"].as_str().is_some() && matches!(progress["state"].as_str(),Some("queued"|"running"|"interrupted"))
@@ -585,8 +591,12 @@ async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()>
             state="skipped";
         }
         let done=finished(state);
+        // Released to the translation lane on an earlier pass: this pass ends its translation.
+        let was_translating=prior["stage"]=="translation";
         {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
             db.connection.execute("UPDATE media_processing SET inventory_state='ready',subtitles_state=?,stage=?,detail=?,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![if done{state}else{"pending"},if done{"credits"}else{progress["stage"].as_str().unwrap_or("subtitles")},progress.to_string(),now(),id,revision])?;
+            if done && was_translating {finished_queue(&db,"translation")?;}
+            else if !was_translating && (done || translation_only(&progress)) {finished_queue(&db,"subtitles")?;}
         }
         // While the external lane translates, use this slot for credits analysis.
         external=state=="external";
@@ -615,6 +625,7 @@ async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()>
             state="skipped";
         }
         db.connection.execute("UPDATE media_processing SET stage='credits',credits_state=?,detail=?,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![state,credits.to_string(),now(),id,revision])?;
+        if finished(state) && !not_applicable {finished_queue(&db,"credits")?;}
         if state=="deferred" {
             db.connection.execute("UPDATE media_processing SET state='queued',retry_after=?,error=?,updated=? WHERE asset_id=?",rusqlite::params![now()+60.0,credits["error"].as_str(),now(),id])?;
         }
@@ -661,6 +672,8 @@ fn name(asset:&Value,entity:Option<&Value>)->Value {
 pub fn summary(db:&Database,jobs:&crate::subtitle_jobs::Manager)->Result<Value> {
     let rows=db.rows("SELECT * FROM media_processing",[])?;
     let translating=jobs.translating_now();
+    // Files waiting (running included) and running, per queue, in the order a file meets them.
+    let mut queues:std::collections::BTreeMap<&str,(u64,u64)>=[("subtitles",(0,0)),("translation",(0,0)),("credits",(0,0))].into_iter().collect();
     let mut queue=Vec::new();let mut running=Vec::new();let mut scanned=0;let mut completed=0;let mut failed=0;
     let entities:std::collections::HashMap<String,Value>=db.documents("entities")?.into_iter()
         .filter_map(|e|e["id"].as_str().map(|id|(id.to_owned(),e.clone()))).collect();
@@ -683,10 +696,25 @@ pub fn summary(db:&Database,jobs:&crate::subtitle_jobs::Manager)->Result<Value> 
         if state=="failed"{failed+=1;}
         let item=json!({"id":id,"asset_id":id,"title":title,"source":detail["source"],"show":named["show"],"season":named["season"],"episode":named["episode"],"episode_name":named["episode_name"],"state":state,"stage":stage,"target":detail["target"],"error":row.map(|r|r["error"].clone()).unwrap_or(Value::Null),"completed_cues":cues,"total_cues":total,"method":detail["extraction_method"],
             "inventory_state":row.map(|r|r["inventory_state"].clone()),"subtitles_state":row.map(|r|r["subtitles_state"].clone()),"credits_state":row.map(|r|r["credits_state"].clone()),"completed_at":row.map(|r|r["completed_at"].clone())});
+        if state!="ready" {
+            let settled=|k:&str|row.and_then(|r|r[k].as_str()).is_some_and(finished);
+            let translating=stage=="translation";
+            let queue=if translating {"translation"} else if !settled("subtitles_state") {"subtitles"} else {"credits"};
+            if let Some(q)=queues.get_mut(queue) {q.0+=1;if state=="running"{q.1+=1;}}
+            // Credits run while a translation waits; still owed, they are counted there too.
+            if translating && !settled("credits_state") {if let Some(q)=queues.get_mut("credits") {q.0+=1;}}
+        }
         if state=="running"{running.push(json!({"asset_id":id,"title":title,"source":detail["source"],"show":named["show"],"season":named["season"],"episode":named["episode"],"episode_name":named["episode_name"],"language":detail["target"].as_str().unwrap_or(""),"stage":stage,"method":detail["extraction_method"],"completed_cues":cues,"total_cues":total}));}
         queue.push(item);
     }
-    Ok(json!({"scanned":scanned,"translated":completed,"completed":completed,"failed":failed,"waiting_for_idle":false,"current":running.first().cloned().unwrap_or(Value::Null),"running":running,"queue":queue}))
+    // Files per minute: those that finished each queue in the last hour.
+    let hour=now()-3600.0;
+    let queues:Vec<Value>=["subtitles","translation","credits"].iter().map(|name|{
+        let (waiting,running)=queues[name];
+        let finished:i64=db.connection.query_row("SELECT COUNT(*) FROM processing_events WHERE stage=? AND at>=?",rusqlite::params![name,hour],|r|r.get(0)).unwrap_or(0);
+        json!({"id":name,"waiting":waiting,"running":running,"finished_last_hour":finished,"per_minute":finished as f64/60.0})
+    }).collect();
+    Ok(json!({"scanned":scanned,"translated":completed,"completed":completed,"failed":failed,"waiting_for_idle":false,"current":running.first().cloned().unwrap_or(Value::Null),"running":running,"queue":queue,"queues":queues}))
 }
 #[cfg(test)]
 mod tests {
@@ -829,8 +857,12 @@ mod tests {
         assert_eq!(open.len(),1);assert_eq!(open[0]["asset_id"],"movie");
         let root=std::env::temp_dir().join(format!("torrbaby-summary-{}",std::process::id()));
         let jobs=crate::subtitle_jobs::Manager::new(&root.join("subtitles"))?;
+        finished_queue(&db,"credits")?;finished_queue(&db,"credits")?;
         let queue=summary(&db,&jobs)?;
         let _=std::fs::remove_dir_all(&root);
+        let queues=queue["queues"].as_array().unwrap();
+        assert_eq!(queues.iter().map(|q|q["id"].as_str().unwrap()).collect::<Vec<_>>(),["subtitles","translation","credits"]);
+        assert_eq!(queues[2]["finished_last_hour"],2);
         assert_eq!(queue["failed"],1);
         assert!(queue["queue"].as_array().unwrap().iter().all(|a|a["asset_id"]=="movie"));
         Ok(())

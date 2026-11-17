@@ -286,6 +286,10 @@ struct SubtitlePreparation: Codable {
     let failed: Int
     let waitingForIdle: Bool
     let current: Current?
+    /// Each queue a file passes through: files waiting (running included), running, and how
+    /// many finished in the last hour.
+    struct Queue: Codable, Identifiable { let id: String; let waiting: Int; let running: Int; let perMinute: Double }
+    let queues: [Queue]?
 }
 struct CreditsAnalysis: Codable {
     struct Current: Codable { let assetId: String; let title: String }

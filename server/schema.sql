@@ -85,3 +85,8 @@ INSERT OR IGNORE INTO processing_failures(asset_id,revision,stage,error,occurren
 CREATE TABLE IF NOT EXISTS torrent_trials(id TEXT PRIMARY KEY,document TEXT NOT NULL);
 
 CREATE TABLE IF NOT EXISTS search_torrent_hashes(listing_key TEXT PRIMARY KEY,hash TEXT NOT NULL);
+
+-- One row per file finishing a processing queue (subtitles, translation, credits), for the
+-- Processing page's files-per-minute; a day is kept.
+CREATE TABLE IF NOT EXISTS processing_events (stage TEXT NOT NULL, at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS processing_events_at ON processing_events(stage,at);

@@ -61,6 +61,9 @@ struct SubtitleQueueView: View {
                 Label("Waiting for playback to finish", systemImage: "play.circle")
             }
             if let preparation = store.status?.subtitlePreparation {
+                if let queues = preparation.queues, !queues.isEmpty {
+                    SwiftUI.Section { ForEach(queues) { queueRow($0) } }
+                }
                 // Files being processed scroll with the rest; several run at once.
                 let running = (preparation.queue ?? []).filter { $0.state == "running" }
                 if !running.isEmpty {
@@ -104,6 +107,18 @@ struct SubtitleQueueView: View {
                 do { try await Task.sleep(for: .seconds(2)) } catch { return }
             }
         }
+    }
+    /// One queue: files waiting, how many run now, and files finished per minute over the last hour.
+    private func queueRow(_ queue: SubtitlePreparation.Queue) -> some View {
+        let name = ["subtitles": "Subtitles", "translation": "Translation", "credits": "Credits"][queue.id] ?? queue.id
+        return HStack(spacing: 12) {
+            Text(LocalizedStringKey(name)).font(.subheadline.weight(.semibold))
+            Spacer()
+            Text(verbatim: L10n.format("%lld waiting", queue.waiting)).monospacedDigit()
+            if queue.running > 0 { Text(verbatim: L10n.format("%lld running", queue.running)).monospacedDigit().foregroundStyle(Color.accentColor) }
+            Text(verbatim: L10n.format("%@ per min", queue.perMinute.formatted(.number.precision(.fractionLength(queue.perMinute < 10 ? 1 : 0)))))
+                .monospacedDigit().foregroundStyle(.secondary)
+        }.font(.caption).textSelection(.enabled)
     }
     /// One file: what it is, then its steps. A file being worked on lists each step on its own
     /// line with progress; the others show their steps on one line.
@@ -488,13 +503,15 @@ struct RootView: View {
         .sheet(isPresented: $showConnect) { LocalizedInterface { ConnectionView() } }
         #if DEBUG
         // Local screenshot checks only: TORRBABY_DEBUG_SCREEN=drives opens Settings → Library,
-        // =files:<asset id> opens that file's Manage Files, =title:<id> a title. Not in Release builds.
+        // =files:<asset id> opens that file's Manage Files, =title:<id> a title, =processing the
+        // Processing page. Not in Release builds.
         .sheet(item: $debugScreen) { screen in
             LocalizedInterface {
                 NavigationStack {
                     if screen.id == "drives" { SettingsPageView(page: .library, showConnect: $showConnect) }
                     else if screen.id.hasPrefix("files:") { LibraryFileManagement(assetID: String(screen.id.dropFirst(6))) }
                     else if screen.id.hasPrefix("title:") { LibraryDetail(titleID: String(screen.id.dropFirst(6))) }
+                    else if screen.id == "processing" { SubtitleQueueView() }
                 }
             }
         }
