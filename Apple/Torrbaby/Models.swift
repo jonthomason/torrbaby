@@ -378,7 +378,7 @@ struct PlaybackLink: Codable {
 struct Playback: Identifiable, Codable, Hashable {
     var id = UUID()
     let sessionId: String?
-    let resumePosition: Double
+    var resumePosition: Double
     let url: URL
     let name: String
     var localDownloadID: UUID? = nil

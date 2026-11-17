@@ -1037,7 +1037,8 @@ struct LibraryDetail: View {
                         Text(title.summary).font(.body).lineSpacing(5).frame(maxWidth: 900, alignment: .leading)
                     }
                     if let asset = preferred {
-                        LibraryAssetActions(asset: asset, showsDownload: false, castTitle: title)
+                        LibraryAssetActions(asset: asset, showsDownload: false, castTitle: title,
+                                            restart: store.canPlay(asset) && asset.position > 0 ? { play(asset, title: title.title, fromBeginning: true) } : nil)
                         MediaLanguagesView(info: asset.mediaInfo, problem: store.detailsProblem[title.id])
                     }
                     // Extras are their own tab after the last season, not a tail on every season.
@@ -1114,19 +1115,27 @@ struct LibraryDetail: View {
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain).disabled(loading && preparing != asset.id)
             .modifier(PreparingPlayback(active: preparing == asset.id))
+            #if !os(tvOS)
+            // Long press (right-click on the Mac): an episode part watched starts again from the top.
+            .contextMenu {
+                if store.canPlay(asset) && asset.position > 0 {
+                    Button { play(asset, title: title.title, fromBeginning: true) } label: { Label("Start from Beginning", systemImage: "backward.end.fill") }
+                }
+            }
+            #endif
             LibraryEpisodeActions(asset: asset, title: title)
         }.padding(14).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
     }
     private func playOrCancel(_ asset: LibraryAsset, title: String) {
         if preparing == asset.id { playbackTask?.cancel() } else { play(asset, title: title) }
     }
-    func play(_ asset: LibraryAsset, title: String) {
+    func play(_ asset: LibraryAsset, title: String, fromBeginning: Bool = false) {
         guard !loading, store.canPlay(asset) else { return }
         loading = true; preparing = asset.id
         playbackTask = Task {
             defer { loading = false; preparing = nil; playbackTask = nil }
             do {
-                let item = try await store.libraryPlayback(asset, titleID: titleID, name: asset.playerName(title: title))
+                let item = try await store.libraryPlayback(asset, titleID: titleID, name: asset.playerName(title: title), fromBeginning: fromBeginning)
                 guard !Task.isCancelled else { return }
                 #if os(macOS)
                 MacPlaybackWindows.open(item, with: openWindow)
@@ -1141,18 +1150,22 @@ struct LibraryDetail: View {
 extension Store {
     /// What Play hands the player for a library file: this device's own copy when it has a
     /// finished one, otherwise a stream from the server. Shared by the title page and the home hero.
-    func libraryPlayback(_ asset: LibraryAsset, titleID: String, name: String) async throws -> Playback {
+    /// `fromBeginning`: Start from Beginning, whatever the saved position.
+    func libraryPlayback(_ asset: LibraryAsset, titleID: String, name: String, fromBeginning: Bool = false) async throws -> Playback {
         #if !os(tvOS)
         let downloads = DownloadQueue.shared
         if let id = downloads.readyDownload(assetID: asset.id, server: libraryKey),
-           let local = await downloads.preparePlayback(id) { return local }
+           var local = await downloads.preparePlayback(id) {
+            if fromBeginning { local.resumePosition = 0 }
+            return local
+        }
         #endif
         try requireStreamingConnection()
         await flushProgress()
         try await registerClient()
         let link = try await mediaPlaybackLink(asset: asset, titleID: titleID)
         try Task.checkCancellation()
-        return Playback(sessionId: link.sessionId, resumePosition: link.resumePosition ?? 0, url: try endpoint(link.path),
+        return Playback(sessionId: link.sessionId, resumePosition: fromBeginning ? 0 : link.resumePosition ?? 0, url: try endpoint(link.path),
                         name: name, libraryAssetID: asset.id, libraryTitleID: titleID)
     }
 }
@@ -1264,6 +1277,8 @@ struct LibraryAssetActions: View {
     let asset: LibraryAsset
     var showsDownload = true
     var castTitle: LibraryTitle?
+    /// Start from Beginning, offered once the file has a saved position (as on TV).
+    var restart: (() -> Void)?
     @State private var saving = false
     var body: some View {
         LibraryActionFlow(spacing: 10) { actions }
@@ -1271,6 +1286,9 @@ struct LibraryAssetActions: View {
     }
     @ViewBuilder private var actions: some View {
         Group {
+            if let restart {
+                Button(action: restart) { Label("Start from Beginning", systemImage: "backward.end.fill") }
+            }
             if let castTitle { ContinueWatchingAction(title: castTitle) }
             Button(LocalizedStringKey(asset.watched ? "Mark as Unwatched" : "Mark as Watched")) {
                 saving = true
