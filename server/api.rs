@@ -391,6 +391,11 @@ pub async fn serve(
             "enabled"
         }
     );
+    if !preview {
+        if let (Ok(address), Some(data)) = (listener.local_addr(), database.parent()) {
+            watchdog(address.port(), data.to_owned());
+        }
+    }
     let lan_task = lan_listener.map(|listener| {
         let router = router.clone();
         tokio::spawn(async move {
@@ -428,6 +433,58 @@ pub async fn serve(
     }
     drop(lease);
     Ok(())
+}
+
+/// The server once stopped answering everything (2026-11-17 11:50, devices offline until it
+/// was restarted by hand) with nothing in its log. A plain thread, outside the async runtime,
+/// asks the server's own port every 10 s; after 45 s without an answer it saves a 5 s sample
+/// of every thread to hangs/ (named code, for finding what held it) and exits so launchd starts
+/// it again.
+fn watchdog(port: u16, data: PathBuf) {
+    std::thread::Builder::new().name("watchdog".into()).spawn(move || {
+        use std::io::{Read, Write};
+        let answers = || -> bool {
+            let Ok(mut stream) = std::net::TcpStream::connect_timeout(&std::net::SocketAddr::from(([127, 0, 0, 1], port)), std::time::Duration::from_secs(5)) else { return false };
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(10)));
+            if stream.write_all(b"GET /v1/ping HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").is_err() { return false }
+            let mut head = [0u8; 12];
+            stream.read_exact(&mut head).is_ok() && head.starts_with(b"HTTP/1.")
+        };
+        // Starting up (opening the database, the first scan) is not a hang.
+        std::thread::sleep(std::time::Duration::from_secs(120));
+        let mut silent_since: Option<std::time::Instant> = None;
+        loop {
+            if answers() { silent_since = None; } else {
+                let since = *silent_since.get_or_insert_with(std::time::Instant::now);
+                if since.elapsed() >= std::time::Duration::from_secs(45) {
+                    let dir = data.join("hangs");
+                    let _ = std::fs::create_dir_all(&dir);
+                    let file = dir.join(format!("{}.txt", chrono_like_stamp()));
+                    eprintln!("Watchdog: the server has not answered for 45 s; saving a sample to {} and restarting", file.display());
+                    let _ = std::process::Command::new("/usr/bin/sample").arg(std::process::id().to_string()).arg("5").arg("-file").arg(&file)
+                        .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+                    std::process::exit(70);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_secs(10));
+        }
+    }).ok();
+}
+/// "20261117-115030", China time, for a file name.
+fn chrono_like_stamp() -> String {
+    let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + 8 * 3600;
+    let (days, rest) = (unix / 86400, unix % 86400);
+    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
+    let z = days as i64 + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+    format!("{y:04}{m:02}{d:02}-{:02}{:02}{:02}", rest / 3600, rest / 60 % 60, rest % 60)
 }
 
 async fn dispatch(

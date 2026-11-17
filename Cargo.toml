@@ -11,7 +11,8 @@ path = "server/main.rs"
 
 [profile.release]
 lto = "thin"
-strip = true
+# Symbols stay, so a sample of a stuck server (the watchdog's, in hangs/) names the code.
+strip = false
 
 [dependencies]
 futures-util = "0.3.34"
