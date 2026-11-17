@@ -3,9 +3,9 @@
 version = 4
 
 [[package]]
-name = "abt-punch"
+name = "abt-link"
 version = "0.1.0"
-source = "git+https://github.com/jonthomason/abt.git?rev=489c5766d6fb1267a359602e6e4c356c39c06072#489c5766d6fb1267a359602e6e4c356c39c06072"
+source = "git+https://github.com/jonthomason/abt.git?rev=be32d14dd0441941c305d0c5aad67e2b43c7968a#be32d14dd0441941c305d0c5aad67e2b43c7968a"
 dependencies = [
  "anyhow",
  "quinn",
@@ -1970,7 +1970,7 @@ dependencies = [
 name = "torrbaby"
 version = "1.0.0"
 dependencies = [
- "abt-punch",
+ "abt-link",
  "anyhow",
  "axum",
  "base64 0.23.1",

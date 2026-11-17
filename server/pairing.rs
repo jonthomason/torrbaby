@@ -95,6 +95,15 @@ pub mod remote {
         Ok([nonce.as_slice(), &data].concat())
     }
 
+    /// A device pairing from away does not know Diamond's identity yet, so its claim comes through
+    /// bronze without end-to-end encryption. Such streams are taken only while a grant waits
+    /// (from the paired device's approval until claimed, or 10 minutes); otherwise every relayed
+    /// stream must be end to end (abt-link's pipe_relayed).
+    fn first_pairing() {
+        let waiting = GRANTS.lock().ok().and_then(|mut held| held.as_mut().map(|g| { g.retain(|_, g| g.expires > now()); !g.is_empty() })).unwrap_or(false);
+        crate::direct::set_first_pairing(waiting);
+    }
+
     /// POST /v1/pairings/remote, from a paired device: Diamond keeps the grant for 10 minutes.
     pub fn grant(body: &Value) -> Result<Value> {
         let secret = b64().decode(body["secret"].as_str().unwrap_or("")).map_err(|_| anyhow::anyhow!("This code isn't a Torrbaby setup code"))?;
@@ -108,6 +117,10 @@ pub mod remote {
         grants.retain(|_, g| g.expires > now());
         if grants.len() >= 16 && !grants.contains_key(&id) { bail!("Too many setup codes waiting. Try again in a few minutes.") }
         grants.insert(id.clone(), Grant { key, name: if name.is_empty() { "New device".into() } else { name }, platform, expires });
+        drop(held);
+        first_pairing();
+        // When it expires unclaimed, plain relayed streams are refused again.
+        tokio::spawn(async { tokio::time::sleep(std::time::Duration::from_secs_f64(LIFETIME + 1.0)).await; first_pairing() });
         Ok(json!({"id": id, "expires": expires}))
     }
 
@@ -122,6 +135,7 @@ pub mod remote {
             grants.retain(|_, g| g.expires > now());
             grants.remove(id)
         };
+        first_pairing();
         let Some(grant) = grant else { return Ok(json!({"waiting": true})) };
         let client = uuid::Uuid::new_v4().to_string();
         let token = secret();

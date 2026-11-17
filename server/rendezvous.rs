@@ -151,7 +151,7 @@ async fn connect_and_serve(config: &RendezvousConfig, http_port: u16) -> Result<
     if let Ok(mut held) = CONNECTION.lock() { *held = Some(connection.clone()) }
     while let Ok((send, recv)) = connection.accept_bi().await {
         set(|s| s["streams"] = json!(s["streams"].as_u64().unwrap_or(0) + 1));
-        tokio::spawn(crate::direct::pipe(send, recv, http_port, "Relay".to_owned()));
+        tokio::spawn(crate::direct::pipe_relayed(tokio::io::join(recv, send), http_port, "Relay".to_owned()));
     }
     let reason = connection.close_reason().map(|r| r.to_string()).unwrap_or_default();
     endpoint.close(0u32.into(), b"done");

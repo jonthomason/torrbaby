@@ -1,9 +1,9 @@
-//! Diamond's side of a direct path to a device: answering the device's start request, spraying
-//! its likely ports, then QUIC on the punched socket, each stream piped to this server's HTTP
-//! port. The code is ABT's shared punch crate (`abt_punch::host`, owned by ABT; the user,
-//! 2026-11-17: the best punching code lives in ABT and Torrbaby uses the same). Here: the port
-//! for devices that come over IPv6, and each punch's outcome passed to bronze's shared hints.
-pub use abt_punch::host::{DIRECT, fingerprint, ipv6, load_identity, pipe, results};
+//! Diamond's side of the secure path to a device: answering a punch (spray, QUIC on the punched
+//! socket), its identity, and end-to-end encryption on relayed streams. The code is ABT's shared
+//! abt-link (`abt_link::host`; the user, 2026-11-17: the best code lives in ABT, Torrbaby uses
+//! the same). Here: the port for devices that come over IPv6, and each punch's outcome passed to
+//! bronze's shared hints.
+pub use abt_link::host::{DIRECT, fingerprint, ipv6, load_identity, pipe_relayed, results, set_first_pairing};
 
 /// Diamond's UDP port for devices that reach it over IPv6 (nothing to punch).
 pub const IPV6_PORT: u16 = 47800;
