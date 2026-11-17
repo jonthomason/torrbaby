@@ -243,12 +243,15 @@ final class L10n {
     IDS.put("Delete", R.string.ui_f6fdbe48dc54);
     IDS.put("Delete Permanently", R.string.ui_a9ec7cf46a7d);
     IDS.put("Delete after playback", R.string.ui_c6e535e716bb);
+    IDS.put("Delete all", R.string.ui_08170580cbf4);
+    IDS.put("Delete all downloaded episodes", R.string.ui_ca7287103bcf);
     IDS.put("Delete download", R.string.ui_d41b502f0510);
     IDS.put("Delete files from server…", R.string.ui_3ddb8541a199);
     IDS.put("Delete permanently", R.string.ui_e63b5153bde0);
     IDS.put("Delete this device’s download?", R.string.ui_b14c902794f5);
     IDS.put("Delete this download?", R.string.ui_72d3c49b323c);
     IDS.put("Delete torrent and its files?", R.string.ui_2e4bc4ccc662);
+    IDS.put("Delete watched episodes", R.string.ui_13d930664790);
     IDS.put("Deleting files permanently removes their downloaded data, including partial downloads.", R.string.ui_da2934b8f12a);
     IDS.put("Deleting files…", R.string.ui_cc7192d76413);
     IDS.put("Description", R.string.ui_55f8ebc805e6);
@@ -286,6 +289,7 @@ final class L10n {
     IDS.put("Download to this device", R.string.ui_2a18b6447c5a);
     IDS.put("Download updated", R.string.ui_1c2b219a8a65);
     IDS.put("Downloaded", R.string.ui_c61970292546);
+    IDS.put("Downloaded episodes watched", R.string.ui_369300ff5764);
     IDS.put("Downloaded file is missing or incomplete. Download it again.", R.string.ui_06a34e14fcd4);
     IDS.put("Downloading", R.string.ui_9b4592f9ae45);
     IDS.put("Downloading first", R.string.ui_af948f4e4aee);
@@ -395,6 +399,7 @@ final class L10n {
     IDS.put("Its files stay on the drive. Torrbaby stops using it.", R.string.ui_eadbdb3346d4);
     IDS.put("Its titles return when it is connected again. Nothing has been removed.", R.string.ui_d45a38ad2c16);
     IDS.put("Junk · delete after seeding", R.string.ui_08c0c7e5fa43);
+    IDS.put("Keep", R.string.ui_466fc492747c);
     IDS.put("Keep downloading", R.string.ui_032fdc17f648);
     IDS.put("Keep file extensions and episode numbers.", R.string.ui_44d9c7e94283);
     IDS.put("Keep files on server", R.string.ui_0ecad4174400);

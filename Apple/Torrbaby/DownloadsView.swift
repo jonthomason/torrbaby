@@ -19,7 +19,7 @@ struct DownloadsView: View {
     @State private var confirmingCancel = false
     @AppStorage("downloads.swipeHintSeen") private var swipeHintSeen = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var hintRow: UUID?
+    @State private var hintRow: String?
     @State private var hintOffset: CGFloat = 0
     private func share(_ id: UUID) { shareDownload(id) }
     /// The device's free space; "< 1 MB" when it is all but gone, rather than "Zero KB".
@@ -108,83 +108,35 @@ struct DownloadsView: View {
                         .frame(maxWidth: .infinity, minHeight: 320, alignment: .center)
                         .listRowSeparator(.hidden)
                 }
-                ForEach(visible) { item in
-                    VStack(alignment: .leading, spacing: 8) {
-                      HStack(spacing: 16) {
-                        DownloadPoster(url: queue.artworkURL(item.id), isTV: item.season != nil)
-                            .frame(width: 40, height: 60).clipShape(RoundedRectangle(cornerRadius: 8))
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(item.title).font(.headline).lineLimit(2)
-                            if let line = queue.episodeLine(item) {
-                                Text(line).font(.caption).foregroundStyle(Theme.muted).lineLimit(2)
-                            } else if item.name != item.title {
-                                Text(item.name).font(.caption).foregroundStyle(Theme.muted).lineLimit(1)
-                            }
-                            if item.state == .ready {
-                                Label(bytes(item.size), systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(Theme.accent)
-                            } else {
-                                Text("\(bytes(queue.received[item.id] ?? item.received)) / \(bytes(item.size))")
-                                    .font(.caption.monospacedDigit()).foregroundStyle(Theme.muted)
-                                Text(L10n.text(!store.connected && [.queued, .transferring].contains(item.state)
-                                              ? "Waiting for connection" : (item.error ?? queue.stateLabel(item))))
-                                    .font(.caption).foregroundStyle(Theme.muted)
+                // By show and by movie (the user, 2026-11-17): a show is one entry with the episode
+                // being watched, a movie one entry with its progress. A show opens its episodes.
+                ForEach(DownloadGroup.groups(visible)) { group in
+                    DownloadGroupRow(group: group, play: play)
+                        .offset(x: hintRow == group.id ? hintOffset : 0)
+                        .background(alignment: .trailing) {
+                            if hintRow == group.id {
+                                Text("Delete").font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                                    .frame(width: 76).frame(maxHeight: .infinity).background(.red)
+                                    .accessibilityHidden(true)
                             }
                         }
-                        Spacer(minLength: 8)
-                        if item.state == .ready {
-                            Image(systemName: "play.circle.fill").font(.title).frame(width: 48, height: 48).accessibilityHidden(true)
-                        } else if item.state == .transferring || item.state == .queued {
-                            Button { queue.pause(item.id) } label: { Image(systemName: "pause.circle").font(.title2) }.help("Pause download")
-                        } else {
-                            Button { queue.resume(item.id) } label: { Image(systemName: "arrow.down.circle").font(.title2) }.help("Resume download")
+                        .clipped()
+                        .allowsHitTesting(hintRow != group.id)
+                        .listRowBackground(Theme.panel)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button("Delete", role: .destructive) { for item in group.items { queue.remove(item.id) } }.tint(.red)
                         }
-
-                      }
-                      if item.state != .ready {
-                          TorrentProgressGauge(value: item.size > 0 ? Double(queue.received[item.id] ?? item.received) / Double(item.size) : 0)
-                      }
-                      // In the row it belongs to, so it is clear which download is behind.
-                      DownloadUpdateOffer(ids: [item.id]).padding(.leading, 56)
-                    }.padding(.vertical, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .onTapGesture { if item.state == .ready { play(item.id) } }
-                    .accessibilityElement(children: item.state == .ready ? .combine : .contain)
-                    .accessibilityAddTraits(item.state == .ready ? .isButton : [])
-                    .accessibilityAction { if item.state == .ready { play(item.id) } }
-                    .background(Theme.panel)
-                    .offset(x: hintRow == item.id ? hintOffset : 0)
-                    .background(alignment: .trailing) {
-                        if hintRow == item.id {
-                            Text("Delete").font(.subheadline.weight(.semibold)).foregroundStyle(.white)
-                                .frame(width: 76).frame(maxHeight: .infinity).background(.red)
-                                .accessibilityHidden(true)
+                        .swipeActions(edge: .leading) {
+                            if !group.isShow, let item = group.items.first, item.state == .ready { Button("Share") { share(item.id) }.tint(Theme.accent) }
                         }
-                    }
-                    .clipped()
-                    .allowsHitTesting(hintRow != item.id)
-                    .accessibilityHint("Swipe left to delete this download")
-                    .listRowBackground(Theme.panel)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        Button("Delete", role: .destructive) { queue.remove(item.id) }.tint(.red)
-                    }
-                    .swipeActions(edge: .leading) {
-                        if item.state == .ready { Button("Share") { share(item.id) }.tint(Theme.accent) }
-                    }
-                    .contextMenu {
-                        if item.state == .ready {
-                            Button { share(item.id) } label: { Label("Share with AirDrop…", systemImage: "square.and.arrow.up") }
-                        }
-                        Button(role: .destructive) { queue.remove(item.id) } label: { Label("Delete", systemImage: "trash") }
-                    }
                 }
             }
         }.listStyle(.plain).scrollContentBackground(.hidden).background(Theme.canvas)
         // Opening this page is one of the two moments downloads are checked for updates
         // (the other is a title's own page). Nothing checks in the background.
         .task(id: store.connected && store.library != nil) { if let library = store.library { await queue.checkForUpdates(library: library) } }
-        .task(id: queue.items.first(where: { $0.state != .removed })?.id) {
-            guard !swipeHintSeen, let first = queue.items.first(where: { $0.state != .removed }) else { return }
+        .task(id: DownloadGroup.groups(queue.items.filter { $0.state != .removed }).first?.id) {
+            guard !swipeHintSeen, let first = DownloadGroup.groups(queue.items.filter { $0.state != .removed }).first else { return }
             guard !reduceMotion else { swipeHintSeen = true; return }
             do {
                 try await Task.sleep(for: .milliseconds(800))
@@ -214,6 +166,240 @@ struct DownloadsView: View {
             #else
             playback = item
             #endif
+        }
+    }
+}
+
+/// One show's or one movie's downloads on this device, for the Downloads page.
+struct DownloadGroup: Identifiable {
+    let id: String
+    let items: [DownloadStorage.Item]
+    var first: DownloadStorage.Item { items[0] }
+    var isShow: Bool { items.contains { $0.season != nil } }
+    var ready: [DownloadStorage.Item] { items.filter { $0.state == .ready } }
+    var size: Int64 { items.reduce(0) { $0 + $1.size } }
+    /// Every downloaded episode (or the movie) is watched.
+    var allWatched: Bool { !ready.isEmpty && ready.allSatisfy(\.watched) }
+    var watchedReady: [DownloadStorage.Item] { ready.filter(\.watched) }
+    var unfinished: [DownloadStorage.Item] { items.filter { $0.state != .ready } }
+    /// The episode to show and play: the one being watched (latest progress), else the first
+    /// not watched, else the last.
+    var current: DownloadStorage.Item {
+        let ordered = ready.isEmpty ? items : ready
+        if let watching = ordered.filter({ $0.position > 0 && !$0.watched }).max(by: { ($0.progressRecordedAt ?? .distantPast) < ($1.progressRecordedAt ?? .distantPast) }) { return watching }
+        return ordered.first { !$0.watched } ?? ordered.last ?? first
+    }
+    /// Shows and movies in the order their first download was added; a show's episodes by number.
+    static func groups(_ items: [DownloadStorage.Item]) -> [DownloadGroup] {
+        var order: [String] = []
+        var grouped: [String: [DownloadStorage.Item]] = [:]
+        for item in items {
+            let key = item.server + "|" + item.titleID
+            if grouped[key] == nil { order.append(key) }
+            grouped[key, default: []].append(item)
+        }
+        return order.map { key in
+            DownloadGroup(id: key, items: grouped[key]!.sorted { ($0.season ?? 0, $0.episode ?? 0) < ($1.season ?? 0, $1.episode ?? 0) })
+        }
+    }
+}
+
+/// Played so far (and whether watched) as a bar, as on a title's page.
+private struct DownloadWatchProgress: View {
+    let item: DownloadStorage.Item
+    var body: some View {
+        if !item.watched, item.duration > 0, item.position > 0 {
+            ProgressView(value: min(1, item.position / item.duration)).tint(Theme.accent)
+        }
+    }
+}
+
+/// A show or a movie on the Downloads page: its poster and name, the episode being watched
+/// and how far, whether it is all watched, the space it takes, and buttons to play it, delete
+/// the watched episodes (a show) and delete it all (x). A show opens its episodes.
+private struct DownloadGroupRow: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @ObservedObject private var queue = DownloadQueue.shared
+    @EnvironmentObject var store: Store
+    let group: DownloadGroup
+    let play: (UUID) -> Void
+    @State private var confirmingDelete = false
+    var body: some View {
+        if group.isShow {
+            NavigationLink { DownloadedShowView(groupID: group.id, play: play) } label: { content }
+        } else {
+            content.contentShape(Rectangle())
+                .onTapGesture { if group.first.state == .ready { play(group.first.id) } }
+                .accessibilityAddTraits(group.first.state == .ready ? .isButton : [])
+                .accessibilityAction { if group.first.state == .ready { play(group.first.id) } }
+        }
+    }
+    /// The whole series is watched on the server too (unknown away from the library: not claimed).
+    private var seriesWatched: Bool {
+        guard let title = store.library?.titles.first(where: { $0.id == group.first.titleID }), store.libraryKey == group.first.server else { return false }
+        return !title.playable.isEmpty && title.playable.allSatisfy(\.watched)
+    }
+    private var content: some View {
+        let current = group.current
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 16) {
+                DownloadPoster(url: queue.artworkURL(current.id), isTV: group.isShow)
+                    .frame(width: 40, height: 60).clipShape(RoundedRectangle(cornerRadius: 8))
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Text(verbatim: current.title).font(.headline).lineLimit(2)
+                        if group.allWatched { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent).accessibilityLabel(Text("Watched")) }
+                    }
+                    if group.isShow {
+                        if let line = queue.episodeLine(current) { Text(verbatim: line).font(.caption).foregroundStyle(Theme.muted).lineLimit(2) }
+                        // Watched means the episodes on this device, not the whole show.
+                        if group.allWatched && !seriesWatched {
+                            Text("Downloaded episodes watched").font(.caption2).foregroundStyle(Theme.muted)
+                        }
+                    }
+                    DownloadWatchProgress(item: current)
+                    HStack(spacing: 8) {
+                        if group.isShow { Text(L10n.format("%lld episodes", group.items.count)) }
+                        Text(verbatim: bytes(group.size))
+                        if !group.unfinished.isEmpty {
+                            Text(L10n.format("%lld downloading", group.unfinished.count))
+                        }
+                    }.font(.caption.monospacedDigit()).foregroundStyle(Theme.muted)
+                    if !group.isShow, current.state != .ready {
+                        Text(L10n.text(!store.connected && [.queued, .transferring].contains(current.state) ? "Waiting for connection" : (current.error ?? queue.stateLabel(current))))
+                            .font(.caption).foregroundStyle(Theme.muted)
+                    }
+                }
+                Spacer(minLength: 8)
+                if group.isShow && !group.watchedReady.isEmpty && !group.allWatched {
+                    Button { for item in group.watchedReady { queue.remove(item.id) } } label: {
+                        Image(systemName: "checkmark.circle.badge.xmark").font(.title2)
+                    }.buttonStyle(.borderless).help("Delete watched episodes").accessibilityLabel(Text("Delete watched episodes"))
+                }
+                if current.state == .ready {
+                    Button { play(current.id) } label: { Image(systemName: "play.circle.fill").font(.title) }
+                        .buttonStyle(.borderless).help("Play").accessibilityLabel(Text("Play"))
+                } else if !group.isShow {
+                    if current.state == .transferring || current.state == .queued {
+                        Button { queue.pause(current.id) } label: { Image(systemName: "pause.circle").font(.title2) }.buttonStyle(.borderless).help("Pause download")
+                    } else {
+                        Button { queue.resume(current.id) } label: { Image(systemName: "arrow.down.circle").font(.title2) }.buttonStyle(.borderless).help("Resume download")
+                    }
+                }
+                Button { if group.isShow { confirmingDelete = true } else { for item in group.items { queue.remove(item.id) } } } label: {
+                    Image(systemName: "xmark.circle").font(.title2).foregroundStyle(.secondary)
+                }.buttonStyle(.borderless).help(group.isShow ? "Delete all downloaded episodes" : "Delete download")
+                .accessibilityLabel(Text(group.isShow ? "Delete all downloaded episodes" : "Delete download"))
+                .confirmationDialog(L10n.format("Delete all %lld downloaded episodes of %@?", group.items.count, current.title), isPresented: $confirmingDelete, titleVisibility: .visible) {
+                    Button("Delete all downloaded episodes", role: .destructive) { for item in group.items { queue.remove(item.id) } }
+                    Button("Keep", role: .cancel) {}
+                }
+            }
+            if !group.unfinished.isEmpty {
+                let received = group.items.reduce(Int64(0)) { $0 + (queue.received[$1.id] ?? ($1.state == .ready ? $1.size : $1.received)) }
+                TorrentProgressGauge(value: group.size > 0 ? Double(received) / Double(group.size) : 0)
+            }
+            if !group.isShow { DownloadUpdateOffer(ids: [group.first.id]).padding(.leading, 56) }
+        }.padding(.vertical, 6).frame(maxWidth: .infinity, alignment: .leading).background(Theme.panel)
+    }
+}
+
+/// A show's downloaded episodes, by season: each with its progress and watched mark, played by
+/// a tap, deleted with its x or a swipe; above them, delete the watched ones or all of them.
+private struct DownloadedShowView: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @ObservedObject private var queue = DownloadQueue.shared
+    @EnvironmentObject var store: Store
+    let groupID: String
+    let play: (UUID) -> Void
+    @State private var confirmingDelete = false
+    var body: some View {
+        let group = DownloadGroup.groups(queue.items.filter { $0.state != .removed }).first { $0.id == groupID }
+        List {
+            if let group {
+                SwiftUI.Section {
+                    HStack(spacing: 18) {
+                        if !group.watchedReady.isEmpty {
+                            Button { for item in group.watchedReady { queue.remove(item.id) } } label: { Label("Delete watched episodes", systemImage: "checkmark.circle.badge.xmark") }
+                        }
+                        Button(role: .destructive) { confirmingDelete = true } label: { Label("Delete all", systemImage: "xmark.circle") }
+                            .confirmationDialog(L10n.format("Delete all %lld downloaded episodes of %@?", group.items.count, group.first.title), isPresented: $confirmingDelete, titleVisibility: .visible) {
+                                Button("Delete all downloaded episodes", role: .destructive) { for item in group.items { queue.remove(item.id) } }
+                                Button("Keep", role: .cancel) {}
+                            }
+                        Spacer()
+                    }.buttonStyle(.borderless).font(.subheadline.weight(.semibold))
+                    if group.ready.filter({ queue.updates[$0.id] != nil }).count > 1 { DownloadUpdateOffer(ids: group.items.map(\.id)) }
+                }
+                let seasons = Array(Set(group.items.map { $0.season ?? 0 })).sorted()
+                ForEach(seasons, id: \.self) { season in
+                    SwiftUI.Section(season == 0 ? L10n.text("Specials") : L10n.format("Season %lld", season)) {
+                        ForEach(group.items.filter { ($0.season ?? 0) == season }) { item in
+                            DownloadEpisodeRow(item: item, play: play)
+                                .listRowBackground(Theme.panel)
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    Button("Delete", role: .destructive) { queue.remove(item.id) }.tint(.red)
+                                }
+                                .swipeActions(edge: .leading) {
+                                    if item.state == .ready { Button("Share") { shareDownload(item.id) }.tint(Theme.accent) }
+                                }
+                        }
+                    }
+                }
+            } else {
+                ContentUnavailableView("No downloads", systemImage: "arrow.down.circle").listRowSeparator(.hidden)
+            }
+        }.listStyle(.plain).scrollContentBackground(.hidden).background(Theme.canvas)
+        .navigationTitle(group?.first.title ?? "")
+    }
+}
+
+/// One downloaded episode: its number and name, progress or watched mark, size or download
+/// state, and play / pause / resume and delete.
+private struct DownloadEpisodeRow: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @ObservedObject private var queue = DownloadQueue.shared
+    @EnvironmentObject var store: Store
+    let item: DownloadStorage.Item
+    let play: (UUID) -> Void
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 6) {
+                        Text(verbatim: queue.episodeLine(item) ?? item.name).font(.headline).lineLimit(2)
+                        if item.watched { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent).accessibilityLabel(Text("Watched")) }
+                    }
+                    DownloadWatchProgress(item: item)
+                    if item.state == .ready {
+                        Text(verbatim: bytes(item.size)).font(.caption.monospacedDigit()).foregroundStyle(Theme.muted)
+                    } else {
+                        Text(verbatim: "\(bytes(queue.received[item.id] ?? item.received)) / \(bytes(item.size))").font(.caption.monospacedDigit()).foregroundStyle(Theme.muted)
+                        Text(L10n.text(!store.connected && [.queued, .transferring].contains(item.state) ? "Waiting for connection" : (item.error ?? queue.stateLabel(item))))
+                            .font(.caption).foregroundStyle(Theme.muted)
+                    }
+                }
+                Spacer(minLength: 8)
+                if item.state == .ready {
+                    Button { play(item.id) } label: { Image(systemName: "play.circle.fill").font(.title) }.buttonStyle(.borderless).help("Play").accessibilityLabel(Text("Play"))
+                } else if item.state == .transferring || item.state == .queued {
+                    Button { queue.pause(item.id) } label: { Image(systemName: "pause.circle").font(.title2) }.buttonStyle(.borderless).help("Pause download")
+                } else {
+                    Button { queue.resume(item.id) } label: { Image(systemName: "arrow.down.circle").font(.title2) }.buttonStyle(.borderless).help("Resume download")
+                }
+                Button { queue.remove(item.id) } label: { Image(systemName: "xmark.circle").font(.title2).foregroundStyle(.secondary) }
+                    .buttonStyle(.borderless).help("Delete download").accessibilityLabel(Text("Delete download"))
+            }
+            if item.state != .ready {
+                TorrentProgressGauge(value: item.size > 0 ? Double(queue.received[item.id] ?? item.received) / Double(item.size) : 0)
+            }
+            DownloadUpdateOffer(ids: [item.id])
+        }.padding(.vertical, 6).frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture { if item.state == .ready { play(item.id) } }
+        .contextMenu {
+            if item.state == .ready { Button { shareDownload(item.id) } label: { Label("Share with AirDrop…", systemImage: "square.and.arrow.up") } }
+            Button(role: .destructive) { queue.remove(item.id) } label: { Label("Delete", systemImage: "trash") }
         }
     }
 }

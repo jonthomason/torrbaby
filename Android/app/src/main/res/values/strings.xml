@@ -232,12 +232,15 @@
     <string name="ui_f6fdbe48dc54" formatted="false">Delete</string>
     <string name="ui_a9ec7cf46a7d" formatted="false">Delete Permanently</string>
     <string name="ui_c6e535e716bb" formatted="false">Delete after playback</string>
+    <string name="ui_08170580cbf4" formatted="false">Delete all</string>
+    <string name="ui_ca7287103bcf" formatted="false">Delete all downloaded episodes</string>
     <string name="ui_d41b502f0510" formatted="false">Delete download</string>
     <string name="ui_3ddb8541a199" formatted="false">Delete files from server…</string>
     <string name="ui_e63b5153bde0" formatted="false">Delete permanently</string>
     <string name="ui_b14c902794f5" formatted="false">Delete this device’s download?</string>
     <string name="ui_72d3c49b323c" formatted="false">Delete this download?</string>
     <string name="ui_2e4bc4ccc662" formatted="false">Delete torrent and its files?</string>
+    <string name="ui_13d930664790" formatted="false">Delete watched episodes</string>
     <string name="ui_da2934b8f12a" formatted="false">Deleting files permanently removes their downloaded data, including partial downloads.</string>
     <string name="ui_cc7192d76413" formatted="false">Deleting files…</string>
     <string name="ui_55f8ebc805e6" formatted="false">Description</string>
@@ -275,6 +278,7 @@
     <string name="ui_2a18b6447c5a" formatted="false">Download to this device</string>
     <string name="ui_1c2b219a8a65" formatted="false">Download updated</string>
     <string name="ui_c61970292546" formatted="false">Downloaded</string>
+    <string name="ui_369300ff5764" formatted="false">Downloaded episodes watched</string>
     <string name="ui_06a34e14fcd4" formatted="false">Downloaded file is missing or incomplete. Download it again.</string>
     <string name="ui_9b4592f9ae45" formatted="false">Downloading</string>
     <string name="ui_af948f4e4aee" formatted="false">Downloading first</string>
@@ -384,6 +388,7 @@
     <string name="ui_eadbdb3346d4" formatted="false">Its files stay on the drive. Torrbaby stops using it.</string>
     <string name="ui_d45a38ad2c16" formatted="false">Its titles return when it is connected again. Nothing has been removed.</string>
     <string name="ui_08c0c7e5fa43" formatted="false">Junk · delete after seeding</string>
+    <string name="ui_466fc492747c" formatted="false">Keep</string>
     <string name="ui_032fdc17f648" formatted="false">Keep downloading</string>
     <string name="ui_44d9c7e94283" formatted="false">Keep file extensions and episode numbers.</string>
     <string name="ui_0ecad4174400" formatted="false">Keep files on server</string>

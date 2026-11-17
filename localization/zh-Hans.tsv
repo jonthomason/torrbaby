@@ -1045,3 +1045,11 @@ Recent events	最近事件
 Connection details	连接详情
 Tunnel source	隧道来源
 Tunnel status	隧道状态
+Downloaded episodes watched	已下载的剧集已看完
+%lld episodes	%lld 集
+%lld downloading	%lld 个正在下载
+Delete watched episodes	删除已看过的剧集
+Delete all downloaded episodes	删除所有已下载的剧集
+Delete all %lld downloaded episodes of %@?	要删除《%2$@》的全部 %1$lld 集下载吗？
+Keep	保留
+Delete all	全部删除
