@@ -913,6 +913,7 @@
     <string name="ui_536244f4cc64" formatted="false">校验中</string>
     <string name="ui_2da600bf9404" formatted="false">版本</string>
     <string name="ui_bc17c1f0179a" formatted="false">视频</string>
+    <string name="ui_4b5c96aa623e" formatted="false">视频不经过 Tailscale 在美国的中继</string>
     <string name="ui_a67bba005296" formatted="false">视频会先存入你的夸克网盘，下载到媒体库后再从网盘删除。</string>
     <string name="ui_31a7604a3c74" formatted="false">查看来源</string>
     <string name="ui_f22eadf74236" formatted="false">语音转写</string>

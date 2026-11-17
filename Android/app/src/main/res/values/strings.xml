@@ -913,6 +913,7 @@
     <string name="ui_536244f4cc64" formatted="false">Verifying</string>
     <string name="ui_2da600bf9404" formatted="false">Version</string>
     <string name="ui_bc17c1f0179a" formatted="false">Video</string>
+    <string name="ui_4b5c96aa623e" formatted="false">Video does not go through Tailscale\'s relay in the US</string>
     <string name="ui_a67bba005296" formatted="false">Videos are saved to your Quark Drive, downloaded into your library, then removed from the drive.</string>
     <string name="ui_31a7604a3c74" formatted="false">View source</string>
     <string name="ui_f22eadf74236" formatted="false">Voice Transcribed</string>

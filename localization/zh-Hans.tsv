@@ -1024,3 +1024,4 @@ Work offline	离线工作
 %lld waiting	%lld 个等待
 %lld running	%lld 个进行中
 %@ per min	每分钟 %@
+Video does not go through Tailscale's relay in the US	视频不经过 Tailscale 在美国的中继

@@ -17956,6 +17956,23 @@
           }
         }
       }
+    },
+    "Video does not go through Tailscale's relay in the US": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Video does not go through Tailscale's relay in the US"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "视频不经过 Tailscale 在美国的中继"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

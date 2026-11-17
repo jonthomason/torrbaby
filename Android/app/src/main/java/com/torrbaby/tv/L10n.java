@@ -924,6 +924,7 @@ final class L10n {
     IDS.put("Verifying", R.string.ui_536244f4cc64);
     IDS.put("Version", R.string.ui_2da600bf9404);
     IDS.put("Video", R.string.ui_bc17c1f0179a);
+    IDS.put("Video does not go through Tailscale's relay in the US", R.string.ui_4b5c96aa623e);
     IDS.put("Videos are saved to your Quark Drive, downloaded into your library, then removed from the drive.", R.string.ui_a67bba005296);
     IDS.put("View source", R.string.ui_31a7604a3c74);
     IDS.put("Voice Transcribed", R.string.ui_f22eadf74236);

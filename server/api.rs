@@ -463,6 +463,11 @@ async fn dispatch(
                 .into_response(),
         };
     }
+    // Video never goes through Tailscale's relay in the US (see tailscale_route).
+    if (uri.path().starts_with("/v1/hls/") || uri.path().starts_with("/v1/stream/")) && crate::tailscale_route::relayed(peer.ip()).await {
+        eprintln!("Video refused for {}: Tailscale has no direct path to it (its relay is in the US)", peer.ip());
+        return (StatusCode::FORBIDDEN, Json(json!({"error":crate::tailscale_route::REFUSED}))).into_response();
+    }
     if uri.path().starts_with("/v1/hls/") {
         return match hls_response(&s, &uri, &method, &headers).await {
             Ok(response) => response,
