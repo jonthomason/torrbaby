@@ -224,14 +224,13 @@ pub async fn serve(
         }
     });
     if let Err(error) = crate::direct::load_identity(&service.data_dir) { eprintln!("Identity: {error:#}") }
-    crate::direct::report_outcomes();
     // Off in previews and tests, like the connection to bronze: one server holds the port.
     if !preview {
         if let Err(error) = crate::direct::ipv6::start(crate::direct::IPV6_PORT, service.config.listen_port, None) { eprintln!("Direct over IPv6: {error:#}") }
     }
     // Off in previews and tests: only the live server holds the connection to bronze.
-    let rendezvous_task = (!preview).then(|| service.config.rendezvous.clone()).flatten()
-        .map(|config| crate::rendezvous::spawn(config, service.config.listen_port));
+    let rendezvous = (!preview).then(|| service.config.rendezvous.clone()).flatten();
+    if let Some(config) = &rendezvous { crate::rendezvous::spawn(config.clone(), service.config.listen_port) }
     {
         let db = service.db.lock().map_err(|_| anyhow::anyhow!("Database lock failed"))?;
         match crate::speech_subtitles::import_records(&db, &service.data_dir) {
@@ -426,7 +425,7 @@ pub async fn serve(
         task.abort();
     }
     routes_task.abort();
-    if let Some(task) = rendezvous_task { task.abort(); }
+    if rendezvous.is_some() { crate::rendezvous::stop() }
     if let Some(child) = &mut advertisement {
         let _ = child.kill().await;
     }

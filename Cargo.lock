@@ -5,18 +5,20 @@ version = 4
 [[package]]
 name = "abt-link"
 version = "0.1.0"
-source = "git+https://github.com/jonthomason/abt.git?rev=70d531c4ad9bda4fa1e33abff579df73444967ed#70d531c4ad9bda4fa1e33abff579df73444967ed"
+source = "git+https://github.com/jonthomason/abt.git?rev=b93dc879ba686e83e2db4f912fed4300a2a7bf71#b93dc879ba686e83e2db4f912fed4300a2a7bf71"
 dependencies = [
  "anyhow",
  "quinn",
  "rcgen",
  "rustls",
+ "serde",
  "serde_json",
  "sha2",
  "socket2 0.5.10",
  "tokio",
  "tokio-rustls",
  "uuid",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -2398,6 +2400,24 @@ name = "webpki-root-certs"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e49d0e65abc00c142e8f9428da991da9f1a250c39be97459901eb12b9b49f62a"
+dependencies = [
+ "rustls-pki-types",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "0.26.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
+dependencies = [
+ "webpki-roots 1.0.12",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7265c9301c16a8711c992c2d8da90ee77ef54b1ed51482d6dfeb00dc756b1297"
 dependencies = [
  "rustls-pki-types",
 ]

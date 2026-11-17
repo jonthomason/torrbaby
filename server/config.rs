@@ -63,14 +63,12 @@ pub struct Config {
     pub rendezvous: Option<RendezvousConfig>,
 }
 
+/// (Earlier configs also name bronze's address and fingerprint here; the servers now come from
+/// abt-link, so those keys are ignored.)
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct RendezvousConfig {
-    /// "ip:port" of its QUIC port; STUN is the same address on UDP 3478.
-    pub address: String,
-    /// SHA-256 of its certificate, hex; devices are given it too.
-    pub fingerprint: String,
-    /// The file holding the shared secret (bronze's /var/lib/tbrendezvous/home.secret).
+    /// The file holding Diamond's home secret at the rendezvous servers (abt-link's
+    /// `bronze::ours()`: bronze, Shadow, miyu; they all take the same one).
     pub secret_file: String,
 }
 
