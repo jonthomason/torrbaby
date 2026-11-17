@@ -5,7 +5,7 @@
 use crate::api::Service;
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
-use std::{io::Read, path::Path, process::{Command, Stdio}, time::{Duration, Instant}};
+use std::{io::Read, path::Path, process::{Command, Stdio}, time::Duration};
 
 /// Stored with the result; raise it to describe every file again.
 // Version 2 measures the picture inside the frame (baked-in black bars).
@@ -156,12 +156,7 @@ fn report(path: &Path) -> Result<Value> {
         .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
     let mut stdout = child.stdout.take().context("Missing format report")?;
     let reader = std::thread::spawn(move || { let mut bytes = Vec::new(); let _ = (&mut stdout).take(8 * 1024 * 1024).read_to_end(&mut bytes); bytes });
-    let started = Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait()? { break status; }
-        if started.elapsed() > Duration::from_secs(60) { let _ = child.kill(); let _ = child.wait(); anyhow::bail!("Format reading timed out"); }
-        std::thread::sleep(Duration::from_millis(20));
-    };
+    let Some(status) = crate::wake::wait_child(&mut child, Duration::from_secs(60))? else { anyhow::bail!("Format reading timed out") };
     let bytes = reader.join().unwrap_or_default();
     ensure!(status.success(), "Format reading failed");
     Ok(serde_json::from_slice(&bytes)?)

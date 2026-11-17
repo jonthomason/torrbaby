@@ -63,11 +63,12 @@ fn establish_identity(s: &Service) -> Result<Value> {
 /// (MagicDNS) name away. Both are looked up from the Mac, so a new address never matters.
 static ROUTES: std::sync::RwLock<Value> = std::sync::RwLock::new(Value::Null);
 
-async fn refresh_routes(home_host: Option<String>, away_host: Option<String>) {
+/// True when both names were found.
+async fn refresh_routes(home_host: Option<String>, away_host: Option<String>) -> bool {
     let configured = |value: Option<String>| value.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
     if let (Some(home), Some(away)) = (configured(home_host.clone()), configured(away_host.clone())) {
         if let Ok(mut current) = ROUTES.write() { *current = json!({"home":home,"away":away}); }
-        return;
+        return true;
     }
     async fn output(program: &str, args: &[&str]) -> Option<String> {
         let output = tokio::process::Command::new(program).args(args).output().await.ok()?;
@@ -86,10 +87,12 @@ async fn refresh_routes(home_host: Option<String>, away_host: Option<String>) {
         }
     }
     let routes = json!({"home":home,"away":away});
+    let found = routes["home"].is_string() && routes["away"].is_string();
     if let Ok(mut current) = ROUTES.write() {
         // Keep the last names known if a lookup fails for a moment.
-        if current.is_null() || (routes["home"].is_string() && routes["away"].is_string()) { *current = routes; }
+        if current.is_null() || found { *current = routes; }
     }
+    found
 }
 
 fn computer_name() -> String {
@@ -211,10 +214,13 @@ pub async fn serve(
         None
     };
     let configured = (service.config.home_host.clone(), service.config.away_host.clone());
+    // The names devices reach the server by: looked up at start and when the network settings
+    // change (the host name lives there), and a minute on while a lookup fails. (Every 10 minutes.)
     let routes_task = tokio::spawn(async move {
+        let _network = crate::wake::watch_dir(std::path::Path::new("/Library/Preferences/SystemConfiguration"), &crate::wake::ROUTES);
         loop {
-            refresh_routes(configured.0.clone(), configured.1.clone()).await;
-            tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+            let found = refresh_routes(configured.0.clone(), configured.1.clone()).await;
+            crate::wake::ROUTES.wait((!found).then(|| crate::wake::after(60.0))).await;
         }
     });
     if let Err(error) = crate::direct::load_identity(&service.data_dir) { eprintln!("Identity: {error:#}") }
@@ -1649,7 +1655,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         ("GET","/v1/library/revision") => Ok(json!({"revision":db.catalog_revision()?,"content":db.part_revision("content")?,"progress":db.part_revision("progress")?})),
         ("GET","/v1/library/list") => db.catalog_list(profile),
         ("GET","/v1/library/progress") => db.catalog_progress(profile),
-        ("GET","/v1/processing") => crate::processing::summary(&db,&s.subtitle_jobs),
+        ("GET","/v1/processing") => { crate::wake::progress_viewed(); crate::processing::summary(&db,&s.subtitle_jobs) },
         ("GET","/v1/processing/failures") => Ok(json!({
             "failures":db.rows("SELECT * FROM processing_failures ORDER BY resolved_at IS NULL DESC,last_seen DESC",[])?,
             "patterns":db.rows("SELECT stage,error,COUNT(*) AS affected_files,SUM(occurrences) AS occurrences FROM processing_failures WHERE resolved_at IS NULL GROUP BY stage,error ORDER BY affected_files DESC",[])?
@@ -1685,6 +1691,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             Ok(json!({"version":env!("CARGO_PKG_VERSION"),"server":{"name":state["server"]["name"],"id":state["server"]["id"],"routes":ROUTES.read().map(|r|r.clone()).unwrap_or_default(),"relay":crate::rendezvous::advertised(),"identity":crate::direct::fingerprint()}}))
         }
         ("GET","/v1/status") => {
+            crate::wake::progress_viewed();
             let state = db.state()?;
             let config = effective.as_ref().context("Missing settings")?;
             Ok(json!({"version":env!("CARGO_PKG_VERSION"),"server":{"name":state["server"]["name"],"id":state["server"]["id"],"routes":ROUTES.read().map(|r|r.clone()).unwrap_or_default(),"relay":crate::rendezvous::advertised()},"uptime_seconds":s.started.elapsed().as_secs(),"rendezvous":crate::rendezvous::status(),
@@ -3086,6 +3093,29 @@ async fn collect_metadata(s: &Service) -> Result<Option<std::time::Instant>> {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }
     // The matches this pass made decide which titles their extras belong to: linked once.
+    // Shows still airing get TMDB's new episodes (and their dates, which schedule the watched-show
+    // checks) a day after they were last fetched; ended and cancelled ones are not asked again.
+    let mut refreshed = 0;
+    for entity in entities.iter().filter(|e| e["provider"] == "TMDB" && e["kind"] == "tv" && !matches!(e["series_status"].as_str(), Some("Ended" | "Canceled"))) {
+        let due = entity["fetched_at"].as_f64().unwrap_or(0.0) + 86400.0;
+        if due > now() { sooner(&mut next, due); continue; }
+        let key = entity["id"].as_str().unwrap_or_default();
+        if s.metadata.recently_failed(key).await { continue; }
+        if refreshed >= 5 { more = true; continue; }
+        refreshed += 1;
+        match s.metadata.enrich(entity).await {
+            Ok(fresh) => {
+                let mut db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
+                let tx = db.connection.transaction()?;
+                let fresh = keep_backfilled(&tx, key, fresh)?;
+                let changed = tx.execute("INSERT INTO library_entities VALUES(?,?) ON CONFLICT(id) DO UPDATE SET document=excluded.document WHERE document IS NOT excluded.document",
+                    rusqlite::params![key, fresh.to_string()])?;
+                tx.commit()?;
+                if changed > 0 && fresh["episodes"] != entity["episodes"] { crate::wake::WATCHER.wake(); }
+            }
+            Err(error) => { eprintln!("Airing show metadata: {error}"); s.metadata.record_failure(key).await; }
+        }
+    }
     s.db.lock().map_err(|_| anyhow::anyhow!("Database lock failed"))?.link_extras()?;
     // Machine-translated descriptions are checked against TMDB again after a while.
     for entity in &entities {

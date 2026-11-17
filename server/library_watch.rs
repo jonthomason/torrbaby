@@ -9,10 +9,10 @@
 //! transfer sampler says where downloads are writing (`downloading`), and asks for a scan when a
 //! torrent, or a file inside one, finishes (`completed`): Transmission knows that, the disk does not.
 //!
-//! The folders watched are worked out again each minute (an in-memory comparison: a drive
-//! connected or removed, a folder made in Settings), and a change of them scans at once. Torrbaby's
-//! own operations (a cloud download landing, files removed) still ask for a scan themselves, and
-//! a full scan every 6 hours catches anything the file system did not report.
+//! The folders watched are worked out again when /Volumes changes (a drive connected or removed)
+//! or the drives change in Settings, and a change of them scans at once. Torrbaby's own operations
+//! (a cloud download landing, files removed) still ask for a scan themselves. When FSEvents drops
+//! events it says so (a rescan flag), and that is a change too. No scan runs on a clock.
 use crate::api::Service;
 use notify::{RecursiveMode, Watcher};
 use std::collections::BTreeSet;
@@ -24,8 +24,6 @@ use std::time::{Duration, Instant};
 const SETTLE: Duration = Duration::from_secs(3);
 /// At most one scan this often while changes keep coming (a download writing).
 const MIN_INTERVAL: Duration = Duration::from_secs(60);
-/// A full scan this often regardless, for anything not reported.
-const SAFETY: Duration = Duration::from_secs(6 * 3600);
 
 /// Where torrents still downloading write: each one's folder or file, in its download folder
 /// and in Transmission's folder for downloads in progress.
@@ -69,7 +67,8 @@ fn roots(s: &Service) -> BTreeSet<PathBuf> {
 fn watch(roots: &BTreeSet<PathBuf>, changed: tokio::sync::mpsc::UnboundedSender<()>) -> Option<notify::RecommendedWatcher> {
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         // Only what can change the library: files and folders made, changed, renamed or removed.
-        if let Ok(event) = event && !matches!(event.kind, notify::EventKind::Access(_)) && event.paths.iter().any(|p| !hidden(p) && !downloading(p)) {
+        // FSEvents dropped some (a rescan flag, often with no paths): look at everything.
+        if let Ok(event) = event && (event.need_rescan() || !matches!(event.kind, notify::EventKind::Access(_)) && event.paths.iter().any(|p| !hidden(p) && !downloading(p))) {
             let _ = changed.send(());
         }
     }).map_err(|error| tracing::warn!(%error, "Library watch could not start")).ok()?;
@@ -102,14 +101,15 @@ pub async fn run(s: Arc<Service>) {
     let (sender, mut changes) = tokio::sync::mpsc::unbounded_channel();
     let mut watched = roots(&s);
     let mut watcher = watch(&watched, sender.clone());
+    // A drive connected or removed changes the folders; so does a change to the drives in Settings.
+    let _volumes = crate::wake::watch_dir(std::path::Path::new("/Volumes"), &crate::wake::ROOTS);
     eprintln!("Library watch: {} folder(s) watched for changes", if watcher.is_some() { watched.len() } else { 0 });
     scan(&s, "start").await;
-    let mut last_scan = Instant::now();
     // The first change not yet scanned, and the latest.
     let mut pending: Option<(Instant, Instant)> = None;
-    let mut roots_checked = Instant::now();
-    let mut tick = tokio::time::interval(Duration::from_secs(1));
     loop {
+        // Once changes settle, or a minute after the first while they keep coming.
+        let due = pending.map(|(first, latest)| (latest + SETTLE).min(first + MIN_INTERVAL));
         tokio::select! {
             () = REQUESTED.notified() => {
                 // Something finished downloading: scan once it settles, like a change.
@@ -122,34 +122,20 @@ pub async fn run(s: Arc<Service>) {
                 // Drain a burst at once (a copy reports every block).
                 while changes.try_recv().is_ok() {}
             }
-            _ = tick.tick() => {
-                // The folders watched: a drive connected or removed changes them.
-                if roots_checked.elapsed() >= Duration::from_secs(60) {
-                    roots_checked = Instant::now();
-                    let now = roots(&s);
-                    if now != watched {
-                        watched = now;
-                        watcher = watch(&watched, sender.clone());
-                        eprintln!("Library watch: folders changed ({} watched)", if watcher.is_some() { watched.len() } else { 0 });
-                        scan(&s, "library folders changed").await;
-                        last_scan = Instant::now(); pending = None;
-                        continue;
-                    }
+            () = crate::wake::ROOTS.wait(None) => {
+                let now = roots(&s);
+                if now != watched {
+                    watched = now;
+                    watcher = watch(&watched, sender.clone());
+                    eprintln!("Library watch: folders changed ({} watched)", if watcher.is_some() { watched.len() } else { 0 });
+                    if watcher.is_none() && !watched.is_empty() { tracing::warn!("Library folders could not be watched: they are scanned when Torrbaby changes them"); }
+                    scan(&s, "library folders changed").await;
+                    pending = None;
                 }
-                if let Some((first, latest)) = pending {
-                    let settled = latest.elapsed() >= SETTLE;
-                    // A download writing for minutes still shows up within a minute.
-                    let overdue = first.elapsed() >= MIN_INTERVAL;
-                    if settled || overdue {
-                        pending = None;
-                        scan(&s, "files changed").await;
-                        last_scan = Instant::now();
-                    }
-                } else if last_scan.elapsed() >= SAFETY || watcher.is_none() && last_scan.elapsed() >= MIN_INTERVAL {
-                    // Every 6 hours anyway; every minute when nothing can be watched.
-                    scan(&s, if watcher.is_none() { "no folders watched" } else { "every 6 hours" }).await;
-                    last_scan = Instant::now();
-                }
+            }
+            () = async { if let Some(at) = due { tokio::time::sleep_until(at.into()).await } else { std::future::pending().await } } => {
+                pending = None;
+                scan(&s, "files changed").await;
             }
         }
     }

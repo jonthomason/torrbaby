@@ -242,11 +242,14 @@ async fn scan(s:&Service,path:&Path,reader:Option<Arc<crate::virtual_captions::R
         let out=tokio::spawn(async move {let mut v=Vec::new();stdout.take(65537).read_to_end(&mut v).await.map(|_|v)});
         let err=tokio::spawn(async move {let mut v=Vec::new();stderr.take(8192).read_to_end(&mut v).await.map(|_|v)});
         let started=std::time::Instant::now();
-        // Finish as soon as the scanner exits; check playback preparation once a second.
+        // Finish as soon as the scanner exits; stop when playback preparation starts or the time budget ends.
+        let mut preparation=crate::wake::PREPARATION.subscribe();
+        let budget=tokio::time::Instant::from_std(started+Duration::from_secs(300));
         let status=loop {
             tokio::select! {
                 status=child.wait()=>break status?,
-                _=tokio::time::sleep(Duration::from_secs(1))=>{}
+                _=preparation.changed()=>{}
+                ()=tokio::time::sleep_until(budget)=>{}
             }
             if started.elapsed()>Duration::from_secs(300) || s.virtual_media.preparing() {
                 child.kill().await?;let _=child.wait().await;out.abort();err.abort();

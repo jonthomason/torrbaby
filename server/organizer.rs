@@ -575,6 +575,7 @@ pub fn watch_transmission(s: &Service) -> Vec<notify::RecommendedWatcher> {
             // Not for the files the organizer clears.
             if event.is_ok_and(|e| !matches!(e.kind, notify::EventKind::Access(_) | notify::EventKind::Remove(_))) {
                 crate::wake::ORGANIZER.wake();
+                crate::wake::CLOUD.wake();
                 if sampler { crate::wake::SAMPLER.wake(); }
             }
         });

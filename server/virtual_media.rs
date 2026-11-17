@@ -503,6 +503,7 @@ impl Manager {
         drop(pending);
         // Playback preparation takes processing's slots: it backs down now.
         crate::wake::PROCESSING.wake();
+        crate::wake::PREPARATION.bump();
         let manager = self.clone();
         let run_id = id.clone();
         tokio::spawn(async move {
@@ -528,6 +529,7 @@ impl Manager {
             }
             // Slots come back, and the warm-up records what was built.
             crate::wake::PROCESSING.wake();
+            crate::wake::PREPARATION.bump();
         });
         Ok(id)
     }

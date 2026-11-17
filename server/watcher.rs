@@ -13,7 +13,6 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::Duration;
 
 /// Seconds after local midnight at which the shows are checked: 12:30 and 21:30.
 const SLOTS: [u64; 2] = [12 * 3600 + 1800, 21 * 3600 + 1800];
@@ -61,6 +60,15 @@ fn local(seconds: i64) -> (String, u64) {
     let moment = seconds as libc::time_t;
     unsafe { libc::localtime_r(&moment, &mut parts) };
     (format!("{:04}-{:02}-{:02}", parts.tm_year + 1900, parts.tm_mon + 1, parts.tm_mday), (parts.tm_hour * 3600 + parts.tm_min * 60 + parts.tm_sec) as u64)
+}
+/// The first check on a local date ("2026-11-20"), as epoch seconds.
+fn first_check_on(date: &str) -> Option<f64> {
+    let mut parts = date.split('-').map(|p| p.parse::<i32>().ok());
+    let (Some(Some(year)), Some(Some(month)), Some(Some(day))) = (parts.next(), parts.next(), parts.next()) else { return None };
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    tm.tm_year = year - 1900; tm.tm_mon = month - 1; tm.tm_mday = day; tm.tm_isdst = -1;
+    let midnight = unsafe { libc::mktime(&mut tm) };
+    (midnight > 0).then(|| midnight as f64 + SLOTS[0] as f64)
 }
 /// Seconds from a time of day until the next check.
 fn until_next(of_day: u64) -> u64 {
@@ -137,8 +145,7 @@ impl Watcher {
                 "market": show.market, "auto": show.auto, "airing": Self::current(entity), "missing": seasons,
                 "checked": if show.checked > 0.0 { json!(show.checked) } else { Value::Null }, "found": show.found, "error": show.error}))
         }).collect();
-        let of_day = local(now() as i64).1;
-        json!({"shows": shows, "next_check": now() + until_next(of_day) as f64, "checking": self.running.lock().map(|r| *r).unwrap_or(false)})
+        json!({"shows": shows, "next_check": self.next_check(s), "checking": self.running.lock().map(|r| *r).unwrap_or(false)})
     }
     pub fn add(&self, s: &Service, id: &str, market: Option<&str>) -> Result<Value> {
         let entity = Self::entities(s).into_iter().find(|e| e["id"] == id && e["kind"] == "tv").context("Only a TV show in the library can be watched")?;
@@ -156,6 +163,24 @@ impl Watcher {
         if !state.dismissed.iter().any(|gone| gone == id) { state.dismissed.push(id.to_owned()); }
         self.save(&state);
         Ok(json!({"removed": removed}))
+    }
+    /// When to look next: the next time of day while a watched show has an aired episode missing;
+    /// else the first check on the day TMDB dates its next episode; else not until asked.
+    fn next_check(&self, s: &Service) -> Option<f64> {
+        self.adopt(s);
+        let entities = Self::entities(s);
+        let ids: Vec<String> = self.state.lock().map(|state| state.shows.keys().cloned().collect()).unwrap_or_default();
+        let today = local(now() as i64).0;
+        let mut soonest: Option<f64> = None;
+        for id in ids {
+            let missing = s.db.lock().ok().and_then(|db| db.missing_episodes(&id).ok()).unwrap_or(Value::Null);
+            if !wanted(&missing).is_empty() { return Some(now() + until_next(local(now() as i64).1) as f64); }
+            let Some(entity) = entities.iter().find(|e| e["id"] == id.as_str()) else { continue };
+            let next_air = entity["episodes"].as_array().into_iter().flatten().filter_map(|e| e["airdate"].as_str())
+                .filter(|d| d.len() == 10 && *d > today.as_str()).min();
+            if let Some(at) = next_air.and_then(first_check_on) { soonest = Some(soonest.map_or(at, |s: f64| s.min(at))); }
+        }
+        soonest
     }
     /// Start a check now, without waiting for the next time of day.
     pub fn check_now(&self) -> Value { self.wake.notify_one(); json!({"started": true}) }
@@ -238,13 +263,16 @@ impl Watcher {
         }
         if let Ok(mut running) = self.running.lock() { *running = false; }
     }
-    /// Check at each time of day, and whenever asked to.
+    /// Check when asked, and at the next time of day there is something to look for (see
+    /// `next_check`). The library or a show's episode list changing works the time out again.
     pub async fn work(&self, s: &Service) {
-        self.adopt(s);
         loop {
-            let wait = until_next(local(now() as i64).1);
-            tokio::select! { _ = self.wake.notified() => {}, _ = tokio::time::sleep(Duration::from_secs(wait + 1)) => {} }
-            self.run(s).await;
+            let due = self.next_check(s).map(crate::wake::at_epoch);
+            tokio::select! {
+                _ = self.wake.notified() => self.run(s).await,
+                () = async { if let Some(at) = due { tokio::time::sleep_until(at.into()).await } else { std::future::pending().await } } => self.run(s).await,
+                () = crate::wake::WATCHER.wait(None) => {}
+            }
         }
     }
 }

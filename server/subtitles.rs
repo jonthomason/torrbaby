@@ -562,7 +562,7 @@ fn detected_sidecar_language(path: &Path) -> SidecarContent {
 }
 
 fn detect_text_language(cues: &[TimedCue]) -> Option<String> {
-    use std::{collections::HashMap, io::Write, process::{Command, Stdio}, sync::{LazyLock, Mutex}, time::{Duration, Instant}};
+    use std::{collections::HashMap, io::Write, process::{Command, Stdio}, sync::{LazyLock, Mutex}, time::Duration};
     use sha2::Digest;
     static CACHE: LazyLock<Mutex<HashMap<Vec<u8>, Option<String>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
     let sample: String = cues.iter().take(400).map(|c| c.text.as_str()).collect::<Vec<_>>().join(" ").chars().take(6000).collect();
@@ -571,16 +571,12 @@ fn detect_text_language(cues: &[TimedCue]) -> Option<String> {
     let helper = std::env::current_exe().ok()?.with_file_name("torrbaby-subtitle-extractor");
     let mut child = Command::new(helper).arg("--detect-language").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
     if child.stdin.take()?.write_all(sample.as_bytes()).is_err() { let _ = child.kill(); let _ = child.wait(); return None; }
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-            _ => { let _ = child.kill(); let _ = child.wait(); return None; }
-        }
-    }
-    let output = child.wait_with_output().ok()?;
-    let result: Option<String> = serde_json::from_slice(&output.stdout).ok()?;
+    // The answer is one short line: it fits the pipe, so it is read once the helper exits.
+    let mut stdout = child.stdout.take()?;
+    crate::wake::wait_child(&mut child, Duration::from_secs(10)).ok()??;
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut stdout, &mut bytes).ok()?;
+    let result: Option<String> = serde_json::from_slice(&bytes).ok()?;
     if let Ok(mut cache) = CACHE.lock() { if cache.len() >= 1024 { cache.clear(); } cache.insert(key, result.clone()); }
     result
 }

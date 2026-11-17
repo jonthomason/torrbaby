@@ -207,7 +207,7 @@ impl Manager {
         }))
     }
     pub fn set_urgent(&self, urgent:bool) {
-        self.urgent.store(urgent,std::sync::atomic::Ordering::Relaxed);
+        if self.urgent.swap(urgent,std::sync::atomic::Ordering::Relaxed)!=urgent {crate::wake::SLOTS.bump();}
     }
     /// Room for another job of this kind: translations count against the translation
     /// lane, everything else (reading tracks, OCR) against the processing slots.
@@ -217,7 +217,7 @@ impl Manager {
         else {pending.len().saturating_sub(translating.len())<self.concurrency.load(std::sync::atomic::Ordering::Relaxed)}
     }
     pub fn set_lane(&self, limit:usize) {
-        self.lane.store(limit.min(MAX_CONCURRENCY),std::sync::atomic::Ordering::Relaxed);
+        if self.lane.swap(limit.min(MAX_CONCURRENCY),std::sync::atomic::Ordering::Relaxed)!=limit.min(MAX_CONCURRENCY) {crate::wake::SLOTS.bump();}
     }
     /// Translations being made now, by asset: their file may have given its processing slot
     /// back, so the queue's own state does not show them.
@@ -233,7 +233,7 @@ impl Manager {
         self.translated.lock().map(|mut t|std::mem::take(&mut *t)).unwrap_or_default()
     }
     pub fn set_concurrency(&self, limit:usize) {
-        self.concurrency.store(limit.min(MAX_CONCURRENCY),std::sync::atomic::Ordering::Relaxed);
+        if self.concurrency.swap(limit.min(MAX_CONCURRENCY),std::sync::atomic::Ordering::Relaxed)!=limit.min(MAX_CONCURRENCY) {crate::wake::SLOTS.bump();}
     }
     pub fn set_external(&self, enabled:bool) {
         self.external.store(enabled,std::sync::atomic::Ordering::Relaxed);
@@ -246,6 +246,7 @@ impl Manager {
             for id in resume { yielded.remove(id); }
             for id in stop { yielded.insert(id.clone()); }
         }
+        if !stop.is_empty() { crate::wake::SLOTS.bump(); }
     }
     fn fleet_dir(root:&Path)->PathBuf { root.parent().unwrap_or(root).join("translation-fleet") }
     /// Write an external translation request: text only, keyed by cue index.
@@ -637,6 +638,9 @@ impl Manager {
         Ok(())
     }
     async fn run(self: Arc<Self>, mut job: Job) {
+        // Its slot is free when it ends: a job waiting for one looks again.
+        struct Freed; impl Drop for Freed { fn drop(&mut self) { crate::wake::SLOTS.bump(); } }
+        let _freed=Freed;
         let asset=job.asset_id.clone();
         let checkpoint_path=self.root.join(format!("{}.progress",job.id));
         let saved_before=|path:&Path|fs::read(path).ok().and_then(|b|serde_json::from_slice::<Progress>(&b).ok()).map_or(0,|p|p.completed);
@@ -645,11 +649,13 @@ impl Manager {
             // Finishing an imported translation is cheap; it does not wait for a slot.
             let bypass=self.imported.lock().map(|mut i|i.remove(&job.id)).unwrap_or(false);
             let (gate,limit)=if job.target.is_some() {(&self.lane_gate,&self.lane)} else {(&self.gate,&self.concurrency)};
+            let mut slots=crate::wake::SLOTS.subscribe();
             let _permit = if bypass {None} else {Some(loop {
                 let permit=gate.acquire().await?;
                 if MAX_CONCURRENCY-gate.available_permits()<=limit.load(std::sync::atomic::Ordering::Relaxed) {break permit;}
                 drop(permit);
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                // Over the limit: until a slot is freed or the limit changes.
+                let _=slots.changed().await;
             })};
             job.state = "running".into();
             self.save(&job)?;
@@ -748,10 +754,11 @@ impl Manager {
         let result = tokio::select! {
             result=tokio::time::timeout(Duration::from_secs(1200), result)=>Some(result),
             _=async {
+                let mut slots=crate::wake::SLOTS.subscribe();
                 loop {
                     if self.urgent.load(std::sync::atomic::Ordering::Relaxed) {break;}
                     if self.yielded.lock().map_or(true,|y|y.contains(&asset)) {break;}
-                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    if slots.changed().await.is_err() {break;}
                 }
             }=>None,
         };

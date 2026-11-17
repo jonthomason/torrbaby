@@ -158,15 +158,7 @@ fn convert(helper: &Path, input: &Path, folder: &Path, plans: &[Plan]) -> Result
         .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn()?;
     let mut stderr = child.stderr.take().context("Missing converter errors")?;
     let errors = std::thread::spawn(move || { let mut text = Vec::new(); let _ = (&mut stderr).take(8192).read_to_end(&mut text); std::io::copy(&mut stderr, &mut std::io::sink()).ok(); text });
-    let started = Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait()? { break status; }
-        if started.elapsed() > Duration::from_secs(3600) {
-            let _ = child.kill(); let _ = child.wait();
-            anyhow::bail!("Audio conversion timed out");
-        }
-        std::thread::sleep(Duration::from_millis(250));
-    };
+    let Some(status) = crate::wake::wait_child(&mut child, Duration::from_secs(3600))? else { anyhow::bail!("Audio conversion timed out") };
     let text = String::from_utf8_lossy(&errors.join().unwrap_or_default()).trim().to_owned();
     ensure!(status.success(), "Audio conversion: {}", if text.is_empty() { "converter failed" } else { &text });
     Ok(())

@@ -67,6 +67,8 @@ struct Superseded {
     outclassed: bool,
 }
 
+/// A running download was cancelled.
+static CANCELLED: tokio::sync::Notify = tokio::sync::Notify::const_new();
 pub struct Cloud {
     cookie_file: PathBuf,
     jobs_file: PathBuf,
@@ -807,12 +809,13 @@ impl Cloud {
     /// picture than the copy that replaced it; or it is going nowhere, with nobody
     /// connected and no activity for an hour, or with nothing ever uploaded. One actively seeding waits until it is
     /// done, and one holding an episode with no better copy is left alone.
-    pub async fn reap(&self, s: &Service) {
+    /// True while torrents are left waiting.
+    pub async fn reap(&self, s: &Service) -> bool {
         let waiting = self.superseded.lock().map(|all| all.clone()).unwrap_or_default();
-        if waiting.is_empty() { return; }
-        let Ok(torrents) = crate::organizer::torrents(s).await else { return };
-        let Some(assets) = s.db.lock().ok().and_then(|db| db.documents("assets").ok()) else { return };
-        let Ok(config) = s.effective_config() else { return };
+        if waiting.is_empty() { return false; }
+        let Ok(torrents) = crate::organizer::torrents(s).await else { return true };
+        let Some(assets) = s.db.lock().ok().and_then(|db| db.documents("assets").ok()) else { return true };
+        let Ok(config) = s.effective_config() else { return true };
         let drives = crate::drives::Drives::of(&config);
         let online = drives.online();
         let mut settled: Vec<String> = Vec::new();
@@ -841,9 +844,10 @@ impl Cloud {
                 Err(error) => tracing::warn!(hash, %error, "Could not remove a superseded torrent"),
             }
         }
-        if settled.is_empty() { return; }
+        if settled.is_empty() { return true; }
         if let Ok(mut all) = self.superseded.lock() { for hash in &settled { all.remove(hash); } self.persist_superseded(&all); }
         if let Err(error) = crate::api::scan_library(s).await { tracing::warn!(%error, "Library scan after removing superseded torrents failed"); }
+        self.superseded.lock().is_ok_and(|all| !all.is_empty())
     }
     fn persist(&self, jobs: &[Job]) {
         if let Ok(raw) = serde_json::to_vec(jobs) {
@@ -1009,6 +1013,7 @@ impl Cloud {
         if let Ok(mut jobs) = self.jobs.lock() {
             if jobs.iter().any(|job| job.id == id && (job.state == "saving" || job.state == "downloading")) {
                 if let Ok(mut cancelled) = self.cancelled.lock() { cancelled.insert(id.to_owned()); cancelling = true; }
+                CANCELLED.notify_waiters();
             } else {
                 let before = jobs.len();
                 jobs.retain(|job| job.id != id);
@@ -1285,8 +1290,9 @@ impl Cloud {
         tokio::join!(self.downloads(s), scans);
     }
     async fn downloads(&self, s: &Service) {
-        // The first tidy comes a minute after starting, once any interrupted job has been taken up again.
-        let mut swept = Instant::now() - Duration::from_secs(3540);
+        // The staging folder is tidied once nothing is downloading: after start (a minute on, once
+        // any interrupted job has been taken up again) and after each download.
+        let mut tidy = Some(Instant::now() + Duration::from_secs(60));
         // Videos delivered before the downloader retagged them itself are put right at start.
         let fixed = self.retag_delivered().await;
         if fixed > 0 { tracing::info!(fixed, "Retagged earlier downloads from hev1 to hvc1"); self.rescan.notify_one(); }
@@ -1305,17 +1311,20 @@ impl Cloud {
             }
             let next = self.jobs.lock().ok().and_then(|jobs| jobs.iter().find(|j| j.state == "queued" && !away(j)).cloned());
             let Some(job) = next else {
-                // Torrents that were still seeding when their episodes were bettered are let go once they finish.
-                self.reap(s).await;
-                // Now and then, with nothing downloading, the staging folder is tidied.
-                if swept.elapsed() >= Duration::from_secs(3600) { self.sweep().await; swept = Instant::now(); }
-                tokio::select! { _ = self.wake.notified() => {}, _ = tokio::time::sleep(Duration::from_secs(60)) => {} }
+                // Torrents that were still seeding when their episodes were bettered are let go once
+                // they finish (Transmission's seeding-finished event wakes this). One that may be let
+                // go for an hour without activity is looked at again in an hour.
+                let waiting = self.reap(s).await;
+                if tidy.is_some_and(|at| at <= Instant::now()) { self.sweep().await; tidy = None; }
+                let next = [tidy, waiting.then(|| Instant::now() + Duration::from_secs(3600))].into_iter().flatten().min();
+                tokio::select! { _ = self.wake.notified() => {}, () = crate::wake::CLOUD.wait(next) => {} }
                 continue;
             };
             let stopped = async {
                 loop {
+                    let notified = CANCELLED.notified();
                     if self.cancelled.lock().is_ok_and(|mut cancelled| cancelled.remove(&job.id)) { return; }
-                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    notified.await;
                 }
             };
             let outcome = tokio::select! { outcome = self.run(s, &job) => Some(outcome), _ = stopped => None };
@@ -1345,6 +1354,7 @@ impl Cloud {
                 }
             }
             self.progress.store(0, Ordering::Relaxed);
+            tidy = Some(Instant::now());
         }
     }
     /// Downloads run one at a time in the order they were added. This moves a waiting

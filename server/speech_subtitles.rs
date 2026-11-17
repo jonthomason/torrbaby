@@ -495,10 +495,15 @@ async fn run(s: &Service, root: &Path, name: &str, helper: &str, arguments: &[&s
         use tokio::io::AsyncReadExt;
         let errors = tokio::spawn(async move { let mut v = Vec::new(); stderr.take(8192).read_to_end(&mut v).await.map(|_| v) });
         let started = std::time::Instant::now();
+        // Finish when the helper exits; stop when playback preparation starts. Its progress is
+        // read every 2 s only while someone has the Processing page open.
+        let mut preparation = crate::wake::PREPARATION.subscribe();
         let status = loop {
+            let watched = crate::wake::progress_watched();
             tokio::select! {
                 status = child.wait() => break status?,
-                _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+                _ = preparation.changed() => {}
+                () = async { if watched { tokio::time::sleep(Duration::from_secs(2)).await } else { std::future::pending().await } } => {}
             }
             if let Ok(p) = std::fs::read(&progress).map_err(anyhow::Error::from).and_then(|b| Ok(serde_json::from_slice::<Value>(&b)?)) {
                 report(p["completed_cues"].as_u64().unwrap_or(0), p["total_cues"].as_u64().unwrap_or(0), source);

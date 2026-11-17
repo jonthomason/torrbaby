@@ -27,6 +27,14 @@ pub static ARTWORK: Signal = Signal::new();
 pub static REMOVALS: Signal = Signal::new();
 pub static TRIALS: Signal = Signal::new();
 pub static MOVES: Signal = Signal::new();
+/// Watched shows: the library or an episode list changed, so the next check is worked out again.
+pub static WATCHER: Signal = Signal::new();
+/// The names devices reach the server by may have changed (network settings).
+pub static ROUTES: Signal = Signal::new();
+/// Cloud downloads: a drive came back, a torrent finished seeding.
+pub static CLOUD: Signal = Signal::new();
+/// The library's folders may have changed (a drive, the drive settings).
+pub static ROOTS: Signal = Signal::new();
 /// Describing files' formats and listing waiting files' languages.
 pub static FORMATS: Signal = Signal::new();
 
@@ -43,14 +51,57 @@ pub fn after_request(path: &str) {
         SAMPLER.wake();
     }
     if path.starts_with("/v1/library") || path.starts_with("/v1/metadata") { METADATA.wake(); }
+    if path.starts_with("/v1/drives") || path.starts_with("/v1/settings") { ROOTS.wake(); }
 }
 
 /// The library's files or titles changed: what is prepared, matched and shown follows.
 pub fn library_changed() {
+    WATCHER.wake();
     PROCESSING.wake();
     FORMATS.wake();
     METADATA.wake();
     ARTWORK.wake();
+}
+
+/// A change counter several waiters can watch at once: a job that must give way when playback
+/// preparation starts, or when its slot is taken back, waits on this instead of looking every
+/// fraction of a second.
+pub struct Changes(tokio::sync::watch::Sender<u64>);
+impl Changes {
+    fn new() -> Self { Self(tokio::sync::watch::Sender::new(0)) }
+    pub fn bump(&self) { self.0.send_modify(|n| *n = n.wrapping_add(1)); }
+    /// The first wait returns at once, so the waiter looks at the state as it is now.
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> { let mut r = self.0.subscribe(); r.mark_changed(); r }
+}
+/// Playback preparation started or ended (virtual media's pending builds).
+pub static PREPARATION: std::sync::LazyLock<Changes> = std::sync::LazyLock::new(Changes::new);
+/// Processing slots: their number changed, one was freed, or a file was told to give its slot back.
+pub static SLOTS: std::sync::LazyLock<Changes> = std::sync::LazyLock::new(Changes::new);
+
+/// When someone last looked at processing (the Processing page): progress of a running helper
+/// is read while they do.
+static PROGRESS_VIEWED: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+pub fn progress_viewed() { if let Ok(mut v) = PROGRESS_VIEWED.lock() { *v = Some(Instant::now()); } }
+pub fn progress_watched() -> bool { PROGRESS_VIEWED.lock().ok().and_then(|v| *v).is_some_and(|at| at.elapsed() < Duration::from_secs(60)) }
+
+/// Wait for a helper process to exit, killing it if it runs past `limit`. None when it was killed
+/// for time. One wait, no polling (each helper looked every 10-250 ms whether it had finished).
+pub fn wait_child(child: &mut std::process::Child, limit: Duration) -> std::io::Result<Option<std::process::ExitStatus>> {
+    let (done, finished) = std::sync::mpsc::channel::<()>();
+    let pid = child.id() as libc::pid_t;
+    let killed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let marker = killed.clone();
+    let guard = std::thread::spawn(move || {
+        if finished.recv_timeout(limit) == Err(std::sync::mpsc::RecvTimeoutError::Timeout) {
+            marker.store(true, std::sync::atomic::Ordering::SeqCst);
+            unsafe { libc::kill(pid, libc::SIGKILL); }
+        }
+    });
+    let status = child.wait();
+    let _ = done.send(());
+    let _ = guard.join();
+    let status = status?;
+    Ok((!killed.load(std::sync::atomic::Ordering::SeqCst)).then_some(status))
 }
 
 /// A deadline `seconds` from now (epoch seconds as stored are converted by the caller).
