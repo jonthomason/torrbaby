@@ -380,6 +380,7 @@
     <string name="ui_fc2d046feac3" formatted="false">单个种子的限制优先。</string>
     <string name="ui_8bfa1406b66d" formatted="false">首字母或表情符号</string>
     <string name="ui_9407e9ca65ce" formatted="false">界面语言</string>
+    <string name="ui_fc9225a1693f" formatted="false">内置</string>
     <string name="ui_50be3afcff74" formatted="false">已中断</string>
     <string name="ui_f0a1400a18ca" formatted="false">无论它在哪里，都会在几秒内自行完成设置。</string>
     <string name="ui_65b63733a6f3" formatted="false">它以其他名称连接。请重新启动服务器 Mac 以恢复。没有删除任何内容。</string>
@@ -507,7 +508,6 @@
     <string name="ui_0180f27718d1" formatted="false">所有试下载均无进展</string>
     <string name="ui_d839d62a2b1e" formatted="false">暂无试下载</string>
     <string name="ui_6eef6648406c" formatted="false">无</string>
-    <string name="ui_d99a2ed19083" formatted="false">无（未使用隧道）</string>
     <string name="ui_98070d393c9e" formatted="false">文件内没有</string>
     <string name="ui_2d4f57f93a15" formatted="false">它们都不符合你选择的分辨率或其他筛选条件。</string>
     <string name="ui_fadae5312047" formatted="false">它们都不符合你选择的分辨率。</string>

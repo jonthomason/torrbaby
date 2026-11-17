@@ -132,7 +132,7 @@ struct TorrentDetail: View {
         Task {
             defer { loadingPlayback = false }
             do {
-                try store.requireStreamingConnection()
+                try await store.requireStreamingConnection()
                 await store.flushProgress()
                 try await store.registerClient()
                 let link: PlaybackLink = try await store.request("POST", "/v1/torrents/\(t.id)/play", body: ["file_index": index, "client_id": store.clientId])

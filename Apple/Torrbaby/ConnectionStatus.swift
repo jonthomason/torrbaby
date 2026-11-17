@@ -501,7 +501,8 @@ struct ConnectionWay {
         }
     }
     var sourceText: String {
-        switch source { case .abt: "ABT"; case .torrbaby: "Torrbaby"; case .none: way == nil ? "None" : "None (no tunnel)" }
+        // ABT when ABT is on, otherwise the app's own (home, its relay and direct path).
+        source == .abt ? "ABT" : "Internal"
     }
     var wayText: String {
         switch way {

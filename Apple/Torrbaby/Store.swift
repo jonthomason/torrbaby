@@ -528,7 +528,7 @@ final class Store: ObservableObject {
             guard let self else { return }
             self.directEvent("Torrbaby tunnel \(PacketTunnel.shared.statusText)")
             // Connected: it is the way to Diamond; the app's own paths would only compete.
-            if PacketTunnel.shared.connected { self.stopLink("the Torrbaby tunnel is connected") }
+            if PacketTunnel.shared.connected { self.stopLink("the Torrbaby tunnel is connected", movingTo: PacketTunnel.route) }
             // Gone: requests must stop going to its address at once, not at the next check.
             else if self.activeServer == PacketTunnel.route { self.activeServer = nil }
             self.refreshFullyNext()
@@ -794,7 +794,10 @@ final class Store: ObservableObject {
         defer { linkOpening = nil }
         return await task.value
     }
-    func stopLink(_ reason: String) {
+    /// `movingTo`: the route that replaces the link (the Torrbaby tunnel), used at once so a
+    /// request or a Play under way is not left with no route (it went to the home address,
+    /// which away from home never answers, until the next check).
+    func stopLink(_ reason: String, movingTo next: String? = nil) {
         guard let route = linkRoute else { return }
         TorrbabyLink.stop()
         linkRoute = nil; linkState = nil
@@ -802,7 +805,7 @@ final class Store: ObservableObject {
         directEvent("link: stopped (\(reason))")
         // Requests were going through it: find a route again now rather than at the next check.
         if activeServer == route, reason != "home" {
-            activeServer = nil
+            activeServer = next
             refreshFullyNext()
             Task { await refresh(polling: true) }
         }
@@ -1105,16 +1108,29 @@ final class Store: ObservableObject {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
+        let sentTo = activeServer
         let (data, response): (Data, URLResponse)
         do { (data, response) = try await session.data(for: request, delegate: observer) }
         catch {
+            // The way to Diamond changed while this request was out (the link stopped for the
+            // tunnel or ABT, a check chose another route): it is asked again on the route now in
+            // use, after the check under way, rather than failing for a route no longer used.
+            if !retried, address == nil, sentTo != activeServer || activeServer == nil, !Self.cancelled(error), error is URLError {
+                if activeServer == nil { _ = try? await probeConnection() }
+                if activeServer != nil, activeServer != sentTo {
+                    directEvent("retried \(path.split(separator: "?").first ?? "") on the new route (\(Self.describe(error)))")
+                    return try await self.request(method, path, body: body, timeout: timeout, address: nil, observer: observer, retried: true)
+                }
+            }
             #if os(iOS)
             // Torrbaby's link dropped the path this request was on (a direct path gone quiet, a
             // carrier switch): it is asked again once at the same address, which the link now
             // carries another way, so the switch costs a moment rather than an error. A change is
             // sent again too: its answer was lost, and Torrbaby's changes are safe to repeat
             // (progress carries its event id, registering and marking watched set a state).
-            let lost: Set<URLError.Code> = [.networkConnectionLost, .timedOut, .cannotConnectToHost, .notConnectedToInternet, .cannotFindHost]
+            // A connection the link closes as it moves from the relay to the direct path can
+            // also end as a bad or unreadable response.
+            let lost: Set<URLError.Code> = [.networkConnectionLost, .timedOut, .cannotConnectToHost, .notConnectedToInternet, .cannotFindHost, .badServerResponse, .cannotParseResponse]
             if !retried, address == nil, let linkRoute, activeServer == linkRoute, let network = error as? URLError, lost.contains(network.code) {
                 directEvent("retried \(path.split(separator: "?").first ?? "") over the link (\(Self.describe(error)))")
                 return try await self.request(method, path, body: body, timeout: timeout, address: nil, observer: observer, retried: true)
@@ -1518,12 +1534,16 @@ final class Store: ObservableObject {
 }
 
 extension Store {
-    func requireStreamingConnection() throws {
+    func requireStreamingConnection() async throws {
         #if os(iOS)
         // A stream is starting away from home (over the relay, the app's own punch or
         // Tailscale) on a device where ABT is the VPN and is off: ABT is turned on.
         if [.relay, .direct, .tailscale].contains(path) { Task { await ABT.turnOnIfOff() } }
         #endif
+        // Not connected this moment (the app just became active, a VPN coming up blinked the
+        // network, the link is switching): the check under way, or a new one, decides. Only
+        // when no way to Diamond answers does Play fail.
+        if !canStream, configured, !workOffline, networkAvailable, (try? await probeConnection()) != nil { connectionError = nil }
         guard canStream else {
             throw APIError(message: Self.unreachable)
         }
@@ -1542,7 +1562,7 @@ extension Store {
     /// `requireSubtitles`: fail when the subtitles could not be read, rather than go on without
     /// them (a download's update check, which would otherwise offer a copy with none).
     func mediaPlaybackLink(asset: LibraryAsset, titleID: String, startSession: Bool = true, requireSubtitles: Bool = false, progress: @escaping (String) -> Void = { _ in }) async throws -> PlaybackLink {
-        if startSession { try requireStreamingConnection() }
+        if startSession { try await requireStreamingConnection() }
         else if !connected { throw URLError(.notConnectedToInternet) }
         // The player reads the file's tracks (subtitles in the picture, picture shape); the
         // list leaves them out, so a title started without opening its page loads them now.
@@ -1576,7 +1596,7 @@ extension Store {
             let deadline = Date().addingTimeInterval(1200)
             while result.state == "queued" || result.state == "running" || result.state == "preparing" {
                 try Task.checkCancellation()
-                if startSession { try self.requireStreamingConnection() }
+                if startSession { try await self.requireStreamingConnection() }
                 guard self.server == serverAtStart && self.profileIdentity == profileAtStart else { throw CancellationError() }
                 guard Date() < deadline else { throw APIError(message: "Playback is still preparing. Try again shortly.") }
                 try await Task.sleep(for: .milliseconds(500))
@@ -1611,14 +1631,14 @@ extension Store {
             if requireSubtitles { throw error }
             notify("Subtitles unavailable", detail: error.localizedDescription)
         }
-        if startSession { try requireStreamingConnection() }
+        if startSession { try await requireStreamingConnection() }
         let prepared: Job = try await request("POST", base + "/virtual-mp4", body: ["subtitle_jobs": ids, "subtitle_names": ids.map { names[$0] ?? "" }])
         if prepared.state != "direct" {
             body["virtual_job"] = try await wait(prepared, route: "/v1/virtual-jobs/").id
         }
         try Task.checkCancellation()
         guard server == serverAtStart && profileIdentity == profileAtStart else { throw CancellationError() }
-        if startSession { try requireStreamingConnection() }
+        if startSession { try await requireStreamingConnection() }
         return try await request("POST", base + "/play", body: body)
     }
 }

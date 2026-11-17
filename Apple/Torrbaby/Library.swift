@@ -1158,7 +1158,7 @@ extension Store {
             return local
         }
         #endif
-        try requireStreamingConnection()
+        try await requireStreamingConnection()
         await flushProgress()
         try await registerClient()
         let link = try await mediaPlaybackLink(asset: asset, titleID: titleID)

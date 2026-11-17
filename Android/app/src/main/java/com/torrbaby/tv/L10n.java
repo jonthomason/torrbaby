@@ -391,6 +391,7 @@ final class L10n {
     IDS.put("Individual torrent limits take precedence.", R.string.ui_fc2d046feac3);
     IDS.put("Initial or emoji", R.string.ui_8bfa1406b66d);
     IDS.put("Interface language", R.string.ui_9407e9ca65ce);
+    IDS.put("Internal", R.string.ui_fc9225a1693f);
     IDS.put("Interrupted", R.string.ui_50be3afcff74);
     IDS.put("It finishes setting up by itself within a few seconds, wherever it is.", R.string.ui_f0a1400a18ca);
     IDS.put("It is connected under another name. Restart the server Mac to put it back. Nothing has been removed.", R.string.ui_65b63733a6f3);
@@ -518,7 +519,6 @@ final class L10n {
     IDS.put("No trial made progress", R.string.ui_0180f27718d1);
     IDS.put("No trials yet", R.string.ui_d839d62a2b1e);
     IDS.put("None", R.string.ui_6eef6648406c);
-    IDS.put("None (no tunnel)", R.string.ui_d99a2ed19083);
     IDS.put("None in the file", R.string.ui_98070d393c9e);
     IDS.put("None of them match the resolution or other filters you have chosen.", R.string.ui_2d4f57f93a15);
     IDS.put("None of them match the resolution you have chosen.", R.string.ui_fadae5312047);

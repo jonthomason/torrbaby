@@ -178,6 +178,7 @@ No releases found	未找到资源
 No subtitle jobs	暂无字幕任务
 No titles match your search.	未找到匹配的影片。
 No torrents	暂无种子
+Internal	内置
 None	无
 Not downloaded	未下载
 Notifications	通知
@@ -1034,7 +1035,6 @@ Connected via Tailscale	已通过 Tailscale 连接
 Last answered %lld s ago	%lld 秒前最后响应
 ABT	ABT
 Torrbaby	Torrbaby
-None (no tunnel)	无（未使用隧道）
 Home network	家庭网络
 Direct	直连
 Relay	中继
