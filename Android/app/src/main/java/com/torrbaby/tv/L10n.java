@@ -125,6 +125,7 @@ final class L10n {
     IDS.put("Can’t reach your library right now. Try again in a moment.", R.string.ui_24f5f64bb24c);
     IDS.put("Can’t reach your server", R.string.ui_fe5cb199d204);
     IDS.put("Can’t reach your server yet. Still trying…", R.string.ui_030a665633af);
+    IDS.put("Can’t stream right now: no direct path to Diamond.", R.string.ui_7457ee9cda9e);
     IDS.put("Cast", R.string.ui_60745aef336b);
     IDS.put("Cellular", R.string.ui_b4e2e1ffb3ed);
     IDS.put("Cellular downloads allowed until", R.string.ui_6b9dfc21816d);
@@ -260,6 +261,7 @@ final class L10n {
     IDS.put("Device allowed", R.string.ui_a23975400420);
     IDS.put("Device linked", R.string.ui_d56e2646caaa);
     IDS.put("Devices", R.string.ui_df485c871329);
+    IDS.put("Diamond is on · No direct path", R.string.ui_40f3193b7e45);
     IDS.put("Direct", R.string.ui_bc81524a554d);
     IDS.put("Direct connection failed", R.string.ui_0f3409cf286f);
     IDS.put("Direct connection test", R.string.ui_a92b0db10b42);
@@ -498,6 +500,7 @@ final class L10n {
     IDS.put("No connected device nearby? Copy or send this code as a picture to someone who has one. It stays the same until a connected device allows it.", R.string.ui_d8c1e979f1af);
     IDS.put("No connected drive takes new downloads", R.string.ui_9e5c2b4cfc49);
     IDS.put("No connected phone nearby? Take a photo of this code and send it to someone who has one. It works once and expires in 10 minutes.", R.string.ui_f102e428502b);
+    IDS.put("No direct path", R.string.ui_7768342f1d75);
     IDS.put("No downloads", R.string.ui_9367342a5e79);
     IDS.put("No matches", R.string.ui_cd0af6cfca75);
     IDS.put("No matches. You can still enter a name above.", R.string.ui_b0b087bbea50);

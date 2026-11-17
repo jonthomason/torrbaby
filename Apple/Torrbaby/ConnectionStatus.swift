@@ -437,10 +437,13 @@ struct ConnectionWay {
     let source: Source
     let way: Way?
     let connecting: Bool
+    /// Diamond is up but there is no path to it (Store.diamondUpNoPath).
+    var noPath = false
 
     @MainActor init(store: Store, tunnelState: String?) {
         guard store.connected else {
             way = nil
+            noPath = store.diamondUpNoPath
             // Before the first answer, or while ABT is finding its path after a network change.
             #if os(iOS)
             // With ABT on, the app waits for ABT to find its way to Diamond: ABT is the source.
@@ -478,7 +481,7 @@ struct ConnectionWay {
     }
 
     var text: String {
-        guard let way else { return connecting ? "Connecting…" : "Offline" }
+        guard let way else { return noPath ? "Diamond is on · No direct path" : connecting ? "Connecting…" : "Offline" }
         switch (source, way) {
         case (.abt, .home): return "Connected via ABT, home network"
         case (.abt, .direct): return "Connected via ABT, direct"
@@ -493,7 +496,7 @@ struct ConnectionWay {
         }
     }
     var icon: (String, Color) {
-        guard let way else { return connecting ? ("arrow.triangle.2.circlepath", .orange) : ("wifi.slash", .red) }
+        guard let way else { return noPath ? ("bolt.horizontal.circle", .orange) : connecting ? ("arrow.triangle.2.circlepath", .orange) : ("wifi.slash", .red) }
         switch way {
         case .home: return ("house.fill", .green)
         case .direct: return ("bolt.horizontal.fill", .green)
@@ -510,7 +513,7 @@ struct ConnectionWay {
         case .direct: "Direct"
         case .relay: "Relay"
         case .tailscale: "Tailscale"
-        case nil: connecting ? "Connecting…" : "Offline"
+        case nil: noPath ? "No direct path" : connecting ? "Connecting…" : "Offline"
         }
     }
 }

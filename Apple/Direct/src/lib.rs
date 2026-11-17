@@ -54,9 +54,8 @@ pub extern "C" fn tbdirect_identity(fingerprint: *const c_char) {
     if let Ok(mut held) = PINNED.lock() { *held = fingerprint }
 }
 
-/// Start Torrbaby's link to Diamond (proxy.rs) and return its loopback port, or 0 when bronze's
-/// relay did not open. `config` is JSON: {"relay": "ip:7443", "relay_fingerprint", "stun",
-/// "stun2", "token", "state_dir", "lean", "idle_s"}; Diamond's identity is the pinned one.
+/// Start Torrbaby's link to Diamond (proxy.rs) and return its loopback port (0 only when it could
+/// not start). `config` is JSON: {"relay": "ip:7443", "relay_fingerprint", "token", "state_dir", "lean", "idle_s"}; Diamond's identity is the pinned one.
 /// Already running for the same relay and identity: takes the new token and returns the same
 /// port. Blocks up to about 7 s: call it off the main thread.
 #[unsafe(no_mangle)]
@@ -64,8 +63,6 @@ pub extern "C" fn tbproxy_start(config: *const c_char) -> u16 {
     let config: serde_json::Value = text(config).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
     let string = |key: &str| config[key].as_str().unwrap_or("").to_owned();
     let mut link = proxy::Config::new(&string("relay"), &string("relay_fingerprint"));
-    link.stun = string("stun");
-    link.stun2 = config["stun2"].as_str().filter(|s| !s.is_empty()).map(str::to_owned);
     link.token = string("token");
     link.state_dir = config["state_dir"].as_str().filter(|s| !s.is_empty()).map(std::path::PathBuf::from);
     link.lean = config["lean"].as_bool().unwrap_or(false);

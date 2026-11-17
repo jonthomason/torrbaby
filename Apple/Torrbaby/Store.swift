@@ -313,11 +313,6 @@ final class Store: ObservableObject {
         relayAddress = address; relayFingerprint = fingerprint
         UserDefaults.standard.set(address, forKey: "relay-address"); UserDefaults.standard.set(fingerprint, forKey: "relay-fingerprint")
     }
-    /// Torrbaby's own STUN server: the rendezvous's address on UDP 3478.
-    var stunServer: String? {
-        guard let host = relayAddress.split(separator: ":").first, !host.isEmpty else { return nil }
-        return "\(host):3478"
-    }
     @Published private(set) var awayRoute = UserDefaults.standard.string(forKey: "route-away") ?? ""
     private var routePort: Int { URLComponents(string: server)?.port ?? 8765 }
     private func address(_ host: String) -> String { host.isEmpty ? "" : "http://\(host):\(routePort)" }
@@ -592,6 +587,15 @@ final class Store: ObservableObject {
         #endif
     }
     var configured: Bool { !server.isEmpty && !token.isEmpty }
+    /// Diamond is up (a rendezvous holds its standing connection) but there is no way to it:
+    /// no direct path could be punched and bronze's relay is down. Downloads still play.
+    var diamondUpNoPath: Bool {
+        #if os(iOS)
+        return configured && !connected && networkAvailable && !workOffline && linkState?.diamondSeen == true && linkState?.punching == nil
+        #else
+        return false
+        #endif
+    }
     /// The server answered the online check. Nothing else decides whether we are online.
     /// Reaching the server also starts queued downloads: the queue tries once at launch,
     /// usually before the server answers, and after an app update every transfer is queued
@@ -774,12 +778,12 @@ final class Store: ObservableObject {
         if let linkOpening { return await linkOpening.value }
         guard !relayAddress.isEmpty, relayFingerprint.count == 64, networkAvailable,
               Date().timeIntervalSince(lastLinkFailure) > 15 else { return nil }
-        let (relay, fingerprint, stun, token) = (relayAddress, relayFingerprint, stunServer, self.token)
+        let (relay, fingerprint, token) = (relayAddress, relayFingerprint, self.token)
         let state = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("Torrbaby", isDirectory: true)
         let task = Task { @MainActor () -> String? in
             TorrbabyLink.identity(diamondIdentity)
             TorrbabyLink.client(clientId)
-            guard let port = await TorrbabyLink.start(relay: relay, fingerprint: fingerprint, stun: stun, token: token, stateDir: state, lean: false) else {
+            guard let port = await TorrbabyLink.start(relay: relay, fingerprint: fingerprint, token: token, stateDir: state, lean: false) else {
                 lastLinkFailure = Date()
                 directEvent("link: bronze's relay at \(relay) did not open")
                 return nil
@@ -958,20 +962,20 @@ final class Store: ObservableObject {
     /// Torrbaby's tunnel connects by itself where it may (see PacketTunnel.autoConnect).
     func autoConnectTunnel() {
         let settings = tunnelSettings
-        Task { await PacketTunnel.shared.autoConnect(relay: settings.relay, relayFingerprint: settings.fingerprint, stun: settings.stun, token: settings.token, home: settings.home, identity: settings.identity, client: settings.client) }
+        Task { await PacketTunnel.shared.autoConnect(relay: settings.relay, relayFingerprint: settings.fingerprint, token: settings.token, home: settings.home, identity: settings.identity, client: settings.client) }
     }
     /// Connect the tunnel now (the Connection page's Connect), with everything it needs.
     func connectTunnel() async {
         let settings = tunnelSettings
-        await PacketTunnel.shared.turnOn(relay: settings.relay, relayFingerprint: settings.fingerprint, stun: settings.stun, token: settings.token, home: settings.home, identity: settings.identity, client: settings.client, byUser: true)
+        await PacketTunnel.shared.turnOn(relay: settings.relay, relayFingerprint: settings.fingerprint, token: settings.token, home: settings.home, identity: settings.identity, client: settings.client, byUser: true)
     }
     /// Everything the tunnel extension is given, in one place: every way of connecting it must
     /// pass all of it, or the extension's copy loses what was left out (Diamond's home name, its
     /// identity: the Connect button once left the relay unencrypted and home unknown).
-    private var tunnelSettings: (relay: String, fingerprint: String, stun: String, token: String, home: String?, identity: String, client: String) {
+    private var tunnelSettings: (relay: String, fingerprint: String, token: String, home: String?, identity: String, client: String) {
         // Diamond's home name and port, for the tunnel to reach it directly at home.
         let home = URL(string: primaryAddress).flatMap { url in url.host.map { "\($0):\(url.port ?? 80)" } }
-        return (relayAddress, relayFingerprint, stunServer ?? "", token, home, diamondIdentity, clientId)
+        return (relayAddress, relayFingerprint, token, home, diamondIdentity, clientId)
     }
     #else
     /// Mac and Apple TV have no link of their own.
@@ -1545,7 +1549,7 @@ extension Store {
         // when no way to Diamond answers does Play fail.
         if !canStream, configured, !workOffline, networkAvailable, (try? await probeConnection()) != nil { connectionError = nil }
         guard canStream else {
-            throw APIError(message: Self.unreachable)
+            throw APIError(message: diamondUpNoPath ? "Can’t stream right now: no direct path to Diamond." : Self.unreachable)
         }
     }
     /// Why a title cannot play while the server is out of reach. An Apple TV keeps no

@@ -32,6 +32,9 @@ enum TorrbabyLink {
         /// Diamond's public address, as bronze sees it: the same as this device's means at home.
         let homeIp: String?
         let behindDiamondsNat: Bool?
+        /// Diamond's standing connection is held by at least one rendezvous (bronze, Shadow,
+        /// miyu): Diamond is up, whether or not there is a path to it.
+        let diamondSeen: Bool?
         let keeper: String?
         let punching: String?
         let note: String?
@@ -42,11 +45,10 @@ enum TorrbabyLink {
     private static let decoder: JSONDecoder = { let d = JSONDecoder(); d.keyDecodingStrategy = .convertFromSnakeCase; return d }()
 
     /// Start the link (or, already running, take the new token) and return its loopback port;
-    /// nil when bronze's relay did not open. Blocks up to about 7 s, off the main thread.
-    static func start(relay: String, fingerprint: String, stun: String?, token: String, stateDir: URL?, lean: Bool) async -> UInt16? {
+    /// nil only when it could not start (bronze's relay being down leaves direct paths). Blocks up to about 7 s, off the main thread.
+    static func start(relay: String, fingerprint: String, token: String, stateDir: URL?, lean: Bool) async -> UInt16? {
         network(DeviceNetwork.signature(), interface: DeviceNetwork.physicalInterface() ?? "")
         var config: [String: Any] = ["relay": relay, "relay_fingerprint": fingerprint, "token": token, "lean": lean]
-        if let stun { config["stun"] = stun }
         if let stateDir { config["state_dir"] = stateDir.path }
         guard let json = try? JSONSerialization.data(withJSONObject: config), let text = String(data: json, encoding: .utf8) else { return nil }
         let port = await Task.detached { text.withCString { tbproxy_start($0) } }.value

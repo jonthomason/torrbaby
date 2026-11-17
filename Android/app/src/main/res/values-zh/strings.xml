@@ -114,6 +114,7 @@
     <string name="ui_24f5f64bb24c" formatted="false">暂时无法连接到媒体库，请稍后再试。</string>
     <string name="ui_fe5cb199d204" formatted="false">无法连接到你的服务器</string>
     <string name="ui_030a665633af" formatted="false">暂时无法连接服务器，正在继续尝试…</string>
+    <string name="ui_7457ee9cda9e" formatted="false">暂时无法播放：没有到 Diamond 的直连路径。</string>
     <string name="ui_60745aef336b" formatted="false">演员表</string>
     <string name="ui_b4e2e1ffb3ed" formatted="false">蜂窝网络</string>
     <string name="ui_6b9dfc21816d" formatted="false">蜂窝网络下载允许至</string>
@@ -249,6 +250,7 @@
     <string name="ui_a23975400420" formatted="false">已允许此设备</string>
     <string name="ui_d56e2646caaa" formatted="false">设备已关联</string>
     <string name="ui_df485c871329" formatted="false">设备</string>
+    <string name="ui_40f3193b7e45" formatted="false">Diamond 在线 · 无直连路径</string>
     <string name="ui_bc81524a554d" formatted="false">直连</string>
     <string name="ui_0f3409cf286f" formatted="false">直连失败</string>
     <string name="ui_a92b0db10b42" formatted="false">直连测试</string>
@@ -487,6 +489,7 @@
     <string name="ui_d8c1e979f1af" formatted="false">附近没有已连接的设备？请将此设置码作为图片拷贝或发送给有已连接设备的人。在已连接的设备允许之前，设置码保持不变。</string>
     <string name="ui_9e5c2b4cfc49" formatted="false">没有已连接的硬盘接收新下载</string>
     <string name="ui_f102e428502b" formatted="false">身边没有已连接的手机？请拍下此设置码，发给有已连接手机的人。设置码只能使用一次，10 分钟后失效。</string>
+    <string name="ui_7768342f1d75" formatted="false">无直连路径</string>
     <string name="ui_9367342a5e79" formatted="false">暂无下载</string>
     <string name="ui_cd0af6cfca75" formatted="false">没有匹配结果</string>
     <string name="ui_b0b087bbea50" formatted="false">没有匹配结果，您仍可在上方输入名称。</string>

@@ -22,7 +22,7 @@ import os
 final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     static let diamond = "10.233.0.1"
     private let log = Logger(subsystem: "org.torrbaby", category: "tunnel")
-    private var relay = "", relayFingerprint = "", stun = "", token = "", home = "", identity = ""
+    private var relay = "", relayFingerprint = "", token = "", home = "", identity = ""
     private var monitor: NWPathMonitor?
     private var keeper: Task<Void, Never>?
     private let started = Date()
@@ -73,7 +73,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let shared = TunnelShared.load()
         relay = shared?.relay ?? configuration["relay"] as? String ?? ""
         relayFingerprint = shared?.relayFingerprint ?? configuration["relayFingerprint"] as? String ?? ""
-        stun = shared?.stun ?? configuration["stun"] as? String ?? ""
         token = shared?.token ?? configuration["token"] as? String ?? ""
         home = shared?.home ?? ""
         identity = shared?.identity ?? ""
@@ -99,7 +98,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             note("cannot start: configuration incomplete (relay \(relay.isEmpty ? "missing" : relay), fingerprint \(relayFingerprint.count) chars, token \(token.isEmpty ? "missing" : "present"))")
             completionHandler(NEVPNError(.configurationInvalid)); return
         }
-        note("configuration: relay \(relay), STUN \(stun)")
+        note("configuration: relay \(relay)")
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: String(relay.split(separator: ":").first ?? ""))
         let ipv4 = NEIPv4Settings(addresses: ["10.233.0.2"], subnetMasks: ["255.255.255.255"])
         ipv4.includedRoutes = [NEIPv4Route(destinationAddress: Self.diamond, subnetMask: "255.255.255.255")]
@@ -253,7 +252,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             loadConfiguration()
             let state = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             if let state { try? FileManager.default.createDirectory(at: state, withIntermediateDirectories: true) }
-            if let port = await TorrbabyLink.start(relay: relay, fingerprint: relayFingerprint, stun: stun.isEmpty ? nil : stun, token: token, stateDir: state, lean: true) {
+            if let port = await TorrbabyLink.start(relay: relay, fingerprint: relayFingerprint, token: token, stateDir: state, lean: true) {
                 note("link open (loopback port \(port))")
                 homeAddress = ""; homeLookedUp = .distantPast
             } else {

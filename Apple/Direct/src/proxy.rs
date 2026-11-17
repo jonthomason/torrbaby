@@ -23,7 +23,8 @@
 //!   a hotspot) drops it.
 use crate::relay::{Bronze, BronzeHints, BronzeRelay};
 use abt_link::device::policy::{Advice, Attempt, Policy, Reporter};
-use abt_link::device::{Failure, HttpSignal, Opened, Plan};
+use abt_link::bronze::{Relay as Rendezvous, Seen, open_signal, ours, watch_home};
+use abt_link::device::{Failure, HttpSignal, Opened, Plan, Signal};
 use abt_link::route::{Route, RouteConfig, State};
 use std::collections::VecDeque;
 use std::net::SocketAddr;
@@ -38,10 +39,6 @@ pub struct Config {
     /// bronze's relay ("ip:port") and its certificate fingerprint.
     pub relay: String,
     pub relay_fingerprint: String,
-    /// bronze's STUN server ("ip:3478"); empty: the relay's host on 3478. The second STUN port:
-    /// none, the same host on 3479.
-    pub stun: String,
-    pub stun2: Option<String>,
     /// This device's token for Diamond, which punching asks with (POST /v1/direct). Empty:
     /// relay only (a TV claiming its setup has no token yet).
     pub token: String,
@@ -60,12 +57,8 @@ pub struct Config {
 
 impl Config {
     pub fn new(relay: &str, relay_fingerprint: &str) -> Config {
-        Config { relay: relay.into(), relay_fingerprint: relay_fingerprint.trim().to_lowercase(), stun: String::new(), stun2: None,
+        Config { relay: relay.into(), relay_fingerprint: relay_fingerprint.trim().to_lowercase(),
             token: String::new(), pinned: crate::pinned(), state_dir: None, idle: Duration::from_secs(120), open_wait: Duration::from_secs(7), lean: false }
-    }
-    fn stun(&self) -> String {
-        if !self.stun.is_empty() { return self.stun.clone() }
-        self.relay.rsplit_once(':').map(|(host, _)| format!("{host}:3478")).unwrap_or_default()
     }
 }
 
@@ -92,7 +85,14 @@ struct Link {
     bronze: Arc<Bronze>,
     policy: Arc<Policy>,
     shared: Arc<Shared>,
+    /// Where Diamond is seen: one entry per rendezvous (bronze, Shadow, miyu), so the app tells
+    /// "Diamond is up but there is no path" from "Diamond is not seen anywhere".
+    seen: tokio::sync::watch::Receiver<Vec<Seen>>,
 }
+
+/// Our rendezvous servers (abt-link's `ours`): bronze, then the backups, which carry only what
+/// sets up a direct path. Punch requests go through whichever answers first.
+fn rendezvous() -> Vec<Arc<Rendezvous>> { ours().into_iter().map(|r| Rendezvous::new(r.bronze)).collect() }
 
 static LINK: Mutex<Option<Link>> = Mutex::new(None);
 /// The network the app says it is on: a signature that changes with the network, and the
@@ -118,7 +118,7 @@ fn note(line: &str) {
 pub fn notes() -> Vec<String> { NOTES.lock().map(|n| n.iter().cloned().collect()).unwrap_or_default() }
 
 /// Start the link (or, already running for this relay and identity, take the new token and
-/// STUN) and return its loopback port; 0 when the relay did not open within `open_wait`.
+/// STUN) and return its loopback port (bronze's relay may not have opened: then direct paths only).
 /// Blocks until then: call it off the main thread, and not from inside an async task.
 pub fn start(config: Config) -> u16 {
     if let Ok(held) = LINK.lock() && let Some(link) = held.as_ref() {
@@ -142,15 +142,12 @@ pub fn start(config: Config) -> u16 {
         stopped: AtomicBool::new(false), epoch: AtomicU64::new(0) });
     let port = route.port();
     note(&format!("link: loopback port {port}, relay {relay}"));
-    // The relay first: punches are asked of Diamond through it.
+    // The relay first. Without it (bronze down) the link still runs: punches are asked of
+    // Diamond through the backup rendezvous servers, and only a direct path carries anything.
     let opened = runtime.block_on(async { tokio::time::timeout(open_wait, bronze.open()).await.unwrap_or(false) });
-    if !opened {
-        note(&format!("link: the relay at {relay} did not open; stopped"));
-        route.stop();
-        runtime.shutdown_background();
-        return 0;
-    }
-    note(&format!("relay open{}", if bronze.over_tcp() { " over TCP 443 (UDP to bronze did not get through)" } else { "" }));
+    if opened { note(&format!("relay open{}", if bronze.over_tcp() { " over TCP 443 (UDP to bronze did not get through)" } else { "" })) }
+    else { note(&format!("link: the relay at {relay} did not open: direct paths only, asked through the backup rendezvous")) }
+    let seen = { let _inside = runtime.enter(); watch_home(rendezvous(), "diamond".into(), Duration::from_secs(20)) };
     {
         let _inside = runtime.enter();
         let attempt = Arc::new(Punch { shared: shared.clone(), route: Arc::downgrade(&route) });
@@ -158,7 +155,7 @@ pub fn start(config: Config) -> u16 {
     }
     runtime.spawn(Keeper { shared: shared.clone(), route: route.clone(), bronze: bronze.clone(), last_info: None, network: String::new(),
         pending: None, last_bytes: 0, last_busy: Instant::now(), punched_from: None }.run());
-    if let Ok(mut held) = LINK.lock() { *held = Some(Link { runtime, route, bronze, policy, shared }) }
+    if let Ok(mut held) = LINK.lock() { *held = Some(Link { runtime, route, bronze, policy, shared, seen }) }
     port
 }
 
@@ -218,8 +215,8 @@ pub fn resumed() {
 /// "at", "next_try"}, "note", "bytes": {"home", "direct", "relay"}, "notes"}.
 pub fn state() -> serde_json::Value {
     use serde_json::json;
-    let held = LINK.lock().ok().and_then(|held| held.as_ref().map(|l| (l.route.clone(), l.bronze.clone(), l.policy.clone(), l.shared.clone(), l.runtime.handle().clone())));
-    let Some((route, bronze, policy, shared, handle)) = held else { return json!({"state": "stopped", "notes": notes()}) };
+    let held = LINK.lock().ok().and_then(|held| held.as_ref().map(|l| (l.route.clone(), l.bronze.clone(), l.policy.clone(), l.shared.clone(), l.runtime.handle().clone(), l.seen.borrow().clone())));
+    let Some((route, bronze, policy, shared, handle, seen)) = held else { return json!({"state": "stopped", "notes": notes()}) };
     let (state, rtt, answered) = match route.state() {
         State::Home => ("home", None, None),
         State::Direct { rtt_ms, last_answered, .. } => ("direct", Some(rtt_ms), Some(last_answered.elapsed().as_secs())),
@@ -237,6 +234,10 @@ pub fn state() -> serde_json::Value {
         "punching": policy.punching("diamond"), "note": policy.note(),
         "last_punch": policy.last("diamond").map(|l| json!({"ok": l.ok, "summary": l.summary, "at": l.at, "next_try": l.next_try})),
         "bytes": {"home": bytes(stats.home), "direct": bytes(stats.direct), "relay": bytes(stats.relay)},
+        // Diamond's standing connection at each rendezvous: online true/false, or null when that
+        // server did not answer.
+        "diamond_seen": seen.iter().any(|s| s.online == Some(true)),
+        "seen": seen.iter().map(|s| json!({"server": s.server, "online": s.online, "last_online": s.last_online})).collect::<Vec<_>>(),
         "notes": notes(),
     })
 }
@@ -269,13 +270,20 @@ impl Attempt for Punch {
         }
         let route = self.route.upgrade().ok_or_else(|| Failure::new("the link stopped"))?;
         let interface = NETWORK.lock().map(|n| n.1.clone()).unwrap_or_default();
+        // Every rendezvous's STUN at once (bronze, Shadow, miyu): the first answer is used.
+        let stun: Vec<String> = ours().into_iter().map(|r| r.stun).collect();
         let mut plan = Plan::from_json(&serde_json::json!({
-            "stun": config.stun(), "stun2": config.stun2, "interface": interface, "lean": config.lean, "pinned": config.pinned,
+            "stun": stun, "interface": interface, "lean": config.lean, "pinned": config.pinned,
         }));
         plan.random_from = advice.random_from;
         plan.pool = advice.pool;
-        // Diamond is asked through the route itself (the relay, while there is no direct path).
-        let signal = HttpSignal { base: format!("http://127.0.0.1:{}", route.port()), token: config.token.clone() };
+        // Diamond is asked through the route itself while it has a path (the relay, or an old
+        // direct path); else through whichever rendezvous answers first, TLS to Diamond end to end.
+        let signal = Signals {
+            route: HttpSignal { base: format!("http://127.0.0.1:{}", route.port()), token: config.token.clone() },
+            through_route: !matches!(route.state(), State::Down),
+            servers: rendezvous(), pinned: config.pinned.clone(), token: config.token.clone(), handle: tokio::runtime::Handle::current(),
+        };
         let named = host.to_string();
         let opened = tokio::task::spawn_blocking(move || abt_link::device::punch_to(&named, &plan, &signal, |r| report(r)))
             .await
@@ -295,6 +303,37 @@ impl Attempt for Punch {
 
     fn relayed(&self, _host: &str) -> bool {
         self.route.upgrade().is_some_and(|r| matches!(r.state(), State::Relay))
+    }
+}
+
+/// How a punch request reaches Diamond: through the route while it has a path, else (or when
+/// that fails) through the rendezvous servers, each stream TLS to Diamond's identity end to end
+/// (the backups carry it without reading it: the request holds this device's token).
+struct Signals {
+    route: HttpSignal,
+    through_route: bool,
+    servers: Vec<Arc<Rendezvous>>,
+    pinned: Option<String>,
+    token: String,
+    handle: tokio::runtime::Handle,
+}
+
+impl Signal for Signals {
+    fn ask(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
+        if self.through_route {
+            match self.route.ask(path, body) {
+                Ok(answer) => return Ok(answer),
+                Err(error) => note(&format!("punch request through the route failed ({error}): asking through the rendezvous")),
+            }
+        }
+        let pinned = self.pinned.clone().ok_or("Diamond's identity is not known: no punch request through a rendezvous")?;
+        self.handle.block_on(async {
+            let (server, stream) = open_signal(&self.servers, "diamond").await.map_err(|e| format!("{e:#}"))?;
+            let stream = abt_link::secure::e2e(stream, Some(&pinned)).await.map_err(|e| format!("TLS to Diamond through {server}: {e}"))?;
+            let answer = abt_link::http::post_on(stream, &self.token, path, body).await;
+            note(&format!("punch request through {server}: {}", if answer.is_ok() { "answered" } else { "failed" }));
+            answer
+        })
     }
 }
 

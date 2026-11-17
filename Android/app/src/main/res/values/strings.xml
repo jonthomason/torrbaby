@@ -114,6 +114,7 @@
     <string name="ui_24f5f64bb24c" formatted="false">Can’t reach your library right now. Try again in a moment.</string>
     <string name="ui_fe5cb199d204" formatted="false">Can’t reach your server</string>
     <string name="ui_030a665633af" formatted="false">Can’t reach your server yet. Still trying…</string>
+    <string name="ui_7457ee9cda9e" formatted="false">Can’t stream right now: no direct path to Diamond.</string>
     <string name="ui_60745aef336b" formatted="false">Cast</string>
     <string name="ui_b4e2e1ffb3ed" formatted="false">Cellular</string>
     <string name="ui_6b9dfc21816d" formatted="false">Cellular downloads allowed until</string>
@@ -249,6 +250,7 @@
     <string name="ui_a23975400420" formatted="false">Device allowed</string>
     <string name="ui_d56e2646caaa" formatted="false">Device linked</string>
     <string name="ui_df485c871329" formatted="false">Devices</string>
+    <string name="ui_40f3193b7e45" formatted="false">Diamond is on · No direct path</string>
     <string name="ui_bc81524a554d" formatted="false">Direct</string>
     <string name="ui_0f3409cf286f" formatted="false">Direct connection failed</string>
     <string name="ui_a92b0db10b42" formatted="false">Direct connection test</string>
@@ -487,6 +489,7 @@
     <string name="ui_d8c1e979f1af" formatted="false">No connected device nearby? Copy or send this code as a picture to someone who has one. It stays the same until a connected device allows it.</string>
     <string name="ui_9e5c2b4cfc49" formatted="false">No connected drive takes new downloads</string>
     <string name="ui_f102e428502b" formatted="false">No connected phone nearby? Take a photo of this code and send it to someone who has one. It works once and expires in 10 minutes.</string>
+    <string name="ui_7768342f1d75" formatted="false">No direct path</string>
     <string name="ui_9367342a5e79" formatted="false">No downloads</string>
     <string name="ui_cd0af6cfca75" formatted="false">No matches</string>
     <string name="ui_b0b087bbea50" formatted="false">No matches. You can still enter a name above.</string>

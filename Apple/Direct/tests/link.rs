@@ -16,7 +16,6 @@ fn a_request_on_the_link_reaches_diamond_end_to_end_through_bronze() {
     let pinned = std::ffi::CString::new(diamond.clone()).unwrap();
     tbdirect::tbdirect_identity(pinned.as_ptr());
     let mut config = tbdirect::proxy::Config::new(&rendezvous.to_string(), &bronze.fingerprint);
-    config.stun = "127.0.0.1:9".into();
     let port = tbdirect::proxy::start(config.clone());
     assert_ne!(port, 0, "the relay opens");
     assert_eq!(tbdirect::proxy::start(config), port, "starting again keeps the same port");

@@ -13,7 +13,7 @@ doctest = false
 [dependencies]
 # The secure path to Diamond (punch, route, end-to-end encryption): ABT's shared abt-link
 # (ABT owns it; move the rev to update).
-abt-link = { git = "https://github.com/jonthomason/abt.git", rev = "70d531c4ad9bda4fa1e33abff579df73444967ed", default-features = false, features = ["device", "route"] }
+abt-link = { git = "https://github.com/jonthomason/abt.git", rev = "b93dc879ba686e83e2db4f912fed4300a2a7bf71", default-features = false, features = ["device", "route", "bronze"] }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls", "ring"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "macros", "sync"] }
@@ -31,7 +31,7 @@ rcgen = "0.13"
 smoltcp = { version = "0.12", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "socket-tcp"] }
 tbrendezvous = { path = "../../rendezvous" }
 # Diamond's side, for the tests' stand-in Diamond.
-abt-link = { git = "https://github.com/jonthomason/abt.git", rev = "70d531c4ad9bda4fa1e33abff579df73444967ed", default-features = false, features = ["device", "route", "host"] }
+abt-link = { git = "https://github.com/jonthomason/abt.git", rev = "b93dc879ba686e83e2db4f912fed4300a2a7bf71", default-features = false, features = ["device", "route", "host", "bronze"] }
 
 [profile.release]
 opt-level = "s"

@@ -57,7 +57,6 @@ enum TunnelLog {
 struct TunnelShared: Codable, Equatable {
     var relay: String
     var relayFingerprint: String
-    var stun: String
     var token: String
     /// Diamond at home ("diamond.local:8765"): at home the tunnel carries connections straight
     /// to it. Looked up by name each time; no address is kept.

@@ -37,7 +37,7 @@ import UIKit
 
     /// Install (iOS asks once) or update the configuration, and connect (on demand, so iOS keeps
     /// it connected, after a restart too, until another VPN takes over).
-    func turnOn(relay: String, relayFingerprint: String, stun: String, token: String, home: String? = nil, identity: String? = nil, client: String? = nil, byUser: Bool = false) async {
+    func turnOn(relay: String, relayFingerprint: String, token: String, home: String? = nil, identity: String? = nil, client: String? = nil, byUser: Bool = false) async {
         // Only the Connection page's Connect takes the device back from ABT.
         if byUser { ABT.inCharge = false } else if ABT.inCharge || ABT.connected { await yield(); return }
         lastError = nil
@@ -46,11 +46,11 @@ import UIKit
         TunnelYield.yielded = false
         let manager = self.manager ?? NETunnelProviderManager()
         // The token goes to the shared keychain, not the VPN configuration.
-        TunnelShared(relay: relay, relayFingerprint: relayFingerprint, stun: stun, token: token, home: home, identity: identity, client: client).save()
+        TunnelShared(relay: relay, relayFingerprint: relayFingerprint, token: token, home: home, identity: identity, client: client).save()
         let configuration = NETunnelProviderProtocol()
         configuration.providerBundleIdentifier = Self.extensionID
         configuration.serverAddress = "Diamond"
-        configuration.providerConfiguration = ["relay": relay, "relayFingerprint": relayFingerprint, "stun": stun]
+        configuration.providerConfiguration = ["relay": relay, "relayFingerprint": relayFingerprint]
         manager.protocolConfiguration = configuration
         manager.localizedDescription = "Torrbaby"
         manager.isEnabled = true
@@ -115,10 +115,10 @@ import UIKit
     /// this was off, it stays off, on demand too, until Torrbaby is next launched: returning to
     /// the foreground does not take the connection back. Never after the user disconnected it
     /// on the Connection page, and not before the app knows bronze and has its credentials.
-    func autoConnect(relay: String, relayFingerprint: String, stun: String, token: String, home: String? = nil, identity: String? = nil, client: String? = nil) async {
+    func autoConnect(relay: String, relayFingerprint: String, token: String, home: String? = nil, identity: String? = nil, client: String? = nil) async {
         // Keep the extension's copy current (a new token, a new bronze) even while connected.
         if installed, !relay.isEmpty, relayFingerprint.count == 64, !token.isEmpty {
-            let changed = TunnelShared(relay: relay, relayFingerprint: relayFingerprint, stun: stun, token: token, home: home, identity: identity, client: client).save()
+            let changed = TunnelShared(relay: relay, relayFingerprint: relayFingerprint, token: token, home: home, identity: identity, client: client).save()
             // A running extension reads its copy only when it starts or reopens the relay: told
             // at once, so Diamond's identity (encryption) or home name take effect now.
             // Also once per launch: an extension started by an older build may hold an older copy.
@@ -151,7 +151,7 @@ import UIKit
             return
         }
         guard !connected, status != .connecting, !heldOff, ready else { return }
-        await turnOn(relay: relay, relayFingerprint: relayFingerprint, stun: stun, token: token, home: home, identity: identity, client: client)
+        await turnOn(relay: relay, relayFingerprint: relayFingerprint, token: token, home: home, identity: identity, client: client)
     }
 
     /// Another VPN has the device: stay off until the next launch. On demand goes off, or iOS

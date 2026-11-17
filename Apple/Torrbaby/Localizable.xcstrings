@@ -18482,6 +18482,57 @@
           }
         }
       }
+    },
+    "Diamond is on · No direct path": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diamond is on · No direct path"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diamond 在线 · 无直连路径"
+          }
+        }
+      }
+    },
+    "Can’t stream right now: no direct path to Diamond.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can’t stream right now: no direct path to Diamond."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂时无法播放：没有到 Diamond 的直连路径。"
+          }
+        }
+      }
+    },
+    "No direct path": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No direct path"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无直连路径"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
