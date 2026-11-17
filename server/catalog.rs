@@ -352,6 +352,11 @@ impl Database {
     /// is one parent title. Collections with multiple films stay unlinked.
     pub fn link_extras(&self) -> Result<()> {
         let assets = self.visible_assets()?;
+        // The library's main files, once: by package, and all of them (each extra used to
+        // scan every file in the library, twice).
+        let mains_all: Vec<&Value> = assets.iter().filter(|a| (a["available"] == true || a["offline"] == true) && a["role"] != "extra").collect();
+        let mut by_package: std::collections::HashMap<&str, Vec<&Value>> = std::collections::HashMap::new();
+        for main in &mains_all { if let Some(hash) = main["torrent_hash"].as_str() { by_package.entry(hash).or_default().push(main) } }
         for extra in assets.iter().filter(|a| a["role"] == "extra") {
             let path = std::path::Path::new(extra["path"].as_str().unwrap_or(""));
             let anchor = path
@@ -375,9 +380,7 @@ impl Database {
             if let Some(hash) = extra["torrent_hash"].as_str() {
                 // Matched files decide the parent; a stray unmatched file in the package
                 // (a featurette outside its folder) must not leave every extra orphaned.
-                let mains: Vec<_> = assets.iter().filter(|a| {
-                    (a["available"] == true || a["offline"] == true) && a["role"] != "extra" && a["torrent_hash"] == hash
-                }).collect();
+                let mains: Vec<&Value> = by_package.get(hash).cloned().unwrap_or_default();
                 let matched: Vec<_> = mains.iter().filter_map(|m| m["entity_id"].as_str()).collect();
                 if matched.is_empty() {
                     parents.extend(mains.iter().filter_map(|m| m["id"].as_str()).map(str::to_owned));
@@ -387,10 +390,7 @@ impl Database {
             }
             if parents.is_empty() {
                 if let Some(anchor) = anchor {
-                    for main in assets
-                        .iter()
-                        .filter(|a| (a["available"] == true || a["offline"] == true) && a["role"] != "extra")
-                    {
+                    for main in &mains_all {
                         if std::path::Path::new(main["path"].as_str().unwrap_or(""))
                             .starts_with(anchor)
                         {

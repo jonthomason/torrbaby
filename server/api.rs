@@ -1433,6 +1433,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
                 .context("Invalid candidate")?;
             let entity = s.metadata.enrich(candidate).await?;
             save_match(s, id, entity, true)?;
+            s.db.lock().map_err(|_| anyhow::anyhow!("Database lock failed"))?.link_extras()?;
             return Ok(json!({"accepted":true}));
         }
     }
@@ -2717,7 +2718,9 @@ fn save_match(s: &Service, id: &str, entity: Value, confirmed: bool) -> Result<(
         rusqlite::params![id, asset.to_string()],
     )?;
     tx.commit()?;
-    db.link_extras()?;
+    // Extras are linked once a pass is done (collect_metadata), not after every match: linking
+    // reads the whole library, and doing it per file under the database lock stalled every
+    // request for up to 40 s while a pass matched many files (2026-11-17).
     Ok(())
 }
 
@@ -3037,6 +3040,8 @@ async fn collect_metadata(s: &Service) -> Result<()> {
         }
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }
+    // The matches this pass made decide which titles their extras belong to: linked once.
+    s.db.lock().map_err(|_| anyhow::anyhow!("Database lock failed"))?.link_extras()?;
     Ok(())
 }
 

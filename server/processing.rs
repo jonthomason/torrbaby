@@ -346,6 +346,34 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
     // Before the database lock: reading the settings takes it.
     let drives=crate::drives::Drives::of(&s.effective_config()?);
     let online=drives.online();
+    // Enrollment stats every media file: done before the database lock is taken, so requests
+    // never wait on disks (a pass under the lock made every request wait about a second each
+    // minute, longer while drives woke). Repeated only when the catalog changes or once a
+    // minute (to notice files replaced in place), not every tick.
+    type Stat = (String, String, bool, std::result::Result<String, String>);
+    let planned: Option<(Vec<Stat>, Vec<(String, String)>, String, bool)> = {
+        let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+        let migrating:bool=db.connection.query_row("SELECT NOT EXISTS(SELECT 1 FROM media_processing)",[],|r|r.get(0))?;
+        let revision=db.catalog_revision()?;
+        let due=ENROLLED.lock().map(|e|e.as_ref().is_none_or(|(r,t)|*r!=revision || now()-t>=60.0)).unwrap_or(true);
+        if due || migrating {
+            let files: Vec<Stat> = assets(&db)?.iter().filter_map(|a| Some((a["id"].as_str()?.to_owned(), a["path"].as_str()?.to_owned(), a["early"]==true, Err(String::new())))).collect();
+            let not_media: Vec<(String, String)> = db.documents("assets")?.iter().filter(|a|crate::container::tagged_not_media(a) && a["available"]==true)
+                .filter_map(|a| Some((a["id"].as_str()?.to_owned(), a["path"].as_str()?.to_owned()))).collect();
+            Some((files, not_media, revision, migrating))
+        } else { None }
+    };
+    let planned = match planned {
+        Some((files, not_media, revision, migrating)) => Some(tokio::task::spawn_blocking(move || {
+            let files: Vec<Stat> = files.into_iter().map(|(id, path, early, _)| {
+                let revision = crate::subtitle_jobs::revision(Path::new(&path)).map_err(|e| e.to_string());
+                (id, path, early, revision)
+            }).collect();
+            let not_media: Vec<(String, String)> = not_media.into_iter().filter_map(|(id, path)| Some((id, crate::subtitle_jobs::revision(Path::new(&path)).ok()?))).collect();
+            (files, not_media, revision, migrating)
+        }).await?),
+        None => None,
+    };
     let (selected,excess)={
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
         for id in s.subtitle_jobs.take_translated() {
@@ -357,19 +385,13 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
             if credits_done {if let Ok(mut fast)=FAST.lock() {fast.insert(id.clone());}}
         }
         let assets=assets(&db)?;
-        let migrating:bool=db.connection.query_row("SELECT NOT EXISTS(SELECT 1 FROM media_processing)",[],|r|r.get(0))?;
-        // Enrollment stats every media file; repeat it only when the catalog changes
-        // or once a minute (to notice files replaced in place), not every tick.
-        let revision=db.catalog_revision()?;
-        let due=ENROLLED.lock().map(|e|e.as_ref().is_none_or(|(r,t)|*r!=revision || now()-t>=60.0)).unwrap_or(true);
-        if due || migrating {
-            for a in &assets {
-                let Some(id)=a["id"].as_str() else{continue};
-                let Some(path)=a["path"].as_str() else{continue};
+        let migrating=planned.as_ref().is_some_and(|p| p.3);
+        if let Some((files, not_media, revision, _)) = planned {
+            for (id, path, early, revision) in &files {
+                let (id, path) = (id.as_str(), path.as_str());
                 // Missing/unreadable files remain visible as failures, not vanished work.
-                let revision=crate::subtitle_jobs::revision(Path::new(path));
                 // An early file that has just moved keeps its work until the next scan finds it.
-                if revision.is_err() && a["early"]==true {continue;}
+                if revision.is_err() && *early {continue;}
                 // Its drive went away before the scan noticed: not a failure, and its finished work stays.
                 if revision.is_err() && drives.offline(Path::new(path),&online) {continue;}
                 if let Ok(revision)=&revision {
@@ -379,14 +401,12 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
                     }
                 }
                 enroll(&db,id,revision.as_deref().unwrap_or("unavailable"))?;
-                if let Err(error)=revision {fail(&db,id,"unavailable",&error.to_string())?;}
+                if let Err(error)=revision {fail(&db,id,"unavailable",error)?;}
             }
             // The scanner hides non-video files from the library; settle their records.
-            for a in db.documents("assets")?.iter().filter(|a|crate::container::tagged_not_media(a) && a["available"]==true) {
-                let (Some(id),Some(path))=(a["id"].as_str(),a["path"].as_str()) else{continue};
-                let Ok(revision)=crate::subtitle_jobs::revision(Path::new(path)) else{continue};
-                enroll(&db,id,&revision)?;
-                not_video(&db,id,&revision)?;
+            for (id, revision) in &not_media {
+                enroll(&db,id,revision)?;
+                not_video(&db,id,revision)?;
             }
             reopen_outdated(&db)?;
             reopen_for_sound(&db)?;
