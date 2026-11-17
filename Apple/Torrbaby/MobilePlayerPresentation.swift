@@ -253,6 +253,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
         weak var waitingIndicator: UIView?
         var waitingObservation: AnyCancellable?
         var backgroundObserver: NSObjectProtocol?
+        var activeObserver: NSObjectProtocol?
         init(_ parent: MobilePlayerPresentation) { self.parent = parent }
         /// The playback last closed: the binding can still hold it for a moment after closing,
         /// which opened it again from its old position and closed it at once ("never played").
@@ -297,6 +298,21 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
                     guard let self, let model = self.model else { return }
                     ClientDiagnostics.note("App leaving the foreground while the player is open\(self.pictureInPicture ? " in Picture in Picture" : "")")
                     model.report()
+                }
+            }
+            // Back in the app: a film in Picture in Picture comes back full screen (it floated over
+            // the app's own pages, 2026-11-17), and the picture is redrawn (it stayed frozen on
+            // its last frame while the sound played on, after Picture in Picture or the background).
+            activeObserver = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification,
+                                                                     object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, let model = self.model, let controller = self.controller else { return }
+                    if self.pictureInPicture, controller.presentingViewController == nil {
+                        ClientDiagnostics.note("Back in the app during Picture in Picture: the player comes back full screen")
+                        if !self.showAgain(controller, then: { _ in model.redrawPicture("back from Picture in Picture") }) { model.redrawPicture("back in the app") }
+                    } else if controller.presentingViewController != nil {
+                        model.redrawPicture("back in the app")
+                    }
                 }
             }
             errorObservation = model.$error.compactMap { $0 }.sink { [weak self] message in
@@ -388,6 +404,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
             waitingObservation = nil
             waitingIndicator?.removeFromSuperview(); waitingIndicator = nil
             if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver); self.backgroundObserver = nil }
+            if let activeObserver { NotificationCenter.default.removeObserver(activeObserver); self.activeObserver = nil }
             if Self.active === self { Self.active = nil }
         }
         func playerViewControllerWillStartPictureInPicture(_ playerViewController: AVPlayerViewController) {
@@ -411,6 +428,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
             pictureInPicture = false
             controller?.inPictureInPicture = false
             model?.report()
+            if restoring || playerViewController.presentingViewController != nil { model?.redrawPicture("Picture in Picture stopped") }
             if !restoring && playerViewController.presentingViewController == nil { finish() }
         }
         func playerViewController(_ playerViewController: AVPlayerViewController,

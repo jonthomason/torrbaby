@@ -488,6 +488,20 @@ final class PlaybackModel: ObservableObject {
             }
         } else { ClientLogs.failed("Picture froze while sound played") }
     }
+    /// The picture can stay on its last frame while the sound plays on once the player's view is
+    /// back (after Picture in Picture or the background): a seek to where it is, exactly, makes
+    /// the video layer draw again. Noted, for the logs.
+    func redrawPicture(_ why: String) {
+        guard let item = player.currentItem, item.status == .readyToPlay else { return }
+        let now = player.currentTime()
+        guard now.isNumeric else { return }
+        let rate = item.tracks.first(where: { $0.assetTrack?.mediaType == .video })?.currentVideoFrameRate ?? -1
+        ClientDiagnostics.note(String(format: "Redrawing the picture (%@) at %.1f s; video %.1f fps before", why, now.seconds, rate))
+        let wasPlaying = player.rate > 0
+        player.seek(to: now, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            Task { @MainActor [weak self] in if wasPlaying { self?.player.play() } }
+        }
+    }
     private func bufferedAhead(_ item: AVPlayerItem) -> Double {
         let now = item.currentTime()
         for value in item.loadedTimeRanges {
