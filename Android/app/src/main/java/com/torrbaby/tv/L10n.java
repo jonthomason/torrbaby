@@ -549,6 +549,7 @@ final class L10n {
     IDS.put("Open Torrbaby", R.string.ui_976905271718);
     IDS.put("Open Torrbaby on your iPhone or iPad and choose Scan connection code.", R.string.ui_1d24f33a5d2e);
     IDS.put("Opening video…", R.string.ui_170cbab1dce2);
+    IDS.put("Opens connection settings", R.string.ui_2a9c1676e4de);
     IDS.put("Operation status is unavailable. The server may still be processing it.", R.string.ui_f5713d02fe43);
     IDS.put("Or use a picture of it: one sent to you in WeChat or as a photo.", R.string.ui_00ba7a2b4852);
     IDS.put("Organize completed downloads", R.string.ui_11bff9c0b568);

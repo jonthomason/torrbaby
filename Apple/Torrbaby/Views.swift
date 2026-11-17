@@ -176,18 +176,25 @@ private struct TorrentDraft: Identifiable {
     var magnet = ""
 }
 
-/// The connection status at the foot of a sidebar.
+/// The connection status at the foot of a sidebar. Tapping it opens Settings → Connection.
 struct SidebarConnectionStatus: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
+    let open: () -> Void
     var body: some View {
-        HStack(spacing: 7) {
-            Circle().fill(store.connectionColor).frame(width: 7, height: 7)
-            Text(LocalizedStringKey(store.connectionLabel))
-                .font(.caption.weight(.semibold))
+        Button(action: open) {
+            HStack(spacing: 7) {
+                Circle().fill(store.connectionColor).frame(width: 7, height: 7)
+                Text(LocalizedStringKey(store.connectionLabel))
+                    .font(.caption.weight(.semibold))
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.horizontal, 18).padding(.vertical, 6)
+            .contentShape(Rectangle())
         }
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.horizontal, 18).padding(.vertical, 6)
+        .buttonStyle(.plain)
+        .help("Connection")
+        .accessibilityHint(Text("Opens connection settings"))
     }
 }
 
@@ -414,7 +421,10 @@ struct RootView: View {
                 #else
                 sidebarMenu
                 #endif
-                SidebarConnectionStatus()
+                SidebarConnectionStatus {
+                    SettingsRequest.shared.page = .connection
+                    navigate(Location(section: .settings))
+                }
                 #if os(iOS)
                 // iPhone: the status sits low, beside the home indicator, leaving the list the room.
                 .padding(.bottom, sizeClass == .compact ? -22 : 0)

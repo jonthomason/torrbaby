@@ -18448,6 +18448,23 @@
           }
         }
       }
+    },
+    "Opens connection settings": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opens connection settings"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开连接设置"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

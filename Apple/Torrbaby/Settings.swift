@@ -184,8 +184,19 @@ private struct SettingsQuickRows: View {
     }
 }
 
+/// A Settings page to open, asked for from elsewhere: tapping the connection status opens
+/// Connection. The Settings view showing takes it and clears it.
+@MainActor final class SettingsRequest: ObservableObject {
+    static let shared = SettingsRequest()
+    @Published var page: SettingsPage?
+}
+
 struct SettingsView: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @ObservedObject private var request = SettingsRequest.shared
+    #if !os(macOS)
+    @State private var requested: SettingsPage?
+    #endif
     @EnvironmentObject var store: Store
     @Binding var showConnect: Bool
     #if os(macOS)
@@ -211,6 +222,8 @@ struct SettingsView: View {
             SettingsPageView(page: selected ?? .general, showConnect: $showConnect)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }.background(Theme.canvas)
+        .onAppear { if let page = request.page { selected = page; request.page = nil } }
+        .onChange(of: request.page) { if let page = request.page { selected = page; request.page = nil } }
         #else
         List {
             #if DEBUG
@@ -219,6 +232,12 @@ struct SettingsView: View {
                 NavigationLink(isActive: .constant(true)) { SettingsPageView(page: page, showConnect: $showConnect) } label: { EmptyView() }
             }
             #endif
+            // The page asked for from elsewhere (the connection status), opened over the list.
+            NavigationLink(isActive: Binding(get: { requested != nil }, set: { if !$0 { requested = nil } })) {
+                if let page = requested {
+                    SettingsPageView(page: page, showConnect: $showConnect).navigationTitle(L10n.text(page.rawValue))
+                }
+            } label: { EmptyView() }
             SwiftUI.Section { SettingsQuickRows() }
             ForEach(Array(SettingsPage.groups.enumerated()), id: \.offset) { _, group in
                 SwiftUI.Section {
@@ -236,6 +255,8 @@ struct SettingsView: View {
         .listStyle(.insetGrouped)
         #endif
         .canvasBackground()
+        .onAppear { if let page = request.page { requested = page; request.page = nil } }
+        .onChange(of: request.page) { if let page = request.page { requested = page; request.page = nil } }
         #endif
     }
 }
@@ -309,7 +330,7 @@ struct PadSettingsView: View {
             }
             .listStyle(.insetGrouped)
             .canvasBackground()
-            .safeAreaInset(edge: .bottom) { SidebarConnectionStatus().background(Theme.canvas) }
+            .safeAreaInset(edge: .bottom) { SidebarConnectionStatus { selected = .connection }.background(Theme.canvas) }
             .navigationTitle(L10n.text("Settings"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(removing: .sidebarToggle)
@@ -326,6 +347,8 @@ struct PadSettingsView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
+        .onAppear { if let page = SettingsRequest.shared.page { selected = page; SettingsRequest.shared.page = nil } }
+        .onReceive(SettingsRequest.shared.$page) { if let page = $0 { selected = page; SettingsRequest.shared.page = nil } }
         // The categories stay beside the page; nothing collapses them.
         .onChange(of: columns) { if columns != .all { columns = .all } }
     }
