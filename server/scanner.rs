@@ -556,7 +556,7 @@ mod tests {
         for folder in ["Downloads", "Movies", "TV"] { fs::create_dir_all(media.join(folder)).unwrap(); }
         let config: Config = serde_json::from_value(json!({
             "listen_host":"127.0.0.1","listen_port":8765,"token_file":"unused","state_file":"unused",
-            "transmission_url":"http://127.0.0.1:9091","transmission_auth_file":null,"poll_seconds":30,
+            "transmission_url":"http://127.0.0.1:9091","transmission_auth_file":null,
             "drives":[{"id":"beta","media":media}]})).unwrap();
         let lost = json!({"id":"asset-lost","path":root.join("Alpha/Media/Movies/Film.mkv"),"status":"matched","entity_id":"tmdb:movie:1",
             "available":false,"offline":true,"removed_drive":"alpha","complete":true,"torrent_hash":"film","file_index":0,"role":"main"});
@@ -586,7 +586,7 @@ mod tests {
             "files":[{"name":"Seed.mkv","length":100,"bytes_completed":100}]});
         let config: Config = serde_json::from_value(json!({
             "listen_host":"127.0.0.1","listen_port":8765,"token_file":"unused","state_file":"unused",
-            "transmission_url":"http://127.0.0.1:9091","transmission_auth_file":null,"poll_seconds":30,
+            "transmission_url":"http://127.0.0.1:9091","transmission_auth_file":null,
             "drives":[{"id":"alpha","media":media("Alpha")},{"id":"beta","media":media("Beta")}]})).unwrap();
         config.validate().unwrap();
         let first = inventory(&config, vec![], vec![seeding.clone()]);
@@ -665,7 +665,7 @@ mod tests {
         let config: Config = serde_json::from_value(json!({
             "listen_host":"127.0.0.1","listen_port":8765,"token_file":"unused","state_file":"unused",
             "transmission_url":"http://127.0.0.1:9091","transmission_auth_file":null,
-            "source":root.join("Downloads"),"movies":root.join("Movies"),"tv":root.join("TV"),"poll_seconds":60
+            "source":root.join("Downloads"),"movies":root.join("Movies"),"tv":root.join("TV")
         })).unwrap();
         for directory in [&config.source,&config.movies,&config.tv] { fs::create_dir_all(directory).unwrap(); }
         let mut torrent = json!({"hash_string":"pending","download_dir":config.source,"name":"Show S01",
@@ -711,7 +711,7 @@ mod tests {
         let config: Config = serde_json::from_value(json!({
             "listen_host":"127.0.0.1","listen_port":8765,"token_file":"unused","state_file":"unused",
             "transmission_url":"http://127.0.0.1:9091","transmission_auth_file":null,
-            "source":root.join("Downloads"),"movies":root.join("Movies"),"tv":root.join("TV"),"poll_seconds":60
+            "source":root.join("Downloads"),"movies":root.join("Movies"),"tv":root.join("TV")
         })).unwrap();
         for directory in [&config.source,&config.movies,&config.tv] { fs::create_dir_all(directory).unwrap(); }
         let movies = Path::new(&config.movies);
@@ -741,7 +741,7 @@ mod tests {
         let config: Config = serde_json::from_value(json!({
             "listen_host":"127.0.0.1","listen_port":8765,"token_file":"unused","state_file":"unused",
             "transmission_url":"http://127.0.0.1:9091","transmission_auth_file":null,
-            "source":root.join("Downloads"),"movies":root.join("Movies"),"tv":root.join("TV"),"poll_seconds":60
+            "source":root.join("Downloads"),"movies":root.join("Movies"),"tv":root.join("TV")
         })).unwrap();
         for directory in [&config.source,&config.movies,&config.tv] { fs::create_dir_all(directory).unwrap(); }
         let torrent = |hash:&str,name:&str,done:u64,bytes:u64| json!({"hash_string":hash,"download_dir":config.movies,"name":name,
@@ -829,7 +829,7 @@ mod tests {
         let config: Config = serde_json::from_value(json!({
             "listen_host":"127.0.0.1","listen_port":8765,"token_file":"unused","state_file":"unused",
             "transmission_url":"http://127.0.0.1:9091","transmission_auth_file":null,
-            "source":root.join("Downloads"),"movies":root.join("Movies"),"tv":root.join("TV"),"poll_seconds":60
+            "source":root.join("Downloads"),"movies":root.join("Movies"),"tv":root.join("TV")
         })).unwrap();
         for directory in [&config.source,&config.movies,&config.tv] { fs::create_dir_all(directory).unwrap(); }
         let source = Path::new(&config.source);

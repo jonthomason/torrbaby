@@ -468,7 +468,7 @@ mod tests {
     fn config(extra: Value) -> Config {
         let mut base = json!({"listen_host":"127.0.0.1","listen_port":1,"token_file":"t","state_file":"s",
             "transmission_url":"http://127.0.0.1:9091","transmission_auth_file":null,
-            "source":"/A/Media/Downloads","movies":"/A/Media/Movies","tv":"/A/Media/TV","poll_seconds":30});
+            "source":"/A/Media/Downloads","movies":"/A/Media/Movies","tv":"/A/Media/TV"});
         base.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
         let config: Config = serde_json::from_value(base).unwrap();
         config.validate().unwrap();
@@ -511,7 +511,7 @@ mod tests {
     #[test]
     fn invalid_drive_lists_are_refused() {
         let base = json!({"listen_host":"127.0.0.1","listen_port":1,"token_file":"t","state_file":"s",
-            "transmission_url":"x","transmission_auth_file":null,"source":"","movies":"","tv":"","poll_seconds":30});
+            "transmission_url":"x","transmission_auth_file":null,"source":"","movies":"","tv":""});
         let refused = |drives: Value| {
             let mut v = base.clone(); v["drives"] = drives;
             serde_json::from_value::<Config>(v).map_err(anyhow::Error::from).and_then(|c| c.validate()).is_err()

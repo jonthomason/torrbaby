@@ -1252,7 +1252,6 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
                 || patch.keys().any(|k| {
                     ![
                         "paused",
-                        "poll_seconds",
                         "source",
                         "movies",
                         "tv",
@@ -1262,7 +1261,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
                 })
             {
                 bail!(
-                    "Allowed settings: paused, poll_seconds, source, movies, tv, background_subtitles"
+                    "Allowed settings: paused, source, movies, tv, background_subtitles"
                 );
             }
             for (key, value) in patch {
@@ -1290,7 +1289,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             s.event("settings_changed", json!({"settings":body}))?;
         }
         return Ok(
-            json!({"background_subtitles":config["background_subtitles"],"paused":config["paused"],"poll_seconds":config["poll_seconds"],"source":config["source"],"movies":config["movies"],"tv":config["tv"]}),
+            json!({"background_subtitles":config["background_subtitles"],"paused":config["paused"],"source":config["source"],"movies":config["movies"],"tv":config["tv"]}),
         );
     }
     if method == Method::POST && path == "/v1/torrents" {
@@ -1695,7 +1694,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             let state = db.state()?;
             let config = effective.as_ref().context("Missing settings")?;
             Ok(json!({"version":env!("CARGO_PKG_VERSION"),"server":{"name":state["server"]["name"],"id":state["server"]["id"],"routes":ROUTES.read().map(|r|r.clone()).unwrap_or_default(),"relay":crate::rendezvous::advertised()},"uptime_seconds":s.started.elapsed().as_secs(),"rendezvous":crate::rendezvous::status(),
-                "settings":{"background_subtitles":config.background_subtitles,"source":config.source,"movies":config.movies,"tv":config.tv,"poll_seconds":config.poll_seconds,"paused":s.preview || config.paused},
+                "settings":{"background_subtitles":config.background_subtitles,"source":config.source,"movies":config.movies,"tv":config.tv,"paused":s.preview || config.paused},
                 "storage":crate::drives::Drives::of(&config).report(),
                 "credits_analysis":crate::credits::summary(&db)?,"subtitle_preparation":crate::media_inventory::summary(&db,&s.subtitle_jobs)?,"last_poll":crate::organizer::last_poll(),"last_error":if s.preview { json!("Migration preview: organizer not enabled") } else {state["last_error"].clone()},"pending_scans":if scanning() {1} else {0},"scan_error":state["library_scan"]["error"],"jobs":db.jobs()?}))
         }

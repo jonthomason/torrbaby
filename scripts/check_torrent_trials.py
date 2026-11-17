@@ -34,7 +34,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
   data=json.dumps({'jsonrpc':'2.0','id':1,'result':r}).encode();self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=server.serve_forever,daemon=True).start()
 (root/'token').write_text('fixture-only-token-not-a-real-secret-12345')
-config={'listen_host':'127.0.0.1','listen_port':18897,'token_file':str(root/'token'),'state_file':str(root/'state.json'),'transmission_url':f'http://127.0.0.1:{server.server_port}/rpc','transmission_auth_file':None,'source':str(root/'source'),'movies':str(root/'movies'),'tv':str(root/'tv'),'poll_seconds':5,'paused':True,'background_subtitles':False}
+config={'listen_host':'127.0.0.1','listen_port':18897,'token_file':str(root/'token'),'state_file':str(root/'state.json'),'transmission_url':f'http://127.0.0.1:{server.server_port}/rpc','transmission_auth_file':None,'source':str(root/'source'),'movies':str(root/'movies'),'tv':str(root/'tv'),'paused':True,'background_subtitles':False}
 (root/'config.json').write_text(json.dumps(config));log=open(root/'server.log','w');proc=subprocess.Popen(['target/debug/torrbaby','serve','--config',str(root/'config.json')],stdout=log,stderr=log)
 def req(path,body=None):
  return json.load(urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:18897'+path,data=None if body is None else json.dumps(body).encode(),headers={'Authorization':'Bearer '+(root/'token').read_text(),'Content-Type':'application/json'}),timeout=10))

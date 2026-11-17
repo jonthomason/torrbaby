@@ -55,7 +55,6 @@ pub struct Config {
     /// `movies` and `tv` are the only drive. Ask `crate::drives`, not these fields.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub drives: Vec<DriveConfig>,
-    pub poll_seconds: f64,
     #[serde(default)]
     pub paused: bool,
     /// Torrbaby's rendezvous on bronze (rendezvous/): Diamond keeps a standing connection
@@ -126,9 +125,6 @@ impl Config {
         if !(1..=8).contains(&config.on_device_processing_concurrency) {
             bail!("on_device_processing_concurrency must be between 1 and 8");
         }
-        if !config.poll_seconds.is_finite() || !(5.0..=3600.0).contains(&config.poll_seconds) {
-            bail!("poll_seconds must be between 5 and 3600");
-        }
         if config.drives.is_empty() {
             if [&config.source, &config.movies, &config.tv].iter().any(|r| r.is_empty()) {
                 bail!("Configure source, movies and tv, or a drives list");
@@ -164,7 +160,7 @@ impl Config {
     /// list saved from Settings replaces the single set of folders.
     pub fn with_settings(&self, settings: &serde_json::Value) -> Result<Self> {
         let mut config = serde_json::to_value(self)?;
-        for key in ["paused", "poll_seconds", "source", "movies", "tv", "background_subtitles", "drives"] {
+        for key in ["paused", "source", "movies", "tv", "background_subtitles", "drives"] {
             if let Some(value) = settings.get(key) { config[key] = value.clone(); }
         }
         if config["drives"].as_array().is_some_and(|d| !d.is_empty()) {

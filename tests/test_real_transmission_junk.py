@@ -123,8 +123,7 @@ def main():
             config = dict(listen_host='127.0.0.1', listen_port=app_port, advertise_lan=False,
                 token_file=str(root / 'token'), state_file=str(root / 'state.json'),
                 transmission_url=f'http://127.0.0.1:{rpc_port}/transmission/rpc',
-                source=str(root / 'Downloads'), movies=str(root / 'Movies'), tv=str(root / 'TV'),
-                poll_seconds=5, paused=True, background_subtitles=False)
+                source=str(root / 'Downloads'), movies=str(root / 'Movies'), tv=str(root / 'TV'), paused=True, background_subtitles=False)
             (root / 'config.json').write_text(json.dumps(config))
             db = sqlite3.connect(root / 'state.sqlite3')
             db.executescript((ROOT / 'server/schema.sql').read_text())

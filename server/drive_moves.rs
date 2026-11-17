@@ -797,7 +797,7 @@ mod tests {
     #[test]
     fn emptying_a_drive_carries_each_torrent_to_the_same_place_on_the_target() {
         let config: crate::config::Config = serde_json::from_value(json!({"listen_host":"127.0.0.1","listen_port":1,"token_file":"t","state_file":"s",
-            "transmission_url":"http://127.0.0.1:9091","transmission_auth_file":null,"poll_seconds":30,
+            "transmission_url":"http://127.0.0.1:9091","transmission_auth_file":null,
             "drives":[{"id":"alpha","media":"/Volumes/Alpha/Media"},{"id":"beta","media":"/Volumes/Beta/Media"}]})).unwrap();
         let drives = Drives::of(&config);
         let [alpha, beta] = drives.all() else { panic!() };

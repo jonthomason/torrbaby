@@ -1229,7 +1229,7 @@ mod tests {
                 "files":[{"name":format!("{name}/Show.S01E01.mkv"),"length":10,"bytes_completed":10}]})
         };
         let base = |extra: Value| -> Config {
-            let mut v = json!({"listen_host":"127.0.0.1","listen_port":1,"token_file":"t","state_file":"s","transmission_url":"x","transmission_auth_file":null,"poll_seconds":30});
+            let mut v = json!({"listen_host":"127.0.0.1","listen_port":1,"token_file":"t","state_file":"s","transmission_url":"x","transmission_auth_file":null});
             v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
             serde_json::from_value(v).unwrap()
         };

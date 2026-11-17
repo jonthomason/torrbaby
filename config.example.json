@@ -11,6 +11,5 @@
   "source": "/path/to/Media/Downloads",
   "movies": "/path/to/Media/Movies",
   "tv": "/path/to/Media/TV",
-  "poll_seconds": 30,
   "paused": false
 }
