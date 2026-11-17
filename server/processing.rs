@@ -139,9 +139,9 @@ impl Flags {
 }
 /// The sweeps that look through every finished file's subtitle records for one to do again.
 /// A record only changes when processing itself writes it, so they run at start, when the
-/// OpenSubtitles switches change, and hourly for answers that said "later" (they ran every
-/// 2 s, reading thousands of record files, because processing's own writes looked like
-/// library changes).
+/// OpenSubtitles switches change, and when the earliest answer that said "ask again later"
+/// comes due (they ran every 2 s, reading thousands of record files, because processing's
+/// own writes looked like library changes).
 fn sweep(db:&Database,flags:Flags)->Result<()> {
     reopen_for_people_english(db,flags)?;
     reopen_for_people_chinese(db,flags)?;
@@ -149,7 +149,21 @@ fn sweep(db:&Database,flags:Flags)->Result<()> {
     reopen_untranscribed(db)?;
     Ok(())
 }
-static SWEPT:std::sync::Mutex<Option<(Flags,f64)>>=std::sync::Mutex::new(None);
+/// The switches the last sweep ran with, and when the next "later" answer comes due.
+static SWEPT:std::sync::Mutex<Option<(Flags,Option<f64>)>>=std::sync::Mutex::new(None);
+/// When the earliest OpenSubtitles "later" (a record's `after`, a transcript's `opensubtitles_after`) is due.
+fn next_later(db:&Database)->Result<Option<f64>> {
+    Ok(db.connection.query_row("SELECT min(t) FROM (SELECT json_extract(document,'$.after') AS t FROM subtitle_records WHERE json_extract(document,'$.state')='later' \
+        UNION ALL SELECT json_extract(document,'$.opensubtitles_after') FROM subtitle_records WHERE kind='transcript') WHERE t>?",[now()],|r|r.get(0))?)
+}
+/// When a processing worker must look again although nothing woke it: a retry comes due,
+/// playback's heartbeat goes stale (its slots come back), or an OpenSubtitles "later" is due.
+fn next_deadline(db:&Database)->Result<Option<std::time::Instant>> {
+    let retry:Option<f64>=db.connection.query_row("SELECT min(retry_after) FROM media_processing WHERE state='queued' AND retry_after>?",[now()],|r|r.get(0))?;
+    let playing:Option<f64>=db.connection.query_row("SELECT max(p.last_played) FROM profile_playback p JOIN playback_sessions s ON p.active_session=s.id WHERE s.ended=0 AND p.last_played>?",[now()-90.0],|r|r.get(0))?;
+    let later=SWEPT.lock().ok().and_then(|w|w.as_ref().and_then(|(_,t)|*t));
+    Ok([retry,playing.map(|t|t+90.0),later].into_iter().flatten().map(crate::wake::at_epoch).min())
+}
 /// `skipped`: credits analysis failed. It is optional, so the file finishes without it.
 fn finished(value:&str)->bool {matches!(value,"ready"|"not_applicable"|"skipped")}
 fn sign_off(db:&Database,id:&str,revision:&str)->Result<bool> {
@@ -372,9 +386,11 @@ static FAST:std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<Strin
 /// Catalog revision and time of the last enrollment pass.
 static ENROLLED:std::sync::Mutex<Option<(String,f64)>>=std::sync::Mutex::new(None);
 
-pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
+/// One pass of the queue; returns when it must look again if nothing wakes it first.
+pub async fn tick(s:&std::sync::Arc<Service>)->Result<Option<std::time::Instant>> {
     let limit=refresh_capacity(s)?;
-    let imported=s.subtitle_jobs.import_external()?;
+    // The external fleet's answers, only while it is in use (a watch on its inbox wakes this).
+    let imported=if s.effective_config()?.external_translation {s.subtitle_jobs.import_external()?} else {Vec::new()};
     // Before the database lock: reading the settings takes it.
     let drives=crate::drives::Drives::of(&s.effective_config()?);
     let online=drives.online();
@@ -458,9 +474,10 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
             reopen_line_translated(&db,&s.subtitle_jobs.line_translated())?;
             if let Ok(mut e)=ENROLLED.lock() {*e=Some((revision,now()));}
         }
-        if SWEPT.lock().map(|w|w.is_none_or(|(f,t)|f!=flags || now()-t>=3600.0)).unwrap_or(true) {
+        if SWEPT.lock().map(|w|w.is_none_or(|(f,t)|f!=flags || t.is_some_and(|t|t<=now()))).unwrap_or(true) {
             sweep(&db,flags)?;
-            if let Ok(mut w)=SWEPT.lock() {*w=Some((flags,now()));}
+            let later=next_later(&db)?;
+            if let Ok(mut w)=SWEPT.lock() {*w=Some((flags,later));}
         }
         if migrating {
             let mut unfinished=s.subtitle_jobs.all_statuses()?;
@@ -514,6 +531,8 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
         let service=s.clone();let task_id=id.clone();
         let handle=tokio::spawn(async move {
             if let Err(error)=process_file(&service,asset).await {tracing::warn!(asset=task_id,%error,"Media processing failed");}
+            // Its slot is free: the next file starts now.
+            crate::wake::PROCESSING.wake();
         });
         flight.insert(id,handle.abort_handle());
     }
@@ -522,12 +541,12 @@ pub async fn tick(s:&std::sync::Arc<Service>)->Result<()> {
     // Alongside subtitle work, not only when the queue is empty (it can be busy for days).
     let _=idle;
     if limit>0 {warm_playback_index(s).await?;}
-    Ok(())
+    next_deadline(&*s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?)
 }
 /// Files whose index build was started in this run ("id:file identity"): a build that
 /// finishes reports itself (virtual_media::take_built), one that fails is not tried again
-/// until the server restarts. And when the last pass ran.
-static WARMED:std::sync::LazyLock<std::sync::Mutex<(std::collections::HashSet<String>,f64)>>=std::sync::LazyLock::new(Default::default);
+/// until the server restarts.
+static WARMED:std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>>=std::sync::LazyLock::new(Default::default);
 /// Processed Matroska files can lose their playback index (the cache's space reclaim, or
 /// the cache moving to its own drive), and then the next play waits while the whole file
 /// is re-read. Rebuild one missing index at a time, the most recently played and added
@@ -549,10 +568,6 @@ async fn warm_playback_index(s:&Service)->Result<()> {
                 rusqlite::params![id,path.to_string_lossy()])?;
         }
     }
-    {let mut warmed=WARMED.lock().map_err(|_|anyhow::anyhow!("Processing pool unavailable"))?;
-        // Checked every few seconds: the next index starts as soon as the last is built.
-        if now()-warmed.1<5.0 {return Ok(());}
-        warmed.1=now();}
     let candidates:Vec<Value>={
         let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
         let recorded:std::collections::HashMap<String,String>=db.rows("SELECT asset_id,file_revision FROM playback_indexes",[])?
@@ -560,7 +575,7 @@ async fn warm_playback_index(s:&Service)->Result<()> {
         let warmed=WARMED.lock().map_err(|_|anyhow::anyhow!("Processing pool unavailable"))?;
         let mut list:Vec<Value>=queue(&db)?.iter().filter(|a|a["role"]!="extra" && a["early"]!=true && a["available"]==true && a["complete"]==true)
             .filter(|a|match (a["id"].as_str(),a["file_revision"].as_str()) {
-                (Some(id),Some(revision))=>recorded.get(id).is_none_or(|r|r!=revision) && !warmed.0.contains(&format!("{id}:{revision}")),
+                (Some(id),Some(revision))=>recorded.get(id).is_none_or(|r|r!=revision) && !warmed.contains(&format!("{id}:{revision}")),
                 _=>false,
             }).cloned().collect();
         drop(warmed);
@@ -588,7 +603,7 @@ async fn warm_playback_index(s:&Service)->Result<()> {
         if let Some(index)=s.virtual_media.index_of(id,&input) {record(id,revision,Some(&index))?;continue;}
         if !s.virtual_media.background_room() || !s.virtual_media.can_preindex() || playback_active(s)? {return Ok(());}
         // Recorded when the build reports it has finished.
-        if let Ok(mut warmed)=WARMED.lock() {warmed.0.insert(format!("{id}:{revision}"));}
+        if let Ok(mut warmed)=WARMED.lock() {warmed.insert(format!("{id}:{revision}"));}
         match s.virtual_media.prepare_analysis(id,input) {
             Ok(_)=>tracing::info!(asset=id,"Rebuilding a missing playback index"),
             Err(error)=>tracing::warn!(asset=id,%error,"Playback index warm-up failed"),

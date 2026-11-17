@@ -416,11 +416,11 @@ async fn advance(s: &Service, operation: &Value) -> Result<()> {
     }
 }
 
-pub async fn tick(s: &Service) -> Result<()> {
-    // Nearly always nothing to do: no wait for the mutation lock (the scan holds it) for that.
-    let unfinished: bool = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?
-        .connection.query_row("SELECT EXISTS(SELECT 1 FROM library_operations WHERE phase!='done')", [], |r| r.get(0))?;
-    if !unfinished { return Ok(()); }
+/// Advance unfinished removals. True while any remain (they wait on Transmission between steps).
+pub async fn tick(s: &Service) -> Result<bool> {
+    let unfinished = || -> Result<bool> { Ok(s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?
+        .connection.query_row("SELECT EXISTS(SELECT 1 FROM library_operations WHERE phase!='done')", [], |r| r.get(0))?) };
+    if !unfinished()? { return Ok(false); }
     let _mutation = s.mutation_lock.lock().await;
     let operations = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.library_operations()?;
     for operation in operations {
@@ -433,7 +433,8 @@ pub async fn tick(s: &Service) -> Result<()> {
                 .clear_library_operation_error(&operation)?;
         }
     }
-    Ok(())
+    drop(_mutation);
+    unfinished()
 }
 
 /// Reconciliation may see already removed files after a crash. Existing files must

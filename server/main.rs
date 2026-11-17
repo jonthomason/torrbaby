@@ -35,6 +35,7 @@ mod dolby;
 mod hls;
 mod lan;
 mod library_watch;
+mod wake;
 mod matroska;
 mod media_format;
 mod media_inventory;

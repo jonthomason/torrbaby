@@ -150,6 +150,13 @@ pub fn wants_chinese_summary(entity: &Value, now: f64) -> bool {
         None => true,
     }
 }
+/// When a machine-translated (or missing) Chinese description is due to be asked for again.
+pub fn chinese_summary_due(entity: &Value) -> Option<f64> {
+    match entity["summary_zh_source"].as_str() {
+        Some("tmdb") | None => None,
+        Some(_) => entity["summary_zh_checked"].as_f64().map(|at| at + CHINESE_SUMMARY_RECHECK_SECONDS),
+    }
+}
 /// Whether this title's English description still needs translating on Diamond.
 pub fn wants_summary_translation(entity: &Value) -> bool {
     entity["summary_zh_source"] == "none" && entity["summary"].as_str().is_some_and(|s| !s.trim().is_empty())
@@ -611,6 +618,11 @@ impl Metadata {
         Ok(json!({"series_status":status,"last_air_date":detail["last_air_date"].as_str().unwrap_or("")}))
     }
     /// Whether a background lookup for this entity failed recently (6 h backoff).
+    /// When the earliest failed lookup may be tried again (epoch seconds).
+    pub async fn next_retry(&self) -> Option<f64> {
+        let failed = self.failed_lookups.lock().await;
+        failed.values().map(|at| crate::storage::now() + (Duration::from_secs(6 * 3600).saturating_sub(at.elapsed())).as_secs_f64()).reduce(f64::min)
+    }
     pub async fn recently_failed(&self, id: &str) -> bool {
         self.failed_lookups.lock().await.get(id).is_some_and(|at| at.elapsed() < Duration::from_secs(6 * 3600))
     }

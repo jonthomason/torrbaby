@@ -54,11 +54,12 @@ fn best(candidates:&[Value])->Option<String> {
  .max_by(|a,b|a["speed"].as_f64().unwrap_or(0.).total_cmp(&b["speed"].as_f64().unwrap_or(0.)))
  .and_then(|c|c["hash"].as_str().map(str::to_owned))
 }
-pub async fn tick(s:&Service)->Result<()> {
+/// Advance running trials. True while one runs (it is measured over time).
+pub async fn tick(s:&Service)->Result<bool> {
  // Only while a trial runs (nearly never): one cheap query otherwise.
  let active:bool=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?.connection.query_row(
   "SELECT EXISTS(SELECT 1 FROM torrent_trials WHERE json_extract(document,'$.state') IN ('starting','running','finishing'))",[],|r|r.get(0))?;
- if !active {return Ok(());}
+ if !active {return Ok(false);}
  let _lock=LOCK.lock().await;
  let trials=list(s)?;
  for mut v in trials["trials"].as_array().into_iter().flatten().cloned() {
@@ -71,7 +72,7 @@ pub async fn tick(s:&Service)->Result<()> {
    tracing::warn!(trial=?v["id"],%error,"Torrent trial will retry");
   }
  }
- Ok(())
+ Ok(true)
 }
 async fn advance(s:&Service,v:&mut Value)->Result<()> {
  if v["state"]=="starting" {

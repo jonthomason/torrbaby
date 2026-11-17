@@ -241,11 +241,11 @@ pub async fn serve(
         .map_err(|_| anyhow::anyhow!("Database lock failed"))?
         .documents("entities")?;
     service.metadata.seed_cache(cached_entities).await;
+    // The transfer sampler: rates, ETAs, finished downloads. Only while something downloads,
+    // or for a minute after a client last asked for the transfers; Transmission's event script
+    // (and a torrent added or asked for) wakes it.
     let sampler = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            interval.tick().await;
             let result = sampling_service
                 .rpc
                 .call("torrent_get", json!({"fields":crate::transmission::FIELDS}))
@@ -258,8 +258,11 @@ pub async fn serve(
                 )
                 .await
                 .ok();
+            let mut downloading = false;
             if let Ok(mut result) = result {
                 if let Some(torrents) = result["torrents"].as_array_mut() {
+                    downloading = torrents.iter().any(crate::organizer::active);
+                    crate::organizer::sampled(torrents);
                     if let Ok(mut db) = sampling_service.db.lock() {
                         if let Err(error) = db.record_activity(torrents, policy.as_ref()) {
                             eprintln!("Activity tracking: {error}");
@@ -275,6 +278,8 @@ pub async fn serve(
                     }
                 }
             }
+            let watched = TRANSFERS_VIEWED.lock().ok().and_then(|v| *v).is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(60));
+            crate::wake::SAMPLER.wait((downloading || watched).then(|| crate::wake::after(5.0))).await;
         }
     });
     let mut workers = Vec::new();
@@ -284,34 +289,38 @@ pub async fn serve(
         workers.push(tokio::spawn(async move { cloud.cloud.work(&cloud).await; }));
         let watching = service.clone();
         workers.push(tokio::spawn(async move { watching.watcher.work(&watching).await; }));
+        // Transmission's events and drives coming and going wake the organizer.
+        let transmission_watch = crate::organizer::watch_transmission(&service);
         workers.push(tokio::spawn(async move {
+            let _watch = transmission_watch;
             loop {
-                if let Err(error) = crate::organizer::tick(&organizer).await {
-                    let message = error.to_string();
-                    let _ = organizer.change_state(|state| state["last_error"] = json!(message));
-                    eprintln!("Organization: {error}");
-                }
-                let seconds = organizer
-                    .effective_config()
-                    .map(|c| c.poll_seconds)
-                    .unwrap_or(30.0);
-                tokio::time::sleep(std::time::Duration::from_secs_f64(seconds)).await;
+                let next = match crate::organizer::tick(&organizer).await {
+                    Ok(next) => next,
+                    Err(error) => {
+                        let message = error.to_string();
+                        let _ = organizer.change_state(|state| state["last_error"] = json!(message));
+                        eprintln!("Organization: {error}");
+                        Some(crate::wake::after(900.0))
+                    }
+                };
+                crate::wake::ORGANIZER.wait(next).await;
             }
         }));
         let moves = service.clone();
         workers.push(tokio::spawn(async move {
             loop {
-                if let Err(error) = crate::drive_moves::tick(&moves).await { tracing::warn!(%error, "Moving files between drives"); }
-                // Files left open for playback would stop a drive from being ejected.
-                moves.virtual_media.release_idle(std::time::Duration::from_secs(120));
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                let busy = crate::drive_moves::tick(&moves).await.unwrap_or_else(|error| { tracing::warn!(%error, "Moving files between drives"); true });
+                // While a move runs it steps on; otherwise it waits to be asked.
+                crate::wake::MOVES.wait(busy.then(|| crate::wake::after(5.0))).await;
             }
         }));
+        // Files left open for playback would stop a drive from being ejected.
+        workers.push(tokio::spawn(service.virtual_media.clone().close_idle_readers()));
         let removals = service.clone();
         workers.push(tokio::spawn(async move {
             loop {
-                if let Err(error) = crate::library_files::tick(&removals).await { eprintln!("File management: {error}"); }
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                let busy = crate::library_files::tick(&removals).await.unwrap_or_else(|error| { eprintln!("File management: {error}"); true });
+                crate::wake::REMOVALS.wait(busy.then(|| crate::wake::after(5.0))).await;
             }
         }));
         // The library is scanned when its files change (library_watch), not every minute.
@@ -319,10 +328,8 @@ pub async fn serve(
         let metadata = service.clone();
         workers.push(tokio::spawn(async move {
             loop {
-                if let Err(error) = collect_metadata(&metadata).await {
-                    eprintln!("Metadata collection: {error}");
-                }
-                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                let next = collect_metadata(&metadata).await.unwrap_or_else(|error| { eprintln!("Metadata collection: {error}"); Some(crate::wake::after(900.0)) });
+                crate::wake::METADATA.wait(next).await;
             }
         }));
     }
@@ -330,51 +337,42 @@ pub async fn serve(
         let artwork_service = service.clone();
         workers.push(tokio::spawn(async move {
             loop {
-                if let Err(error) = prefetch_library_artwork(&artwork_service).await {
-                    tracing::warn!(%error, "Library artwork preparation failed");
-                }
-                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-            }
-        }));
-        let capacity_service=service.clone();
-        workers.push(tokio::spawn(async move {
-            loop {
-                if let Err(error)=crate::processing::refresh_capacity(&capacity_service) {
-                    capacity_service.subtitle_jobs.set_concurrency(0);
-                    tracing::warn!(%error,"Processing capacity unavailable");
-                }
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                let next = prefetch_library_artwork(&artwork_service).await.unwrap_or_else(|error| { tracing::warn!(%error, "Library artwork preparation failed"); Some(crate::wake::after(900.0)) });
+                crate::wake::ARTWORK.wait(next).await;
             }
         }));
         let trials_service=service.clone();
         workers.push(tokio::spawn(async move {
             loop {
-                if let Err(error)=crate::trials::tick(&trials_service).await {tracing::warn!(%error,"Torrent trial scheduler failed");}
-                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                let running=crate::trials::tick(&trials_service).await.unwrap_or_else(|error|{tracing::warn!(%error,"Torrent trial scheduler failed");true});
+                // A running trial is measured over time; none, it waits to be asked.
+                crate::wake::TRIALS.wait(running.then(||crate::wake::after(3.0))).await;
             }
         }));
         let formats = service.clone();
         workers.push(tokio::spawn(async move {
             loop {
-                // Brisk while files are waiting to be described, idle otherwise.
                 // Languages first: the format pass describes files that have a track list.
                 let listed = crate::media_inventory::list_waiting(&formats).await
                     .unwrap_or_else(|error| { tracing::warn!(%error,"Language listing failed"); 0 });
-                let pause = match crate::media_format::tick(&formats).await {
-                    Ok(0) if listed == 0 => 15,
-                    Ok(_) => 1,
-                    Err(error) => { tracing::warn!(%error,"Media format pass failed"); 60 }
-                };
-                tokio::time::sleep(std::time::Duration::from_secs(pause)).await;
+                let described = crate::media_format::tick(&formats).await
+                    .unwrap_or_else(|error| { tracing::warn!(%error,"Media format pass failed"); 0 });
+                // Straight on while there is work; then until a file's tracks are listed.
+                if listed == 0 && described == 0 { crate::wake::FORMATS.wait(None).await; }
             }
         }));
+        // The external translation fleet's answers arrive in its inbox: a watch wakes processing.
+        let inbox = service.subtitle_jobs.fleet_inbox();
+        let inbox_watch = crate::wake::watch_dir(&inbox, &crate::wake::PROCESSING);
         let background = service.clone();
         workers.push(tokio::spawn(async move {
+            let _watch = inbox_watch;
             loop {
-                if let Err(error) = crate::processing::tick(&background).await {
+                let next = crate::processing::tick(&background).await.unwrap_or_else(|error| {
                     tracing::warn!(%error,"Media processing failed");
-                }
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    Some(crate::wake::after(60.0))
+                });
+                crate::wake::PROCESSING.wait(next).await;
             }
         }));
     }
@@ -705,7 +703,9 @@ async fn dispatch(
     };
     let gzip = headers.get(axum::http::header::ACCEPT_ENCODING).and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.split(',').any(|e| e.trim().split(';').next() == Some("gzip")));
-    match handle(&s, &method, uri.path(), body, profile).await {
+    let result = handle(&s, &method, uri.path(), body, profile).await;
+    if method != Method::GET && result.is_ok() { crate::wake::after_request(uri.path()); }
+    match result {
         Ok(value) if gzip => compressed_json(&value),
         Ok(value) => ([("Cache-Control", "no-store")], Json(value)).into_response(),
         Err(error) => (
@@ -1559,6 +1559,9 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         }
     }
     if method == Method::GET && path == "/v1/torrents" {
+        // Someone is looking at the transfers: the sampler keeps rates and ETAs fresh for a minute.
+        if let Ok(mut viewed) = TRANSFERS_VIEWED.lock() { *viewed = Some(Instant::now()); }
+        crate::wake::SAMPLER.wake();
         let cached = s
             .torrents
             .lock()
@@ -2459,17 +2462,15 @@ mod artwork_preparation_tests {
 }
 
 /// Artwork known to be cached, and the library revision and time of the last pass.
-static ARTWORK: std::sync::LazyLock<std::sync::Mutex<(HashSet<String>, String, f64)>> = std::sync::LazyLock::new(Default::default);
-/// Fetches the artwork the library's titles show, when the library changes (and hourly, for
-/// fetches that failed). It looked for every image on disk each minute.
-async fn prefetch_library_artwork(s: &Service) -> Result<()> {
+/// Artwork known to be cached.
+static ARTWORK: std::sync::LazyLock<std::sync::Mutex<HashSet<String>>> = std::sync::LazyLock::new(Default::default);
+/// Fetches the artwork the library's titles show, when the library or its titles change.
+/// Returns when the earliest failed fetch may be tried again. (It looked for every image on
+/// disk each minute.)
+async fn prefetch_library_artwork(s: &Service) -> Result<Option<std::time::Instant>> {
     use futures_util::{stream, StreamExt};
-    let revision = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.part_revision("content")?;
-    {
-        let mut last = ARTWORK.lock().map_err(|_| anyhow::anyhow!("Artwork unavailable"))?;
-        if last.1 == revision && now() - last.2 < 3600.0 { return Ok(()); }
-        last.1 = revision; last.2 = now();
-    }
+    let retry: std::sync::Mutex<Option<f64>> = std::sync::Mutex::new(None);
+    let retry_at = |t: f64| if let Ok(mut r) = retry.lock() { sooner(&mut r, t); };
     let urls = {
         let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
         // visible_assets excludes removal intent; it deliberately includes pending downloads.
@@ -2481,16 +2482,17 @@ async fn prefetch_library_artwork(s: &Service) -> Result<()> {
             }
         }
         let known = ARTWORK.lock().map_err(|_| anyhow::anyhow!("Artwork unavailable"))?;
-        urls.retain(|url| !known.0.contains(url));
+        urls.retain(|url| !known.contains(url));
         urls
     };
     let cache = s.data_dir.join("artwork");
     tokio::fs::create_dir_all(&cache).await?;
     stream::iter(urls).map(|url| {
         let cache = &cache;
+        let retry_at = &retry_at;
         async move {
             let key = artwork_key(&url);
-            let have = |url: &str| { if let Ok(mut known) = ARTWORK.lock() { known.0.insert(url.to_owned()); } };
+            let have = |url: &str| { if let Ok(mut known) = ARTWORK.lock() { known.insert(url.to_owned()); } };
             if tokio::fs::try_exists(cache.join(format!("{key}.image"))).await? { have(&url); return Ok::<(),anyhow::Error>(()); }
             let state_path = cache.join(format!("{key}.fetch.json"));
             let previous: Value = match tokio::fs::read(&state_path).await {
@@ -2498,12 +2500,13 @@ async fn prefetch_library_artwork(s: &Service) -> Result<()> {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => Value::Null,
                 Err(error) => return Err(error.into()),
             };
-            if previous["retry_at"].as_f64().unwrap_or(0.0) > now() { return Ok(()); }
+            if let Some(at) = previous["retry_at"].as_f64().filter(|at| *at > now()) { retry_at(at); return Ok(()); }
             match cached_artwork(s, &url).await {
                 Ok(_) => { have(&url); let _ = tokio::fs::remove_file(state_path).await; }
                 Err(error) => {
                     let attempts = previous["attempts"].as_u64().unwrap_or(0).saturating_add(1);
                     let state = json!({"url":url,"attempts":attempts,"retry_at":now()+artwork_retry_delay(attempts),"error":error.to_string()});
+                    retry_at(now()+artwork_retry_delay(attempts));
                     let temporary = cache.join(format!("{key}.{}.tmp", uuid::Uuid::new_v4()));
                     tokio::fs::write(&temporary, serde_json::to_vec(&state)?).await?;
                     tokio::fs::rename(&temporary, &state_path).await?;
@@ -2515,9 +2518,11 @@ async fn prefetch_library_artwork(s: &Service) -> Result<()> {
     }).buffer_unordered(4).for_each(|result| async move {
         if let Err(error) = result { tracing::warn!(%error,"Could not persist artwork preparation state"); }
     }).await;
-    Ok(())
+    Ok(retry.into_inner().ok().flatten().map(crate::wake::at_epoch))
 }
 
+/// When a client last asked for the transfer list.
+static TRANSFERS_VIEWED: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
 /// Whether a scan is running: in memory. Only a scan's error is
 /// stored (and changes the catalog), so a scan that finds nothing new writes nothing.
 static SCANNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -2608,6 +2613,7 @@ pub(crate) async fn scan_library(s: &Service) -> Result<()> {
             }
             tx.commit()?;
             db.link_extras()?;
+            crate::wake::library_changed();
             state["library_scan"] = json!({"error":if inventory.errors.is_empty(){None}else{Some(inventory.errors.join("\n"))}});
         }
         Err(error) => {
@@ -2750,6 +2756,8 @@ fn save_match(s: &Service, id: &str, entity: Value, confirmed: bool) -> Result<(
         rusqlite::params![id, asset.to_string()],
     )?;
     tx.commit()?;
+    // A download waiting to be identified can be filed now.
+    if !unchanged { crate::wake::ORGANIZER.wake(); }
     // Extras are linked once a pass is done (collect_metadata), not after every match: linking
     // reads the whole library, and doing it per file under the database lock stalled every
     // request for up to 40 s while a pass matched many files (2026-11-17).
@@ -2759,7 +2767,7 @@ fn save_match(s: &Service, id: &str, entity: Value, confirmed: bool) -> Result<(
 /// Translates up to 32 English descriptions into Simplified Chinese per pass, titles first, then
 /// the library's episodes, in one request to the on-device translator, and saves each as a
 /// machine translation. One whose English changed meanwhile is left for the next pass.
-async fn translate_summaries(s: &Service, entities: &[Value], held: &HashMap<String, HashSet<(u64, u64)>>) -> Result<()> {
+async fn translate_summaries(s: &Service, entities: &[Value], held: &HashMap<String, HashSet<(u64, u64)>>) -> Result<bool> {
     // (cue id, show id, episode or None for the title, English)
     let mut pending: Vec<(String, String, Option<(u64, u64)>, String)> = Vec::new();
     let usable = |text: &str| !text.trim().is_empty() && text.len() <= 16_384;
@@ -2779,8 +2787,9 @@ async fn translate_summaries(s: &Service, entities: &[Value], held: &HashMap<Str
             }
         }
     }
+    let more = pending.len() > 32;
     pending.truncate(32);
-    if pending.is_empty() { return Ok(()); }
+    if pending.is_empty() { return Ok(false); }
     let helper = std::env::current_exe()?.with_file_name("torrbaby-subtitle-translator");
     let request = crate::subtitles::TranslationRequest {
         source: "en".into(), target: "zh-Hans".into(),
@@ -2811,23 +2820,32 @@ async fn translate_summaries(s: &Service, entities: &[Value], held: &HashMap<Str
     for (id, document) in documents {
         db.connection.execute("UPDATE library_entities SET document=? WHERE id=?", [document.to_string(), id])?;
     }
-    Ok(())
+    Ok(more)
 }
 
-async fn collect_metadata(s: &Service) -> Result<()> {
+/// The earlier of a deadline and `t` (epoch seconds).
+fn sooner(next: &mut Option<f64>, t: f64) { *next = Some(next.map_or(t, |n| n.min(t))); }
+/// One metadata pass. Returns when to run again if nothing wakes it first: a minute on while
+/// capped lookups are left, else when the earliest retry (a failure backing off, a file no
+/// title matched yet, a machine translation's recheck) comes due. Matched files are not looked
+/// up again on a clock; a title is refreshed when a new file for it arrives.
+async fn collect_metadata(s: &Service) -> Result<Option<std::time::Instant>> {
     if !s.metadata.configured() {
-        return Ok(());
+        return Ok(None);
     }
     let Ok(_guard) = s.metadata_lock.try_lock() else {
-        return Ok(());
+        return Ok(None);
     };
+    let mut more = false;
+    let mut next: Option<f64> = None;
     let entities=s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.documents("entities")?;
     // Background backfills are capped per pass and back off per entity after a
     // failure, so a title TMDB cannot serve is not re-requested every minute.
     let mut lookups=0;
     for entity in entities.iter().filter(|entity| entity["provider"]=="TMDB" && !entity["cast"].is_array()) {
         let key=entity["id"].as_str().unwrap_or_default();
-        if lookups>=3 || s.metadata.recently_failed(key).await {continue;}
+        if lookups>=3 {more=true;continue;}
+        if s.metadata.recently_failed(key).await {continue;}
         lookups+=1;
         match s.metadata.cast(entity).await {
             Ok(cast) => {
@@ -2847,7 +2865,8 @@ async fn collect_metadata(s: &Service) -> Result<()> {
     let mut lookups=0;
     for entity in entities.iter().filter(|entity| entity["provider"]=="TMDB" && entity["kind"]=="tv" && entity["series_status"].as_str().is_none_or(str::is_empty)) {
         let key=entity["id"].as_str().unwrap_or_default();
-        if lookups>=3 || s.metadata.recently_failed(key).await {continue;}
+        if lookups>=3 {more=true;continue;}
+        if s.metadata.recently_failed(key).await {continue;}
         lookups+=1;
         match s.metadata.series_run(entity).await {
             Ok(run) => {
@@ -2869,7 +2888,8 @@ async fn collect_metadata(s: &Service) -> Result<()> {
     let checked_at=now();
     for entity in entities.iter().filter(|entity| entity["provider"]=="TMDB" && (entity.get("title_zh").is_none() || crate::metadata::wants_chinese_summary(entity, checked_at))) {
         let key=entity["id"].as_str().unwrap_or_default();
-        if lookups>=20 || s.metadata.recently_failed(key).await {continue;}
+        if lookups>=20 {more=true;continue;}
+        if s.metadata.recently_failed(key).await {continue;}
         lookups+=1;
         match s.metadata.chinese_details(entity).await {
             Ok((name, summary)) => {
@@ -2898,7 +2918,7 @@ async fn collect_metadata(s: &Service) -> Result<()> {
         seasons.sort_unstable(); seasons.dedup();
         if seasons.is_empty() || s.metadata.recently_failed(id).await {continue;}
         for season in seasons {
-            if lookups>=20 {break 'shows;}
+            if lookups>=20 {more=true;break 'shows;}
             lookups+=1;
             match s.metadata.chinese_season(entity, season).await {
                 Ok(found) => {
@@ -2921,7 +2941,9 @@ async fn collect_metadata(s: &Service) -> Result<()> {
     }
     // Where TMDB has no Chinese description, Diamond translates the English one on device.
     if !s.metadata.recently_failed("chinese-summary-translation").await {
-        if let Err(error)=translate_summaries(s,&entities,&held).await {
+        let translated = translate_summaries(s,&entities,&held).await;
+        if let Ok(left) = translated { more |= left; }
+        if let Err(error)=translated {
             eprintln!("Description translation: {error:#}");
             s.metadata.record_failure("chinese-summary-translation").await;
         }
@@ -2931,16 +2953,11 @@ async fn collect_metadata(s: &Service) -> Result<()> {
             let hash = text(&torrent, "hash_string")?;
             if s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.hidden_package(hash)? { continue; }
             let old = torrent_metadata(s, hash)?;
-            if old.as_ref().is_some_and(|r| {
-                r["confirmed"] == true
-                    || now() - r["updated_at"].as_f64().unwrap_or(0.0)
-                        < if r["status"] == "matched" {
-                            86400.0
-                        } else {
-                            900.0
-                        }
-            }) {
-                continue;
+            // A match stands; no match is looked for again a day on, an error 15 minutes on.
+            if let Some(r) = old.as_ref() {
+                if r["confirmed"] == true || r["status"] == "matched" { continue; }
+                let due = r["updated_at"].as_f64().unwrap_or(0.0) + if r["status"] == "error" { 900.0 } else { 86400.0 };
+                if due > now() { sooner(&mut next, due); continue; }
             }
             let mut record = match s.metadata.search(text(&torrent, "name")?).await {
                 Ok(record) => record,
@@ -2997,15 +3014,11 @@ async fn collect_metadata(s: &Service) -> Result<()> {
                 }
             }
         }
-        let age = now() - asset["matched_at"].as_f64().unwrap_or(0.0);
-        if age
-            < if asset["entity_id"].is_string() {
-                86400.0
-            } else {
-                900.0
-            }
-        {
-            continue;
+        // Matched files are not looked up again; unmatched ones a day on, after an error 15 minutes.
+        if asset["entity_id"].is_string() { continue; }
+        if asset["matched_at"].is_number() {
+            let due = asset["matched_at"].as_f64().unwrap_or(0.0) + if asset["error"].is_null() { 86400.0 } else { 900.0 };
+            if due > now() { sooner(&mut next, due); continue; }
         }
         let id = text(&asset, "id")?;
         let path = std::path::Path::new(text(&asset, "path")?);
@@ -3074,7 +3087,16 @@ async fn collect_metadata(s: &Service) -> Result<()> {
     }
     // The matches this pass made decide which titles their extras belong to: linked once.
     s.db.lock().map_err(|_| anyhow::anyhow!("Database lock failed"))?.link_extras()?;
-    Ok(())
+    // Machine-translated descriptions are checked against TMDB again after a while.
+    for entity in &entities {
+        if let Some(due) = crate::metadata::chinese_summary_due(entity) { sooner(&mut next, due); }
+        for episode in entity["episodes"].as_array().into_iter().flatten() {
+            if let Some(due) = crate::metadata::chinese_summary_due(episode) { sooner(&mut next, due); }
+        }
+    }
+    if let Some(retry) = s.metadata.next_retry().await { sooner(&mut next, retry); }
+    crate::wake::ARTWORK.wake();
+    Ok(if more { Some(crate::wake::after(60.0)) } else { next.map(crate::wake::at_epoch) })
 }
 
 impl Service {

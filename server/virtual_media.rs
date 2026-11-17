@@ -85,7 +85,9 @@ pub fn take_removed() -> Vec<PathBuf> { REMOVED.lock().map(|mut r| std::mem::tak
 /// Index folders built, with their file (asset ID), for the same record.
 static BUILT: Mutex<Vec<(String, PathBuf)>> = Mutex::new(Vec::new());
 pub fn take_built() -> Vec<(String, PathBuf)> { BUILT.lock().map(|mut b| std::mem::take(&mut *b)).unwrap_or_default() }
-fn removed(path: &Path) { if let Ok(mut r) = REMOVED.lock() { r.push(path.to_owned()); } }
+/// A reader was opened or used.
+static READERS: crate::wake::Signal = crate::wake::Signal::new();
+fn removed(path: &Path) { if let Ok(mut r) = REMOVED.lock() { r.push(path.to_owned()); } crate::wake::PROCESSING.wake(); }
 /// Playback indexes built at once in the background (each reads its whole file).
 const BACKGROUND_BUILDS: usize = 4;
 fn valid(id: &str) -> bool {
@@ -196,6 +198,20 @@ impl Manager {
     #[cfg(test)]
     pub fn indexed(&self, asset: &str, input: &Path) -> bool { self.index_of(asset, input).is_some() }
     fn forget_usage(&self) { if let Ok(mut usage) = self.usage.lock() { *usage = None; } }
+    /// For the server's life: closes each cached reader two minutes after its last use, once
+    /// nothing streams from it (an open file stops its drive from being ejected). Sleeps until
+    /// the next reader is due; with none open, until one is.
+    pub async fn close_idle_readers(self: Arc<Self>) {
+        const IDLE: std::time::Duration = std::time::Duration::from_secs(120);
+        loop {
+            self.release_idle(IDLE);
+            let now = std::time::Instant::now();
+            // One still streaming when due is looked at again two minutes on.
+            let next = self.reader_use.lock().ok().and_then(|used| used.values().map(|at| *at + IDLE).min())
+                .map(|due| if due <= now { now + IDLE } else { due });
+            READERS.wait(next).await;
+        }
+    }
     /// Close cached readers nothing has used for a while and nothing is streaming from.
     pub fn release_idle(&self, after: std::time::Duration) {
         let (Ok(mut readers), Ok(mut used)) = (self.readers.lock(), self.reader_use.lock()) else { return };
@@ -355,6 +371,7 @@ impl Manager {
             .lock()
             .map_err(|_| anyhow::anyhow!("Playback index unavailable"))?;
         if let Ok(mut used) = self.reader_use.lock() { used.insert(id.into(), std::time::Instant::now()); }
+        READERS.wake();
         if let Some(reader) = readers.get(id) {
             reader.validate_source()?;
             return Ok(reader.clone());
@@ -484,6 +501,8 @@ impl Manager {
         }
         pending.insert(id.clone());
         drop(pending);
+        // Playback preparation takes processing's slots: it backs down now.
+        crate::wake::PROCESSING.wake();
         let manager = self.clone();
         let run_id = id.clone();
         tokio::spawn(async move {
@@ -507,6 +526,8 @@ impl Manager {
                 pending.remove(&run_id);
                 if let Ok(mut set) = manager.background.lock() { set.remove(&run_id); }
             }
+            // Slots come back, and the warm-up records what was built.
+            crate::wake::PROCESSING.wake();
         });
         Ok(id)
     }

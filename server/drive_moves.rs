@@ -426,13 +426,14 @@ async fn carry_one(s: &Service, m: &Move) -> Result<bool> {
 }
 
 /// Advance the oldest unfinished move by one unit. Called every few seconds.
-pub async fn tick(s: &Service) -> Result<()> {
+/// Advance unfinished moves. True while any remain.
+pub async fn tick(s: &Service) -> Result<bool> {
     release_stale_flags(s);
     let mut waiting: Vec<Move> = load(s).into_iter().filter(active).collect();
     waiting.sort_by(|a, b| a.created.total_cmp(&b.created));
     // Oldest first; one that is waiting (for playback, for a drive) lets the next go on.
     for m in waiting { if step(s, m).await? { break; } }
-    Ok(())
+    Ok(load(s).iter().any(active))
 }
 
 /// Once after a start: a record still marked as moving that no unfinished move owns (the

@@ -293,6 +293,8 @@ pub(crate) async fn add_at(s: &Service, body: &Value, directory:Option<&Path>) -
     }
     s.event("torrent_added", json!({"result":result}))?;
     s.invalidate_torrents();
+    crate::wake::ORGANIZER.wake();
+    crate::wake::SAMPLER.wake();
     Ok(result)
 }
 
@@ -512,7 +514,10 @@ pub async fn apply_private_seeding(s: &Service) {
     let Ok(found) = s.rpc.call("torrent_get", json!({"fields":["hash_string","labels","seconds_seeding","seed_ratio_mode","seed_ratio_limit","seed_idle_mode"]})).await else { return };
     for t in found["torrents"].as_array().into_iter().flatten() {
         if !t["labels"].as_array().is_some_and(|labels| labels.iter().any(|l| l == crate::torrent_search::PRIVATE_LABEL)) { continue; }
-        let want = private_seeding(t["seconds_seeding"].as_f64().unwrap_or(0.0), seconds, ratio);
+        let seeded = t["seconds_seeding"].as_f64().unwrap_or(0.0);
+        // Its time target reached, its ratio target applies: looked at again then.
+        if seeded < seconds { due(now() + seconds - seeded); }
+        let want = private_seeding(seeded, seconds, ratio);
         let same = t["seed_ratio_mode"] == want["seed_ratio_mode"] && t["seed_idle_mode"] == want["seed_idle_mode"]
             && want["seed_ratio_limit"].as_f64().is_none_or(|limit| (t["seed_ratio_limit"].as_f64().unwrap_or(-1.0) - limit).abs() < 0.001);
         if same { continue; }
@@ -541,10 +546,78 @@ fn forget_removed(s: &Service, all: &[Value]) {
     }
 }
 
+/// The earliest moment a pass must look again although nothing woke it (epoch seconds),
+/// collected during the pass: a move to check, a torrent to restart, a seeding target, a retry.
+static DUE: std::sync::Mutex<Option<f64>> = std::sync::Mutex::new(None);
+fn due(at: f64) { if let Ok(mut d) = DUE.lock() { *d = Some(d.map_or(at, |d| d.min(at))); } }
+
+/// Transmission tells the server when a torrent is added, finishes downloading or finishes
+/// seeding: it runs this script, which leaves a file named for the torrent in `events`, and a
+/// watch on that folder wakes the organizer and the transfer sampler. (The organizer looked at
+/// every torrent every 30 s.)
+pub fn events_dir(s: &Service) -> std::path::PathBuf { s.data_dir.join("transmission-events") }
+fn event_script(s: &Service) -> std::path::PathBuf { s.data_dir.join("transmission-event.sh") }
+/// Writes the script, and watches its folder and /Volumes (a drive connected or removed).
+pub fn watch_transmission(s: &Service) -> Vec<notify::RecommendedWatcher> {
+    use notify::Watcher;
+    let events = events_dir(s);
+    let script = format!("#!/bin/sh\n# Torrbaby: Transmission ran this for a torrent added, downloaded or seeded; the server wakes on it.\n: > '{}/'\"${{TR_TORRENT_HASH:-torrent}}\"\n", events.display().to_string().replace('\'', "'\\''"));
+    let written = std::fs::create_dir_all(&events).and_then(|()| {
+        let path = event_script(s);
+        if std::fs::read_to_string(&path).ok().as_deref() != Some(script.as_str()) { std::fs::write(&path, &script)?; }
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+    });
+    if let Err(error) = written { tracing::warn!(%error, "Transmission's event script not written"); }
+    let mut watchers = Vec::new();
+    for (dir, sampler) in [(events.clone(), true), (std::path::PathBuf::from("/Volumes"), false)] {
+        let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+            // Not for the files the organizer clears.
+            if event.is_ok_and(|e| !matches!(e.kind, notify::EventKind::Access(_) | notify::EventKind::Remove(_))) {
+                crate::wake::ORGANIZER.wake();
+                if sampler { crate::wake::SAMPLER.wake(); }
+            }
+        });
+        match watcher.and_then(|mut w| w.watch(&dir, notify::RecursiveMode::NonRecursive).map(|()| w)) {
+            Ok(w) => watchers.push(w),
+            Err(error) => tracing::warn!(%error, dir = %dir.display(), "Not watched for the organizer"),
+        }
+    }
+    watchers
+}
+/// From each transfer sample: a torrent whose state changed (started, stopped, its metadata
+/// arrived, finished, an error) wakes the organizer; Transmission runs no script for most of these.
+pub fn sampled(torrents: &[Value]) {
+    static LAST: std::sync::Mutex<Option<Vec<String>>> = std::sync::Mutex::new(None);
+    let mut states: Vec<String> = torrents.iter().map(|t| format!("{}:{}:{}:{}:{}", t["hash_string"].as_str().unwrap_or(""), t["status"],
+        t["metadata_percent_complete"].as_f64().is_some_and(|m| m >= 1.0), t["left_until_done"].as_u64() == Some(0), t["error"])).collect();
+    states.sort();
+    let Ok(mut last) = LAST.lock() else { return };
+    if last.as_ref().is_some_and(|l| *l != states) { crate::wake::ORGANIZER.wake(); }
+    *last = Some(states);
+}
+/// Whether a torrent is at work: downloading, waiting to, checking, or fetching its metadata.
+pub fn active(t: &Value) -> bool {
+    let status = t["status"].as_u64().unwrap_or(0);
+    matches!(status, 1..=4) || (status != 0 && (t["left_until_done"].as_u64().unwrap_or(0) > 0 || t["metadata_percent_complete"].as_f64().is_some_and(|m| m < 1.0)))
+}
+/// Clears the event files Transmission left (the pass that follows looks at every torrent).
+fn clear_events(s: &Service) {
+    if let Ok(entries) = std::fs::read_dir(events_dir(s)) { for entry in entries.flatten() { let _ = std::fs::remove_file(entry.path()); } }
+}
+
 /// When the organizer last looked at the torrents: shown in status, not stored.
 static LAST_POLL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub fn last_poll() -> Option<f64> { Some(f64::from_bits(LAST_POLL.load(std::sync::atomic::Ordering::Relaxed))).filter(|t| *t > 0.0) }
-pub async fn tick(s: &Service) -> Result<()> {
+/// One pass over the torrents. Returns when it must look again if nothing wakes it first.
+pub async fn tick(s: &Service) -> Result<Option<std::time::Instant>> {
+    if let Ok(mut d) = DUE.lock() { *d = None; }
+    clear_events(s);
+    let result = pass(s).await;
+    let next = DUE.lock().ok().and_then(|d| *d).map(crate::wake::at_epoch);
+    result.map(|()| next)
+}
+async fn pass(s: &Service) -> Result<()> {
     apply_queue_policy(s).await;
     // Before the pause check: seeding obligations do not pause with automation.
     apply_private_seeding(s).await;
@@ -605,6 +678,8 @@ pub async fn tick(s: &Service) -> Result<()> {
             if current.is_null() {
                 current = json!({"hash":hash,"name":t["name"],"phase":"blocked"});
             }
+            // Looked at again when something changes, or in 15 minutes.
+            due(now() + 900.0);
             if current["error"] != error.to_string() {
                 current["error"] = json!(error.to_string());
                 save_job(s, hash, current)?;
@@ -657,13 +732,10 @@ mod identification_tests {
 /// drive's Downloads, under a temporary name, and the default folder is a connected
 /// drive's Downloads. Looked at once a minute.
 async fn tend_session(s: &Service, drives: &Drives) {
-    static LOOKED: std::sync::Mutex<f64> = std::sync::Mutex::new(0.0);
-    {
-        let Ok(mut looked) = LOOKED.lock() else { return };
-        if now() - *looked < 60.0 { return; }
-        *looked = now();
-    }
-    let Ok(session) = s.rpc.call("session_get", json!({"fields":["download_dir","incomplete_dir","incomplete_dir_enabled","rename_partial_files"]})).await else { return };
+    let script = event_script(s).to_string_lossy().into_owned();
+    let Ok(session) = s.rpc.call("session_get", json!({"fields":["download_dir","incomplete_dir","incomplete_dir_enabled","rename_partial_files",
+        "script_torrent_added_enabled","script_torrent_added_filename","script_torrent_done_enabled","script_torrent_done_filename",
+        "script_torrent_done_seeding_enabled","script_torrent_done_seeding_filename"]})).await else { return };
     let online = drives.online();
     let on_a_drive = |dir: &str| drives.drive_of(Path::new(dir)).is_some_and(|d| online.contains(&d.id));
     let mut change = serde_json::Map::new();
@@ -674,6 +746,10 @@ async fn tend_session(s: &Service, drives: &Drives) {
     }
     if !session["download_dir"].as_str().is_some_and(on_a_drive) {
         if let Ok(drive) = drives.place(None, 0) { change.insert("download_dir".into(), json!(drive.downloads)); }
+    }
+    for event in ["added", "done", "done_seeding"] {
+        if session[format!("script_torrent_{event}_enabled")] != true { change.insert(format!("script_torrent_{event}_enabled"), json!(true)); }
+        if session[format!("script_torrent_{event}_filename")] != script.as_str() { change.insert(format!("script_torrent_{event}_filename"), json!(script)); }
     }
     if change.is_empty() { return; }
     let change = Value::Object(change);
@@ -769,7 +845,7 @@ async fn reconnect(s: &Service, t: &Value, was_running: bool) {
     if !present { return; }
     {
         let Ok(mut tried) = TRIED.lock() else { return };
-        if tried.get(hash).is_some_and(|at| now() - at < 600.0) { return; }
+        if let Some(at) = tried.get(hash).filter(|at| now() - **at < 600.0) { due(at + 600.0); return; }
         tried.insert(hash.to_owned(), now());
     }
     let ids = json!({"ids":[hash]});
@@ -868,6 +944,7 @@ async fn advance(
         return Ok(());
     }
     if now() - job["attempted"].as_f64().unwrap_or(0.0) < 300.0 {
+        due(job["attempted"].as_f64().unwrap_or(0.0) + 300.0);
         return Ok(());
     }
     if !crate::drives::same_place(&t["download_dir"], &job["source"]) {

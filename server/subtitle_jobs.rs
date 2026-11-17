@@ -265,6 +265,8 @@ impl Manager {
     /// Accept translated cue text from the inbox as a completed translation
     /// checkpoint; the job then finishes through the normal validation path.
     /// Returns the asset IDs whose translations were accepted.
+    /// Where the external fleet leaves its answers.
+    pub fn fleet_inbox(&self) -> std::path::PathBuf { Self::fleet_dir(&self.root).join("inbox") }
     pub fn import_external(&self) -> Result<Vec<String>> {
         let fleet=Self::fleet_dir(&self.root);
         let mut accepted=Vec::new();
@@ -792,6 +794,7 @@ impl Manager {
         }
         if self.translating.lock().is_ok_and(|mut t|t.remove(&job.id)) {
             if let Ok(mut t)=self.translated.lock() { t.push(asset); }
+            crate::wake::PROCESSING.wake();
         }
     }
 }

@@ -95,6 +95,8 @@ fn labelled_sdh(track:&Value)->bool {
 fn save(db: &Database, id: &str, revision: &str, info: &Value) -> Result<()> {
     db.connection.execute("INSERT INTO media_inventory VALUES(?,?,?,?) ON CONFLICT(asset_id) DO UPDATE SET revision=excluded.revision,document=excluded.document,updated=excluded.updated",
         rusqlite::params![id,revision,info.to_string(),now()])?;
+    // A file's tracks are listed: its format can be described.
+    crate::wake::FORMATS.wake();
     Ok(())
 }
 pub fn update_sidecar_languages(db: &Database, id: &str, tracks: &[crate::subtitles::Sidecar]) -> Result<()> {
