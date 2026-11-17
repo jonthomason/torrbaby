@@ -643,22 +643,6 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     func readyDownload(assetID: String, server: String) -> UUID? {
         items.first(where: { $0.assetID == assetID && $0.server == server && playback($0.id) != nil })?.id
     }
-    func preparePlayback(_ id: UUID) async -> Playback? {
-        if let store, let storage, store.connected,
-           let item = items.first(where: { $0.id == id && $0.server == store.libraryKey && $0.state == .ready }) {
-            let server = store.libraryKey, identity = store.profileIdentity
-            struct Progress: Decodable { let position: Double; let duration: Double; let watched: Bool; let lastPlayed: Double }
-            do {
-                let progress: Progress = try await store.request("GET", "/v1/library/assets/\(item.assetID)/progress", timeout: 3)
-                if store.libraryKey == server && store.profileIdentity == identity {
-                    try storage.importProgress(id, profile: store.activeProfile?.id ?? "", position: progress.position, duration: progress.duration,
-                                               watched: progress.watched, recordedAt: Date(timeIntervalSince1970: progress.lastPlayed))
-                    reload()
-                }
-            } catch { /* Local playback remains available when the server is unreachable. */ }
-        }
-        return playback(id)
-    }
     func isEpisode(_ playback: Playback) -> Bool {
         if let id = playback.localDownloadID { return items.first(where: { $0.id == id })?.episode != nil }
         return store?.library?.titles.first(where: { $0.id == playback.libraryTitleID })?.assets.first(where: { $0.id == playback.libraryAssetID })?.episode != nil
@@ -709,7 +693,7 @@ final class DownloadQueue: NSObject, ObservableObject, URLSessionDownloadDelegat
     func nextPlayback(after currentPlayback: Playback) async throws -> Playback? {
         guard let selection = nextSelection(after: currentPlayback) else { return nil }
         switch selection {
-        case .local(let id): return await preparePlayback(id)
+        case .local(let id): return playback(id)
         case .stream(let title, let asset):
         guard let store, store.canStream else { throw APIError(message: "Reconnect to your library to play the next episode.") }
         let identity = store.profileIdentity

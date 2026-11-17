@@ -1153,7 +1153,7 @@ extension Store {
         #if !os(tvOS)
         let downloads = DownloadQueue.shared
         if let id = downloads.readyDownload(assetID: asset.id, server: libraryKey),
-           var local = await downloads.preparePlayback(id) {
+           var local = downloads.playback(id) {
             if fromBeginning { local.resumePosition = 0 }
             return local
         }

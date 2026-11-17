@@ -440,14 +440,15 @@ struct ConnectionWay {
 
     @MainActor init(store: Store, tunnelState: String?) {
         guard store.connected else {
-            source = .none; way = nil
+            way = nil
             // Before the first answer, or while ABT is finding its path after a network change.
             #if os(iOS)
-            // With ABT on, the app waits for ABT to find its way to Diamond.
+            // With ABT on, the app waits for ABT to find its way to Diamond: ABT is the source.
             let abtBusy = ABT.connected
             #else
             let abtBusy = false
             #endif
+            source = abtBusy ? .abt : .none
             connecting = !store.workOffline && store.networkAvailable && (store.connectionError == nil || abtBusy)
             return
         }

@@ -15,7 +15,6 @@ struct DownloadsView: View {
     #endif
     @State private var playback: Playback?
     @State private var settings = false
-    @State private var preparing = false
     @State private var confirmingCancel = false
     @AppStorage("downloads.swipeHintSeen") private var swipeHintSeen = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -155,18 +154,15 @@ struct DownloadsView: View {
         .background(MobilePlayerPresentation(playback: $playback, store: store).frame(width: 0, height: 0))
         #endif
     }
+    /// A downloaded copy opens at once: its progress is already here (the library refresh
+    /// imports it), so nothing waits on the server.
     private func play(_ id: UUID) {
-        guard !preparing else { return }
-        preparing = true
-        Task {
-            defer { preparing = false }
-            guard let item = await queue.preparePlayback(id) else { return }
-            #if os(macOS)
-            MacPlaybackWindows.open(item, with: openWindow)
-            #else
-            playback = item
-            #endif
-        }
+        guard let item = queue.playback(id) else { return }
+        #if os(macOS)
+        MacPlaybackWindows.open(item, with: openWindow)
+        #else
+        playback = item
+        #endif
     }
 }
 
