@@ -439,66 +439,114 @@ final class PlaybackModel: ObservableObject {
         @unknown default: waiting = false
         }
     }
-    /// The picture stopping while the sound and subtitles go on (the iPad, several times; Parasite
-    /// at 13:10 on 2026-11-17 in the foreground; a clean H.264 file, and a skip brought it back).
-    /// AVFoundation reports no stall or error for it, and the track's frame rate stays normal. So
-    /// each second while playing, the item's video output is asked whether a new frame has come
-    /// out: none for 2.5 s while the time moves on, and the player seeks to where it is (which
-    /// starts the picture again), notes the state and sends the logs to Diamond.
+    /// The picture stopping while the sound and subtitles go on (the iPad, several times, in more
+    /// than one title; Parasite at 13:10 on 2026-11-17 in the foreground: a clean H.264 file, and
+    /// a skip brought it back). AVFoundation reports no stall or error for it, and the track's
+    /// frame rate stays normal. Diagnostics, deliberately not a workaround (the user: the freeze
+    /// stays visible until its cause is fixed): each second while playing, the item's video output
+    /// is asked whether a new frame has come out. None for 2.5 s while the time runs on: a full
+    /// account of the player, the stream, the route and the device is noted at once, again 5, 15
+    /// and 30 s later while it lasts, and when the picture moves again; the logs go to Diamond.
     private var videoOutput: AVPlayerItemVideoOutput?
     private var lastFrameAt = Date()
     private var lastFrameTime = -1.0
     private var lastPictureNote = Date.distantPast
-    private var freezesThisPlayback = 0
+    private var frozenSince: Date?
+    private var frozenFollowUps: Set<Int> = []
+    private var lastTickPosition: Double?
     private func watchVideoOutput(_ item: AVPlayerItem) {
         let output = AVPlayerItemVideoOutput(pixelBufferAttributes: nil)
         item.add(output)
         videoOutput = output
-        lastFrameAt = Date(); freezesThisPlayback = 0
+        lastFrameAt = Date(); lastFrameTime = -1; frozenSince = nil
     }
     private func watchPicture() {
         guard let item = player.currentItem, let output = videoOutput else { return }
         let now = item.currentTime()
-        guard player.timeControlStatus == .playing, now.isNumeric, item.tracks.contains(where: { $0.assetTrack?.mediaType == .video }) else {
-            lastFrameAt = Date(); lastFrameTime = -1; return
+        // A jump in position between ticks is a seek (the scrubber, a skip): noted, since a skip
+        // is what brought a frozen picture back.
+        if now.isNumeric, let last = lastTickPosition, abs(now.seconds - last) > 3 {
+            ClientDiagnostics.note(String(format: "Position jumped %.1f s → %.1f s (a seek)%@", last, now.seconds, frozenSince != nil ? " while the picture was frozen" : ""))
         }
-        if output.hasNewPixelBuffer(forItemTime: now) {
+        lastTickPosition = now.isNumeric ? now.seconds : nil
+        let playing = player.timeControlStatus == .playing && now.isNumeric && item.tracks.contains(where: { $0.assetTrack?.mediaType == .video })
+        if playing, output.hasNewPixelBuffer(forItemTime: now) {
             _ = output.copyPixelBuffer(forItemTime: now, itemTimeForDisplay: nil)
+            if let since = frozenSince {
+                ClientDiagnostics.note(String(format: "Picture moving again at %.1f s after %.0f s frozen", now.seconds, Date().timeIntervalSince(since)))
+                ClientDiagnostics.note(pictureReport(item, why: "after the freeze"))
+                frozenSince = nil; frozenFollowUps = []
+            }
             lastFrameAt = Date(); lastFrameTime = now.seconds
         }
-        let dropped = item.accessLog()?.events.last?.numberOfDroppedVideoFrames ?? -1
+        guard playing else { if frozenSince == nil { lastFrameAt = Date(); lastFrameTime = -1 }; return }
         if Date().timeIntervalSince(lastPictureNote) > 120 {
             lastPictureNote = Date()
-            ClientDiagnostics.note(String(format: "Picture at %.1f s: last new frame %.1f s ago, %d frames dropped, %.0f s buffered", now.seconds, Date().timeIntervalSince(lastFrameAt), dropped, bufferedAhead(item)))
+            ClientDiagnostics.note(String(format: "Picture at %.1f s: last new frame %.1f s ago, %d frames dropped, %.0f s buffered", now.seconds, Date().timeIntervalSince(lastFrameAt),
+                                          item.accessLog()?.events.last?.numberOfDroppedVideoFrames ?? -1, bufferedAhead(item)))
+        }
+        if let since = frozenSince {
+            // Still frozen: the same account again at 5, 15 and 30 s.
+            let age = Int(Date().timeIntervalSince(since))
+            for mark in [5, 15, 30] where age >= mark && !frozenFollowUps.contains(mark) {
+                frozenFollowUps.insert(mark)
+                ClientDiagnostics.note(pictureReport(item, why: "still frozen after \(mark) s"))
+                if mark == 30 { ClientLogs.failed("Picture frozen for 30 s while sound played") }
+            }
+            return
         }
         // Frozen: no new frame for 2.5 s while the clock ran on (not paused, not waiting for data).
-        guard Date().timeIntervalSince(lastFrameAt) >= 2.5, now.seconds - lastFrameTime >= 2, lastFrameTime >= 0 else { return }
-        freezesThisPlayback += 1
-        let errors = item.errorLog()?.events ?? []
-        var state = "foreground"
-        #if os(iOS)
-        state = UIApplication.shared.applicationState == .active ? "foreground" : UIApplication.shared.applicationState == .background ? "background" : "inactive"
-        #endif
-        ClientDiagnostics.note(String(format: "Picture frozen at %.1f s (last frame at %.1f s) while the sound played on: %d frames dropped, %.0f s buffered, likely to keep up %@, %d error-log entries, app %@, external playback %@; starting it again (%d this playback)",
-                                      now.seconds, lastFrameTime, dropped, bufferedAhead(item), item.isPlaybackLikelyToKeepUp ? "yes" : "no", errors.count, state,
-                                      player.isExternalPlaybackActive ? "yes" : "no", freezesThisPlayback))
-        lastFrameAt = Date(); lastFrameTime = -1
-        redrawPicture("frozen")
-        if freezesThisPlayback == 1 { ClientLogs.failed("Picture froze while sound played; started again") }
-    }
-    /// The picture can stay on its last frame while the sound plays on once the player's view is
-    /// back (after Picture in Picture or the background): a seek to where it is, exactly, makes
-    /// the video layer draw again. Noted, for the logs.
-    func redrawPicture(_ why: String) {
-        guard let item = player.currentItem, item.status == .readyToPlay else { return }
-        let now = player.currentTime()
-        guard now.isNumeric else { return }
-        let rate = item.tracks.first(where: { $0.assetTrack?.mediaType == .video })?.currentVideoFrameRate ?? -1
-        ClientDiagnostics.note(String(format: "Redrawing the picture (%@) at %.1f s; video %.1f fps before", why, now.seconds, rate))
-        let wasPlaying = player.rate > 0
-        player.seek(to: now, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-            Task { @MainActor [weak self] in if wasPlaying { self?.player.play() } }
+        guard Date().timeIntervalSince(lastFrameAt) >= 2.5, lastFrameTime >= 0, now.seconds - lastFrameTime >= 2 else { return }
+        frozenSince = lastFrameAt
+        ClientDiagnostics.note(String(format: "Picture frozen at %.1f s: no new frame since %.1f s while the sound played on", now.seconds, lastFrameTime))
+        ClientDiagnostics.note(pictureReport(item, why: "frozen"))
+        Task { @MainActor in
+            if let asset = item.tracks.first(where: { $0.assetTrack?.mediaType == .video })?.assetTrack {
+                let formats = (try? await asset.load(.formatDescriptions)) ?? []
+                let described = formats.map { description -> String in
+                    let code = CMFormatDescriptionGetMediaSubType(description)
+                    let fourcc = String(bytes: [UInt8(code >> 24 & 255), UInt8(code >> 16 & 255), UInt8(code >> 8 & 255), UInt8(code & 255)], encoding: .ascii) ?? "?"
+                    let size = CMVideoFormatDescriptionGetDimensions(description)
+                    return "\(fourcc) \(size.width)×\(size.height)"
+                }
+                let rate = (try? await asset.load(.nominalFrameRate)) ?? 0
+                let bitrate = (try? await asset.load(.estimatedDataRate)) ?? 0
+                ClientDiagnostics.note(String(format: "Picture frozen: video %@, %.2f fps nominal, %.1f Mb/s", described.joined(separator: ", "), rate, bitrate / 1_000_000))
+            }
+            ClientLogs.failed("Picture froze while sound played")
         }
+    }
+    /// Everything the player, the stream, the route and the device say right now, on one line.
+    private func pictureReport(_ item: AVPlayerItem, why: String) -> String {
+        let now = item.currentTime().seconds
+        let video = item.tracks.first(where: { $0.assetTrack?.mediaType == .video })
+        let ranges = item.loadedTimeRanges.map { let r = $0.timeRangeValue; return String(format: "%.0f–%.0f", r.start.seconds, r.end.seconds) }.joined(separator: " ")
+        let access = item.accessLog()?.events ?? []
+        let last = access.last
+        let errors = item.errorLog()?.events ?? []
+        let errorText = errors.suffix(3).map { "\($0.errorStatusCode) \($0.errorDomain) \($0.errorComment ?? "")" }.joined(separator: " | ")
+        var device = ""
+        #if os(iOS)
+        let app = UIApplication.shared.applicationState == .active ? "foreground" : UIApplication.shared.applicationState == .background ? "background" : "inactive"
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs.map { "\($0.portType.rawValue) (\($0.portName))" }.joined(separator: ", ")
+        device = "app \(app), audio to \(outputs)"
+        #endif
+        let thermal = ["nominal", "fair", "serious", "critical"][min(3, ProcessInfo.processInfo.thermalState.rawValue)]
+        #if os(iOS) || os(tvOS)
+        let memory = Double(os_proc_available_memory()) / 1_048_576
+        #else
+        let memory = -1.0
+        #endif
+        let wait = player.reasonForWaitingToPlay?.rawValue ?? "none"
+        let status = player.timeControlStatus == .playing ? "playing" : player.timeControlStatus == .paused ? "paused" : "waiting (\(wait))"
+        let route = playback.url.isFileURL ? "this device" : store.path.rawValue
+        return String(format: "Picture report (%@) at %.1f s: last frame %.1f s ago at %.1f s; player %@ rate %.2f; video track %@, %.1f fps reported, picture %.0f×%.0f; buffered %.0f s ahead (%@); likely to keep up %@, buffer empty %@, full %@; access log %d events, last: %d dropped frames, %d stalls, indicated %.1f Mb/s, observed %.1f Mb/s, %lld bytes, server %@; errors %d%@; via %@; external playback %@; %@, thermal %@, low power %@, memory free %.0f MB",
+                      why, now, Date().timeIntervalSince(lastFrameAt), lastFrameTime, status, player.rate,
+                      video?.isEnabled == true ? "enabled" : "disabled", video?.currentVideoFrameRate ?? -1, item.presentationSize.width, item.presentationSize.height,
+                      bufferedAhead(item), ranges, item.isPlaybackLikelyToKeepUp ? "yes" : "no", item.isPlaybackBufferEmpty ? "yes" : "no", item.isPlaybackBufferFull ? "yes" : "no",
+                      access.count, last?.numberOfDroppedVideoFrames ?? -1, last?.numberOfStalls ?? -1, (last?.indicatedBitrate ?? 0) / 1_000_000, (last?.observedBitrate ?? 0) / 1_000_000,
+                      last?.numberOfBytesTransferred ?? -1, last?.serverAddress ?? "?", errors.count, errors.isEmpty ? "" : " (" + errorText + ")", route,
+                      player.isExternalPlaybackActive ? "yes" : "no", device, thermal, ProcessInfo.processInfo.isLowPowerModeEnabled ? "yes" : "no", memory)
     }
     private func bufferedAhead(_ item: AVPlayerItem) -> Double {
         let now = item.currentTime()

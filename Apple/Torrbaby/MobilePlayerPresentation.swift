@@ -301,12 +301,11 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
                 }
             }
             // Back in the app: a film in Picture in Picture comes back full screen (it floated over
-            // the app's own pages, 2026-11-17), and the picture is redrawn (it stayed frozen on
-            // its last frame while the sound played on, after Picture in Picture or the background).
+            // the app's own pages, 2026-11-17).
             activeObserver = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification,
                                                                      object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in
-                    guard let self, let model = self.model, let controller = self.controller else { return }
+                    guard let self, self.model != nil, let controller = self.controller else { return }
                     if self.pictureInPicture {
                         ClientDiagnostics.note("Back in the app during Picture in Picture: the player comes back full screen")
                         // Its screen first (over whatever is showing), then Picture in Picture is ended:
@@ -322,14 +321,10 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
                                 self.restoring = false
                                 self.pictureInPicture = false
                                 controller.inPictureInPicture = false
-                                model.redrawPicture("back from Picture in Picture")
                             }
                         }
                         if controller.presentingViewController != nil { endPictureInPicture() }
-                        else if self.showAgain(controller, then: { _ in endPictureInPicture() }) {}
-                        else { model.redrawPicture("back in the app") }
-                    } else if controller.presentingViewController != nil {
-                        model.redrawPicture("back in the app")
+                        else { _ = self.showAgain(controller, then: { _ in endPictureInPicture() }) }
                     }
                 }
             }
@@ -446,7 +441,6 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
             pictureInPicture = false
             controller?.inPictureInPicture = false
             model?.report()
-            if restoring || playerViewController.presentingViewController != nil { model?.redrawPicture("Picture in Picture stopped") }
             if !restoring && playerViewController.presentingViewController == nil { finish() }
         }
         func playerViewController(_ playerViewController: AVPlayerViewController,
