@@ -772,12 +772,13 @@ struct LibraryBrowser: View {
                             Text(featured.title).font(.system(size: 38, weight: .bold))
                                 .lineLimit(3).minimumScaleFactor(0.7).multilineTextAlignment(.leading)
                             Text(verbatim: ([featured.yearLabel] + featured.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · ")).font(.subheadline)
-                            // Side by side, or one above the other on a phone too narrow for both labels.
-                            ViewThatFits(in: .horizontal) {
-                                HStack(alignment: .top, spacing: 12) { heroActions(featured) }
-                                VStack(alignment: .leading, spacing: 10) { heroActions(featured) }
+                            // A phone stacks them full width, as on the title's page.
+                            Group {
+                                if compactLibrary {
+                                    VStack(spacing: 10) { heroActions(featured) }.environment(\.libraryActionFullWidth, true)
+                                } else { HStack(alignment: .top, spacing: 12) { heroActions(featured) } }
                             }.padding(.top, 5)
-                        }.padding(28).foregroundStyle(.white)
+                        }.padding(compactLibrary ? 16 : 28).foregroundStyle(.white)
                     }
                 }
                 #if !os(iOS)
@@ -842,14 +843,15 @@ struct LibraryBrowser: View {
             VStack(spacing: 5) {
                 Button { heroPlayOrCancel(asset, title: featured) } label: {
                     Label {
-                        Text(asset.playbackActionTitle(television: featured.kind == "tv", brief: true))
+                        // Stacked full width on a phone, the time left stays in the button.
+                        Text(asset.playbackActionTitle(television: featured.kind == "tv", brief: !compactLibrary))
                     } icon: {
                         if heroPreparing == asset.id { PlaybackSpinner(color: Theme.onAccent) }
                         else { Image(systemName: "play.fill") }
                     }.font(.headline).frame(minHeight: 44)
                 }.libraryActionStyle(prominent: true)
                 .modifier(PreparingPlayback(active: heroPreparing == asset.id))
-                if let left = asset.timeLeft { Text(verbatim: left).font(.caption).foregroundStyle(.white.opacity(0.75)) }
+                if !compactLibrary, let left = asset.timeLeft { Text(verbatim: left).font(.caption).foregroundStyle(.white.opacity(0.75)) }
             }
         }
         NavigationLink(value: LibraryDestination(id: featured.id)) {
