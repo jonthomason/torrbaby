@@ -483,24 +483,63 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
         let tag = if language == "en" { "en" } else { "zh" };
         let record = format!("{name}.{tag}-opensubtitles");
         // Decoding the audio takes a while: off the async workers.
-        if let Err(error) = tokio::task::block_in_place(|| time_by_audio(s, input, &record)) {
-            tracing::warn!(asset = id, %error, "Subtitles not timed by the audio");
+        match tokio::task::block_in_place(|| time_by_audio(s, input, &record)) {
+            Err(error) => tracing::warn!(asset = id, %error, "Subtitles not timed by the audio"),
+            // The audio cannot confirm it and nothing else times it: the hash-matched upload is
+            // taken instead when there is one (bad subtitles at the right time beat good ones at
+            // the wrong time).
+            Ok(false) => {
+                let root = directory(&s.data_dir);
+                let titled = titled(s, asset);
+                match crate::opensubtitles::find_language(&s.data_dir, &titled, input, &root, &name, language, &[], None, true).await {
+                    Ok(crate::opensubtitles::Found::Ready(path, provenance)) => {
+                        tracing::info!(asset = id, tag, release = provenance["release"].as_str().unwrap_or(""), "Timing unconfirmed: the hash-matched upload is used");
+                        store(&*database(s)?, &record, &json!({"state":"ready","asset_id":id,"output":path.file_name().and_then(|n| n.to_str()),"provenance":provenance,"updated":now()}))?;
+                        let _ = tokio::task::block_in_place(|| time_by_audio(s, input, &record));
+                        return Ok(Some(path));
+                    }
+                    Ok(_) => {
+                        let loaded = load(&*database(s)?, &record);
+                        if let Some(mut saved) = loaded {
+                            saved["provenance"]["timing_unverified"] = json!(true);
+                            store(&*database(s)?, &record, &saved)?;
+                        }
+                    }
+                    // Asked again once OpenSubtitles can be (its daily downloads reset).
+                    Err(error) => {
+                        tracing::info!(asset = id, %error, "Timing unconfirmed; the hash-matched upload not asked for now");
+                        let loaded = load(&*database(s)?, &record);
+                        if let Some(mut saved) = loaded {
+                            saved["provenance"]["fallback_after"] = json!(crate::opensubtitles::waits_until(&error.to_string()).unwrap_or(now() + 3600.0));
+                            store(&*database(s)?, &record, &saved)?;
+                        }
+                    }
+                }
+            }
+            Ok(true) => {}
         }
     }
     Ok(found)
 }
 
+/// Whether a file's timing is known without the audio: made for this file (hash match) or timed
+/// by the upload that was.
+fn timing_known(saved: &Value) -> bool { saved["provenance"]["moviehash_match"] == true || !saved["provenance"]["timed_by"].is_null() }
+
 /// Version 2 of timing by audio (2026-11-18): only a strong fit that every window agrees with.
 /// Version 1 retimed on weak fits and put sitcoms 10-20 s out; its changes are undone and judged
 /// again. Version 3 searches offsets up to 3 minutes, not 30 s (Outlander S01E07's English was
-/// 47 s early): every file is judged again.
-const AUDIO_TIMING: u64 = 3;
+/// 47 s early): every file is judged again. Version 4 tells "fits as it is" from "unclear", and an
+/// unclear file whose timing is not otherwise known gives way to the hash-matched upload.
+const AUDIO_TIMING: u64 = 4;
 
 /// Whether a record from OpenSubtitles still waits to be timed by the film's own audio.
 fn untimed(saved: &Value) -> bool {
     let timed = &saved["provenance"]["timed_by_audio"];
     saved["state"] == "ready" && saved["provenance"]["source"] == "opensubtitles"
-        && (timed.is_null() || timed["version"].as_u64().unwrap_or(1) < AUDIO_TIMING)
+        && (timed.is_null() || timed["version"].as_u64().unwrap_or(1) < AUDIO_TIMING
+            // Unclear, not otherwise timed, and the hash-matched upload could not be asked then.
+            || (timed["verdict"] == "unclear" && !timing_known(saved) && saved["provenance"]["fallback_after"].as_f64().is_some_and(|t| t <= now())))
 }
 
 /// The film's sound, 50 ms frames (`subtitles::sound_frames`), from its first audio track: three
@@ -536,9 +575,10 @@ fn uuid_like() -> String { format!("{}-{}", std::process::id(), std::time::Syste
 /// speech under its lines (`subtitles::audio_timing`). No upload is the reference: Parasite's
 /// "hash-matched" English ran 10 s late, and lining its Chinese up with that English made the
 /// Chinese wrong too (2026-11-18).
-fn time_by_audio(s: &Service, input: &Path, record: &str) -> Result<()> {
-    let Some(mut saved) = load(&*database(s)?, record) else { return Ok(()) };
-    if !untimed(&saved) { return Ok(()) }
+/// Ok(false): the audio could not confirm the timing and nothing else does.
+fn time_by_audio(s: &Service, input: &Path, record: &str) -> Result<bool> {
+    let Some(mut saved) = load(&*database(s)?, record) else { return Ok(true) };
+    if !untimed(&saved) { return Ok(true) }
     let path = directory(&s.data_dir).join(saved["output"].as_str().unwrap_or_default());
     let mut cues = crate::subtitles::parse_srt(&std::fs::read_to_string(&path)?)?;
     // A version 1 retiming: undone first (its scale and shift were kept), then judged again.
@@ -548,15 +588,21 @@ fn time_by_audio(s: &Service, input: &Path, record: &str) -> Result<()> {
         tracing::info!(record, scale, shift, "Earlier retiming by audio undone");
     }
     let sound = sound(input)?;
-    let timing = crate::subtitles::audio_timing(&sound, &cues);
-    let written = timing.map_or_else(|| cues.clone(), |t| crate::subtitles::shifted(&cues, t));
+    if let Some(fallback) = saved["provenance"].as_object_mut() { fallback.remove("fallback_after"); }
+    let verdict = crate::subtitles::audio_timing(&sound, &cues);
+    let (written, timing, said) = match verdict {
+        crate::subtitles::Verdict::Retimed(t) => (crate::subtitles::shifted(&cues, t), t, "retimed"),
+        crate::subtitles::Verdict::Confirmed => (cues.clone(), crate::subtitles::Timing { scale: 1.0, shift: 0 }, "confirmed"),
+        crate::subtitles::Verdict::Unclear => (cues.clone(), crate::subtitles::Timing { scale: 1.0, shift: 0 }, "unclear"),
+    };
     let temporary = path.with_extension("srt.tmp");
     std::fs::write(&temporary, crate::subtitles::to_srt(&written))?;
     std::fs::rename(&temporary, &path)?;
-    let timing = timing.unwrap_or(crate::subtitles::Timing { scale: 1.0, shift: 0 });
-    if timing.scale != 1.0 || timing.shift != 0 { tracing::info!(record, shift = timing.shift, scale = timing.scale, "Subtitles retimed by the film's audio") }
-    saved["provenance"]["timed_by_audio"] = json!({"shift_ms": timing.shift, "scale": timing.scale, "version": AUDIO_TIMING});
-    store(&*database(s)?, record, &saved)
+    if said == "retimed" { tracing::info!(record, shift = timing.shift, scale = timing.scale, "Subtitles retimed by the film's audio") }
+    saved["provenance"]["timed_by_audio"] = json!({"shift_ms": timing.shift, "scale": timing.scale, "version": AUDIO_TIMING, "verdict": said});
+    let known = said != "unclear" || timing_known(&saved);
+    store(&*database(s)?, record, &saved)?;
+    Ok(known)
 }
 
 async fn people_found(s: &Service, asset: &Value, input: &Path, language: &str) -> Result<Option<PathBuf>> {
@@ -579,7 +625,7 @@ async fn people_found(s: &Service, asset: &Value, input: &Path, language: &str) 
             // already lined up with the hash-matched upload).
             let in_time = saved["provenance"]["moviehash_match"] == true || !saved["provenance"]["timed_by"].is_null();
             let keep = saved["provenance"]["file_id"].as_u64().filter(|_| in_time);
-            match crate::opensubtitles::find_language(&s.data_dir, &titled(s, asset), input, &root, &name, language, &[], keep).await {
+            match crate::opensubtitles::find_language(&s.data_dir, &titled(s, asset), input, &root, &name, language, &[], keep, false).await {
                 Ok(crate::opensubtitles::Found::Ready(path, provenance)) => {
                     tracing::info!(asset = id, tag, was = saved["provenance"]["release"].as_str().unwrap_or(""), now = provenance["release"].as_str().unwrap_or(""), "OpenSubtitles chosen again by the new ranking");
                     save(json!({"state":"ready","asset_id":id,"output":path.file_name().and_then(|n| n.to_str()),"provenance":provenance,"updated":now()}))?;
@@ -626,7 +672,7 @@ async fn people_found(s: &Service, asset: &Value, input: &Path, language: &str) 
         if saved["state"] == "missing" && !unordered && !ask_again(&saved, special) && !rematched && (saved["lookup"].as_u64() >= Some(2) || set_aside) { return Ok(None); }
         if saved["after"].as_f64().is_some_and(|t| t > now()) { return Ok(None); }
     }
-    match crate::opensubtitles::find_language(&s.data_dir, &titled(s, asset), input, &root, &name, language, &refused, None).await {
+    match crate::opensubtitles::find_language(&s.data_dir, &titled(s, asset), input, &root, &name, language, &refused, None, false).await {
         Ok(crate::opensubtitles::Found::Ready(path, provenance)) => {
             save(json!({"state":"ready","asset_id":id,"output":path.file_name().and_then(|n| n.to_str()),"provenance":provenance,"updated":now()}))?;
             Ok(Some(path))

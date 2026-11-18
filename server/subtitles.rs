@@ -271,12 +271,22 @@ pub fn sound_frames(levels: &[f32]) -> Vec<bool> {
 /// Outlander S01E07's English was 47 s early). Windows near the start, middle and end catch both an offset and
 /// a drift (another frame rate) without decoding the whole film. The reference no upload can get
 /// wrong: Parasite's "hash-matched" English ran 10 s late and fell 5 s further behind by the end.
-/// None when the cues already fit as well as any timing does (within 0.02), or none fits clearly.
-pub fn audio_timing(windows: &[(f64, Vec<bool>)], cues: &[TimedCue]) -> Option<Timing> {
+/// What the film's audio says about a file's timing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Verdict {
+    /// It fits clearly as it is.
+    Confirmed,
+    /// It fits clearly at this timing instead.
+    Retimed(Timing),
+    /// No timing fits clearly (a noisy soundtrack, or dialogue the detector cannot find).
+    Unclear,
+}
+
+pub fn audio_timing(windows: &[(f64, Vec<bool>)], cues: &[TimedCue]) -> Verdict {
     const FRAME: f64 = 0.05;
     /// Tenths of a second either way.
     const SEARCH: i64 = 1800;
-    if cues.len() < 20 || windows.iter().map(|(_, w)| w.len()).sum::<usize>() < 1200 { return None }
+    if cues.len() < 20 || windows.iter().map(|(_, w)| w.len()).sum::<usize>() < 1200 { return Verdict::Unclear }
     let prepared: Vec<(f64, Vec<u32>)> = windows.iter().map(|(start, sound)| {
         let mut prefix = vec![0u32; sound.len() + 1];
         for (i, s) in sound.iter().enumerate() { prefix[i + 1] = prefix[i] + *s as u32 }
@@ -314,14 +324,19 @@ pub fn audio_timing(windows: &[(f64, Vec<bool>)], cues: &[TimedCue]) -> Option<T
     // Only a clear answer: speech that stands out (sitcom laugh tracks, music and rain gave weak
     // fits that put The Office and Friends 10-20 s out), and every window, on its own, agreeing
     // within a second at that speed (a wrong speed agrees in one window at most).
-    if best.0 < 0.15 || best.0 - now < 0.03 { return None }
+    if best.0 < 0.15 { return Verdict::Unclear }
     let (scale, shift) = (best.1.scale, best.1.shift);
     let agree = (0..prepared.len()).all(|w| {
         let own = (-SEARCH..=SEARCH).map(|tenth| (fit_in(Timing { scale, shift: tenth * 100 }, Some(w)), tenth * 100))
             .max_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, s)| s).unwrap_or(shift);
         (own - shift).abs() <= 1000
     });
-    agree.then_some(best.1)
+    if !agree { return Verdict::Unclear }
+    // As it is fits about as well: confirmed (when that fit is itself clear).
+    if best.0 - now < 0.03 || (scale == 1.0 && shift.abs() <= 300) {
+        return if now >= 0.15 { Verdict::Confirmed } else { Verdict::Unclear }
+    }
+    Verdict::Retimed(best.1)
 }
 
 /// `cues` with `timing` undone (a retiming found wrong).

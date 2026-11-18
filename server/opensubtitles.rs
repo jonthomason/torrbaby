@@ -244,7 +244,7 @@ const TRIES: usize = 3;
 
 /// English subtitles for `asset`'s file at `input`, written into `directory` as `name`.
 pub async fn find(data: &Path, asset: &Value, input: &Path, directory: &Path, name: &str) -> Result<Found> {
-    find_language(data, asset, input, directory, name, "en", &[], None).await
+    find_language(data, asset, input, directory, name, "en", &[], None, false).await
 }
 
 /// Subtitles in `language` ("en" or "zh-cn") for `asset`'s file, written into `directory`.
@@ -256,7 +256,10 @@ pub async fn find(data: &Path, asset: &Value, input: &Path, directory: &Path, na
 /// `TRIES`; `refused` are file ids already found not to fit. A candidate that does not fit is
 /// named in the answer's `refused`, so it is not downloaded again. `keep`: the file this one
 /// already has, which ends the lookup (`Kept`) when no better-ranked one fits before it.
-pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: &Path, name: &str, language: &str, refused: &[u64], keep: Option<u64>) -> Result<Found> {
+/// `known_timing`: the hash-matched upload first, whatever its text (the film's audio could not
+/// confirm the better-written one's timing: bad subtitles at the right time beat good ones at the
+/// wrong time, the user, 2026-11-18).
+pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: &Path, name: &str, language: &str, refused: &[u64], keep: Option<u64>, known_timing: bool) -> Result<Found> {
     let (code, ours) = match language { "zh-cn" => ("zh-cn", "zh-Hans"), _ => ("en", "en") };
     // The languages searched, in the order their files are tried.
     let codes: &[&str] = if code == "zh-cn" { &["zh-cn", "zh-tw"] } else { &[code] };
@@ -317,7 +320,13 @@ pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: 
         if named && let Some((_, wanted)) = &by_name { found.retain(|r| wanted(&r["attributes"]["feature_details"])) }
         any |= !found.is_empty();
         let found = found.as_slice();
-        let candidates: Vec<_> = codes.iter().flat_map(|code| ranked(found, &release, code).into_iter()
+        let order = |code: &str| {
+            let mut list = ranked(found, &release, code);
+            if known_timing { list.sort_by_key(|(_, _, p)| p["moviehash_match"] != true) }
+            if known_timing { list.retain(|(_, _, p)| p["moviehash_match"] == true) }
+            list
+        };
+        let candidates: Vec<_> = codes.iter().flat_map(|code| order(code).into_iter()
             .filter(|(id, _, _)| !tried.contains(id)).take(TRIES).map(move |c| (*code, c))).collect();
         for (from, (file_id, chosen, mut provenance)) in candidates {
             if keep == Some(file_id) { return Ok(Found::Kept) }
