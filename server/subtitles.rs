@@ -110,7 +110,7 @@ pub async fn translate(helper: &Path, request: TranslationRequest) -> Result<Tra
 }
 
 /// A normalized text cue. Integer milliseconds avoid timestamp drift in translation.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct TimedCue {
     pub start_ms: u64,
     pub end_ms: u64,
@@ -218,6 +218,46 @@ pub fn tidy_vtt(text: &str, language: &str) -> String {
     }).collect();
     if !changed || cues.is_empty() { return text.to_owned(); }
     webvtt(&cues)
+}
+
+/// The shift (ms, added to `cues`' times) that lines `cues` up with `reference`, two uploads of
+/// the same dialogue for different releases: the offset at which the most cue starts land within
+/// 0.4 s of one in `reference`, tried among the differences of their first 40 starts. None when
+/// no offset lines up at least a third of the cues (another cut or frame rate); 0 within 0.3 s.
+pub fn alignment(reference: &[TimedCue], cues: &[TimedCue]) -> Option<i64> {
+    if reference.len() < 10 || cues.len() < 10 { return None }
+    let starts: Vec<i64> = reference.iter().map(|c| c.start_ms as i64).collect();
+    let lands = |shift: i64| cues.iter().filter(|c| {
+        let at = c.start_ms as i64 + shift;
+        let i = starts.partition_point(|s| *s < at);
+        [i.checked_sub(1), Some(i)].into_iter().flatten().filter_map(|i| starts.get(i)).any(|s| (s - at).abs() <= 400)
+    }).count();
+    let mut tried = std::collections::HashSet::new();
+    let mut best = (0, 0i64);
+    for r in starts.iter().take(40) {
+        for c in cues.iter().take(40) {
+            let shift = r - c.start_ms as i64;
+            if shift.abs() > 300_000 || !tried.insert(shift / 100) { continue }
+            let landed = lands(shift);
+            if landed > best.0 || (landed == best.0 && shift.abs() < best.1.abs()) { best = (landed, shift) }
+        }
+    }
+    let (landed, shift) = best;
+    (landed * 3 >= cues.len()).then_some(if shift.abs() <= 300 { 0 } else { shift })
+}
+
+/// `cues` moved by `shift` ms; a cue that would start before 0 is dropped.
+pub fn shifted(cues: &[TimedCue], shift: i64) -> Vec<TimedCue> {
+    cues.iter().filter_map(|c| {
+        let start = c.start_ms as i64 + shift;
+        (start >= 0).then(|| TimedCue { start_ms: start as u64, end_ms: (c.end_ms as i64 + shift).max(start) as u64, text: c.text.clone() })
+    }).collect()
+}
+
+/// `cues` as SRT.
+pub fn to_srt(cues: &[TimedCue]) -> String {
+    let time = |ms: u64| format!("{:02}:{:02}:{:02},{:03}", ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000);
+    cues.iter().enumerate().map(|(i, c)| format!("{}\n{} --> {}\n{}\n\n", i + 1, time(c.start_ms), time(c.end_ms), c.text.trim_end())).collect()
 }
 
 pub fn parse_srt(input: &str) -> Result<Vec<TimedCue>> {
@@ -691,6 +731,27 @@ pub fn read_sidecar(media: &Path, id: &str) -> Result<String> {
     let path = crate::api::checked_path(media.parent().context("Missing directory")?, &track.name)?;
     let language = track.language.clone().unwrap_or_default();
     Ok(tidy_vtt(&webvtt(&read_srt_file(&path, track.language.as_deref())?), &language))
+}
+
+#[cfg(test)]
+mod alignment_tests {
+    use super::*;
+    fn cues(starts: &[u64]) -> Vec<TimedCue> { starts.iter().map(|s| TimedCue { start_ms: *s, end_ms: s + 1500, text: format!("line {s}") }).collect() }
+    #[test]
+    fn another_release_is_lined_up_with_the_hash_matched_one() {
+        // The Office S01E01: the same lines 23 s earlier in a WEB-DL's upload, some cues split
+        // differently.
+        let reference: Vec<u64> = (0..60).map(|i| 55_315 + i * 3_100 + (i % 7) * 211).collect();
+        let other: Vec<u64> = reference.iter().enumerate().filter(|(i, _)| i % 9 != 4).map(|(_, s)| s - 22_850).collect();
+        assert_eq!(alignment(&cues(&reference), &cues(&other)), Some(22_850));
+        assert_eq!(alignment(&cues(&reference), &cues(&reference)), Some(0));
+        // Another frame rate (4% slower): nothing lines up a third of the cues.
+        let slower: Vec<u64> = reference.iter().map(|s| s * 104 / 100).collect();
+        assert_eq!(alignment(&cues(&reference), &cues(&slower)), None);
+        let moved = shifted(&cues(&other), 22_850);
+        assert_eq!(moved[0].start_ms, 55_315);
+        assert!(to_srt(&moved).starts_with("1\n00:00:55,315 --> 00:00:56,815\nline 32465\n\n2\n"));
+    }
 }
 
 #[cfg(test)]

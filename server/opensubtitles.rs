@@ -159,8 +159,9 @@ pub(crate) fn choose(results: &[Value], release: &str, language: &str) -> Option
 /// How uploads are ranked: version 2 (2026-11-18) puts trusted uploaders first and anonymous
 /// ones last, with a matching hash only a tie-breaker. Version 1 put any hash match first, and
 /// The Office S01E01 got an anonymous upload full of mistakes ("I couldn't closet") over the
-/// administrator's from the DVD.
-pub(crate) const RANKING: u64 = 2;
+/// administrator's from the DVD. Version 3 times an upload that is not the hash-matched one by
+/// that one (`subtitles::alignment`): the best text for The Office S01E01 ran 23 s early.
+pub(crate) const RANKING: u64 = 3;
 
 pub(crate) fn ranked(results: &[Value], release: &str, language: &str) -> Vec<(u64, String, Value)> {
     let mine = tokens(release);
@@ -285,6 +286,9 @@ pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: 
     let duration = tokio::task::spawn_blocking(move || crate::media_format::duration(&measured)).await.ok().flatten();
     let mut misfits: Vec<Value> = Vec::new();
     let mut unreadable = None;
+    // The hash-matched upload, downloaded once when another is chosen: its timing is this
+    // file's, whatever its text (The Office S01E01's best text ran 23 s early on this copy).
+    let mut reference: Option<Option<(Vec<crate::subtitles::TimedCue>, String, Value)>> = None;
     let mut tried: Vec<u64> = refused.to_vec();
     for mut query in searches {
         if let Some(hash) = &hash { query.push(("moviehash", hash.clone())); }
@@ -317,6 +321,42 @@ pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: 
                 tracing::info!(asset = asset["id"].as_str().unwrap_or(""), language = ours, release = %chosen, last_end, duration, "OpenSubtitles file does not fit this file's length");
                 misfits.push(json!({"file_id": file_id, "release": chosen, "last_cue": last_end}));
                 continue;
+            }
+            let (mut cues, mut text) = (cues, text);
+            if provenance["moviehash_match"] != true {
+                if reference.is_none() {
+                    let matched = codes.iter().flat_map(|code| ranked(found, &release, code)).find(|(_, _, p)| p["moviehash_match"] == true);
+                    reference = Some(match matched {
+                        Some((id, _, p)) => match download(data, &client, &c, id, if p["language"].as_str().is_some_and(|l| l.eq_ignore_ascii_case("zh-tw")) { "zh-Hant" } else { ours }).await? {
+                            Ok((cues, text)) => Some((cues, text, p)),
+                            Err(_) => None,
+                        },
+                        None => None,
+                    });
+                }
+                if let Some(Some((timing, matched_text, matched))) = &reference {
+                    match crate::subtitles::alignment(timing, &cues) {
+                        Some(0) => { provenance["timed_by"] = matched["file_id"].clone(); }
+                        Some(shift) => {
+                            cues = crate::subtitles::shifted(&cues, shift);
+                            text = crate::subtitles::to_srt(&cues);
+                            provenance["shifted_ms"] = json!(shift);
+                            provenance["timed_by"] = matched["file_id"].clone();
+                            tracing::info!(asset = asset["id"].as_str().unwrap_or(""), shift, release = %chosen, "OpenSubtitles file shifted to the hash-matched upload's timing");
+                        }
+                        None => {
+                            // Not the same timing at any offset (another cut, another frame
+                            // rate): in time beats tidy, so the hash-matched upload is used.
+                            tracing::info!(asset = asset["id"].as_str().unwrap_or(""), release = %chosen, "OpenSubtitles file does not line up with the hash-matched upload; using that");
+                            let from_matched = matched["language"].as_str().is_some_and(|l| l.eq_ignore_ascii_case("zh-tw"));
+                            text = if from_matched { zhconv::zhconv(matched_text, zhconv::Variant::ZhCN) } else { matched_text.clone() };
+                            cues = timing.clone();
+                            provenance = matched.clone();
+                            if from_matched { provenance["converted_from"] = json!("zh-Hant"); }
+                            provenance["better_text_out_of_time"] = json!(chosen);
+                        }
+                    }
+                }
             }
             let path = directory.join(format!("{name}.{ours}.opensubtitles.srt"));
             let temporary = directory.join(format!("{name}.{ours}.opensubtitles.srt.tmp"));

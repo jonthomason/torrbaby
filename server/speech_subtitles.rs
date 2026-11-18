@@ -448,7 +448,11 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
         let kept = root.join(saved["output"].as_str().unwrap_or_default());
         if kept.is_file() {
             let mut saved = saved.clone();
-            match crate::opensubtitles::find_language(&s.data_dir, asset, input, &root, &name, language, &[], saved["provenance"]["file_id"].as_u64()).await {
+            // Kept as it is only when its timing is known to be this file's (hash-matched, or
+            // already lined up with the hash-matched upload).
+            let in_time = saved["provenance"]["moviehash_match"] == true || !saved["provenance"]["timed_by"].is_null();
+            let keep = saved["provenance"]["file_id"].as_u64().filter(|_| in_time);
+            match crate::opensubtitles::find_language(&s.data_dir, asset, input, &root, &name, language, &[], keep).await {
                 Ok(crate::opensubtitles::Found::Ready(path, provenance)) => {
                     tracing::info!(asset = id, tag, was = saved["provenance"]["release"].as_str().unwrap_or(""), now = provenance["release"].as_str().unwrap_or(""), "OpenSubtitles chosen again by the new ranking");
                     save(json!({"state":"ready","asset_id":id,"output":path.file_name().and_then(|n| n.to_str()),"provenance":provenance,"updated":now()}))?;
