@@ -21,9 +21,9 @@
 //! - every 6 s, bronze's view (TBINFO): behind Diamond's own address no punch is tried (it
 //!   could only hairpin); a new public address under the direct path (a carrier switch behind
 //!   a hotspot) drops it.
-use crate::relay::{Bronze, BronzeHints, BronzeRelay};
+use crate::relay::{Bronze, BronzeRelay};
 use abt_link::device::policy::{Advice, Attempt, Policy, Reporter};
-use abt_link::bronze::{Relay as Rendezvous, Seen, open_signal, ours, watch_home};
+use abt_link::bronze::{Relay as Rendezvous, Seen, hints_from, open_signal, ours, watch_home};
 use abt_link::device::{Failure, HttpSignal, Opened, Plan, Signal};
 use abt_link::route::{Route, RouteConfig, State};
 use std::collections::VecDeque;
@@ -151,7 +151,7 @@ pub fn start(config: Config) -> u16 {
     {
         let _inside = runtime.enter();
         let attempt = Arc::new(Punch { shared: shared.clone(), route: Arc::downgrade(&route) });
-        route.punch_with(policy.clone(), attempt, Arc::new(BronzeHints(bronze.clone())));
+        route.punch_with(policy.clone(), attempt, Arc::new(Hints(rendezvous())));
     }
     runtime.spawn(Keeper { shared: shared.clone(), route: route.clone(), bronze: bronze.clone(), last_info: None, network: String::new(),
         pending: None, last_bytes: 0, last_busy: Instant::now(), punched_from: None }.run());
@@ -277,6 +277,8 @@ impl Attempt for Punch {
         }));
         plan.random_from = advice.random_from;
         plan.pool = advice.pool;
+        // No punch from this network on record: Diamond also sprays random ports.
+        plan.known = advice.known;
         // Diamond is asked through the route itself while it has a path (the relay, or an old
         // direct path); else through whichever rendezvous answers first, TLS to Diamond end to end.
         let signal = Signals {
@@ -304,6 +306,12 @@ impl Attempt for Punch {
     fn relayed(&self, _host: &str) -> bool {
         self.route.upgrade().is_some_and(|r| matches!(r.state(), State::Relay))
     }
+}
+
+/// What every rendezvous's shared store says about punching from this network, merged.
+struct Hints(Vec<Arc<Rendezvous>>);
+impl abt_link::device::policy::Hints for Hints {
+    async fn hints(&self) -> Option<serde_json::Value> { hints_from(&self.0).await }
 }
 
 /// How a punch request reaches Diamond: through the route while it has a path, else (or when

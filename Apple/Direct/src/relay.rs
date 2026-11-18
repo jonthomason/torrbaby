@@ -264,11 +264,3 @@ impl abt_link::route::Relay for BronzeRelay {
         Box::pin(async move { self.0.stream(host).await })
     }
 }
-
-/// bronze's shared punch hints for the network this device is on.
-pub(crate) struct BronzeHints(pub(crate) Arc<Bronze>);
-impl abt_link::device::policy::Hints for BronzeHints {
-    async fn hints(&self) -> Option<serde_json::Value> {
-        serde_json::from_slice(&self.0.ask(b"TBHINTS1\n").await?).ok()
-    }
-}
