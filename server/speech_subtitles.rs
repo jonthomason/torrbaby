@@ -490,9 +490,16 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
     Ok(found)
 }
 
+/// Version 2 of timing by audio (2026-11-18): only a strong fit that every window agrees with.
+/// Version 1 retimed on weak fits and put sitcoms 10-20 s out; its changes are undone and judged
+/// again.
+const AUDIO_TIMING: u64 = 2;
+
 /// Whether a record from OpenSubtitles still waits to be timed by the film's own audio.
 fn untimed(saved: &Value) -> bool {
-    saved["state"] == "ready" && saved["provenance"]["source"] == "opensubtitles" && saved["provenance"]["timed_by_audio"].is_null()
+    let timed = &saved["provenance"]["timed_by_audio"];
+    saved["state"] == "ready" && saved["provenance"]["source"] == "opensubtitles"
+        && (timed.is_null() || (timed["version"].as_u64().unwrap_or(1) < AUDIO_TIMING && (timed["shift_ms"] != 0 || timed["scale"] != 1.0)))
 }
 
 /// The film's sound, 50 ms frames (`subtitles::sound_frames`), from its first audio track: three
@@ -532,18 +539,22 @@ fn time_by_audio(s: &Service, input: &Path, record: &str) -> Result<()> {
     let Some(mut saved) = load(&*database(s)?, record) else { return Ok(()) };
     if !untimed(&saved) { return Ok(()) }
     let path = directory(&s.data_dir).join(saved["output"].as_str().unwrap_or_default());
-    let cues = crate::subtitles::parse_srt(&std::fs::read_to_string(&path)?)?;
-    let sound = sound(input)?;
-    match crate::subtitles::audio_timing(&sound, &cues) {
-        Some(timing) => {
-            let temporary = path.with_extension("srt.tmp");
-            std::fs::write(&temporary, crate::subtitles::to_srt(&crate::subtitles::shifted(&cues, timing)))?;
-            std::fs::rename(&temporary, &path)?;
-            saved["provenance"]["timed_by_audio"] = json!({"shift_ms": timing.shift, "scale": timing.scale});
-            tracing::info!(record, shift = timing.shift, scale = timing.scale, "Subtitles retimed by the film's audio");
-        }
-        None => { saved["provenance"]["timed_by_audio"] = json!({"shift_ms": 0, "scale": 1.0}); }
+    let mut cues = crate::subtitles::parse_srt(&std::fs::read_to_string(&path)?)?;
+    // A version 1 retiming: undone first (its scale and shift were kept), then judged again.
+    let earlier = &saved["provenance"]["timed_by_audio"];
+    if let (Some(scale), Some(shift)) = (earlier["scale"].as_f64(), earlier["shift_ms"].as_i64()) && (scale != 1.0 || shift != 0) {
+        cues = crate::subtitles::unshifted(&cues, crate::subtitles::Timing { scale, shift });
+        tracing::info!(record, scale, shift, "Earlier retiming by audio undone");
     }
+    let sound = sound(input)?;
+    let timing = crate::subtitles::audio_timing(&sound, &cues);
+    let written = timing.map_or_else(|| cues.clone(), |t| crate::subtitles::shifted(&cues, t));
+    let temporary = path.with_extension("srt.tmp");
+    std::fs::write(&temporary, crate::subtitles::to_srt(&written))?;
+    std::fs::rename(&temporary, &path)?;
+    let timing = timing.unwrap_or(crate::subtitles::Timing { scale: 1.0, shift: 0 });
+    if timing.scale != 1.0 || timing.shift != 0 { tracing::info!(record, shift = timing.shift, scale = timing.scale, "Subtitles retimed by the film's audio") }
+    saved["provenance"]["timed_by_audio"] = json!({"shift_ms": timing.shift, "scale": timing.scale, "version": AUDIO_TIMING});
     store(&*database(s)?, record, &saved)
 }
 

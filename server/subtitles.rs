@@ -279,9 +279,10 @@ pub fn audio_timing(windows: &[(f64, Vec<bool>)], cues: &[TimedCue]) -> Option<T
         for (i, s) in sound.iter().enumerate() { prefix[i + 1] = prefix[i] + *s as u32 }
         (*start, prefix)
     }).collect();
-    let fit = |t: Timing| {
+    let fit_in = |t: Timing, only: Option<usize>| {
         let (mut loud, mut frames, mut total, mut all) = (0f64, 0f64, 0f64, 0f64);
-        for (start, prefix) in &prepared {
+        for (index, (start, prefix)) in prepared.iter().enumerate() {
+            if only.is_some_and(|o| o != index) { continue }
             let len = prefix.len() - 1;
             total += prefix[len] as f64;
             all += len as f64;
@@ -297,6 +298,7 @@ pub fn audio_timing(windows: &[(f64, Vec<bool>)], cues: &[TimedCue]) -> Option<T
         if frames == 0.0 || frames >= all { return f64::MIN }
         loud / frames - (total - loud) / (all - frames)
     };
+    let fit = |t: Timing| fit_in(t, None);
     let mut best = (f64::MIN, Timing { scale: 1.0, shift: 0 });
     for scale in SCALES {
         for tenth in -300..=300 {
@@ -306,7 +308,23 @@ pub fn audio_timing(windows: &[(f64, Vec<bool>)], cues: &[TimedCue]) -> Option<T
         }
     }
     let now = fit(Timing { scale: 1.0, shift: 0 });
-    (best.0 > 0.05 && best.0 - now > 0.02).then_some(best.1)
+    // Only a clear answer: speech that stands out (sitcom laugh tracks, music and rain gave weak
+    // fits that put The Office and Friends 10-20 s out), and every window, on its own, agreeing
+    // within a second at that speed (a wrong speed agrees in one window at most).
+    if best.0 < 0.15 || best.0 - now < 0.03 { return None }
+    let (scale, shift) = (best.1.scale, best.1.shift);
+    let agree = (0..prepared.len()).all(|w| {
+        let own = (-300..=300).map(|tenth| (fit_in(Timing { scale, shift: tenth * 100 }, Some(w)), tenth * 100))
+            .max_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, s)| s).unwrap_or(shift);
+        (own - shift).abs() <= 1000
+    });
+    agree.then_some(best.1)
+}
+
+/// `cues` with `timing` undone (a retiming found wrong).
+pub fn unshifted(cues: &[TimedCue], timing: Timing) -> Vec<TimedCue> {
+    let back = |ms: u64| ((ms as f64 - timing.shift as f64) / timing.scale).round().max(0.0) as u64;
+    cues.iter().map(|c| TimedCue { start_ms: back(c.start_ms), end_ms: back(c.end_ms), text: c.text.clone() }).collect()
 }
 
 /// `cues` retimed by `timing`; a cue that would start before 0 is dropped.
