@@ -161,7 +161,9 @@ pub(crate) fn choose(results: &[Value], release: &str, language: &str) -> Option
 /// The Office S01E01 got an anonymous upload full of mistakes ("I couldn't closet") over the
 /// administrator's from the DVD. Version 3 times an upload that is not the hash-matched one by
 /// that one (`subtitles::alignment`): the best text for The Office S01E01 ran 23 s early.
-pub(crate) const RANKING: u64 = 3;
+/// Version 4 also stretches it (another frame rate): picks that fell back to the hash-matched
+/// text for want of a fit are looked up again.
+pub(crate) const RANKING: u64 = 4;
 
 pub(crate) fn ranked(results: &[Value], release: &str, language: &str) -> Vec<(u64, String, Value)> {
     let mine = tokens(release);
@@ -336,13 +338,14 @@ pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: 
                 }
                 if let Some(Some((timing, matched_text, matched))) = &reference {
                     match crate::subtitles::alignment(timing, &cues) {
-                        Some(0) => { provenance["timed_by"] = matched["file_id"].clone(); }
-                        Some(shift) => {
-                            cues = crate::subtitles::shifted(&cues, shift);
+                        Some(crate::subtitles::Timing { scale, shift: 0 }) if scale == 1.0 => { provenance["timed_by"] = matched["file_id"].clone(); }
+                        Some(retimed) => {
+                            cues = crate::subtitles::shifted(&cues, retimed);
                             text = crate::subtitles::to_srt(&cues);
-                            provenance["shifted_ms"] = json!(shift);
+                            provenance["shifted_ms"] = json!(retimed.shift);
+                            if retimed.scale != 1.0 { provenance["scaled"] = json!(retimed.scale) }
                             provenance["timed_by"] = matched["file_id"].clone();
-                            tracing::info!(asset = asset["id"].as_str().unwrap_or(""), shift, release = %chosen, "OpenSubtitles file shifted to the hash-matched upload's timing");
+                            tracing::info!(asset = asset["id"].as_str().unwrap_or(""), shift = retimed.shift, scale = retimed.scale, release = %chosen, "OpenSubtitles file retimed to the hash-matched upload's timing");
                         }
                         None => {
                             // Not the same timing at any offset (another cut, another frame

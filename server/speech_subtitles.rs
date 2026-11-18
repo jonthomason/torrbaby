@@ -414,7 +414,11 @@ fn ask_again(saved: &Value, special: bool) -> bool {
 /// it still ranks first among those that fit (nothing downloaded) or nothing better is found.
 fn rechoose(saved: &Value) -> bool {
     saved["state"] == "ready" && saved["provenance"]["source"] == "opensubtitles"
-        && saved["provenance"]["ranking"].as_u64().unwrap_or(1) < crate::opensubtitles::RANKING
+        && match saved["provenance"]["ranking"].as_u64().unwrap_or(1) {
+            // Ranking 3 timed by shifting only: what it could not line up is asked again.
+            3 => !saved["provenance"]["better_text_out_of_time"].is_null(),
+            ranking => ranking < crate::opensubtitles::RANKING,
+        }
         && saved["after"].as_f64().is_none_or(|t| t <= now())
 }
 

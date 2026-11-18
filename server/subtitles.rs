@@ -220,37 +220,49 @@ pub fn tidy_vtt(text: &str, language: &str) -> String {
     webvtt(&cues)
 }
 
-/// The shift (ms, added to `cues`' times) that lines `cues` up with `reference`, two uploads of
-/// the same dialogue for different releases: the offset at which the most cue starts land within
-/// 0.4 s of one in `reference`, tried among the differences of their first 40 starts. None when
-/// no offset lines up at least a third of the cues (another cut or frame rate); 0 within 0.3 s.
-pub fn alignment(reference: &[TimedCue], cues: &[TimedCue]) -> Option<i64> {
+/// How `cues` line up with `reference`, two uploads of the same dialogue for different
+/// releases: their times are multiplied by `scale` (another frame rate: PAL's 25 against film's
+/// 23.976 runs 4% fast), then `shift` ms is added.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Timing { pub scale: f64, pub shift: i64 }
+
+/// The speed ratios tried: the same speed, then 25 / 24 / 23.976 fps against each other.
+const SCALES: [f64; 7] = [1.0, 25.0 / (24000.0 / 1001.0), (24000.0 / 1001.0) / 25.0, 24.0 / (24000.0 / 1001.0), (24000.0 / 1001.0) / 24.0, 25.0 / 24.0, 24.0 / 25.0];
+
+/// The timing at which the most cue starts land within 0.4 s of one in `reference`, among the
+/// speed ratios and, for each, the offsets between their first 40 starts. None when none lines
+/// up at least half the cues (another cut: with this many timings tried, a third can land by
+/// chance); the same speed is preferred on a tie, and an offset within 0.3 s is none.
+pub fn alignment(reference: &[TimedCue], cues: &[TimedCue]) -> Option<Timing> {
     if reference.len() < 10 || cues.len() < 10 { return None }
     let starts: Vec<i64> = reference.iter().map(|c| c.start_ms as i64).collect();
-    let lands = |shift: i64| cues.iter().filter(|c| {
-        let at = c.start_ms as i64 + shift;
+    let lands = |scale: f64, shift: i64| cues.iter().filter(|c| {
+        let at = (c.start_ms as f64 * scale) as i64 + shift;
         let i = starts.partition_point(|s| *s < at);
         [i.checked_sub(1), Some(i)].into_iter().flatten().filter_map(|i| starts.get(i)).any(|s| (s - at).abs() <= 400)
     }).count();
-    let mut tried = std::collections::HashSet::new();
-    let mut best = (0, 0i64);
-    for r in starts.iter().take(40) {
-        for c in cues.iter().take(40) {
-            let shift = r - c.start_ms as i64;
-            if shift.abs() > 300_000 || !tried.insert(shift / 100) { continue }
-            let landed = lands(shift);
-            if landed > best.0 || (landed == best.0 && shift.abs() < best.1.abs()) { best = (landed, shift) }
+    let mut best: Option<(usize, Timing)> = None;
+    for scale in SCALES {
+        let mut tried = std::collections::HashSet::new();
+        for r in starts.iter().take(40) {
+            for c in cues.iter().take(40) {
+                let shift = r - (c.start_ms as f64 * scale) as i64;
+                if shift.abs() > 300_000 || !tried.insert(shift / 100) { continue }
+                let landed = lands(scale, shift);
+                if best.is_none_or(|(most, _)| landed > most) { best = Some((landed, Timing { scale, shift })) }
+            }
         }
     }
-    let (landed, shift) = best;
-    (landed * 3 >= cues.len()).then_some(if shift.abs() <= 300 { 0 } else { shift })
+    let (landed, timing) = best?;
+    (landed * 2 >= cues.len()).then_some(if timing.scale == 1.0 && timing.shift.abs() <= 300 { Timing { scale: 1.0, shift: 0 } } else { timing })
 }
 
-/// `cues` moved by `shift` ms; a cue that would start before 0 is dropped.
-pub fn shifted(cues: &[TimedCue], shift: i64) -> Vec<TimedCue> {
+/// `cues` retimed by `timing`; a cue that would start before 0 is dropped.
+pub fn shifted(cues: &[TimedCue], timing: Timing) -> Vec<TimedCue> {
+    let at = |ms: u64| (ms as f64 * timing.scale) as i64 + timing.shift;
     cues.iter().filter_map(|c| {
-        let start = c.start_ms as i64 + shift;
-        (start >= 0).then(|| TimedCue { start_ms: start as u64, end_ms: (c.end_ms as i64 + shift).max(start) as u64, text: c.text.clone() })
+        let start = at(c.start_ms);
+        (start >= 0).then(|| TimedCue { start_ms: start as u64, end_ms: at(c.end_ms).max(start) as u64, text: c.text.clone() })
     }).collect()
 }
 
@@ -741,14 +753,26 @@ mod alignment_tests {
     fn another_release_is_lined_up_with_the_hash_matched_one() {
         // The Office S01E01: the same lines 23 s earlier in a WEB-DL's upload, some cues split
         // differently.
-        let reference: Vec<u64> = (0..60).map(|i| 55_315 + i * 3_100 + (i % 7) * 211).collect();
+        // Dialogue: lines 1.2 to 6 s apart, irregularly.
+        let mut seed = 7u64;
+        let mut gap = || { seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); 1_200 + (seed >> 33) % 4_800 };
+        let mut at = 55_315;
+        let reference: Vec<u64> = (0..60).map(|_| { let start = at; at += gap(); start }).collect();
         let other: Vec<u64> = reference.iter().enumerate().filter(|(i, _)| i % 9 != 4).map(|(_, s)| s - 22_850).collect();
-        assert_eq!(alignment(&cues(&reference), &cues(&other)), Some(22_850));
-        assert_eq!(alignment(&cues(&reference), &cues(&reference)), Some(0));
-        // Another frame rate (4% slower): nothing lines up a third of the cues.
-        let slower: Vec<u64> = reference.iter().map(|s| s * 104 / 100).collect();
-        assert_eq!(alignment(&cues(&reference), &cues(&slower)), None);
-        let moved = shifted(&cues(&other), 22_850);
+        assert_eq!(alignment(&cues(&reference), &cues(&other)), Some(Timing { scale: 1.0, shift: 22_850 }));
+        assert_eq!(alignment(&cues(&reference), &cues(&reference)), Some(Timing { scale: 1.0, shift: 0 }));
+        // A PAL release's upload: 25 fps against this file's 23.976, so 4% fast, and 5 s off.
+        let film = 24000.0 / 1001.0;
+        let pal: Vec<u64> = reference.iter().map(|s| (*s as f64 * film / 25.0) as u64 + 5_000).collect();
+        let timing = alignment(&cues(&reference), &cues(&pal)).unwrap();
+        assert!((timing.scale - 25.0 / film).abs() < 1e-9, "{timing:?}");
+        let back = shifted(&cues(&pal), timing);
+        assert!(back.iter().zip(&reference).all(|(c, r)| (c.start_ms as i64 - *r as i64).abs() <= 400));
+        // Another cut, other dialogue: nothing lines up.
+        let mut at = 40_000;
+        let cut: Vec<u64> = (0..60).map(|_| { let start = at; at += gap(); start }).collect();
+        assert_eq!(alignment(&cues(&reference), &cues(&cut)), None);
+        let moved = shifted(&cues(&other), Timing { scale: 1.0, shift: 22_850 });
         assert_eq!(moved[0].start_ms, 55_315);
         assert!(to_srt(&moved).starts_with("1\n00:00:55,315 --> 00:00:56,815\nline 32465\n\n2\n"));
     }
