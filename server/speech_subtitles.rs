@@ -492,14 +492,15 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
 
 /// Version 2 of timing by audio (2026-11-18): only a strong fit that every window agrees with.
 /// Version 1 retimed on weak fits and put sitcoms 10-20 s out; its changes are undone and judged
-/// again.
-const AUDIO_TIMING: u64 = 2;
+/// again. Version 3 searches offsets up to 3 minutes, not 30 s (Outlander S01E07's English was
+/// 47 s early): every file is judged again.
+const AUDIO_TIMING: u64 = 3;
 
 /// Whether a record from OpenSubtitles still waits to be timed by the film's own audio.
 fn untimed(saved: &Value) -> bool {
     let timed = &saved["provenance"]["timed_by_audio"];
     saved["state"] == "ready" && saved["provenance"]["source"] == "opensubtitles"
-        && (timed.is_null() || (timed["version"].as_u64().unwrap_or(1) < AUDIO_TIMING && (timed["shift_ms"] != 0 || timed["scale"] != 1.0)))
+        && (timed.is_null() || timed["version"].as_u64().unwrap_or(1) < AUDIO_TIMING)
 }
 
 /// The film's sound, 50 ms frames (`subtitles::sound_frames`), from its first audio track: three

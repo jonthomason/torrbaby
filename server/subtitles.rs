@@ -267,12 +267,15 @@ pub fn sound_frames(levels: &[f32]) -> Vec<bool> {
 
 /// The timing that puts the most sound under `cues` and the least outside them, against the
 /// film's own audio: `windows` of it (start in seconds, 50 ms frames of sound), among the speed
-/// ratios and offsets up to 30 s. Windows near the start, middle and end catch both an offset and
+/// ratios and offsets up to 3 minutes (a recap or cold open one release has and another lacks:
+/// Outlander S01E07's English was 47 s early). Windows near the start, middle and end catch both an offset and
 /// a drift (another frame rate) without decoding the whole film. The reference no upload can get
 /// wrong: Parasite's "hash-matched" English ran 10 s late and fell 5 s further behind by the end.
 /// None when the cues already fit as well as any timing does (within 0.02), or none fits clearly.
 pub fn audio_timing(windows: &[(f64, Vec<bool>)], cues: &[TimedCue]) -> Option<Timing> {
     const FRAME: f64 = 0.05;
+    /// Tenths of a second either way.
+    const SEARCH: i64 = 1800;
     if cues.len() < 20 || windows.iter().map(|(_, w)| w.len()).sum::<usize>() < 1200 { return None }
     let prepared: Vec<(f64, Vec<u32>)> = windows.iter().map(|(start, sound)| {
         let mut prefix = vec![0u32; sound.len() + 1];
@@ -301,7 +304,7 @@ pub fn audio_timing(windows: &[(f64, Vec<bool>)], cues: &[TimedCue]) -> Option<T
     let fit = |t: Timing| fit_in(t, None);
     let mut best = (f64::MIN, Timing { scale: 1.0, shift: 0 });
     for scale in SCALES {
-        for tenth in -300..=300 {
+        for tenth in -SEARCH..=SEARCH {
             let timing = Timing { scale, shift: tenth * 100 };
             let score = fit(timing);
             if score > best.0 { best = (score, timing) }
@@ -314,7 +317,7 @@ pub fn audio_timing(windows: &[(f64, Vec<bool>)], cues: &[TimedCue]) -> Option<T
     if best.0 < 0.15 || best.0 - now < 0.03 { return None }
     let (scale, shift) = (best.1.scale, best.1.shift);
     let agree = (0..prepared.len()).all(|w| {
-        let own = (-300..=300).map(|tenth| (fit_in(Timing { scale, shift: tenth * 100 }, Some(w)), tenth * 100))
+        let own = (-SEARCH..=SEARCH).map(|tenth| (fit_in(Timing { scale, shift: tenth * 100 }, Some(w)), tenth * 100))
             .max_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, s)| s).unwrap_or(shift);
         (own - shift).abs() <= 1000
     });
