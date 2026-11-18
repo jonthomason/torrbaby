@@ -203,6 +203,26 @@ pub fn fits(last_end: f64, duration: Option<f64>) -> bool {
     last_end >= duration * 0.6 && last_end <= duration + 120.0
 }
 
+/// When OpenSubtitles last said "too many requests" (429): every search and download waits
+/// until then and asks again, rather than each file finding out for itself and waiting an hour
+/// (2026-11-18: re-asking 900 Chinese files at once left 248 waiting).
+static PAUSED_UNTIL: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// `request` sent once OpenSubtitles' pause has passed, and again (up to 3 times) after each 429,
+/// waiting as long as its Retry-After says (10 s when it says nothing).
+async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response> {
+    for _ in 0..3 {
+        let until = PAUSED_UNTIL.lock().ok().and_then(|p| *p);
+        if let Some(until) = until { tokio::time::sleep_until(until.into()).await }
+        let reply = request.try_clone().context("OpenSubtitles request")?.send().await?;
+        if reply.status() != reqwest::StatusCode::TOO_MANY_REQUESTS { return Ok(reply) }
+        let wait = reply.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(10).clamp(1, 120);
+        tracing::info!(wait, "OpenSubtitles: too many requests; every lookup waits");
+        if let Ok(mut paused) = PAUSED_UNTIL.lock() { *paused = Some(std::time::Instant::now() + std::time::Duration::from_secs(wait)) }
+    }
+    anyhow::bail!("OpenSubtitles refused (429 Too Many Requests) three times")
+}
+
 /// Candidates downloaded at most for one lookup, looking for subtitles that fit the file.
 const TRIES: usize = 3;
 
@@ -259,7 +279,7 @@ pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: 
         query.sort();
         let mut url = reqwest::Url::parse(&format!("{API}/subtitles"))?;
         for (key, value) in &query { url.query_pairs_mut().append_pair(key, value); }
-        let reply = client.get(url).header("Api-Key", &c.api_key).header("Accept", "application/json").send().await.context("OpenSubtitles search")?;
+        let reply = send(client.get(url).header("Api-Key", &c.api_key).header("Accept", "application/json")).await.context("OpenSubtitles search")?;
         ensure!(reply.status().is_success(), "OpenSubtitles search failed ({})", reply.status());
         let results: Value = reply.json().await?;
         let found = results["data"].as_array().map(Vec::as_slice).unwrap_or(&[]);
@@ -328,7 +348,7 @@ pub(crate) fn special(stem: &str) -> Option<Special> {
 async fn special_search(client: &reqwest::Client, c: &Credentials, special: &Special) -> Option<Vec<(&'static str, String)>> {
     let mut url = reqwest::Url::parse(&format!("{API}/features")).ok()?;
     url.query_pairs_mut().append_pair("query", &format!("{} {}", special.series, special.title));
-    let reply = client.get(url).header("Api-Key", &c.api_key).header("Accept", "application/json").send().await.ok()?;
+    let reply = send(client.get(url).header("Api-Key", &c.api_key).header("Accept", "application/json")).await.ok()?;
     if !reply.status().is_success() { return None }
     let found: Value = reply.json().await.ok()?;
     let (kind, imdb) = feature(found["data"].as_array()?, special)?;
@@ -363,8 +383,8 @@ async fn download(data: &Path, client: &reqwest::Client, c: &Credentials, file_i
         let (token, host) = session(client, c).await?;
         client.post(format!("https://{host}/api/v1/download")).bearer_auth(&token)
     } else { client.post(format!("{API}/download")) };
-    let reply = request.header("Api-Key", &c.api_key).header("Accept", "application/json")
-        .json(&json!({"file_id": file_id, "sub_format": "srt"})).send().await.context("OpenSubtitles download")?;
+    let reply = send(request.header("Api-Key", &c.api_key).header("Accept", "application/json")
+        .json(&json!({"file_id": file_id, "sub_format": "srt"}))).await.context("OpenSubtitles download")?;
     let status = reply.status();
     let body: Value = reply.json().await.unwrap_or(Value::Null);
     let reset = || body["reset_time_utc"].as_str().and_then(utc_seconds).unwrap_or(crate::storage::now() + 6.0 * 3600.0);
