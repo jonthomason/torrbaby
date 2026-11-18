@@ -1014,8 +1014,11 @@ struct LibraryDetail: View {
                         VStack(alignment: .leading, spacing: 14) {
                             Spacer(minLength: 160)
                             Text(title.title).font(.largeTitle.bold()).fixedSize(horizontal: false, vertical: true)
-                            Text(([title.yearLabel, title.contentRating ?? ""] + title.genres.prefix(3)).filter { !$0.isEmpty }.joined(separator: " · "))
-                                .font(.subheadline).foregroundStyle(.white.opacity(0.8))
+                            HStack(spacing: 12) {
+                                Text(([title.yearLabel, title.contentRating ?? ""] + title.genres.prefix(3)).filter { !$0.isEmpty }.joined(separator: " · "))
+                                    .foregroundStyle(.white.opacity(0.8))
+                                if title.watched { Label("Watched", systemImage: "checkmark.circle.fill").fontWeight(.semibold) }
+                            }.font(.subheadline)
                             if let asset = preferred {
                                 if stacksActions {
                                     VStack(alignment: .leading, spacing: 10) { playbackActions(asset, title: title, selectedSeason: chosen) }

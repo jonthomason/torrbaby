@@ -513,8 +513,11 @@ private struct TVMediaDetail: View {
                         LinearGradient(colors: [.clear, .black.opacity(0.95)], startPoint: .top, endPoint: .bottom)
                         VStack(alignment: .leading, spacing: 22) {
                             Text(title.title).font(.system(size: 56, weight: .bold)).lineLimit(2)
-                            Text(LocalizedStringKey(([title.yearLabel, title.contentRating ?? ""] + title.genres.prefix(3)).filter { !$0.isEmpty }.joined(separator: " · ")))
-                                .font(.headline).foregroundStyle(.white.opacity(0.8))
+                            HStack(spacing: 20) {
+                                Text(LocalizedStringKey(([title.yearLabel, title.contentRating ?? ""] + title.genres.prefix(3)).filter { !$0.isEmpty }.joined(separator: " · ")))
+                                    .foregroundStyle(.white.opacity(0.8))
+                                if title.watched { Label("Watched", systemImage: "checkmark.circle.fill") }
+                            }.font(.headline)
                             if let asset = store.preferredLibraryAsset(title) {
                                 // TV shows keep the episode guide directly below the hero, so their
                                 // secondary actions live in one compact menu beside Play.

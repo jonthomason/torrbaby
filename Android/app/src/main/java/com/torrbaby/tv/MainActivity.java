@@ -629,7 +629,17 @@ public class MainActivity extends Activity {
     name.setMaxLines(2);
     Ui.add(info, name, -1, -2);
     Ui.gap(info, 10);
-    Ui.add(info, Ui.text(this, t.metadata(), 14, 0xffcccccc), -1, -2);
+    // A watched title says so on its page, as its poster does with the check.
+    android.text.SpannableStringBuilder meta = new android.text.SpannableStringBuilder(t.metadata());
+    if (detail && t.watched()) {
+      int from = meta.length();
+      meta.append(from == 0 ? "" : "    ").append("\u2713 ").append(L10n.t("Watched"));
+      meta.setSpan(new android.text.style.ForegroundColorSpan(0xffffffff), from, meta.length(), 0);
+      meta.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), from, meta.length(), 0);
+    }
+    TextView metadata = Ui.text(this, "", 14, 0xffcccccc);
+    metadata.setText(meta);
+    Ui.add(info, metadata, -1, -2);
     Ui.gap(info, 15);
     Library.Asset asset = t.preferred();
     if (detail) {
