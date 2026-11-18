@@ -771,21 +771,22 @@ final class Store: ObservableObject {
     private var linkOpening: Task<String?, Never>?
     private var lastLinkFailure = Date.distantPast
     private var linkWatch: Task<Void, Never>?
-    /// The link's address, starting it when needed. Nil when bronze is not known or its relay
-    /// could not be reached (not tried again for a few seconds).
+    /// The link's address, starting it when needed. Nil when this device was never set up for
+    /// away from home (no relay known from Diamond) or the link could not start (not tried again
+    /// for a few seconds). bronze being down does not stop it: direct paths are still punched.
     func ensureLink() async -> String? {
         if let linkRoute, TorrbabyLink.running { return linkRoute }
         if let linkOpening { return await linkOpening.value }
         guard !relayAddress.isEmpty, relayFingerprint.count == 64, networkAvailable,
               Date().timeIntervalSince(lastLinkFailure) > 15 else { return nil }
-        let (relay, fingerprint, token) = (relayAddress, relayFingerprint, self.token)
+        let token = self.token
         let state = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("Torrbaby", isDirectory: true)
         let task = Task { @MainActor () -> String? in
             TorrbabyLink.identity(diamondIdentity)
             TorrbabyLink.client(clientId)
-            guard let port = await TorrbabyLink.start(relay: relay, fingerprint: fingerprint, token: token, stateDir: state, lean: false) else {
+            guard let port = await TorrbabyLink.start(token: token, stateDir: state, lean: false) else {
                 lastLinkFailure = Date()
-                directEvent("link: bronze's relay at \(relay) did not open")
+                directEvent("link: could not start")
                 return nil
             }
             let route = "http://127.0.0.1:\(port)"

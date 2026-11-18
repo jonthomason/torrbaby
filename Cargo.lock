@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "abt-link"
 version = "0.1.0"
-source = "git+https://github.com/jonthomason/abt.git?rev=78af12be53fcb4269536b2f1e9cfcdc581cd3464#78af12be53fcb4269536b2f1e9cfcdc581cd3464"
+source = "git+https://github.com/jonthomason/abt.git?rev=0b96f85f6dc5555017fe3be5798676a2cce00154#0b96f85f6dc5555017fe3be5798676a2cce00154"
 dependencies = [
  "anyhow",
  "quinn",

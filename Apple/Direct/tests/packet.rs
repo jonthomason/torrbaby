@@ -60,7 +60,7 @@ fn a_tcp_connection_in_packets_reaches_diamond_through_the_link() {
     let setup = common::bronze_and_diamond(&runtime, "packet", Arc::new(body));
     let pinned = CString::new(setup.diamond.clone()).unwrap();
     tbdirect::tbdirect_identity(pinned.as_ptr());
-    let mut config = tbdirect::proxy::Config::new(&setup.rendezvous.to_string(), &setup.bronze);
+    let mut config = tbdirect::proxy::Config::local(setup.rendezvous, &setup.bronze);
     config.lean = true;
     assert_ne!(tbdirect::proxy::start(config), 0, "the link opens");
 

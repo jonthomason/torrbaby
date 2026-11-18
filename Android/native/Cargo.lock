@@ -5,15 +5,18 @@ version = 4
 [[package]]
 name = "abt-link"
 version = "0.1.0"
-source = "git+https://github.com/jonthomason/abt.git?rev=70d531c4ad9bda4fa1e33abff579df73444967ed#70d531c4ad9bda4fa1e33abff579df73444967ed"
+source = "git+https://github.com/jonthomason/abt.git?rev=0b96f85f6dc5555017fe3be5798676a2cce00154#0b96f85f6dc5555017fe3be5798676a2cce00154"
 dependencies = [
+ "anyhow",
  "quinn",
  "rustls",
+ "serde",
  "serde_json",
  "sha2",
  "socket2 0.5.10",
  "tokio",
  "tokio-rustls",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -27,6 +30,12 @@ dependencies = [
  "version_check",
  "zerocopy",
 ]
+
+[[package]]
+name = "anyhow"
+version = "1.0.104"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "arrayvec"
@@ -217,6 +226,7 @@ dependencies = [
 [[package]]
 name = "ipstack"
 version = "1.0.1"
+source = "git+https://github.com/jonthomason/abt.git?rev=0b96f85f6dc5555017fe3be5798676a2cce00154#0b96f85f6dc5555017fe3be5798676a2cce00154"
 dependencies = [
  "ahash",
  "etherparse",
@@ -518,6 +528,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
 dependencies = [
  "serde_core",
+ "serde_derive",
 ]
 
 [[package]]
@@ -645,7 +656,7 @@ dependencies = [
  "sha2",
  "tokio",
  "tokio-rustls",
- "webpki-roots",
+ "webpki-roots 1.0.12",
 ]
 
 [[package]]
@@ -841,6 +852,15 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "0.26.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
+dependencies = [
+ "webpki-roots 1.0.12",
 ]
 
 [[package]]

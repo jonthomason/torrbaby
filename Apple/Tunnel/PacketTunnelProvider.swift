@@ -252,7 +252,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             loadConfiguration()
             let state = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             if let state { try? FileManager.default.createDirectory(at: state, withIntermediateDirectories: true) }
-            if let port = await TorrbabyLink.start(relay: relay, fingerprint: relayFingerprint, token: token, stateDir: state, lean: true) {
+            if let port = await TorrbabyLink.start(token: token, stateDir: state, lean: true) {
                 note("link open (loopback port \(port))")
                 homeAddress = ""; homeLookedUp = .distantPast
             } else {

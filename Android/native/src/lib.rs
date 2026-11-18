@@ -23,9 +23,9 @@ fn string(env: &mut JNIEnv, value: &JString) -> Option<CString> { CString::new(t
 /// the new token and returns at once; otherwise it blocks for up to 7 s: call off the main thread.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_torrbaby_tv_Relay_nativeStart(mut env: JNIEnv, _: JClass, address: JString, fingerprint: JString, token: JString, state_dir: JString) -> jint {
-    let (Some(address), Some(fingerprint)) = (text(&mut env, &address), text(&mut env, &fingerprint)) else { return 0 };
+    let _ = (address, fingerprint); // The rendezvous servers come from abt-link.
     tbdirect::proxy::set_logger(log);
-    let mut config = tbdirect::proxy::Config::new(&address, &fingerprint);
+    let mut config = tbdirect::proxy::Config::new();
     config.token = text(&mut env, &token).unwrap_or_default();
     config.state_dir = text(&mut env, &state_dir).filter(|d| !d.is_empty()).map(std::path::PathBuf::from);
     tbdirect::proxy::start(config) as jint

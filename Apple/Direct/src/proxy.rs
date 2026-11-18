@@ -12,18 +12,21 @@
 //! policy (one at a time, waits after failures, random ports at once where predicted ones
 //! failed, bronze's shared hints, at most 2 minutes between tries while relayed).
 //!
+//! The rendezvous servers come from abt-link (`bronze::ours()`): bronze relays; Shadow and miyu
+//! carry only punch requests and "is Diamond there" (the user, 2026-11-18: no single point of
+//! failure for direct paths, no relaying but bronze). Each is abt-link's `bronze::Relay`, which
+//! keeps its QUIC (or TCP 443) connection, ties its sockets to the device's interface, moves
+//! them on a network change and lets the connection go after `idle` unused (no keepalives).
+//!
 //! What stays Torrbaby's (`Keeper`, every 3 s):
-//! - the relay through bronze (relay.rs: QUIC, or TCP 443 where UDP is blocked) kept open,
-//!   and let go after `idle` with nothing carried (no keepalives) until the next connection,
-//!   which opens it again within about a second;
-//! - a network change (told by the app, `network`) that holds for 3 s: the relay moves to the
-//!   new network and the route drops its direct path and asks for a punch;
-//! - every 6 s, bronze's view (TBINFO): behind Diamond's own address no punch is tried (it
-//!   could only hairpin); a new public address under the direct path (a carrier switch behind
-//!   a hotspot) drops it.
-use crate::relay::{Bronze, BronzeRelay};
+//! - a network change (told by the app, `network`) that holds for 3 s: the servers' sockets move
+//!   to the new network and the route drops its direct path and asks for a punch;
+//! - every 6 s while bronze's connection is up, bronze's view (TBINFO): behind Diamond's own
+//!   address no punch is tried (it could only hairpin); a new public address under the direct
+//!   path (a carrier switch behind a hotspot) drops it;
+//! - with no path at all, every 20 s, whether a rendezvous holds Diamond (`diamond_seen`).
+use abt_link::bronze::{NoRelay, Relay as Rendezvous, RelayState, Rendezvous as Server, ToHome, hints_from, open_signal, ours};
 use abt_link::device::policy::{Advice, Attempt, Policy, Reporter};
-use abt_link::bronze::{Relay as Rendezvous, Seen, hints_from, open_signal, ours, watch_home};
 use abt_link::device::{Failure, HttpSignal, Opened, Plan, Signal};
 use abt_link::route::{Route, RouteConfig, State};
 use std::collections::VecDeque;
@@ -33,12 +36,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
-/// How the link reaches bronze and Diamond.
-#[derive(Clone, PartialEq)]
+/// How the link reaches the rendezvous servers and Diamond.
+#[derive(Clone)]
 pub struct Config {
-    /// bronze's relay ("ip:port") and its certificate fingerprint.
-    pub relay: String,
-    pub relay_fingerprint: String,
+    /// The rendezvous servers: abt-link's `ours()` (tests give their own).
+    pub servers: Vec<Server>,
     /// This device's token for Diamond, which punching asks with (POST /v1/direct). Empty:
     /// relay only (a TV claiming its setup has no token yet).
     pub token: String,
@@ -47,20 +49,27 @@ pub struct Config {
     pub pinned: Option<String>,
     /// Where the punch memory is kept across restarts; none: in memory.
     pub state_dir: Option<PathBuf>,
-    /// Nothing carried this long: the relay is let go until the next connection.
+    /// Nothing carried this long: a server's connection is let go until it is next needed.
     pub idle: Duration,
-    /// How long `start` waits for the relay to open before giving up.
+    /// How long `start` waits to hear from bronze before going on without it.
     pub open_wait: Duration,
     /// The packet tunnel extension (50 MB in all): smaller buffers.
     pub lean: bool,
 }
 
 impl Config {
-    pub fn new(relay: &str, relay_fingerprint: &str) -> Config {
-        Config { relay: relay.into(), relay_fingerprint: relay_fingerprint.trim().to_lowercase(),
-            token: String::new(), pinned: crate::pinned(), state_dir: None, idle: Duration::from_secs(120), open_wait: Duration::from_secs(7), lean: false }
+    pub fn new() -> Config {
+        Config { servers: ours(), token: String::new(), pinned: crate::pinned(), state_dir: None, idle: Duration::from_secs(120),
+            open_wait: Duration::from_secs(7), lean: false }
+    }
+    /// One relaying rendezvous at `quic` (tests).
+    pub fn local(quic: SocketAddr, fingerprint: &str) -> Config {
+        let bronze = abt_link::bronze::Bronze { quic, tcp: None, name: None, fingerprint: fingerprint.trim().to_lowercase(), home: None, secret_file: None };
+        Config { servers: vec![Server { bronze, stun: "127.0.0.1:9".into(), relays: true }], ..Config::new() }
     }
 }
+
+impl Default for Config { fn default() -> Config { Config::new() } }
 
 /// What the keeper knows, for the status and the punches.
 #[derive(Default)]
@@ -69,6 +78,9 @@ struct Status {
     public_ip: String,
     home_ip: String,
     behind_diamonds_nat: bool,
+    /// Where Diamond was last seen with no path: (server, held Diamond's connection; None when
+    /// the server did not answer).
+    seen: Vec<(String, Option<bool>)>,
 }
 
 struct Shared {
@@ -82,17 +94,11 @@ struct Shared {
 struct Link {
     runtime: tokio::runtime::Runtime,
     route: Arc<Route>,
-    bronze: Arc<Bronze>,
+    /// The relaying server (bronze), when there is one.
+    bronze: Option<Arc<Rendezvous>>,
     policy: Arc<Policy>,
     shared: Arc<Shared>,
-    /// Where Diamond is seen: one entry per rendezvous (bronze, Shadow, miyu), so the app tells
-    /// "Diamond is up but there is no path" from "Diamond is not seen anywhere".
-    seen: tokio::sync::watch::Receiver<Vec<Seen>>,
 }
-
-/// Our rendezvous servers (abt-link's `ours`): bronze, then the backups, which carry only what
-/// sets up a direct path. Punch requests go through whichever answers first.
-fn rendezvous() -> Vec<Arc<Rendezvous>> { ours().into_iter().map(|r| Rendezvous::new(r.bronze)).collect() }
 
 static LINK: Mutex<Option<Link>> = Mutex::new(None);
 /// The network the app says it is on: a signature that changes with the network, and the
@@ -123,39 +129,49 @@ pub fn notes() -> Vec<String> { NOTES.lock().map(|n| n.iter().cloned().collect()
 pub fn start(config: Config) -> u16 {
     if let Ok(held) = LINK.lock() && let Some(link) = held.as_ref() {
         let mut current = link.shared.config.lock().unwrap_or_else(|e| e.into_inner());
-        if current.relay == config.relay && current.relay_fingerprint == config.relay_fingerprint && current.pinned == config.pinned && current.lean == config.lean {
+        let same = |a: &[Server], b: &[Server]| a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.bronze.quic == b.bronze.quic && a.bronze.fingerprint == b.bronze.fingerprint);
+        if same(&current.servers, &config.servers) && current.pinned == config.pinned && current.lean == config.lean {
             *current = config;
             return link.route.port();
         }
     }
     stop();
-    let Ok(relay) = config.relay.parse::<SocketAddr>() else { note(&format!("link: bronze's address is not valid: {}", config.relay)); return 0 };
     let Ok(runtime) = tokio::runtime::Builder::new_multi_thread().worker_threads(2).thread_name("tblink").enable_all().build() else { return 0 };
-    let bronze = Arc::new(Bronze::new(relay, &config.relay_fingerprint, config.lean));
-    bronze.set_interface(&NETWORK.lock().map(|n| n.1.clone()).unwrap_or_default());
+    let interface = NETWORK.lock().map(|n| n.1.clone()).unwrap_or_default();
+    let servers: Vec<(bool, Arc<Rendezvous>)> = config.servers.iter().map(|server| {
+        let relay = Rendezvous::new(server.bronze.clone());
+        relay.set_lean(config.lean);
+        relay.set_dormant_after(config.idle);
+        relay.set_interface(Some(interface.as_str()).filter(|i| !i.is_empty()));
+        (server.relays, relay)
+    }).collect();
+    let bronze = servers.iter().find(|(relays, _)| *relays).map(|(_, relay)| relay.clone());
+    let servers: Vec<Arc<Rendezvous>> = servers.into_iter().map(|(_, relay)| relay).collect();
+    let relay: Arc<dyn abt_link::route::Relay> = match &bronze { Some(b) => Arc::new(ToHome { relay: b.clone(), home: "diamond".into() }), None => Arc::new(NoRelay) };
     let route_config = RouteConfig { host: "diamond".into(), pinned: config.pinned.clone(), ..RouteConfig::default() };
-    let Ok(route) = runtime.block_on(Route::start(route_config, Arc::new(BronzeRelay(bronze.clone())), None)) else { runtime.shutdown_background(); return 0 };
+    let Ok(route) = runtime.block_on(Route::start(route_config, relay, None)) else { runtime.shutdown_background(); return 0 };
     let policy = Policy::new();
     if let Some(dir) = &config.state_dir { policy.keep_memory(dir.join("punch-memory.json")) }
     let open_wait = config.open_wait;
     let shared = Arc::new(Shared { config: Mutex::new(config), status: Mutex::new(Status { state: "starting".into(), ..Status::default() }),
         stopped: AtomicBool::new(false), epoch: AtomicU64::new(0) });
     let port = route.port();
-    note(&format!("link: loopback port {port}, relay {relay}"));
-    // The relay first. Without it (bronze down) the link still runs: punches are asked of
-    // Diamond through the backup rendezvous servers, and only a direct path carries anything.
-    let opened = runtime.block_on(async { tokio::time::timeout(open_wait, bronze.open()).await.unwrap_or(false) });
-    if opened { note(&format!("relay open{}", if bronze.over_tcp() { " over TCP 443 (UDP to bronze did not get through)" } else { "" })) }
-    else { note(&format!("link: the relay at {relay} did not open: direct paths only, asked through the backup rendezvous")) }
-    let seen = { let _inside = runtime.enter(); watch_home(rendezvous(), "diamond".into(), Duration::from_secs(20)) };
+    note(&format!("link: loopback port {port}"));
+    // bronze first. Without it (bronze down) the link still runs: punches are asked of Diamond
+    // through the backup rendezvous servers, and only a direct path carries anything.
+    let heard = bronze.as_ref().is_some_and(|b| runtime.block_on(async { tokio::time::timeout(open_wait, b.info("diamond")).await.is_ok_and(|i| i.is_ok()) }));
+    match &bronze {
+        Some(b) if heard => note(&format!("relay: {}", b.line())),
+        _ => note("link: bronze's relay did not answer: direct paths only, asked through the backup rendezvous"),
+    }
     {
         let _inside = runtime.enter();
-        let attempt = Arc::new(Punch { shared: shared.clone(), route: Arc::downgrade(&route) });
-        route.punch_with(policy.clone(), attempt, Arc::new(Hints(rendezvous())));
+        let attempt = Arc::new(Punch { shared: shared.clone(), route: Arc::downgrade(&route), servers: servers.clone() });
+        route.punch_with(policy.clone(), attempt, Arc::new(Hints(servers.clone())));
     }
-    runtime.spawn(Keeper { shared: shared.clone(), route: route.clone(), bronze: bronze.clone(), last_info: None, network: String::new(),
-        pending: None, last_bytes: 0, last_busy: Instant::now(), punched_from: None }.run());
-    if let Ok(mut held) = LINK.lock() { *held = Some(Link { runtime, route, bronze, policy, shared, seen }) }
+    runtime.spawn(Keeper { shared: shared.clone(), route: route.clone(), bronze: bronze.clone(), servers, last_info: None, last_seen: None,
+        network: String::new(), pending: None, punched_from: None }.run());
+    if let Ok(mut held) = LINK.lock() { *held = Some(Link { runtime, route, bronze, policy, shared }) }
     port
 }
 
@@ -215,29 +231,30 @@ pub fn resumed() {
 /// "at", "next_try"}, "note", "bytes": {"home", "direct", "relay"}, "notes"}.
 pub fn state() -> serde_json::Value {
     use serde_json::json;
-    let held = LINK.lock().ok().and_then(|held| held.as_ref().map(|l| (l.route.clone(), l.bronze.clone(), l.policy.clone(), l.shared.clone(), l.runtime.handle().clone(), l.seen.borrow().clone())));
-    let Some((route, bronze, policy, shared, handle, seen)) = held else { return json!({"state": "stopped", "notes": notes()}) };
+    let held = LINK.lock().ok().and_then(|held| held.as_ref().map(|l| (l.route.clone(), l.bronze.clone(), l.policy.clone(), l.shared.clone())));
+    let Some((route, bronze, policy, shared)) = held else { return json!({"state": "stopped", "notes": notes()}) };
     let (state, rtt, answered) = match route.state() {
         State::Home => ("home", None, None),
         State::Direct { rtt_ms, last_answered, .. } => ("direct", Some(rtt_ms), Some(last_answered.elapsed().as_secs())),
         State::Relay => ("relay", None, None),
         State::Down => ("down", None, None),
     };
-    let relay_alive = handle.block_on(bronze.alive());
-    let relay = if bronze.dormant() { "dormant" } else if !relay_alive { "closed" } else if bronze.over_tcp() { "tcp" } else { "quic" };
+    let relay = match bronze.as_ref().map(|b| b.state()) {
+        Some(RelayState::Quic) => "quic", Some(RelayState::Tcp) => "tcp", Some(RelayState::Dormant) => "dormant", _ => "closed",
+    };
     let stats = route.stats();
     let bytes = |p: abt_link::route::PathBytes| json!({"sent": p.sent, "received": p.received});
     let status = shared.status.lock().unwrap_or_else(|e| e.into_inner());
     json!({
-        "state": state, "rtt_ms": rtt, "last_answered_s": answered, "relay": relay, "relay_line": handle.block_on(bronze.line()),
+        "state": state, "rtt_ms": rtt, "last_answered_s": answered, "relay": relay, "relay_line": bronze.as_ref().map(|b| b.line()),
         "public_ip": status.public_ip, "home_ip": status.home_ip, "behind_diamonds_nat": status.behind_diamonds_nat, "keeper": status.state,
         "punching": policy.punching("diamond"), "note": policy.note(),
         "last_punch": policy.last("diamond").map(|l| json!({"ok": l.ok, "summary": l.summary, "at": l.at, "next_try": l.next_try})),
         "bytes": {"home": bytes(stats.home), "direct": bytes(stats.direct), "relay": bytes(stats.relay)},
         // Diamond's standing connection at each rendezvous: online true/false, or null when that
         // server did not answer.
-        "diamond_seen": seen.iter().any(|s| s.online == Some(true)),
-        "seen": seen.iter().map(|s| json!({"server": s.server, "online": s.online, "last_online": s.last_online})).collect::<Vec<_>>(),
+        "diamond_seen": status.seen.iter().any(|(_, online)| *online == Some(true)),
+        "seen": status.seen.iter().map(|(server, online)| json!({"server": server, "online": online})).collect::<Vec<_>>(),
         "notes": notes(),
     })
 }
@@ -257,6 +274,7 @@ pub fn status() -> String {
 struct Punch {
     shared: Arc<Shared>,
     route: Weak<Route>,
+    servers: Vec<Arc<Rendezvous>>,
 }
 
 impl Attempt for Punch {
@@ -271,7 +289,7 @@ impl Attempt for Punch {
         let route = self.route.upgrade().ok_or_else(|| Failure::new("the link stopped"))?;
         let interface = NETWORK.lock().map(|n| n.1.clone()).unwrap_or_default();
         // Every rendezvous's STUN at once (bronze, Shadow, miyu): the first answer is used.
-        let stun: Vec<String> = ours().into_iter().map(|r| r.stun).collect();
+        let stun: Vec<String> = config.servers.iter().map(|r| r.stun.clone()).collect();
         let mut plan = Plan::from_json(&serde_json::json!({
             "stun": stun, "interface": interface, "lean": config.lean, "pinned": config.pinned,
         }));
@@ -284,7 +302,7 @@ impl Attempt for Punch {
         let signal = Signals {
             route: HttpSignal { base: format!("http://127.0.0.1:{}", route.port()), token: config.token.clone() },
             through_route: !matches!(route.state(), State::Down),
-            servers: rendezvous(), pinned: config.pinned.clone(), token: config.token.clone(), handle: tokio::runtime::Handle::current(),
+            servers: self.servers.clone(), pinned: config.pinned.clone(), token: config.token.clone(), handle: tokio::runtime::Handle::current(),
         };
         let named = host.to_string();
         let opened = tokio::task::spawn_blocking(move || abt_link::device::punch_to(&named, &plan, &signal, |r| report(r)))
@@ -345,18 +363,17 @@ impl Signal for Signals {
     }
 }
 
-/// The relay, network changes and bronze's view, every 3 s.
+/// Network changes, bronze's view and whether Diamond is there, every 3 s.
 struct Keeper {
     shared: Arc<Shared>,
     route: Arc<Route>,
-    bronze: Arc<Bronze>,
+    bronze: Option<Arc<Rendezvous>>,
+    servers: Vec<Arc<Rendezvous>>,
     last_info: Option<Instant>,
+    last_seen: Option<Instant>,
     /// The network acted on, and a different one waiting to hold for 3 s.
     network: String,
     pending: Option<(String, Instant)>,
-    /// Bytes carried on any path at the last look, and when they last grew.
-    last_bytes: u64,
-    last_busy: Instant,
     /// The public address the direct path was punched from.
     punched_from: Option<String>,
 }
@@ -367,6 +384,7 @@ impl Keeper {
     async fn run(mut self) {
         while !self.shared.stopped.load(Ordering::SeqCst) {
             self.watch_network().await;
+            self.look_for_diamond().await;
             self.maintain().await;
             tokio::time::sleep(Duration::from_secs(3)).await;
         }
@@ -384,48 +402,54 @@ impl Keeper {
         }
         // A different network has held for 3 s: the direct path's hole was for the old one.
         self.shared.epoch.fetch_add(1, Ordering::SeqCst);
-        self.bronze.set_interface(&interface);
-        let moved = !self.bronze.dormant() && self.bronze.rebind().await;
-        if !moved { self.bronze.close(self.bronze.dormant()).await }
+        for server in &self.servers {
+            server.set_interface(Some(interface.as_str()).filter(|i| !i.is_empty()));
+            server.network_changed().await;
+        }
         self.route.network_changed();
-        note(&format!("network changed ({} → {signature}): direct path dropped, relay {}", self.network,
-            if moved { "moved to the new network" } else if self.bronze.dormant() { "stays closed (dormant)" } else { "reopening" }));
+        note(&format!("network changed ({} → {signature}): direct path dropped, servers moved to the new network", self.network));
         self.network = signature;
         self.pending = None;
         self.punched_from = None;
         self.last_info = None;
-        if let Ok(mut s) = self.shared.status.lock() { s.public_ip.clear(); s.behind_diamonds_nat = false }
+        self.last_seen = None;
+        if let Ok(mut s) = self.shared.status.lock() { s.public_ip.clear(); s.behind_diamonds_nat = false; s.seen.clear() }
+    }
+
+    /// With no path at all: whether any rendezvous holds Diamond's connection (Diamond is up, so
+    /// the app says there is no path rather than that Diamond is gone). Every 20 s while so.
+    async fn look_for_diamond(&mut self) {
+        if !matches!(self.route.state(), State::Down) {
+            if let Ok(mut s) = self.shared.status.lock() { s.seen.clear() }
+            self.last_seen = None;
+            return
+        }
+        if self.last_seen.is_some_and(|at| at.elapsed() < Duration::from_secs(20)) { return }
+        self.last_seen = Some(Instant::now());
+        let mut asked = tokio::task::JoinSet::new();
+        for (index, server) in self.servers.iter().enumerate() {
+            let server = server.clone();
+            asked.spawn(async move {
+                let online = tokio::time::timeout(Duration::from_secs(8), server.info("diamond")).await.ok().and_then(Result::ok).map(|i| i.online);
+                (index, server.label(), online)
+            });
+        }
+        let mut seen: Vec<(usize, String, Option<bool>)> = Vec::new();
+        while let Some(Ok(answer)) = asked.join_next().await { seen.push(answer) }
+        seen.sort_by_key(|(index, _, _)| *index);
+        if let Ok(mut s) = self.shared.status.lock() { s.seen = seen.into_iter().map(|(_, server, online)| (server, online)).collect() }
     }
 
     async fn maintain(&mut self) {
-        let stats = self.route.stats();
-        let bytes = stats.home.sent + stats.home.received + stats.direct.sent + stats.direct.received + stats.relay.sent + stats.relay.received;
-        if bytes != self.last_bytes { self.last_bytes = bytes; self.last_busy = Instant::now() }
-        let idle = self.shared.config.lock().map(|c| c.idle).unwrap_or(Duration::from_secs(120));
-        if self.bronze.dormant() {
-            // The next connection opens the relay again itself (relay.rs).
-            if self.last_busy.elapsed() < idle { note("a connection woke the link"); }
-            else { return }
-        } else if self.last_busy.elapsed() > idle && !matches!(self.route.state(), State::Home) {
-            // Battery and bronze: with nothing carried, the relay's keepalives are not worth it.
-            self.bronze.close(true).await;
-            self.state("dormant: idle, nothing sent until the next connection");
-            note(&format!("idle for {} s: relay let go, no keepalives, until the next connection", idle.as_secs()));
-            return
-        }
-        if !self.bronze.alive().await {
-            note("relay: connecting");
-            if self.bronze.open().await { self.state("relay open"); note("relay open") }
-            else { self.state("relay: bronze did not answer"); return }
-        }
-        // Every 6 s, bronze's view of this device and of Diamond.
+        // bronze's view only while its connection is up: asking would wake a dormant one.
+        let Some(bronze) = self.bronze.clone() else { return };
+        if !matches!(bronze.state(), RelayState::Quic | RelayState::Tcp) { return }
         if self.last_info.is_some_and(|at| at.elapsed() < Duration::from_secs(6)) { return }
         self.last_info = Some(Instant::now());
-        let Some(reply) = self.bronze.ask(b"TBINFO1\n").await else { return };
-        let text = String::from_utf8_lossy(&reply).to_string();
-        let field = |name: &str| text.lines().find_map(|l| l.strip_prefix(name)).map(str::to_owned);
-        let ip = field("you ").map(|you| you.rsplit_once(':').map(|(ip, _)| ip.trim_matches(['[', ']']).to_owned()).unwrap_or(you)).unwrap_or_default();
-        let home_ip = field("homeip ").unwrap_or_default();
+        let Ok(info) = bronze.info("diamond").await else { self.state("relay: bronze did not answer"); return };
+        self.state(&bronze.line());
+        let ip = info.you.map(|you| you.rsplit_once(':').map(|(ip, _)| ip.trim_matches(['[', ']']).to_owned()).unwrap_or(you)).unwrap_or_default();
+        let home_ip = info.home_ip.unwrap_or_default();
         let behind = !ip.is_empty() && ip == home_ip;
         let was_behind = self.shared.status.lock().map(|s| s.behind_diamonds_nat).unwrap_or(false);
         if let Ok(mut s) = self.shared.status.lock() { s.public_ip = ip.clone(); s.home_ip = home_ip; s.behind_diamonds_nat = behind }

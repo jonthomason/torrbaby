@@ -1,4 +1,4 @@
-//! A real rendezvous (rendezvous/) and a stand-in Diamond on loopback: it holds its standing
+//! A real rendezvous (ABT's abt-bronze) and a stand-in Diamond on loopback: it holds its standing
 //! connection to bronze and serves relayed streams the way Diamond does (abt-link's
 //! pipe_relayed: TLS to its identity end to end, then its HTTP port). Diamond's HTTP port
 //! answers "/download" with `download` and anything else with the request line it heard.
@@ -12,8 +12,8 @@ pub fn bronze_and_diamond(runtime: &tokio::runtime::Runtime, name: &str, downloa
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("bronze")).unwrap();
     std::fs::create_dir_all(dir.join("diamond")).unwrap();
-    let bronze = tbrendezvous::Identity::load_or_create(&dir.join("bronze")).unwrap();
-    let secret = tbrendezvous::load_or_create_secret(&dir.join("bronze")).unwrap();
+    let bronze = abt_bronze::Identity::load_or_create(&dir.join("bronze")).unwrap();
+    let secret = abt_bronze::load_or_create_secret(&dir.join("bronze")).unwrap();
     abt_link::host::load_identity(&dir.join("diamond")).unwrap();
     let diamond = abt_link::host::fingerprint().unwrap();
     let fingerprint = bronze.fingerprint.clone();
@@ -39,7 +39,7 @@ pub fn bronze_and_diamond(runtime: &tokio::runtime::Runtime, name: &str, downloa
         });
         let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         let address = socket.local_addr().unwrap();
-        tokio::spawn(tbrendezvous::serve(tbrendezvous::endpoint(socket, &bronze).unwrap(), tbrendezvous::Hub::new(&secret)));
+        tokio::spawn(abt_bronze::serve(abt_bronze::endpoint(socket, &bronze).unwrap(), abt_bronze::Hub::new(&secret)));
         let mut endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
         let mut roots = rustls::RootCertStore::empty();
         roots.add(bronze.cert.clone()).unwrap();
