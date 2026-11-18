@@ -531,7 +531,9 @@ fn timing_known(saved: &Value) -> bool { saved["provenance"]["moviehash_match"] 
 /// again. Version 3 searches offsets up to 3 minutes, not 30 s (Outlander S01E07's English was
 /// 47 s early): every file is judged again. Version 4 tells "fits as it is" from "unclear", and an
 /// unclear file whose timing is not otherwise known gives way to the hash-matched upload.
-const AUDIO_TIMING: u64 = 4;
+/// Version 5 times English by what is said (speech transcribed on device in three stretches),
+/// which a film score cannot hide, and Chinese by verified English: every file judged again.
+const AUDIO_TIMING: u64 = 5;
 
 /// Whether a record from OpenSubtitles still waits to be timed by the film's own audio.
 fn untimed(saved: &Value) -> bool {
@@ -569,6 +571,40 @@ fn sound_window(input: &Path, start: f64, length: f64) -> Result<Vec<bool>> {
     let levels: Vec<f32> = samples.chunks(400).map(|c| (c.iter().map(|s| (*s as f32) * (*s as f32)).sum::<f32>() / c.len() as f32).sqrt()).collect();
     Ok(crate::subtitles::sound_frames(&levels))
 }
+/// The film's speech transcribed on device in three 2½-minute stretches (a fifth, half and four
+/// fifths of the way through), with their real times in the film. Empty where a stretch has no
+/// speech.
+fn heard(input: &Path, language: &str) -> Result<Vec<crate::subtitles::TimedCue>> {
+    let duration = crate::media_format::duration(input).unwrap_or(0.0);
+    anyhow::ensure!(duration > 600.0, "Too short to sample");
+    let bin = std::env::current_exe()?;
+    let mut heard = Vec::new();
+    for fraction in [0.2, 0.5, 0.8] {
+        let start = (duration * fraction).floor();
+        let base = std::env::temp_dir().join(format!("torrbaby-heard-{}", uuid_like()));
+        let (wav, result, progress) = (base.with_extension("wav"), base.with_extension("json"), base.with_extension("progress"));
+        let decoded = std::process::Command::new("/usr/bin/nice").args(["-n", "15"]).arg(bin.with_file_name("torrbaby-ffmpeg"))
+            .args(["-hide_banner", "-loglevel", "error", "-threads", "1", "-ss", &format!("{start:.0}"), "-t", "150", "-i"]).arg(input)
+            .args(["-vn", "-map", "0:a:0", "-ac", "1", "-ar", "16000", "-y"]).arg(&wav).stdin(std::process::Stdio::null()).status()?;
+        if decoded.success() {
+            let mut child = std::process::Command::new("/usr/bin/nice").args(["-n", "15"]).arg(bin.with_file_name("torrbaby-speech-subtitles"))
+                .arg(&wav).arg(&result).arg(&progress).arg(language)
+                .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn()?;
+            let finished = crate::wake::wait_child(&mut child, std::time::Duration::from_secs(600))?;
+            if finished.is_some_and(|status| status.success()) && let Ok(text) = std::fs::read_to_string(&result)
+                && let Ok(found) = serde_json::from_str::<Value>(&text) {
+                for cue in found["cues"].as_array().into_iter().flatten() {
+                    let (Some(a), Some(b), Some(t)) = (cue["start_ms"].as_u64(), cue["end_ms"].as_u64(), cue["text"].as_str()) else { continue };
+                    let offset = (start * 1000.0) as u64;
+                    heard.push(crate::subtitles::TimedCue { start_ms: a + offset, end_ms: b + offset, text: t.to_owned() });
+                }
+            }
+        }
+        for path in [&wav, &result, &progress] { let _ = std::fs::remove_file(path); }
+    }
+    Ok(heard)
+}
+
 fn uuid_like() -> String { format!("{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)) }
 
 /// Time a file from OpenSubtitles by the film's own audio: the speed and offset that put the
@@ -587,9 +623,37 @@ fn time_by_audio(s: &Service, input: &Path, record: &str) -> Result<bool> {
         cues = crate::subtitles::unshifted(&cues, crate::subtitles::Timing { scale, shift });
         tracing::info!(record, scale, shift, "Earlier retiming by audio undone");
     }
-    let sound = sound(input)?;
     if let Some(fallback) = saved["provenance"].as_object_mut() { fallback.remove("fallback_after"); }
-    let verdict = crate::subtitles::audio_timing(&sound, &cues);
+    // English: what is said, transcribed, says where each line belongs (precise under a score).
+    // Otherwise, or when that is unclear: the sound. Chinese still unclear: lined up with the
+    // title's English once that is verified.
+    let english = record.ends_with(".en-opensubtitles");
+    let mut by = "speech";
+    let mut verdict = if english {
+        match heard(input, "en") {
+            Ok(heard) => crate::subtitles::speech_timing(&heard, &cues),
+            Err(error) => { tracing::info!(record, %error, "Speech not sampled"); crate::subtitles::Verdict::Unclear }
+        }
+    } else { crate::subtitles::Verdict::Unclear };
+    if verdict == crate::subtitles::Verdict::Unclear {
+        by = "sound";
+        verdict = crate::subtitles::audio_timing(&sound(input)?, &cues);
+    }
+    if verdict == crate::subtitles::Verdict::Unclear && !english && let Some(stem) = record.strip_suffix(".zh-opensubtitles") {
+        let reference = load(&*database(s)?, &format!("{stem}.en-opensubtitles"));
+        if let Some(reference) = reference.filter(|r| r["state"] == "ready" && (r["provenance"]["moviehash_match"] == true
+            || matches!(r["provenance"]["timed_by_audio"]["verdict"].as_str(), Some("confirmed" | "retimed")))) {
+            let english_path = directory(&s.data_dir).join(reference["output"].as_str().unwrap_or_default());
+            if let Ok(english_cues) = std::fs::read_to_string(&english_path).map_err(anyhow::Error::from).and_then(|t| crate::subtitles::parse_srt(&t)) {
+                by = "english";
+                verdict = match crate::subtitles::alignment(&english_cues, &cues) {
+                    Some(t) if t.scale == 1.0 && t.shift == 0 => crate::subtitles::Verdict::Confirmed,
+                    Some(t) => crate::subtitles::Verdict::Retimed(t),
+                    None => crate::subtitles::Verdict::Unclear,
+                };
+            }
+        }
+    }
     let (written, timing, said) = match verdict {
         crate::subtitles::Verdict::Retimed(t) => (crate::subtitles::shifted(&cues, t), t, "retimed"),
         crate::subtitles::Verdict::Confirmed => (cues.clone(), crate::subtitles::Timing { scale: 1.0, shift: 0 }, "confirmed"),
@@ -599,7 +663,7 @@ fn time_by_audio(s: &Service, input: &Path, record: &str) -> Result<bool> {
     std::fs::write(&temporary, crate::subtitles::to_srt(&written))?;
     std::fs::rename(&temporary, &path)?;
     if said == "retimed" { tracing::info!(record, shift = timing.shift, scale = timing.scale, "Subtitles retimed by the film's audio") }
-    saved["provenance"]["timed_by_audio"] = json!({"shift_ms": timing.shift, "scale": timing.scale, "version": AUDIO_TIMING, "verdict": said});
+    saved["provenance"]["timed_by_audio"] = json!({"shift_ms": timing.shift, "scale": timing.scale, "version": AUDIO_TIMING, "verdict": said, "by": by});
     let known = said != "unclear" || timing_known(&saved);
     store(&*database(s)?, record, &saved)?;
     Ok(known)

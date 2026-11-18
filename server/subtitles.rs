@@ -339,6 +339,45 @@ pub fn audio_timing(windows: &[(f64, Vec<bool>)], cues: &[TimedCue]) -> Verdict 
     Verdict::Retimed(best.1)
 }
 
+/// The timing that lines `cues` up with what is actually said: `heard`, the film's speech
+/// transcribed on device in a few stretches (cues with their real times). Each transcript line
+/// that shares at least three words with a subtitle line says where that line belongs; the speed
+/// ratio and offset most of them agree on (within a second) wins, if they span two stretches.
+/// Precise under a film score, where the sound alone could not tell speech from music
+/// (Outlander). Unclear when too few lines match (another language, little dialogue).
+pub fn speech_timing(heard: &[TimedCue], cues: &[TimedCue]) -> Verdict {
+    fn words(text: &str) -> std::collections::HashSet<String> {
+        text.to_lowercase().split(|c: char| !c.is_alphanumeric() && c != '\'').map(|w| w.trim_matches('\'').to_owned())
+            .filter(|w| w.chars().count() >= 2).collect()
+    }
+    let subtitles: Vec<(f64, std::collections::HashSet<String>)> = cues.iter().map(|c| (c.start_ms as f64, words(&c.text))).collect();
+    // (subtitle time, real time) for each confident match, and which stretch it came from.
+    let mut pairs: Vec<(f64, f64, u64)> = Vec::new();
+    for line in heard {
+        let said = words(&line.text);
+        if said.len() < 3 { continue }
+        let real = line.start_ms as f64;
+        let best = subtitles.iter().filter(|(at, _)| (at - real).abs() <= 240_000.0)
+            .map(|(at, w)| { let shared = said.intersection(w).count(); (shared, shared as f64 / said.len().min(w.len()).max(1) as f64, *at) })
+            .filter(|(shared, overlap, _)| *shared >= 3 && *overlap >= 0.6)
+            .max_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+        if let Some((_, _, at)) = best { pairs.push((at, real, line.start_ms / 600_000)) }
+    }
+    if pairs.len() < 8 { return Verdict::Unclear }
+    let mut best: Option<(usize, Timing)> = None;
+    for scale in SCALES {
+        let mut shifts: Vec<f64> = pairs.iter().map(|(at, real, _)| real - at * scale).collect();
+        shifts.sort_by(f64::total_cmp);
+        let shift = shifts[shifts.len() / 2];
+        let agree = pairs.iter().filter(|(at, real, _)| (real - (at * scale + shift)).abs() <= 1000.0).count();
+        if best.is_none_or(|(most, _)| agree > most) { best = Some((agree, Timing { scale, shift: shift.round() as i64 })) }
+    }
+    let (agree, timing) = best.expect("a scale was tried");
+    let stretches: std::collections::HashSet<u64> = pairs.iter().filter(|(at, real, _)| (real - (at * timing.scale + timing.shift as f64)).abs() <= 1000.0).map(|p| p.2).collect();
+    if agree * 10 < pairs.len() * 6 || stretches.len() < 2 { return Verdict::Unclear }
+    if timing.scale == 1.0 && timing.shift.abs() <= 300 { Verdict::Confirmed } else { Verdict::Retimed(timing) }
+}
+
 /// `cues` with `timing` undone (a retiming found wrong).
 pub fn unshifted(cues: &[TimedCue], timing: Timing) -> Vec<TimedCue> {
     let back = |ms: u64| ((ms as f64 - timing.shift as f64) / timing.scale).round().max(0.0) as u64;
@@ -863,6 +902,31 @@ mod alignment_tests {
         let moved = shifted(&cues(&other), Timing { scale: 1.0, shift: 22_850 });
         assert_eq!(moved[0].start_ms, 55_315);
         assert!(to_srt(&moved).starts_with("1\n00:00:55,315 --> 00:00:56,815\nline 32465\n\n2\n"));
+    }
+}
+
+#[cfg(test)]
+mod speech_timing_tests {
+    use super::*;
+    fn cue(ms: u64, text: &str) -> TimedCue { TimedCue { start_ms: ms, end_ms: ms + 2000, text: text.into() } }
+    fn lines() -> Vec<&'static str> {
+        vec!["Ready for what, then, folks", "Right then, folks, lovely to see you", "Do you take this man to be your husband",
+             "I do, with all my heart and soul", "The life you had before is over now", "We should go back to the inn tonight",
+             "Murtagh will stand as your witness today", "I never thought I would marry again", "Tell me about your family in Oxford",
+             "There is something I must tell you first", "You are mine and I am yours forever", "Let us drink to the bride and groom"]
+    }
+    #[test]
+    fn subtitles_line_up_with_what_is_said() {
+        // Outlander S01E07: the subtitles 47 s early; the speech heard in three stretches.
+        let real: Vec<(u64, &str)> = lines().into_iter().enumerate().map(|(i, t)| (600_000 * (i as u64 / 4) + 20_000 + (i as u64 % 4) * 30_000, t)).collect();
+        let heard: Vec<TimedCue> = real.iter().map(|(at, t)| cue(*at, t)).collect();
+        let early: Vec<TimedCue> = real.iter().map(|(at, t)| cue(at - 47_400, t)).collect();
+        assert_eq!(speech_timing(&heard, &early), Verdict::Retimed(Timing { scale: 1.0, shift: 47_400 }));
+        let right: Vec<TimedCue> = real.iter().map(|(at, t)| cue(*at, t)).collect();
+        assert_eq!(speech_timing(&heard, &right), Verdict::Confirmed);
+        // Another language heard: nothing matches.
+        let other: Vec<TimedCue> = real.iter().map(|(at, _)| cue(*at, "어디 가세요 지금 바로")).collect();
+        assert_eq!(speech_timing(&other, &right), Verdict::Unclear);
     }
 }
 
