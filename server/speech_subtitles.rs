@@ -243,6 +243,8 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
                     finding = Some(Ok(Transcript::Ready(path, "en")));
                     break;
                 }
+                // No file to keep was named, so there is none.
+                Ok(crate::opensubtitles::Found::Kept) => { tried.push(step); continue; }
                 Ok(crate::opensubtitles::Found::Missing(why)) => {
                     tracing::info!(asset = id, reason = %why, "No subtitles from OpenSubtitles");
                     tried.push(step);
@@ -407,11 +409,11 @@ fn ask_again(saved: &Value, special: bool) -> bool {
             || reason.starts_with("No zh-Hans subtitles on OpenSubtitles"))
 }
 
-/// A ready record from an anonymous upload chosen before ranking version 2 (any hash match
-/// first): looked up again once, keeping it when nothing better is found.
+/// A ready record chosen before ranking version 2 (any hash match first, so a careless upload
+/// beat the administrator's from the disc: The Office): looked up again once, keeping it when
+/// it still ranks first among those that fit (nothing downloaded) or nothing better is found.
 fn rechoose(saved: &Value) -> bool {
     saved["state"] == "ready" && saved["provenance"]["source"] == "opensubtitles"
-        && saved["provenance"]["uploader"].as_str().is_none_or(|u| u.eq_ignore_ascii_case("anonymous"))
         && saved["provenance"]["ranking"].as_u64().unwrap_or(1) < crate::opensubtitles::RANKING
         && saved["after"].as_f64().is_none_or(|t| t <= now())
 }
@@ -446,13 +448,13 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
         let kept = root.join(saved["output"].as_str().unwrap_or_default());
         if kept.is_file() {
             let mut saved = saved.clone();
-            match crate::opensubtitles::find_language(&s.data_dir, asset, input, &root, &name, language, &[]).await {
+            match crate::opensubtitles::find_language(&s.data_dir, asset, input, &root, &name, language, &[], saved["provenance"]["file_id"].as_u64()).await {
                 Ok(crate::opensubtitles::Found::Ready(path, provenance)) => {
                     tracing::info!(asset = id, tag, was = saved["provenance"]["release"].as_str().unwrap_or(""), now = provenance["release"].as_str().unwrap_or(""), "OpenSubtitles chosen again by the new ranking");
                     save(json!({"state":"ready","asset_id":id,"output":path.file_name().and_then(|n| n.to_str()),"provenance":provenance,"updated":now()}))?;
                     return Ok(Some(path));
                 }
-                Ok(crate::opensubtitles::Found::Missing(_)) => { saved["provenance"]["ranking"] = json!(crate::opensubtitles::RANKING); }
+                Ok(crate::opensubtitles::Found::Missing(_) | crate::opensubtitles::Found::Kept) => { saved["provenance"]["ranking"] = json!(crate::opensubtitles::RANKING); }
                 Err(error) => { saved["after"] = json!(crate::opensubtitles::waits_until(&error.to_string()).unwrap_or(now() + 3600.0)); }
             }
             save(saved)?;
@@ -492,11 +494,12 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
         if saved["state"] == "missing" && !unordered && !ask_again(&saved, special) && (saved["lookup"].as_u64() >= Some(2) || set_aside) { return Ok(None); }
         if saved["after"].as_f64().is_some_and(|t| t > now()) { return Ok(None); }
     }
-    match crate::opensubtitles::find_language(&s.data_dir, asset, input, &root, &name, language, &refused).await {
+    match crate::opensubtitles::find_language(&s.data_dir, asset, input, &root, &name, language, &refused, None).await {
         Ok(crate::opensubtitles::Found::Ready(path, provenance)) => {
             save(json!({"state":"ready","asset_id":id,"output":path.file_name().and_then(|n| n.to_str()),"provenance":provenance,"updated":now()}))?;
             Ok(Some(path))
         }
+        Ok(crate::opensubtitles::Found::Kept) => Ok(None), // No file to keep was named.
         Ok(crate::opensubtitles::Found::Missing(why)) => {
             save(json!({"state":"missing","asset_id":id,"reason":why,"lookup":LOOKUP,"updated":now()}))?;
             Ok(None)

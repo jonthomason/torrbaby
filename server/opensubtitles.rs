@@ -58,6 +58,8 @@ pub enum Found {
     Ready(PathBuf, Value),
     /// Nothing suitable on OpenSubtitles (or no credentials): the next source is tried.
     Missing(String),
+    /// The file asked to be kept (`keep`) is still the best that fits: nothing downloaded.
+    Kept,
 }
 
 /// The account file, read once: nothing writes it but a person, and the server is restarted
@@ -207,6 +209,8 @@ pub fn fits(last_end: f64, duration: Option<f64>) -> bool {
 /// until then and asks again, rather than each file finding out for itself and waiting an hour
 /// (2026-11-18: re-asking 900 Chinese files at once left 248 waiting).
 static PAUSED_UNTIL: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+/// When the next request may go (`send`'s pacing).
+static NEXT_TURN: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
 
 /// `request` sent once OpenSubtitles' pause has passed, and again (up to 3 times) after each 429,
 /// waiting as long as its Retry-After says (10 s when it says nothing).
@@ -214,6 +218,15 @@ async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response> {
     for _ in 0..3 {
         let until = PAUSED_UNTIL.lock().ok().and_then(|p| *p);
         if let Some(until) = until { tokio::time::sleep_until(until.into()).await }
+        // Paced: at most four requests a second from every lookup together (OpenSubtitles
+        // allows five), so a queue of lookups seldom hears "too many requests" at all.
+        let turn = NEXT_TURN.lock().map(|mut next| {
+            let now = std::time::Instant::now();
+            let turn = (*next).filter(|t| *t > now).unwrap_or(now);
+            *next = Some(turn + std::time::Duration::from_millis(250));
+            turn
+        }).unwrap_or_else(|_| std::time::Instant::now());
+        tokio::time::sleep_until(turn.into()).await;
         let reply = request.try_clone().context("OpenSubtitles request")?.send().await?;
         if reply.status() != reqwest::StatusCode::TOO_MANY_REQUESTS { return Ok(reply) }
         let wait = reply.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(10).clamp(1, 120);
@@ -228,7 +241,7 @@ const TRIES: usize = 3;
 
 /// English subtitles for `asset`'s file at `input`, written into `directory` as `name`.
 pub async fn find(data: &Path, asset: &Value, input: &Path, directory: &Path, name: &str) -> Result<Found> {
-    find_language(data, asset, input, directory, name, "en", &[]).await
+    find_language(data, asset, input, directory, name, "en", &[], None).await
 }
 
 /// Subtitles in `language` ("en" or "zh-cn") for `asset`'s file, written into `directory`.
@@ -238,8 +251,9 @@ pub async fn find(data: &Path, asset: &Value, input: &Path, directory: &Path, na
 /// user, 2026-11-18); Simplified is all that is shown (the Mainland).
 /// Candidates are downloaded best first until one fits the file's length (`fits`), at most
 /// `TRIES`; `refused` are file ids already found not to fit. A candidate that does not fit is
-/// named in the answer's `refused`, so it is not downloaded again.
-pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: &Path, name: &str, language: &str, refused: &[u64]) -> Result<Found> {
+/// named in the answer's `refused`, so it is not downloaded again. `keep`: the file this one
+/// already has, which ends the lookup (`Kept`) when no better-ranked one fits before it.
+pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: &Path, name: &str, language: &str, refused: &[u64], keep: Option<u64>) -> Result<Found> {
     let (code, ours) = match language { "zh-cn" => ("zh-cn", "zh-Hans"), _ => ("en", "en") };
     // The languages searched, in the order their files are tried.
     let codes: &[&str] = if code == "zh-cn" { &["zh-cn", "zh-tw"] } else { &[code] };
@@ -286,6 +300,7 @@ pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: 
         let candidates: Vec<_> = codes.iter().flat_map(|code| ranked(found, &release, code).into_iter()
             .filter(|(id, _, _)| !tried.contains(id)).take(TRIES).map(move |c| (*code, c))).collect();
         for (from, (file_id, chosen, mut provenance)) in candidates {
+            if keep == Some(file_id) { return Ok(Found::Kept) }
             tried.push(file_id);
             // Read as its own script: a Traditional file that is not UTF-8 is most likely Big5.
             let script = if from == "zh-tw" { "zh-Hant" } else { ours };
