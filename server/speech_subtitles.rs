@@ -404,8 +404,9 @@ pub fn people_decided(db: &Database, asset: &str, revision: &str, tag: &str) -> 
 /// Subtitles taken before they were checked against the file's length are not settled.
 /// `everything`: opensubtitles::everything, read once by the caller.
 pub fn people_settled(db: &Database, everything: bool, asset: &str, revision: &str, tag: &str, special: bool) -> bool {
-    load(db, &format!("{}.{tag}-opensubtitles", key(db, asset, revision))).is_some_and(|saved|
-        (saved["state"] == "ready" && fit_checked(&saved) && !rechoose(&saved)) || (saved["state"] == "later" && saved["after"].as_f64().is_some_and(|t| t > now()))
+    let name = key(db, asset, revision);
+    load(db, &format!("{name}.{tag}-opensubtitles")).is_some_and(|saved|
+        (saved["state"] == "ready" && fit_checked(&saved) && !rechoose(&saved) && !untimed(&saved)) || (saved["state"] == "later" && saved["after"].as_f64().is_some_and(|t| t > now()))
             || (saved["state"] == "missing" && !(everything && saved["set_aside"] == true)
             && !saved["reason"].as_str().is_some_and(|r| r.ends_with("Subtitle cues are out of order"))
             && !ask_again(&saved, special) && !matched_since(db, asset, &saved)))
@@ -474,6 +475,68 @@ pub fn set_aside(s: &Service, asset: &Value, input: &Path, tag: &str, reason: &s
 }
 
 async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Result<Option<PathBuf>> {
+    let found = people_found(s, asset, input, language).await?;
+    if found.is_some() {
+        let id = asset["id"].as_str().context("Missing asset ID")?;
+        let revision = crate::subtitle_jobs::revision(input)?;
+        let name = key(&*database(s)?, id, &revision);
+        let tag = if language == "en" { "en" } else { "zh" };
+        let record = format!("{name}.{tag}-opensubtitles");
+        // Decoding the audio takes a while: off the async workers.
+        if let Err(error) = tokio::task::block_in_place(|| time_by_audio(s, input, &record)) {
+            tracing::warn!(asset = id, %error, "Subtitles not timed by the audio");
+        }
+    }
+    Ok(found)
+}
+
+/// Whether a record from OpenSubtitles still waits to be timed by the film's own audio.
+fn untimed(saved: &Value) -> bool {
+    saved["state"] == "ready" && saved["provenance"]["source"] == "opensubtitles" && saved["provenance"]["timed_by_audio"].is_null()
+}
+
+/// The film's sound, 50 ms frames (`subtitles::sound_frames`), from its first audio track.
+fn sound(input: &Path) -> Result<Vec<bool>> {
+    let ffmpeg = std::env::current_exe()?.with_file_name("torrbaby-ffmpeg");
+    let wav = std::env::temp_dir().join(format!("torrbaby-sound-{}.wav", uuid_like()));
+    let status = std::process::Command::new("/usr/bin/nice").args(["-n", "15"]).arg(&ffmpeg)
+        .args(["-hide_banner", "-loglevel", "error", "-i"]).arg(input).args(["-vn", "-map", "0:a:0", "-ac", "1", "-ar", "8000", "-y"]).arg(&wav)
+        .stdin(std::process::Stdio::null()).status()?;
+    let bytes = std::fs::read(&wav);
+    let _ = std::fs::remove_file(&wav);
+    anyhow::ensure!(status.success(), "Could not read the audio");
+    let bytes = bytes?;
+    let data = bytes.windows(4).position(|w| w == b"data").context("Not a WAV file")? + 8;
+    let samples: Vec<i16> = bytes[data..].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+    let levels: Vec<f32> = samples.chunks(400).map(|c| (c.iter().map(|s| (*s as f32) * (*s as f32)).sum::<f32>() / c.len() as f32).sqrt()).collect();
+    Ok(crate::subtitles::sound_frames(&levels))
+}
+fn uuid_like() -> String { format!("{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)) }
+
+/// Time a file from OpenSubtitles by the film's own audio: the speed and offset that put the
+/// speech under its lines (`subtitles::audio_timing`). No upload is the reference: Parasite's
+/// "hash-matched" English ran 10 s late, and lining its Chinese up with that English made the
+/// Chinese wrong too (2026-11-18).
+fn time_by_audio(s: &Service, input: &Path, record: &str) -> Result<()> {
+    let Some(mut saved) = load(&*database(s)?, record) else { return Ok(()) };
+    if !untimed(&saved) { return Ok(()) }
+    let path = directory(&s.data_dir).join(saved["output"].as_str().unwrap_or_default());
+    let cues = crate::subtitles::parse_srt(&std::fs::read_to_string(&path)?)?;
+    let sound = sound(input)?;
+    match crate::subtitles::audio_timing(&sound, &cues) {
+        Some(timing) => {
+            let temporary = path.with_extension("srt.tmp");
+            std::fs::write(&temporary, crate::subtitles::to_srt(&crate::subtitles::shifted(&cues, timing)))?;
+            std::fs::rename(&temporary, &path)?;
+            saved["provenance"]["timed_by_audio"] = json!({"shift_ms": timing.shift, "scale": timing.scale});
+            tracing::info!(record, shift = timing.shift, scale = timing.scale, "Subtitles retimed by the film's audio");
+        }
+        None => { saved["provenance"]["timed_by_audio"] = json!({"shift_ms": 0, "scale": 1.0}); }
+    }
+    store(&*database(s)?, record, &saved)
+}
+
+async fn people_found(s: &Service, asset: &Value, input: &Path, language: &str) -> Result<Option<PathBuf>> {
     let tag = if language == "en" { "en" } else { "zh" };
     let id = asset["id"].as_str().context("Missing asset ID")?;
     let revision = crate::subtitle_jobs::revision(input)?;

@@ -257,6 +257,49 @@ pub fn alignment(reference: &[TimedCue], cues: &[TimedCue]) -> Option<Timing> {
     (landed * 2 >= cues.len()).then_some(if timing.scale == 1.0 && timing.shift.abs() <= 300 { Timing { scale: 1.0, shift: 0 } } else { timing })
 }
 
+/// Where there is sound in a film, 50 ms at a time: louder than half again its median.
+pub fn sound_frames(levels: &[f32]) -> Vec<bool> {
+    let mut sorted: Vec<f32> = levels.to_vec();
+    sorted.sort_by(f32::total_cmp);
+    let median = sorted.get(sorted.len() / 2).copied().unwrap_or(0.0);
+    levels.iter().map(|l| *l > median * 1.5).collect()
+}
+
+/// The timing that puts the most sound under `cues` and the least outside them, against the
+/// film's own audio (`sound`, 50 ms frames), among the speed ratios and offsets up to 30 s. The
+/// reference no upload can get wrong: Parasite's "hash-matched" English ran 10 s late and fell
+/// 5 s further behind by the end (made for a 24 fps release). None when the cues already fit
+/// as well as any timing does (within `0.02`), or when no timing fits clearly.
+pub fn audio_timing(sound: &[bool], cues: &[TimedCue]) -> Option<Timing> {
+    const FRAME: f64 = 0.05;
+    if cues.len() < 20 || sound.len() < 1200 { return None }
+    let mut prefix = vec![0u32; sound.len() + 1];
+    for (i, s) in sound.iter().enumerate() { prefix[i + 1] = prefix[i] + *s as u32 }
+    let total = prefix[sound.len()] as f64;
+    let n = sound.len() as f64;
+    let fit = |t: Timing| {
+        let (mut loud, mut frames) = (0f64, 0f64);
+        let mut last = 0usize;
+        for c in cues {
+            let a = (((c.start_ms as f64 * t.scale) / 1000.0 + t.shift as f64 / 1000.0) / FRAME).max(last as f64) as usize;
+            let b = ((((c.end_ms as f64 * t.scale) / 1000.0 + t.shift as f64 / 1000.0) / FRAME) as usize).min(sound.len());
+            if b > a { loud += (prefix[b] - prefix[a]) as f64; frames += (b - a) as f64; last = b }
+        }
+        if frames == 0.0 || frames >= n { return f64::MIN }
+        loud / frames - (total - loud) / (n - frames)
+    };
+    let mut best = (f64::MIN, Timing { scale: 1.0, shift: 0 });
+    for scale in SCALES {
+        for tenth in -300..=300 {
+            let timing = Timing { scale, shift: tenth * 100 };
+            let score = fit(timing);
+            if score > best.0 { best = (score, timing) }
+        }
+    }
+    let now = fit(Timing { scale: 1.0, shift: 0 });
+    (best.0 > 0.05 && best.0 - now > 0.02).then_some(best.1)
+}
+
 /// `cues` retimed by `timing`; a cue that would start before 0 is dropped.
 pub fn shifted(cues: &[TimedCue], timing: Timing) -> Vec<TimedCue> {
     let at = |ms: u64| (ms as f64 * timing.scale) as i64 + timing.shift;
