@@ -90,6 +90,22 @@ pub(crate) fn store(db: &Database, name: &str, document: &Value) -> Result<()> {
 }
 fn database(s: &Service) -> Result<std::sync::MutexGuard<'_, Database>> { s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable")) }
 
+/// `asset` with its title's name and year (a movie) or its show's name (an episode), from the
+/// title's metadata, so OpenSubtitles can be searched by name when it lacks the TMDB id.
+fn titled(s: &Service, asset: &Value) -> Value {
+    let mut asset = asset.clone();
+    let Some(entity) = asset["entity_id"].as_str().map(str::to_owned) else { return asset };
+    let document = database(s).ok().and_then(|db| db.connection.query_row("SELECT document FROM library_entities WHERE id=?", [&entity], |r| r.get::<_, String>(0)).ok());
+    let Some(title) = document.and_then(|d| serde_json::from_str::<Value>(&d).ok()) else { return asset };
+    if entity.starts_with("tmdb:movie:") {
+        asset["title"] = title["title"].clone();
+        asset["year"] = title["year"].as_u64().or_else(|| title["year"].as_str().and_then(|y| y.parse().ok())).map_or(Value::Null, |y| json!(y));
+    } else {
+        asset["show"] = title["title"].clone();
+    }
+    asset
+}
+
 /// Records kept as JSON files by earlier builds move into the database, once.
 pub fn import_records(db: &Database, data: &Path) -> Result<usize> {
     let Ok(entries) = std::fs::read_dir(directory(data)) else { return Ok(0) };
@@ -235,7 +251,7 @@ pub async fn transcript(s: &Service, asset: &Value, input: &Path, report: impl F
         if step == OPENSUBTITLES {
             // A limit or a network failure is an error: the file waits and tries again,
             // rather than being transcribed when people's subtitles may exist.
-            match crate::opensubtitles::find(&s.data_dir, asset, input, &root, &name).await {
+            match crate::opensubtitles::find(&s.data_dir, &titled(s, asset), input, &root, &name).await {
                 Ok(crate::opensubtitles::Found::Ready(path, provenance)) => {
                     tried.push(step);
                     let file = path.file_name().and_then(|n| n.to_str()).context("Invalid subtitle path")?.to_owned();
@@ -399,14 +415,17 @@ pub fn people_settled(db: &Database, everything: bool, asset: &str, revision: &s
 /// by their name (a pack's S00E01 is seldom TMDB's), and reads files with a cue that ends
 /// before it starts: records from before that, for those, are asked again. Version 4 takes
 /// Traditional Chinese (converted to Simplified) when there is no Simplified: Chinese records
-/// with nothing found before it are asked again, once.
-const LOOKUP: u64 = 4;
+/// with nothing found before it are asked again, once. Version 5 searches by name when
+/// OpenSubtitles lacks the TMDB id (The Threesome, 2025, was transcribed from its audio while
+/// OpenSubtitles had administrator uploads): every record with nothing found is asked again, once.
+const LOOKUP: u64 = 5;
 fn ask_again(saved: &Value, special: bool) -> bool {
     let lookup = saved["lookup"].as_u64().unwrap_or(0);
     let reason = saved["reason"].as_str().unwrap_or("");
     saved["state"] == "missing" && lookup < LOOKUP
         && ((lookup < 3 && (special || reason.ends_with("Subtitle ends before it starts")))
-            || reason.starts_with("No zh-Hans subtitles on OpenSubtitles"))
+            || (lookup < 4 && reason.starts_with("No zh-Hans subtitles on OpenSubtitles"))
+            || (reason.starts_with("No en subtitles on OpenSubtitles") || reason.starts_with("No zh-Hans subtitles on OpenSubtitles")))
 }
 
 /// A ready record chosen before ranking version 2 (any hash match first, so a careless upload
@@ -456,7 +475,7 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
             // already lined up with the hash-matched upload).
             let in_time = saved["provenance"]["moviehash_match"] == true || !saved["provenance"]["timed_by"].is_null();
             let keep = saved["provenance"]["file_id"].as_u64().filter(|_| in_time);
-            match crate::opensubtitles::find_language(&s.data_dir, asset, input, &root, &name, language, &[], keep).await {
+            match crate::opensubtitles::find_language(&s.data_dir, &titled(s, asset), input, &root, &name, language, &[], keep).await {
                 Ok(crate::opensubtitles::Found::Ready(path, provenance)) => {
                     tracing::info!(asset = id, tag, was = saved["provenance"]["release"].as_str().unwrap_or(""), now = provenance["release"].as_str().unwrap_or(""), "OpenSubtitles chosen again by the new ranking");
                     save(json!({"state":"ready","asset_id":id,"output":path.file_name().and_then(|n| n.to_str()),"provenance":provenance,"updated":now()}))?;
@@ -502,7 +521,7 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
         if saved["state"] == "missing" && !unordered && !ask_again(&saved, special) && (saved["lookup"].as_u64() >= Some(2) || set_aside) { return Ok(None); }
         if saved["after"].as_f64().is_some_and(|t| t > now()) { return Ok(None); }
     }
-    match crate::opensubtitles::find_language(&s.data_dir, asset, input, &root, &name, language, &refused, None).await {
+    match crate::opensubtitles::find_language(&s.data_dir, &titled(s, asset), input, &root, &name, language, &refused, None).await {
         Ok(crate::opensubtitles::Found::Ready(path, provenance)) => {
             save(json!({"state":"ready","asset_id":id,"output":path.file_name().and_then(|n| n.to_str()),"provenance":provenance,"updated":now()}))?;
             Ok(Some(path))

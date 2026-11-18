@@ -292,7 +292,18 @@ pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: 
     // file's, whatever its text (The Office S01E01's best text ran 23 s early on this copy).
     let mut reference: Option<Option<(Vec<crate::subtitles::TimedCue>, String, Value)>> = None;
     let mut tried: Vec<u64> = refused.to_vec();
-    for mut query in searches {
+    // OpenSubtitles does not always link a title to TMDB (The Threesome, 2025: two
+    // administrator uploads, no TMDB id), so when the TMDB searches find nothing at all, it is
+    // searched by name and year (`title`, `year`, `show` from the title's metadata), keeping
+    // only results for exactly that title.
+    let by_name = name_search(asset);
+    let mut any = false;
+    let mut searches: Vec<(Vec<(&str, String)>, bool)> = searches.into_iter().map(|s| (s, false)).collect();
+    let mut next = 0;
+    while next < searches.len() || (!any && by_name.is_some() && !searches.iter().any(|(_, named)| *named)) {
+        if next == searches.len() { searches.push((by_name.clone().map(|(q, _)| q).unwrap_or_default(), true)) }
+        let (mut query, named) = searches[next].clone();
+        next += 1;
         if let Some(hash) = &hash { query.push(("moviehash", hash.clone())); }
         query.push(("languages", codes.join(",")));
         // OpenSubtitles redirects any other order of the parameters: send them sorted.
@@ -302,7 +313,10 @@ pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: 
         let reply = send(client.get(url).header("Api-Key", &c.api_key).header("Accept", "application/json")).await.context("OpenSubtitles search")?;
         ensure!(reply.status().is_success(), "OpenSubtitles search failed ({})", reply.status());
         let results: Value = reply.json().await?;
-        let found = results["data"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+        let mut found: Vec<Value> = results["data"].as_array().cloned().unwrap_or_default();
+        if named && let Some((_, wanted)) = &by_name { found.retain(|r| wanted(&r["attributes"]["feature_details"])) }
+        any |= !found.is_empty();
+        let found = found.as_slice();
         let candidates: Vec<_> = codes.iter().flat_map(|code| ranked(found, &release, code).into_iter()
             .filter(|(id, _, _)| !tried.contains(id)).take(TRIES).map(move |c| (*code, c))).collect();
         for (from, (file_id, chosen, mut provenance)) in candidates {
@@ -379,6 +393,24 @@ pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: 
         return Ok(Found::Missing(format!("No {ours} subtitles on OpenSubtitles fit this file's length ({} tried)", misfits.len())));
     }
     Ok(Found::Missing(unreadable.unwrap_or_else(|| format!("No {ours} subtitles on OpenSubtitles"))))
+}
+
+/// The search by name for when OpenSubtitles has the title but not its TMDB id: the query, and
+/// which results are for exactly this title (a movie's title and year; an episode's show).
+type Wanted = std::sync::Arc<dyn Fn(&Value) -> bool + Send + Sync>;
+fn name_search(asset: &Value) -> Option<(Vec<(&'static str, String)>, Wanted)> {
+    let same = |a: &str, b: &str| tokens(a) == tokens(b) && !tokens(a).is_empty();
+    if asset["entity_id"].as_str().is_some_and(|e| e.starts_with("tmdb:movie:")) {
+        let title = asset["title"].as_str()?.to_owned();
+        let year = asset["year"].as_u64()?;
+        let query = vec![("query", title.to_lowercase()), ("year", year.to_string())];
+        Some((query, std::sync::Arc::new(move |f: &Value| f["year"].as_u64() == Some(year) && f["title"].as_str().is_some_and(|t| same(t, &title)))))
+    } else {
+        let show = asset["show"].as_str()?.to_owned();
+        let (season, episode) = (asset["season"].as_u64()?, asset["episode"].as_u64()?);
+        let query = vec![("episode_number", episode.to_string()), ("query", show.to_lowercase()), ("season_number", season.to_string())];
+        Some((query, std::sync::Arc::new(move |f: &Value| f["parent_title"].as_str().is_some_and(|t| same(t, &show)))))
+    }
 }
 
 /// A special's series and name from its file name, with the part when it has one:
