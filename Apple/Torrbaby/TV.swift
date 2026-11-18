@@ -363,6 +363,8 @@ private struct TVMonochromeButtonStyle: ButtonStyle {
     @Environment(\.isFocused) private var focused
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            // Sized to its label: Chinese would otherwise break its last character onto a second line.
+            .lineLimit(1).fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 18).padding(.vertical, 8)
             // Where the remote is must never look the same as what is merely chosen: focus
             // is solid white and a little larger; the chosen tab is a quiet tint until focused.

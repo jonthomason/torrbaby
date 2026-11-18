@@ -772,24 +772,10 @@ struct LibraryBrowser: View {
                             Text(featured.title).font(.system(size: 38, weight: .bold))
                                 .lineLimit(3).minimumScaleFactor(0.7).multilineTextAlignment(.leading)
                             Text(verbatim: ([featured.yearLabel] + featured.genres.prefix(2)).filter { !$0.isEmpty }.joined(separator: " · ")).font(.subheadline)
-                            HStack(alignment: .top, spacing: 12) {
-                                if let asset = store.preferredLibraryAsset(featured), store.canPlay(asset) {
-                                    VStack(spacing: 5) {
-                                        Button { heroPlayOrCancel(asset, title: featured) } label: {
-                                            Label {
-                                                Text(asset.playbackActionTitle(television: featured.kind == "tv", brief: true))
-                                            } icon: {
-                                                if heroPreparing == asset.id { PlaybackSpinner(color: Theme.onAccent) }
-                                                else { Image(systemName: "play.fill") }
-                                            }.font(.headline).frame(minHeight: 44)
-                                        }.libraryActionStyle(prominent: true)
-                                        .modifier(PreparingPlayback(active: heroPreparing == asset.id))
-                                        if let left = asset.timeLeft { Text(verbatim: left).font(.caption).foregroundStyle(.white.opacity(0.75)) }
-                                    }
-                                }
-                                NavigationLink(value: LibraryDestination(id: featured.id)) {
-                                    Text("Explore").font(.headline).frame(minHeight: 44)
-                                }.libraryActionStyle()
+                            // Side by side, or one above the other on a phone too narrow for both labels.
+                            ViewThatFits(in: .horizontal) {
+                                HStack(alignment: .top, spacing: 12) { heroActions(featured) }
+                                VStack(alignment: .leading, spacing: 10) { heroActions(featured) }
                             }.padding(.top, 5)
                         }.padding(28).foregroundStyle(.white)
                     }
@@ -849,6 +835,26 @@ struct LibraryBrowser: View {
         #elseif os(tvOS)
         .searchable(text: $search, prompt: "Search movies and TV shows")
         #endif
+    }
+    /// The Home hero's Play (time left beneath) and Explore.
+    @ViewBuilder private func heroActions(_ featured: LibraryTitle) -> some View {
+        if let asset = store.preferredLibraryAsset(featured), store.canPlay(asset) {
+            VStack(spacing: 5) {
+                Button { heroPlayOrCancel(asset, title: featured) } label: {
+                    Label {
+                        Text(asset.playbackActionTitle(television: featured.kind == "tv", brief: true))
+                    } icon: {
+                        if heroPreparing == asset.id { PlaybackSpinner(color: Theme.onAccent) }
+                        else { Image(systemName: "play.fill") }
+                    }.font(.headline).frame(minHeight: 44)
+                }.libraryActionStyle(prominent: true)
+                .modifier(PreparingPlayback(active: heroPreparing == asset.id))
+                if let left = asset.timeLeft { Text(verbatim: left).font(.caption).foregroundStyle(.white.opacity(0.75)) }
+            }
+        }
+        NavigationLink(value: LibraryDestination(id: featured.id)) {
+            Text("Explore").font(.headline).frame(minHeight: 44)
+        }.libraryActionStyle()
     }
     private func heroPlayOrCancel(_ asset: LibraryAsset, title: LibraryTitle) {
         if heroPreparing == asset.id { heroTask?.cancel(); return }
@@ -1253,6 +1259,9 @@ private struct LibraryActionButtonStyle: ButtonStyle {
         configuration.label
             .font(compact ? .subheadline.weight(.semibold) : .headline)
             .lineLimit(fullWidth && !compact ? 1 : nil).minimumScaleFactor(fullWidth && !compact ? 0.8 : 1)
+            // Sized to its label: Chinese breaks between any two characters, so a button offered
+            // a hair less than its text's width wrapped its last character onto a second line.
+            .fixedSize(horizontal: !fullWidth, vertical: false)
             .padding(.horizontal, compact ? 14 : 20)
             .frame(maxWidth: fullWidth && !compact ? .infinity : nil)
             .frame(minHeight: compact ? 36 : 48)
