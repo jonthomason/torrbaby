@@ -505,20 +505,17 @@ public class MainActivity extends Activity {
   /** The home hero's title, so a live refresh can tell whether Home must be drawn again. */
   private String shownHero = "";
   /**
-   * The title most recently played, unless it was removed from Continue Watching; else the
-   * first recent title with a backdrop.
+   * The first title in Continue Watching: neither finished nor removed from it. Else the
+   * first recent unwatched title with a backdrop (any with a backdrop, any at all).
    */
   private static Library.Title featured(List<Library.Title> recent) {
-    Library.Title featured = recent.get(0);
+    Library.Title continuing = null;
     for (Library.Title t : recent)
-      if (!t.backdrop.isEmpty() && !t.playable().isEmpty()) {
-        featured = t;
-        break;
-      }
-    Library.Title played = null;
-    for (Library.Title t : recent)
-      if (!t.playable().isEmpty() && !t.continueWatchingHidden && t.latestPlayed() > 0 && (played == null || t.latestPlayed() > played.latestPlayed())) played = t;
-    return played != null ? played : featured;
+      if (t.isContinuing() && (continuing == null || t.continueWatchingAt() > continuing.continueWatchingAt())) continuing = t;
+    if (continuing != null) return continuing;
+    for (Library.Title t : recent) if (!t.backdrop.isEmpty() && !t.playable().isEmpty() && !t.watched()) return t;
+    for (Library.Title t : recent) if (!t.backdrop.isEmpty() && !t.playable().isEmpty()) return t;
+    return recent.get(0);
   }
   /** Home is showing, and the library now features another title than the one on screen. */
   private boolean heroChanged() {
