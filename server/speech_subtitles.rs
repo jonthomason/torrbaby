@@ -533,13 +533,17 @@ fn timing_known(saved: &Value) -> bool { saved["provenance"]["moviehash_match"] 
 /// unclear file whose timing is not otherwise known gives way to the hash-matched upload.
 /// Version 5 times English by what is said (speech transcribed on device in three stretches),
 /// which a film score cannot hide, and Chinese by verified English: every file judged again.
-const AUDIO_TIMING: u64 = 5;
+/// 6: a title with Chinese subtitles burned into the picture (read off it, so exactly in time)
+/// times its downloads by them: speech in English cannot hear a Chinese drama. Only version 5's
+/// unclear files are judged again.
+const AUDIO_TIMING: u64 = 6;
 
 /// Whether a record from OpenSubtitles still waits to be timed by the film's own audio.
 fn untimed(saved: &Value) -> bool {
     let timed = &saved["provenance"]["timed_by_audio"];
     saved["state"] == "ready" && saved["provenance"]["source"] == "opensubtitles"
-        && (timed.is_null() || timed["version"].as_u64().unwrap_or(1) < AUDIO_TIMING
+        && (timed.is_null() || timed["version"].as_u64().unwrap_or(1) < 5
+            || (timed["version"].as_u64().unwrap_or(1) < AUDIO_TIMING && timed["verdict"] == "unclear")
             // Unclear, not otherwise timed, and the hash-matched upload could not be asked then.
             || (timed["verdict"] == "unclear" && !timing_known(saved) && saved["provenance"]["fallback_after"].as_f64().is_some_and(|t| t <= now())))
 }
@@ -635,6 +639,15 @@ fn time_by_audio(s: &Service, input: &Path, record: &str) -> Result<bool> {
             Err(error) => { tracing::info!(record, %error, "Speech not sampled"); crate::subtitles::Verdict::Unclear }
         }
     } else { crate::subtitles::Verdict::Unclear };
+    if verdict == crate::subtitles::Verdict::Unclear && let Some(stem) = record.rsplit_once('.').map(|(stem, _)| stem)
+        && let Some(burned) = burned_cues(s, stem) {
+        by = "burned";
+        verdict = match crate::subtitles::alignment(&burned, &cues) {
+            Some(t) if t.scale == 1.0 && t.shift == 0 => crate::subtitles::Verdict::Confirmed,
+            Some(t) => crate::subtitles::Verdict::Retimed(t),
+            None => crate::subtitles::Verdict::Unclear,
+        };
+    }
     if verdict == crate::subtitles::Verdict::Unclear {
         by = "sound";
         verdict = crate::subtitles::audio_timing(&sound(input)?, &cues);
@@ -667,6 +680,13 @@ fn time_by_audio(s: &Service, input: &Path, record: &str) -> Result<bool> {
     let known = said != "unclear" || timing_known(&saved);
     store(&*database(s)?, record, &saved)?;
     Ok(known)
+}
+
+/// The Chinese subtitles read off this file's picture (`stem`'s transcript record), if any.
+fn burned_cues(s: &Service, stem: &str) -> Option<Vec<crate::subtitles::TimedCue>> {
+    let saved = load(&*database(s).ok()?, stem).filter(|r| r["state"] == "ready" && r["method"] == "burned")?;
+    let text = std::fs::read_to_string(directory(&s.data_dir).join(saved["output"].as_str()?)).ok()?;
+    crate::subtitles::parse_srt(&text).ok()
 }
 
 async fn people_found(s: &Service, asset: &Value, input: &Path, language: &str) -> Result<Option<PathBuf>> {
