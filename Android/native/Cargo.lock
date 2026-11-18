@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "abt-link"
 version = "0.1.0"
-source = "git+https://github.com/jonthomason/abt.git?rev=0b96f85f6dc5555017fe3be5798676a2cce00154#0b96f85f6dc5555017fe3be5798676a2cce00154"
+source = "git+https://github.com/jonthomason/abt.git?rev=9571fea48793ca39355ddcf78d8a3a673b74a087#9571fea48793ca39355ddcf78d8a3a673b74a087"
 dependencies = [
  "anyhow",
  "quinn",
@@ -226,7 +226,7 @@ dependencies = [
 [[package]]
 name = "ipstack"
 version = "1.0.1"
-source = "git+https://github.com/jonthomason/abt.git?rev=0b96f85f6dc5555017fe3be5798676a2cce00154#0b96f85f6dc5555017fe3be5798676a2cce00154"
+source = "git+https://github.com/jonthomason/abt.git?rev=9571fea48793ca39355ddcf78d8a3a673b74a087#9571fea48793ca39355ddcf78d8a3a673b74a087"
 dependencies = [
  "ahash",
  "etherparse",
