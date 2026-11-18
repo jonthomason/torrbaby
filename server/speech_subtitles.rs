@@ -495,12 +495,23 @@ fn untimed(saved: &Value) -> bool {
     saved["state"] == "ready" && saved["provenance"]["source"] == "opensubtitles" && saved["provenance"]["timed_by_audio"].is_null()
 }
 
-/// The film's sound, 50 ms frames (`subtitles::sound_frames`), from its first audio track.
-fn sound(input: &Path) -> Result<Vec<bool>> {
+/// The film's sound, 50 ms frames (`subtitles::sound_frames`), from its first audio track: three
+/// 8-minute windows (near the start, the middle and the end) for anything over half an hour,
+/// else all of it. Decoding the whole film for every title kept twelve cores busy for a day.
+fn sound(input: &Path) -> Result<Vec<(f64, Vec<bool>)>> {
+    let duration = crate::media_format::duration(input).unwrap_or(0.0);
+    let windows: Vec<(f64, f64)> = if duration > 1800.0 {
+        [0.06, 0.48, 0.88].iter().map(|f| ((duration * f).floor(), 480.0)).collect()
+    } else { vec![(0.0, duration.max(60.0))] };
+    windows.into_iter().map(|(start, length)| Ok((start, sound_window(input, start, length)?))).collect()
+}
+
+fn sound_window(input: &Path, start: f64, length: f64) -> Result<Vec<bool>> {
     let ffmpeg = std::env::current_exe()?.with_file_name("torrbaby-ffmpeg");
     let wav = std::env::temp_dir().join(format!("torrbaby-sound-{}.wav", uuid_like()));
     let status = std::process::Command::new("/usr/bin/nice").args(["-n", "15"]).arg(&ffmpeg)
-        .args(["-hide_banner", "-loglevel", "error", "-i"]).arg(input).args(["-vn", "-map", "0:a:0", "-ac", "1", "-ar", "8000", "-y"]).arg(&wav)
+        .args(["-hide_banner", "-loglevel", "error", "-threads", "1", "-ss", &format!("{start:.0}"), "-t", &format!("{length:.0}"), "-i"]).arg(input)
+        .args(["-vn", "-map", "0:a:0", "-ac", "1", "-ar", "8000", "-y"]).arg(&wav)
         .stdin(std::process::Stdio::null()).status()?;
     let bytes = std::fs::read(&wav);
     let _ = std::fs::remove_file(&wav);

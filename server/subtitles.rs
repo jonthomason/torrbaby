@@ -266,27 +266,36 @@ pub fn sound_frames(levels: &[f32]) -> Vec<bool> {
 }
 
 /// The timing that puts the most sound under `cues` and the least outside them, against the
-/// film's own audio (`sound`, 50 ms frames), among the speed ratios and offsets up to 30 s. The
-/// reference no upload can get wrong: Parasite's "hash-matched" English ran 10 s late and fell
-/// 5 s further behind by the end (made for a 24 fps release). None when the cues already fit
-/// as well as any timing does (within `0.02`), or when no timing fits clearly.
-pub fn audio_timing(sound: &[bool], cues: &[TimedCue]) -> Option<Timing> {
+/// film's own audio: `windows` of it (start in seconds, 50 ms frames of sound), among the speed
+/// ratios and offsets up to 30 s. Windows near the start, middle and end catch both an offset and
+/// a drift (another frame rate) without decoding the whole film. The reference no upload can get
+/// wrong: Parasite's "hash-matched" English ran 10 s late and fell 5 s further behind by the end.
+/// None when the cues already fit as well as any timing does (within 0.02), or none fits clearly.
+pub fn audio_timing(windows: &[(f64, Vec<bool>)], cues: &[TimedCue]) -> Option<Timing> {
     const FRAME: f64 = 0.05;
-    if cues.len() < 20 || sound.len() < 1200 { return None }
-    let mut prefix = vec![0u32; sound.len() + 1];
-    for (i, s) in sound.iter().enumerate() { prefix[i + 1] = prefix[i] + *s as u32 }
-    let total = prefix[sound.len()] as f64;
-    let n = sound.len() as f64;
+    if cues.len() < 20 || windows.iter().map(|(_, w)| w.len()).sum::<usize>() < 1200 { return None }
+    let prepared: Vec<(f64, Vec<u32>)> = windows.iter().map(|(start, sound)| {
+        let mut prefix = vec![0u32; sound.len() + 1];
+        for (i, s) in sound.iter().enumerate() { prefix[i + 1] = prefix[i] + *s as u32 }
+        (*start, prefix)
+    }).collect();
     let fit = |t: Timing| {
-        let (mut loud, mut frames) = (0f64, 0f64);
-        let mut last = 0usize;
-        for c in cues {
-            let a = (((c.start_ms as f64 * t.scale) / 1000.0 + t.shift as f64 / 1000.0) / FRAME).max(last as f64) as usize;
-            let b = ((((c.end_ms as f64 * t.scale) / 1000.0 + t.shift as f64 / 1000.0) / FRAME) as usize).min(sound.len());
-            if b > a { loud += (prefix[b] - prefix[a]) as f64; frames += (b - a) as f64; last = b }
+        let (mut loud, mut frames, mut total, mut all) = (0f64, 0f64, 0f64, 0f64);
+        for (start, prefix) in &prepared {
+            let len = prefix.len() - 1;
+            total += prefix[len] as f64;
+            all += len as f64;
+            let mut last = 0usize;
+            for c in cues {
+                let at = |ms: u64| ((ms as f64 * t.scale + t.shift as f64) / 1000.0 - start) / FRAME;
+                let (a, b) = (at(c.start_ms), at(c.end_ms));
+                if b <= 0.0 || a >= len as f64 { continue }
+                let (a, b) = ((a.max(0.0) as usize).max(last), (b as usize).min(len));
+                if b > a { loud += (prefix[b] - prefix[a]) as f64; frames += (b - a) as f64; last = b }
+            }
         }
-        if frames == 0.0 || frames >= n { return f64::MIN }
-        loud / frames - (total - loud) / (n - frames)
+        if frames == 0.0 || frames >= all { return f64::MIN }
+        loud / frames - (total - loud) / (all - frames)
     };
     let mut best = (f64::MIN, Timing { scale: 1.0, shift: 0 });
     for scale in SCALES {
