@@ -378,6 +378,192 @@ pub fn speech_timing(heard: &[TimedCue], cues: &[TimedCue]) -> Verdict {
     if timing.scale == 1.0 && timing.shift.abs() <= 300 { Verdict::Confirmed } else { Verdict::Retimed(timing) }
 }
 
+/// Subtitles made for another cut of the film or episode (a DVD or uncut release, a broadcast
+/// with its own breaks): each stretch belongs at its own offset. `scale` is applied first; a
+/// subtitle time inside `[from_ms, to_ms]` (scaled) moves by that piece's `shift`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pieces { pub scale: f64, pub pieces: Vec<Piece> }
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Piece { pub from_ms: i64, pub to_ms: i64, pub shift: i64, pub anchors: usize }
+
+/// Words of a line that say which line it is, for matching what is said with what is
+/// written: not the commonest words, which any two lines share.
+fn words(text: &str) -> HashSet<String> {
+    const COMMON: [&str; 48] = ["the", "and", "you", "to", "of", "it", "is", "that", "in", "on", "for", "with", "me", "my", "we",
+        "be", "this", "what", "are", "was", "not", "have", "do", "no", "so", "but", "just", "he", "she", "they", "your", "i'm",
+        "it's", "don't", "oh", "yeah", "okay", "all", "at", "can", "get", "go", "like", "there", "here", "out", "up", "now"];
+    text.to_lowercase().split(|c: char| !c.is_alphanumeric() && c != '\'').map(|w| w.trim_matches('\'').to_owned())
+        .filter(|w| w.chars().count() >= 2 && !COMMON.contains(&w.as_str())).collect()
+}
+
+/// (subtitle time, real time) for each transcript line sharing three words (and most of its
+/// words) with a subtitle line within `reach` ms.
+fn spoken_pairs(heard: &[TimedCue], cues: &[TimedCue], reach: f64) -> Vec<(f64, f64)> {
+    let subtitles: Vec<(f64, HashSet<String>)> = cues.iter().map(|c| (c.start_ms as f64, words(&c.text))).collect();
+    let mut pairs = Vec::new();
+    for line in heard {
+        let said = words(&line.text);
+        if said.len() < 3 { continue }
+        let real = line.start_ms as f64;
+        let best = subtitles.iter().filter(|(at, _)| (at - real).abs() <= reach)
+            .map(|(at, w)| { let shared = said.intersection(w).count(); (shared, shared as f64 / said.len().min(w.len()).max(1) as f64, *at) })
+            .filter(|(shared, overlap, _)| *shared >= 3 && *overlap >= 0.6)
+            .max_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+        if let Some((_, _, at)) = best { pairs.push((at, real)) }
+    }
+    pairs
+}
+
+/// Runs of anchors (subtitle time, real time) that agree on an offset within a second, at the
+/// speed ratio giving the most anchored pairs. An anchor needs two of its eight neighbours to
+/// agree with it (a chance match stands alone); a run needs three anchors; runs must follow
+/// one another in real time as in subtitle time. None with fewer than 12 anchors in runs, or
+/// when runs hold under 60% of the pairs (most matches disagree: nothing is clear).
+fn runs(pairs: &[(f64, f64)]) -> Option<Pieces> { scored_runs(pairs).map(|(_, found)| found) }
+
+/// `runs`, with its score: anchors in runs, less three for each further piece (at a wrong speed
+/// ratio the offset drifts, and the anchors break into many short runs).
+fn scored_runs(pairs: &[(f64, f64)]) -> Option<(i64, Pieces)> {
+    if pairs.len() < 12 { return None }
+    let mut best: Option<(i64, usize, Pieces)> = None;
+    for scale in SCALES {
+        let mut scaled: Vec<(f64, f64)> = pairs.iter().map(|(at, real)| (at * scale, *real)).collect();
+        scaled.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let offset = |p: &(f64, f64)| p.1 - p.0;
+        let supported: Vec<(f64, f64)> = (0..scaled.len()).filter(|&i| {
+            let near = scaled[i.saturating_sub(4)..(i + 5).min(scaled.len())].iter().enumerate()
+                .filter(|(j, p)| i.saturating_sub(4) + j != i && (offset(p) - offset(&scaled[i])).abs() <= 1000.0).count();
+            near >= 2
+        }).map(|i| scaled[i]).collect();
+        let mut pieces: Vec<(Vec<(f64, f64)>, f64)> = Vec::new();
+        for p in supported {
+            match pieces.last_mut() {
+                Some((members, shift)) if (offset(&p) - *shift).abs() <= 1000.0 => {
+                    members.push(p);
+                    // Fixed by the run's first anchors: within one cut the offset does not move.
+                    if members.len() <= 5 {
+                        let mut all: Vec<f64> = members.iter().map(offset).collect();
+                        all.sort_by(f64::total_cmp);
+                        *shift = all[all.len() / 2];
+                    }
+                }
+                _ => pieces.push((vec![p], offset(&p))),
+            }
+        }
+        pieces.retain(|(members, _)| members.len() >= 3);
+        // In real time too: a run that would play before the one ahead of it is dropped.
+        let mut kept: Vec<(Vec<(f64, f64)>, f64)> = Vec::new();
+        for piece in pieces {
+            if kept.last().is_some_and(|(members, _)| piece.0[0].1 < members.last().map_or(0.0, |m| m.1) - 1000.0) { continue }
+            kept.push(piece);
+        }
+        let anchored: usize = kept.iter().map(|(m, _)| m.len()).sum();
+        let score = anchored as i64 - 3 * (kept.len() as i64 - 1).max(0);
+        if best.as_ref().is_none_or(|(most, _, _)| score > *most) {
+            best = Some((score, anchored, Pieces { scale, pieces: kept.iter().map(|(m, shift)| Piece {
+                from_ms: m[0].0.round() as i64, to_ms: m[m.len() - 1].0.round() as i64, shift: shift.round() as i64, anchors: m.len() }).collect() }));
+        }
+    }
+    let (score, anchored, mut found) = best?;
+    if anchored < 12 || anchored * 10 < pairs.len() * 6 { return None }
+    // Neighbouring runs at the same offset are one.
+    let mut merged: Vec<Piece> = Vec::new();
+    for piece in found.pieces {
+        match merged.last_mut() {
+            Some(last) if (last.shift - piece.shift).abs() <= 300 => { last.to_ms = piece.to_ms; last.anchors += piece.anchors }
+            _ => merged.push(piece),
+        }
+    }
+    found.pieces = merged;
+    Some((score, found))
+}
+
+/// The verdict for pieces found: one offset is a plain timing.
+fn judged(found: Option<Pieces>) -> Placement {
+    match found {
+        None => Placement::Unclear,
+        Some(p) if p.pieces.len() == 1 => {
+            let timing = Timing { scale: p.scale, shift: p.pieces[0].shift };
+            if timing.scale == 1.0 && timing.shift.abs() <= 300 { Placement::Confirmed } else { Placement::Retimed(timing) }
+        }
+        Some(p) => Placement::Pieced(p),
+    }
+}
+
+/// Where subtitle lines belong, by what is said through the whole film (`heard`, transcribed
+/// on device), when one offset does not fit them all (another cut: Friends' UNCUT DVD lines on
+/// the BluRay, 24 s apart halfway through).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Placement { Confirmed, Retimed(Timing), Pieced(Pieces), Unclear }
+
+/// How many transcript lines match a subtitle line (none: another language).
+pub fn spoken_matches(heard: &[TimedCue], cues: &[TimedCue]) -> usize { spoken_pairs(heard, cues, 240_000.0).len() }
+
+pub fn speech_pieces(heard: &[TimedCue], cues: &[TimedCue]) -> Placement {
+    judged(runs(&spoken_pairs(heard, cues, 600_000.0)))
+}
+
+/// Where lines belong by another file's line starts known to be in time (`reference`: verified
+/// English, or Chinese read off the picture), piece by piece: a line is anchored at the offset
+/// that lands most of its ten neighbours (six at least) within 0.4 s of reference starts.
+pub fn cue_pieces(reference: &[TimedCue], cues: &[TimedCue]) -> Placement {
+    if reference.len() < 10 || cues.len() < 10 { return Placement::Unclear }
+    let mut starts: Vec<f64> = reference.iter().map(|c| c.start_ms as f64).collect();
+    starts.sort_by(f64::total_cmp);
+    let lands = |at: f64| { let i = starts.partition_point(|s| *s < at - 400.0); i < starts.len() && starts[i] <= at + 400.0 };
+    let mut best: Option<(i64, Pieces)> = None;
+    for scale in SCALES {
+        let mine: Vec<f64> = cues.iter().map(|c| c.start_ms as f64 * scale).collect();
+        let mut pairs = Vec::new();
+        for (i, at) in mine.iter().enumerate() {
+            let near = &mine[i.saturating_sub(5)..(i + 6).min(mine.len())];
+            let from = starts.partition_point(|s| *s < at - 180_000.0);
+            let mut chosen: Option<(usize, f64)> = None;
+            for r in starts[from..].iter().take_while(|r| **r <= at + 180_000.0) {
+                let shift = r - at;
+                let landed = near.iter().filter(|n| lands(**n + shift)).count();
+                if landed >= 6 && chosen.is_none_or(|(most, _)| landed > most) { chosen = Some((landed, shift)) }
+            }
+            if let Some((_, shift)) = chosen { pairs.push((at / scale, at + shift)) }
+        }
+        if let Some((score, found)) = scored_runs(&pairs) && best.as_ref().is_none_or(|(most, _)| score > *most) { best = Some((score, found)) }
+    }
+    judged(best.map(|(_, found)| found))
+}
+
+/// `cues` placed piece by piece. A line inside a piece moves by its offset; one between pieces
+/// by the nearer piece's, and is dropped when it would land among the next piece's lines (a
+/// scene this cut does not have).
+pub fn placed(cues: &[TimedCue], found: &Pieces) -> Vec<TimedCue> {
+    if found.pieces.is_empty() { return cues.to_vec() }
+    let piece_of = |at: f64| -> (usize, bool) {
+        if let Some(i) = found.pieces.iter().position(|p| at >= p.from_ms as f64 - 1.0 && at <= p.to_ms as f64 + 1.0) { return (i, true) }
+        let after = found.pieces.iter().position(|p| at < p.from_ms as f64).unwrap_or(found.pieces.len());
+        if after == 0 { return (0, false) }
+        if after == found.pieces.len() { return (after - 1, false) }
+        let (before, next) = (&found.pieces[after - 1], &found.pieces[after]);
+        (if at - before.to_ms as f64 <= next.from_ms as f64 - at { after - 1 } else { after }, false)
+    };
+    let moved: Vec<(TimedCue, bool)> = cues.iter().map(|c| {
+        let at = c.start_ms as f64 * found.scale;
+        let (i, inside) = piece_of(at);
+        let shift = found.pieces[i].shift as f64;
+        let start = (at + shift).max(0.0) as u64;
+        let end = ((c.end_ms as f64 * found.scale + shift).max(0.0) as u64).max(start);
+        (TimedCue { start_ms: start, end_ms: end, text: c.text.clone() }, inside)
+    }).collect();
+    let mut kept = Vec::new();
+    for (i, (cue, inside)) in moved.iter().enumerate() {
+        if !inside {
+            let previous = moved[..i].iter().rev().find(|(_, inside)| *inside).map(|(c, _)| c.start_ms);
+            let next = moved[i + 1..].iter().find(|(_, inside)| *inside).map(|(c, _)| c.start_ms);
+            if previous.is_some_and(|p| cue.start_ms <= p) || next.is_some_and(|n| cue.start_ms >= n) { continue }
+        }
+        kept.push(cue.clone());
+    }
+    kept
+}
+
 /// `cues` with `timing` undone (a retiming found wrong).
 pub fn unshifted(cues: &[TimedCue], timing: Timing) -> Vec<TimedCue> {
     let back = |ms: u64| ((ms as f64 - timing.shift as f64) / timing.scale).round().max(0.0) as u64;
@@ -1073,5 +1259,90 @@ mod sidecar_tests {
         assert_eq!(cues.len(), 2);
         assert_eq!(cues[0].start_ms, 1000);
         assert_eq!(cues[1].text, "Next line");
+    }
+}
+
+#[cfg(test)]
+mod piece_tests {
+    use super::*;
+    fn cue(ms: u64, text: &str) -> TimedCue { TimedCue { start_ms: ms, end_ms: ms + 1800, text: text.into() } }
+    /// Distinct lines of dialogue, every 4 s from 20 s.
+    fn script(n: usize) -> Vec<String> {
+        let vocabulary = ["coffee", "apartment", "museum", "dinosaur", "sandwich", "turkey", "couch", "chick", "duck", "ugly",
+            "naked", "neighbor", "wedding", "london", "paleontology", "massage", "guitar", "smelly", "cat", "lobster", "break",
+            "unagi", "pivot", "football", "thanksgiving", "candy", "laundry", "routine", "moustache", "cheesecake", "embryos",
+            "holiday", "armadillo", "jam", "tulip", "boat", "fireman", "princess", "leia", "blackout", "monkey", "marcel"];
+        let mut seed: u64 = 7;
+        (0..n).map(|_| (0..6).map(|_| { seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); vocabulary[(seed >> 33) as usize % vocabulary.len()] }).collect::<Vec<_>>().join(" ")).collect()
+    }
+    #[test]
+    fn another_cut_is_placed_piece_by_piece() {
+        // The subtitles were made for an uncut release with a 24 s scene (lines 150-155) this
+        // file lacks: lines after it are 24 s early, lines in it are dropped.
+        let lines = script(300);
+        let subtitle_at = |i: usize| 20_000 + i as u64 * 4_000 + if i >= 150 { 24_000 } else { 0 };
+        let mut subtitles: Vec<TimedCue> = lines.iter().enumerate().map(|(i, t)| cue(subtitle_at(i), t)).collect();
+        for k in 0..5 { subtitles.push(cue(20_000 + 150 * 4_000 + k * 4_000, &format!("Lost scene line {k} about the shadow game tonight"))) }
+        subtitles.sort_by_key(|c| c.start_ms);
+        // Heard: every other line (recognition misses some), at the film's times.
+        let heard: Vec<TimedCue> = lines.iter().enumerate().filter(|(i, _)| i % 2 == 0).map(|(i, t)| cue(20_000 + i as u64 * 4_000, t)).collect();
+        let Placement::Pieced(found) = speech_pieces(&heard, &subtitles) else { panic!("expected pieces: {:?}", speech_pieces(&heard, &subtitles)) };
+        assert_eq!(found.pieces.len(), 2);
+        assert_eq!((found.pieces[0].shift, found.pieces[1].shift), (0, -24_000));
+        let placed = placed(&subtitles, &found);
+        // Every line kept is where it is said; no more than a few beside the cut are dropped.
+        for (i, text) in lines.iter().enumerate() {
+            let at = placed.iter().find(|c| &c.text == text).map(|c| c.start_ms);
+            assert!(at.is_none_or(|at| at == 20_000 + i as u64 * 4_000), "line {i} at {at:?}");
+        }
+        assert!(placed.iter().filter(|c| !c.text.starts_with("Lost")).count() >= 296);
+        assert!(placed.iter().filter(|c| c.text.starts_with("Lost scene")).count() <= 2);
+        // One offset throughout is a plain retiming; the right timing is confirmed.
+        let early: Vec<TimedCue> = lines.iter().enumerate().map(|(i, t)| cue(10_000 + i as u64 * 4_000, t)).collect();
+        assert_eq!(speech_pieces(&heard, &early), Placement::Retimed(Timing { scale: 1.0, shift: 10_000 }));
+        let right: Vec<TimedCue> = lines.iter().enumerate().map(|(i, t)| cue(20_000 + i as u64 * 4_000, t)).collect();
+        assert_eq!(speech_pieces(&heard, &right), Placement::Confirmed);
+        // Another language: nothing.
+        let other: Vec<TimedCue> = (0..300).map(|i| cue(20_000 + i * 4_000, "어디 가세요 지금 바로")).collect();
+        assert_eq!(speech_pieces(&other, &right), Placement::Unclear);
+    }
+    #[test]
+    fn lines_follow_a_reference_in_time_piece_by_piece() {
+        // Chinese lines for the uncut release against English already in time: irregular gaps,
+        // 24 s apart after the lost scene.
+        let mut seed: u64 = 11;
+        let mut reference = Vec::new();
+        let mut at = 20_000;
+        for _ in 0..300 {
+            reference.push(cue(at, "x"));
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            at += 1_500 + (seed >> 33) % 5_500;
+        }
+        let chinese: Vec<TimedCue> = reference.iter().enumerate().map(|(i, c)| cue(c.start_ms + if i >= 150 { 24_000 } else { 0 }, "中文")).collect();
+        let Placement::Pieced(found) = cue_pieces(&reference, &chinese) else { panic!("expected pieces") };
+        assert_eq!(found.pieces.iter().map(|p| p.shift).collect::<Vec<_>>(), vec![0, -24_000]);
+        let placed = placed(&chinese, &found);
+        assert_eq!(placed.iter().map(|c| c.start_ms).collect::<Vec<_>>(), reference.iter().map(|c| c.start_ms).collect::<Vec<_>>());
+        assert_eq!(cue_pieces(&reference, &reference), Placement::Confirmed);
+    }
+}
+
+#[cfg(test)]
+mod piece_check {
+    /// A real file: PIECE_HEARD (JSON cues) and PIECE_SRT. `cargo test piece_check -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn real_file() {
+        let heard: Vec<super::TimedCue> = serde_json::from_str::<Vec<serde_json::Value>>(&std::fs::read_to_string(std::env::var("PIECE_HEARD").unwrap()).unwrap()).unwrap()
+            .iter().map(|c| super::TimedCue { start_ms: c["start_ms"].as_u64().unwrap(), end_ms: c["end_ms"].as_u64().unwrap(), text: c["text"].as_str().unwrap().into() }).collect();
+        let cues = super::parse_srt(&std::fs::read_to_string(std::env::var("PIECE_SRT").unwrap()).unwrap()).unwrap();
+        println!("pairs {}", super::spoken_pairs(&heard, &cues, 600_000.0).len());
+        let placement = super::speech_pieces(&heard, &cues);
+        println!("{placement:?}");
+        if let super::Placement::Pieced(p) = &placement {
+            let placed = super::placed(&cues, p);
+            println!("kept {} of {}", placed.len(), cues.len());
+            if let Ok(word) = std::env::var("PIECE_FIND") { for c in placed.iter().filter(|c| c.text.to_lowercase().contains(&word)) { println!("{:.1} {}", c.start_ms as f64 / 1000.0, c.text.replace('\n', " ")) } }
+        }
     }
 }
