@@ -3019,12 +3019,10 @@ async fn collect_metadata(s: &Service) -> Result<Option<std::time::Instant>> {
                 }
             }
         }
-        // Matched files are not looked up again; unmatched ones a day on, after an error 15 minutes.
+        // Matched files are not looked up again; unmatched ones are at every pass (a pass runs
+        // when something changed). TMDB's requests are spaced and pause after a 429, so this
+        // never hammers it; no day's wait (the user, 2026-11-18).
         if asset["entity_id"].is_string() { continue; }
-        if asset["matched_at"].is_number() {
-            let due = asset["matched_at"].as_f64().unwrap_or(0.0) + if asset["error"].is_null() { 86400.0 } else { 900.0 };
-            if due > now() { sooner(&mut next, due); continue; }
-        }
         let id = text(&asset, "id")?;
         let path = std::path::Path::new(text(&asset, "path")?);
         let mut name = asset["metadata_query"].as_str().or(asset["series_query"].as_str())

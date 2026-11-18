@@ -408,7 +408,25 @@ pub fn people_settled(db: &Database, everything: bool, asset: &str, revision: &s
         (saved["state"] == "ready" && fit_checked(&saved) && !rechoose(&saved)) || (saved["state"] == "later" && saved["after"].as_f64().is_some_and(|t| t > now()))
             || (saved["state"] == "missing" && !(everything && saved["set_aside"] == true)
             && !saved["reason"].as_str().is_some_and(|r| r.ends_with("Subtitle cues are out of order"))
-            && !ask_again(&saved, special)))
+            && !ask_again(&saved, special) && !matched_since(db, asset, &saved)))
+}
+
+/// A record of nothing found that was made under another match than the file has now (it was
+/// not identified, or taken for an episode of its pack's series: Downton Abbey's 2019 film):
+/// asked again under the new one. Records from before the match was kept count when they failed
+/// for want of one and the file is now matched.
+fn matched_since(db: &Database, asset: &str, saved: &Value) -> bool {
+    if saved["state"] != "missing" { return false }
+    let Ok(current) = db.asset(asset) else { return false };
+    let entity = current["entity_id"].as_str().unwrap_or("");
+    match saved["entity"].as_str() {
+        Some(then) => then != entity,
+        None => {
+            let reason = saved["reason"].as_str().unwrap_or("");
+            (reason == "Title not identified on TMDB" && !entity.is_empty())
+                || (reason == "Not an episode OpenSubtitles can look up" && (entity.starts_with("tmdb:movie:") || current["episode"].is_u64()))
+        }
+    }
 }
 
 /// The OpenSubtitles lookup version a missing record was made by. Version 3 looks specials up
@@ -518,7 +536,8 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
         // Set aside (fleet translations, for a later round): that round is every title.
         let set_aside = saved["set_aside"] == true && !crate::opensubtitles::everything(&s.data_dir);
         let special = asset["season"].as_u64() == Some(0);
-        if saved["state"] == "missing" && !unordered && !ask_again(&saved, special) && (saved["lookup"].as_u64() >= Some(2) || set_aside) { return Ok(None); }
+        let rematched = matched_since(&*database(s)?, id, &saved);
+        if saved["state"] == "missing" && !unordered && !ask_again(&saved, special) && !rematched && (saved["lookup"].as_u64() >= Some(2) || set_aside) { return Ok(None); }
         if saved["after"].as_f64().is_some_and(|t| t > now()) { return Ok(None); }
     }
     match crate::opensubtitles::find_language(&s.data_dir, &titled(s, asset), input, &root, &name, language, &refused, None).await {
@@ -528,7 +547,7 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
         }
         Ok(crate::opensubtitles::Found::Kept) => Ok(None), // No file to keep was named.
         Ok(crate::opensubtitles::Found::Missing(why)) => {
-            save(json!({"state":"missing","asset_id":id,"reason":why,"lookup":LOOKUP,"updated":now()}))?;
+            save(json!({"state":"missing","asset_id":id,"reason":why,"lookup":LOOKUP,"entity":asset["entity_id"],"updated":now()}))?;
             Ok(None)
         }
         Err(error) => {
