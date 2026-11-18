@@ -387,7 +387,7 @@ pub fn people_decided(db: &Database, asset: &str, revision: &str, tag: &str) -> 
 /// `everything`: opensubtitles::everything, read once by the caller.
 pub fn people_settled(db: &Database, everything: bool, asset: &str, revision: &str, tag: &str, special: bool) -> bool {
     load(db, &format!("{}.{tag}-opensubtitles", key(db, asset, revision))).is_some_and(|saved|
-        (saved["state"] == "ready" && fit_checked(&saved)) || (saved["state"] == "later" && saved["after"].as_f64().is_some_and(|t| t > now()))
+        (saved["state"] == "ready" && fit_checked(&saved) && !rechoose(&saved)) || (saved["state"] == "later" && saved["after"].as_f64().is_some_and(|t| t > now()))
             || (saved["state"] == "missing" && !(everything && saved["set_aside"] == true)
             && !saved["reason"].as_str().is_some_and(|r| r.ends_with("Subtitle cues are out of order"))
             && !ask_again(&saved, special)))
@@ -395,11 +395,25 @@ pub fn people_settled(db: &Database, everything: bool, asset: &str, revision: &s
 
 /// The OpenSubtitles lookup version a missing record was made by. Version 3 looks specials up
 /// by their name (a pack's S00E01 is seldom TMDB's), and reads files with a cue that ends
-/// before it starts: records from before that, for those, are asked again.
-const LOOKUP: u64 = 3;
+/// before it starts: records from before that, for those, are asked again. Version 4 takes
+/// Traditional Chinese (converted to Simplified) when there is no Simplified: Chinese records
+/// with nothing found before it are asked again, once.
+const LOOKUP: u64 = 4;
 fn ask_again(saved: &Value, special: bool) -> bool {
-    saved["state"] == "missing" && saved["lookup"].as_u64().unwrap_or(0) < LOOKUP
-        && (special || saved["reason"].as_str().is_some_and(|r| r.ends_with("Subtitle ends before it starts")))
+    let lookup = saved["lookup"].as_u64().unwrap_or(0);
+    let reason = saved["reason"].as_str().unwrap_or("");
+    saved["state"] == "missing" && lookup < LOOKUP
+        && ((lookup < 3 && (special || reason.ends_with("Subtitle ends before it starts")))
+            || reason.starts_with("No zh-Hans subtitles on OpenSubtitles"))
+}
+
+/// A ready record from an anonymous upload chosen before ranking version 2 (any hash match
+/// first): looked up again once, keeping it when nothing better is found.
+fn rechoose(saved: &Value) -> bool {
+    saved["state"] == "ready" && saved["provenance"]["source"] == "opensubtitles"
+        && saved["provenance"]["uploader"].as_str().is_none_or(|u| u.eq_ignore_ascii_case("anonymous"))
+        && saved["provenance"]["ranking"].as_u64().unwrap_or(1) < crate::opensubtitles::RANKING
+        && saved["after"].as_f64().is_none_or(|t| t <= now())
 }
 
 /// Whether a ready record's subtitles were checked against the file's length.
@@ -426,6 +440,25 @@ async fn people(s: &Service, asset: &Value, input: &Path, language: &str) -> Res
     let record = format!("{name}.{tag}-opensubtitles");
     let save = |document: Value| -> Result<()> { store(&*database(s)?, &record, &document) };
     let mut refused: Vec<u64> = Vec::new();
+    // An anonymous upload chosen by the old ranking: asked again, and kept unless a better one
+    // is found (or OpenSubtitles cannot be asked now).
+    if let Some(saved) = stored.as_ref().filter(|saved| rechoose(saved)) {
+        let kept = root.join(saved["output"].as_str().unwrap_or_default());
+        if kept.is_file() {
+            let mut saved = saved.clone();
+            match crate::opensubtitles::find_language(&s.data_dir, asset, input, &root, &name, language, &[]).await {
+                Ok(crate::opensubtitles::Found::Ready(path, provenance)) => {
+                    tracing::info!(asset = id, tag, was = saved["provenance"]["release"].as_str().unwrap_or(""), now = provenance["release"].as_str().unwrap_or(""), "OpenSubtitles chosen again by the new ranking");
+                    save(json!({"state":"ready","asset_id":id,"output":path.file_name().and_then(|n| n.to_str()),"provenance":provenance,"updated":now()}))?;
+                    return Ok(Some(path));
+                }
+                Ok(crate::opensubtitles::Found::Missing(_)) => { saved["provenance"]["ranking"] = json!(crate::opensubtitles::RANKING); }
+                Err(error) => { saved["after"] = json!(crate::opensubtitles::waits_until(&error.to_string()).unwrap_or(now() + 3600.0)); }
+            }
+            save(saved)?;
+            return Ok(Some(kept));
+        }
+    }
     if let Some(mut saved) = stored {
         if saved["state"] == "ready" {
             let path = root.join(saved["output"].as_str().unwrap_or_default());

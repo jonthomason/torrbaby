@@ -154,6 +154,12 @@ pub(crate) fn choose(results: &[Value], release: &str, language: &str) -> Option
 }
 
 /// Every acceptable subtitle of a search, best first (see `choose`).
+/// How uploads are ranked: version 2 (2026-11-18) puts trusted uploaders first and anonymous
+/// ones last, with a matching hash only a tie-breaker. Version 1 put any hash match first, and
+/// The Office S01E01 got an anonymous upload full of mistakes ("I couldn't closet") over the
+/// administrator's from the DVD.
+pub(crate) const RANKING: u64 = 2;
+
 pub(crate) fn ranked(results: &[Value], release: &str, language: &str) -> Vec<(u64, String, Value)> {
     let mine = tokens(release);
     let mut found: Vec<_> = results.iter().filter_map(|r| {
@@ -164,12 +170,24 @@ pub(crate) fn ranked(results: &[Value], release: &str, language: &str) -> Vec<(u
         let id = file["file_id"].as_u64()?;
         let theirs = tokens(a["release"].as_str().unwrap_or(""));
         let alike = mine.intersection(&theirs).count() as f64 / theirs.len().max(1) as f64;
-        let score = (a["moviehash_match"] == true) as u8 as f64 * 100.0
+        // Who made it counts most (votes are almost never given): OpenSubtitles' trusted
+        // uploads (its administrators', often from the disc), then members by rank; anonymous
+        // uploads last. A matching hash, the release's name and downloads break ties; the
+        // length check after downloading still refuses another cut.
+        let rank = a["uploader"]["rank"].as_str().unwrap_or("").to_lowercase();
+        let anonymous = rank.is_empty() || rank == "anonymous" || a["uploader"]["name"].as_str().is_none_or(|n| n.eq_ignore_ascii_case("anonymous"));
+        let trusted = a["from_trusted"] == true || ["administrator", "trusted"].iter().any(|t| rank.contains(t));
+        let member = [("platinum", 6.0), ("gold", 4.0), ("silver", 2.0), ("bronze", 1.0)].iter().find(|(r, _)| rank.contains(r)).map_or(0.0, |(_, s)| *s);
+        let votes = a["votes"].as_f64().unwrap_or(0.0);
+        let rating = if votes > 0.0 { (a["ratings"].as_f64().unwrap_or(5.0) - 5.0) * votes.min(5.0) } else { 0.0 };
+        let score = trusted as u8 as f64 * 30.0 + member - anonymous as u8 as f64 * 10.0 + rating
+            + (a["moviehash_match"] == true) as u8 as f64 * 8.0
             + alike * 10.0
             - (a["hearing_impaired"] == true) as u8 as f64 * 5.0
             + (a["download_count"].as_f64().unwrap_or(0.0) + 1.0).log10();
         let provenance = json!({"source":"opensubtitles","subtitle_id":r["id"],"file_id":id,"release":a["release"],"language":language,
-            "moviehash_match":a["moviehash_match"],"hearing_impaired":a["hearing_impaired"],"download_count":a["download_count"],"fps":a["fps"],"uploader":a["uploader"]["name"],"url":a["url"]});
+            "moviehash_match":a["moviehash_match"],"hearing_impaired":a["hearing_impaired"],"download_count":a["download_count"],"fps":a["fps"],"uploader":a["uploader"]["name"],
+            "uploader_rank":a["uploader"]["rank"],"from_trusted":a["from_trusted"],"ranking":RANKING,"url":a["url"]});
         Some((score, id, a["release"].as_str().unwrap_or("").to_owned(), provenance))
     }).collect();
     found.sort_by(|a, b| b.0.total_cmp(&a.0));
@@ -194,11 +212,17 @@ pub async fn find(data: &Path, asset: &Value, input: &Path, directory: &Path, na
 }
 
 /// Subtitles in `language` ("en" or "zh-cn") for `asset`'s file, written into `directory`.
+/// For Chinese, Traditional (zh-tw) is searched in the same request and used only when no
+/// Simplified file fits: it is converted to Simplified, mainland usage (zhconv's phrase tables,
+/// not a character swap). People's Traditional subtitles beat an English translation (the
+/// user, 2026-11-18); Simplified is all that is shown (the Mainland).
 /// Candidates are downloaded best first until one fits the file's length (`fits`), at most
 /// `TRIES`; `refused` are file ids already found not to fit. A candidate that does not fit is
 /// named in the answer's `refused`, so it is not downloaded again.
 pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: &Path, name: &str, language: &str, refused: &[u64]) -> Result<Found> {
     let (code, ours) = match language { "zh-cn" => ("zh-cn", "zh-Hans"), _ => ("en", "en") };
+    // The languages searched, in the order their files are tried.
+    let codes: &[&str] = if code == "zh-cn" { &["zh-cn", "zh-tw"] } else { &[code] };
     let Some(c) = credentials(data) else { return Ok(Found::Missing("No OpenSubtitles account".into())) };
     let entity = asset["entity_id"].as_str().unwrap_or("");
     let client = client()?;
@@ -230,7 +254,7 @@ pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: 
     let mut tried: Vec<u64> = refused.to_vec();
     for mut query in searches {
         if let Some(hash) = &hash { query.push(("moviehash", hash.clone())); }
-        query.push(("languages", code.into()));
+        query.push(("languages", codes.join(",")));
         // OpenSubtitles redirects any other order of the parameters: send them sorted.
         query.sort();
         let mut url = reqwest::Url::parse(&format!("{API}/subtitles"))?;
@@ -238,14 +262,21 @@ pub async fn find_language(data: &Path, asset: &Value, input: &Path, directory: 
         let reply = client.get(url).header("Api-Key", &c.api_key).header("Accept", "application/json").send().await.context("OpenSubtitles search")?;
         ensure!(reply.status().is_success(), "OpenSubtitles search failed ({})", reply.status());
         let results: Value = reply.json().await?;
-        let candidates: Vec<_> = ranked(results["data"].as_array().map(Vec::as_slice).unwrap_or(&[]), &release, code)
-            .into_iter().filter(|(id, _, _)| !tried.contains(id)).take(TRIES).collect();
-        for (file_id, chosen, mut provenance) in candidates {
+        let found = results["data"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+        let candidates: Vec<_> = codes.iter().flat_map(|code| ranked(found, &release, code).into_iter()
+            .filter(|(id, _, _)| !tried.contains(id)).take(TRIES).map(move |c| (*code, c))).collect();
+        for (from, (file_id, chosen, mut provenance)) in candidates {
             tried.push(file_id);
-            let (cues, text) = match download(data, &client, &c, file_id, ours).await? {
+            // Read as its own script: a Traditional file that is not UTF-8 is most likely Big5.
+            let script = if from == "zh-tw" { "zh-Hant" } else { ours };
+            let (cues, text) = match download(data, &client, &c, file_id, script).await? {
                 Ok(read) => read,
                 Err(why) => { unreadable = Some(why); continue }
             };
+            let text = if from == "zh-tw" {
+                provenance["converted_from"] = json!("zh-Hant");
+                zhconv::zhconv(&text, zhconv::Variant::ZhCN)
+            } else { text };
             let last_end = cues.iter().map(|c| c.end_ms).max().unwrap_or(0) as f64 / 1000.0;
             if !fits(last_end, duration) {
                 tracing::info!(asset = asset["id"].as_str().unwrap_or(""), language = ours, release = %chosen, last_end, duration, "OpenSubtitles file does not fit this file's length");
@@ -385,6 +416,29 @@ pub fn waits_until(error: &str) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_trusted_upload_beats_an_anonymous_one_with_a_matching_hash() {
+        let upload = |file: u64, hash: bool, trusted: bool, rank: &str, name: &str, downloads: u64| json!({"id": file.to_string(), "attributes": {
+            "language": "en", "release": "The Office S01E01 Pilot", "moviehash_match": hash, "from_trusted": trusted, "download_count": downloads,
+            "uploader": {"name": name, "rank": rank}, "files": [{"file_id": file}]}});
+        // The Office S01E01 (2026-11-18): an anonymous hash match full of mistakes, the
+        // administrator's from the DVD, and a gold member's.
+        let results = [upload(1, true, false, "anonymous", "Anonymous", 70674), upload(2, false, true, "Administrator", "os-admin", 19642),
+            upload(3, false, false, "Gold member", "someone", 47553)];
+        let order: Vec<u64> = ranked(&results, "The Office (2005) - S01E01 - Pilot.mkv", "en").into_iter().map(|c| c.0).collect();
+        assert_eq!(order, vec![2, 3, 1]);
+    }
+
+    #[test]
+    fn traditional_subtitles_become_simplified_by_phrase() {
+        // Not a character swap: 髮 and 發 both become 发, 乾 becomes 干 or stays 乾, and
+        // Taiwanese words become mainland ones.
+        let simplified = zhconv::zhconv("我們的頭髮很長。經濟發展很快。這個軟體很好用。乾隆皇帝", zhconv::Variant::ZhCN);
+        assert_eq!(simplified, "我们的头发很长。经济发展很快。这个软件很好用。乾隆皇帝");
+        // English lines in a bilingual file are left as they are.
+        assert_eq!(zhconv::zhconv("I'm here.", zhconv::Variant::ZhCN), "I'm here.");
+    }
+
     #[test]
     fn a_limit_holds_only_the_quota_that_reached_it() {
         assert_eq!(parse_limit("1794787199"), Some((1794787199.0, true)));
