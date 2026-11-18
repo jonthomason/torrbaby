@@ -952,13 +952,23 @@ final class Store: ObservableObject {
         if directEvents.count > 40 { directEvents.removeFirst(directEvents.count - 40) }
     }
     private static let connectionLog = Logger(subsystem: "org.torrbaby", category: "connection")
-    /// Back from the background. iOS suspends the app, so the link's keepalives stopped: its
-    /// direct path is dropped and punched again (the relay carries meanwhile).
+    /// Back from the background. If iOS suspended the app, the link's keepalives stopped: its
+    /// direct path is dropped and punched again (the relay carries meanwhile). Not when the app
+    /// kept running (Picture in Picture, audio in the background): the direct path still
+    /// answers, and dropping it put playback on bronze's relay for nothing.
     func checkPathsOnReturn() {
         PacketTunnel.shared.refresh()
         abtChanged()
         autoConnectTunnel()
-        if linkRoute != nil { TorrbabyLink.resumed() }
+        guard linkRoute != nil else { return }
+        Task {
+            let state = await TorrbabyLink.state()
+            if state?.state == "direct", let answered = state?.lastAnsweredS, answered <= 6 {
+                directEvent("back in the app: direct path still answering (\(answered) s ago), kept")
+                return
+            }
+            TorrbabyLink.resumed()
+        }
     }
     /// Torrbaby's tunnel connects by itself where it may (see PacketTunnel.autoConnect).
     func autoConnectTunnel() {
