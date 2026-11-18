@@ -64,13 +64,35 @@ enum CreditCards {
         return s.filter(\.isLetter).count >= 4 && (tokens.count >= 2 || s == s.uppercased())
     }
 
+    /// A card printed as one line, role then name ("EDITED BY YANG JINMO", Parasite's
+    /// closing cards): the name it ends with. Vision reads such a card as a single line, so
+    /// without this the role word hid the name and the card counted as a blank frame.
+    static func trailingName(_ text: String) -> String? {
+        let tokens = text.split(separator: " ").map(String.init)
+        guard tokens.count >= 3 else { return nil }
+        for count in stride(from: min(4, tokens.count - 1), through: 1, by: -1) {
+            let name = tokens.suffix(count).joined(separator: " "), role = tokens.dropLast(count).joined(separator: " ")
+            if ["by", "of", "and", "&"].contains(tokens[tokens.count - count].lowercased()) { continue }
+            if isRole(role) && !isRole(name) && isName(name) { return name }
+        }
+        return nil
+    }
+
+    /// The name a credit line gives: the whole line, or (on a near-black card) the name
+    /// after its role.
+    static func creditName(_ text: String, dark: Double) -> String? {
+        if !isRole(text) && isName(text) { return text }
+        return dark >= 0.8 ? trailingName(text) : nil
+    }
+
     static func label(_ frame: CardFrame) -> CardLabel {
         let lines = frame.lines.filter { $0.text.trimmingCharacters(in: .whitespaces).count >= 2 }
         // Footage without any text (between cards over a picture) neither extends nor breaks a run quickly.
         if lines.isEmpty { return frame.dark >= 0.8 ? .plain : .blank }
         let roles = lines.filter { isRole($0.text) }.count
-        let names = lines.filter { !isRole($0.text) && isName($0.text) }.count
-        let credit = Double(roles + names) / Double(lines.count)
+        let plainNames = lines.filter { !isRole($0.text) && isName($0.text) }.count
+        let names = lines.filter { creditName($0.text, dark: frame.dark) != nil }.count
+        let credit = Double(roles + plainNames) / Double(lines.count)
         if roles >= 1 && names >= 1 && credit >= 0.6 { return .strong }
         if names >= 1 && credit >= 0.6 && frame.dark >= 0.85 { return .weak }
         if frame.dark >= 0.8 && lines.count <= 3 { return .plain }
@@ -106,8 +128,9 @@ enum CreditCards {
             let plain = Double(cards.filter { $0.0.dark >= 0.85 }.count) / Double(cards.count)
             var seen = Set<String>(), words = [String]()
             for (frame, _) in cards {
-                for line in frame.lines where isName(line.text) && !isRole(line.text) {
-                    let key = line.text.lowercased().filter { $0.isLetter || $0.isNumber }
+                for line in frame.lines {
+                    guard let name = creditName(line.text, dark: frame.dark) else { continue }
+                    let key = name.lowercased().filter { $0.isLetter || $0.isNumber }
                     if key.count >= 4 && words.count < 120 && seen.insert(key).inserted { words.append(key) }
                 }
             }
@@ -217,7 +240,12 @@ enum CreditCards {
         let over = runs([card(0, ["Executive Producer", "LARRY DAVID"], dark: 0.7)] + quiet +
                         [card(14, ["Producer", "JERRY SEINFELD"], dark: 0.7), card(16, ["Story Editor", "MATT GOLDMAN"], dark: 0.7)])
         let chinese = runs([card(0, ["导演", "王家卫"]), card(3, ["编剧", "刘以鬯"]), card(6, ["摄影", "杜可风"]), card(9, ["主演", "梁朝伟", "张曼玉"])])
-        return found.count == 1 && found[0].start == 40 && found[0].end == 52 && found[0].distinct == 5 &&
+        // Single-line cards on black (Parasite: "EDITED BY YANG JINMO") are credits too.
+        let oneLine = runs([card(0, ["STORY BY BONG JOON HO"]), card(10, ["CO-EXECUTIVE PRODUCER HEO MIN HEOI"]),
+                            card(20, ["DIRECTOR OF PHOTOGRAPHY HONG KYUNG PYO"]), card(30, ["EDITED BY YANG JINMO"])])
+        return oneLine.count == 1 && oneLine[0].start == 0 && oneLine[0].distinct == 4 &&
+            trailingName("EDITED BY YANG JINMO") == "YANG JINMO" && creditName("Production Office KEEP OUT", dark: 0.1) == nil &&
+            found.count == 1 && found[0].start == 40 && found[0].end == 52 && found[0].distinct == 5 &&
             held.isEmpty && signs.isEmpty && isName("J. David Brightbill") && isName("王家卫") &&
             !isName("Floor 3") && isRole("导演") && over.count == 1 && over[0].start == 0 && over[0].plainShare == 0 &&
             chinese.count == 1 && chinese[0].distinct == 4

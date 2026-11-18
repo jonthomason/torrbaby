@@ -918,7 +918,7 @@ mod speech_timing_tests {
     #[test]
     fn subtitles_line_up_with_what_is_said() {
         // Outlander S01E07: the subtitles 47 s early; the speech heard in three stretches.
-        let real: Vec<(u64, &str)> = lines().into_iter().enumerate().map(|(i, t)| (600_000 * (i as u64 / 4) + 20_000 + (i as u64 % 4) * 30_000, t)).collect();
+        let real: Vec<(u64, &str)> = lines().into_iter().enumerate().map(|(i, t)| (600_000 * (i as u64 / 4) + 120_000 + (i as u64 % 4) * 30_000, t)).collect();
         let heard: Vec<TimedCue> = real.iter().map(|(at, t)| cue(*at, t)).collect();
         let early: Vec<TimedCue> = real.iter().map(|(at, t)| cue(at - 47_400, t)).collect();
         assert_eq!(speech_timing(&heard, &early), Verdict::Retimed(Timing { scale: 1.0, shift: 47_400 }));

@@ -7,7 +7,9 @@ use rusqlite::OptionalExtension;
 use std::{path::Path, process::Stdio, sync::Arc, time::Duration};
 
 /// 2: static credit cards (cards-v1) alongside rolling crawls, resolved per series.
-pub(crate) const VERSION:i64=2;
+/// 3: a card printed as one line, role then name ("EDITED BY YANG JINMO"), is a card:
+/// Parasite's credits were placed 70 s late, so stopping in them did not finish it.
+pub(crate) const VERSION:i64=3;
 pub fn cached(db:&Database,id:&str)->Result<Value> {
     let asset=db.asset(id)?;
     let row:Option<(String,String)>=db.connection.query_row("SELECT revision,document FROM credits_analysis WHERE asset_id=? AND version=?",rusqlite::params![id,VERSION],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
@@ -130,7 +132,10 @@ pub async fn process(s:&Service, asset:&Value)->Result<()> {
             {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;save(&db,id,&revision,&document)?;
             // Resolve this file against its series, and its series against it.
             if entity.is_empty() {save(&db,id,&revision,&crate::credit_series::resolve(&document,&[]))?;}
-            else {crate::credit_series::resolve_title(&db,&entity,VERSION)?;}}
+            else {crate::credit_series::resolve_title(&db,&entity,VERSION)?;}
+            // Playback already stopped inside credits found only now is finished.
+            let finished=crate::profiles::finish_in_credits(&db.connection,id)?;
+            if finished>0 {tracing::info!(asset=id,finished,"Playback stopped in the closing credits marked watched");}}
             if episode {place_by_sound(s,&entity).await?;}
         }
         tracing::info!(asset=id,state=?document["state"],elapsed=?document["elapsed_seconds"],"Credits analysis finished");

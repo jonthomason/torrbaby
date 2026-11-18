@@ -106,6 +106,22 @@ pub fn closing_credits(connection: &rusqlite::Connection, media: &str, duration:
     Ok(documents.iter().filter_map(|d| serde_json::from_str::<Value>(d).ok()).find_map(|d| crate::credits::closing_start(&d, duration)))
 }
 
+/// Marks watched the playback of `asset` stopped inside its closing credits, as now
+/// detected: a newer analysis can place them earlier than the one playback was judged by.
+/// Returns how many records were marked.
+pub fn finish_in_credits(connection: &rusqlite::Connection, asset: &str) -> Result<usize> {
+    let rows: Vec<(String, String, f64, f64)> = connection.prepare_cached(
+        "SELECT p.profile_id,p.media_id,p.position,p.duration FROM profile_playback p JOIN media m ON m.id=p.media_id JOIN library_assets a ON (json_extract(a.document,'$.torrent_hash')=m.torrent_hash AND COALESCE(json_extract(a.document,'$.file_index'),0)=m.file_index) OR a.id=m.torrent_hash WHERE a.id=? AND p.watched=0 AND p.position>0 AND p.duration>0")?
+        .query_map([asset], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<rusqlite::Result<_>>()?;
+    let mut marked = 0;
+    for (profile, media, position, duration) in rows {
+        if finished(position, duration, closing_credits(connection, &media, duration)?) {
+            marked += connection.execute("UPDATE profile_playback SET watched=1 WHERE profile_id=? AND media_id=? AND watched=0", params![profile, media])?;
+        }
+    }
+    Ok(marked)
+}
+
 impl Database {
     /// Playback stopped in the closing credits before this rule existed stayed in Continue
     /// Watching ("4m left"). Marks those records watched once; positions and times are kept.
@@ -305,6 +321,23 @@ mod tests {
         db.progress_with_evidence(&s, 4, 5710.0, 5904.169, true, false, false)?;
         assert_eq!(db.history(LEGACY_PROFILE)?[0]["watched"], true);
         assert_eq!(db.begin(LEGACY_PROFILE, "hash", 0, "Test", 100, &client)?["resume_position"], 0.0);
+        Ok(())
+    }
+
+    #[test]
+    fn credits_found_later_finish_playback_stopped_in_them() -> Result<()> {
+        let (mut db, client, _) = fixture()?;
+        credits_fixture(&db, 5904.169, 5800.0)?;
+        let s = session(&mut db, LEGACY_PROFILE, &client)?;
+        db.progress_with_evidence(&s, 1, 5700.0, 5904.169, false, true, false)?;
+        db.progress_with_evidence(&s, 2, 5700.0, 5904.169, true, false, false)?;
+        assert_eq!(finish_in_credits(&db.connection, "asset-test")?, 0);
+        // A newer analysis places the credits earlier (one-line cards): stopped inside them.
+        db.connection.execute("UPDATE credits_analysis SET document=? WHERE asset_id='asset-test'", [json!({
+            "state":"ready","duration":5904.169,"segments":[{"start":5650.0,"end":5899.0,"confidence":0.95}]}).to_string()])?;
+        assert_eq!(finish_in_credits(&db.connection, "asset-test")?, 1);
+        assert_eq!(db.history(LEGACY_PROFILE)?[0]["watched"], true);
+        assert_eq!(finish_in_credits(&db.connection, "asset-test")?, 0);
         Ok(())
     }
 
