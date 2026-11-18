@@ -35,7 +35,9 @@ struct Job {
 // preparation, and old indexes leave through normal cache reclamation.
 // Version 6 stops reading at the end of the Matroska segment, so files with bytes
 // appended after it no longer fail; those earlier failures are retried once.
-const PREPARATION_VERSION: u32 = 6;
+// Version 7 takes implicit HE-AAC (its configuration names only the 24 kHz core; Matroska gives
+// the 48 kHz output: The Office S01), which failed as "AAC layout mismatch"; retried once.
+const PREPARATION_VERSION: u32 = 7;
 /// The preparation version from which indexes carry random-access tables (see version 5).
 const RANDOM_ACCESS_VERSION: u32 = 5;
 const LAYOUT_VERSION: u32 = 3;

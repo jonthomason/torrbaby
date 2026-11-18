@@ -482,9 +482,10 @@ fn remux_pass(input: &Path, output: &Path, max_bytes: u64, mapping: Mapping,
         } else {
             let a = t.audio().context("Missing audio parameters")?;
             let (core_rate, output_rate, channels) = aac_configuration(&params.extradata)?;
-            ensure!(a.sampling_frequency() == core_rate as f64
-                && a.output_sampling_frequency().is_none_or(|r| r == output_rate as f64)
-                && a.channels().get() == channels as u64, "AAC layout mismatch");
+            let output_rate = aac_output_rate(core_rate, output_rate, a.sampling_frequency(), a.output_sampling_frequency())
+                .filter(|_| a.channels().get() == channels as u64)
+                .with_context(|| format!("AAC layout mismatch: the stream says {core_rate}/{output_rate} Hz, {channels} channels; Matroska says {}/{:?} Hz, {} channels",
+                    a.sampling_frequency(), a.output_sampling_frequency(), a.channels().get()))?;
             params.sample_rate = Some(output_rate);
             params.channels = Some(channels.into());
             audio_samples = 1024 * output_rate as u64 / core_rate as u64;
@@ -1139,6 +1140,18 @@ fn rewrite_track_labels(data: &[u8], labels: &TrackLabels) -> Result<Vec<u8>> {
 
 // AAC-LC, including backward-compatible SBR signaling. Keep the full ASC
 // in esds so the native decoder sees the same configuration as the source.
+/// The rate an AAC track plays at, when Matroska's rates agree with the stream's configuration
+/// (`core`, `output` from `aac_configuration`). Implicit HE-AAC names only its AAC-LC core
+/// (24 kHz) in the configuration; the SBR output (48 kHz) is found in the stream, and Matroska
+/// records it as the track's rate or its output rate (The Office S01, 2026-11-18). Then the
+/// output is twice the core, and a frame's 1024 core samples are 2048 at the output rate.
+fn aac_output_rate(core: u32, output: u32, matroska: f64, matroska_output: Option<f64>) -> Option<u32> {
+    let doubled = core * 2;
+    let output = if output == core && (matroska == doubled as f64 || matroska_output == Some(doubled as f64)) { doubled } else { output };
+    let rate_fits = matroska == core as f64 || matroska == output as f64;
+    (rate_fits && matroska_output.is_none_or(|r| r == output as f64)).then_some(output)
+}
+
 fn aac_configuration(data: &[u8]) -> Result<(u32, u32, u8)> {
     struct Bits<'a> { bytes: &'a [u8], at: usize }
     impl Bits<'_> {
@@ -1198,6 +1211,22 @@ mod aac_tests {
         assert_eq!(parse(&[0x2b,0x31,0x88,0x00]).unwrap(), (24000,48000,6));
         // Explicit parametric stereo (29) is still refused.
         assert!(parse(&[0xeb,0x31,0x88,0x00]).is_err());
+    }
+
+    #[test]
+    fn implicit_he_aac_plays_at_the_rate_matroska_records() {
+        use super::aac_output_rate as rate;
+        // The Office S01E01's second track: AAC-LC 24 kHz stereo in the configuration (13 10),
+        // 48 kHz in Matroska.
+        assert_eq!(super::aac_configuration(&[0x13,0x10]).unwrap(), (24000,24000,2));
+        assert_eq!(rate(24000, 24000, 48000.0, None), Some(48000));
+        assert_eq!(rate(24000, 24000, 24000.0, Some(48000.0)), Some(48000));
+        // Plain AAC-LC and explicit HE-AAC as before.
+        assert_eq!(rate(48000, 48000, 48000.0, None), Some(48000));
+        assert_eq!(rate(24000, 48000, 24000.0, Some(48000.0)), Some(48000));
+        // Rates that disagree otherwise are still refused.
+        assert_eq!(rate(48000, 48000, 44100.0, None), None);
+        assert_eq!(rate(24000, 24000, 24000.0, Some(44100.0)), None);
     }
 }
 
