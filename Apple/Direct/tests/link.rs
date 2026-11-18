@@ -1,4 +1,4 @@
-//! Torrbaby's link on loopback: a real rendezvous (rendezvous/), a stand-in Diamond that holds
+//! Torrbaby's link on loopback: a real rendezvous (ABT's abt-bronze), a stand-in Diamond that holds
 //! its connection and serves relayed streams the way Diamond does (abt-link's pipe_relayed: TLS
 //! to its identity, end to end, then its HTTP port), and a request on the link's loopback port.
 mod common;

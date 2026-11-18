@@ -4,6 +4,29 @@ Status: **built** (iOS since Apple 247–302, Android TV since 114–116, server
 2026-11-14). The plan below is the original from 2026-11-13; this first section is the current
 state and what is left.
 
+## Update 2026-11-18: the rendezvous is ABT's, with backups
+
+bronze's account was stopped on 2026-11-17 (an unpaid 0.07 RMB of traffic) and every device
+away from home lost Diamond: STUN, punch requests and the relay all went through bronze. Now:
+
+- **The service is ABT's `abt-bronze`** (abt repo, `crates/abt-bronze`; setup in abt's
+  `deploy/rendezvous/README.md`, "Bronze"). Since 2026-11-18 08:17 China time bronze runs it in
+  place of Torrbaby's `tbrendezvous`: same unit (`tbrendezvous.service`, drop-in
+  `abt-bronze.conf`), state, certificate and ports. Torrbaby's `rendezvous/` and
+  `scripts/deploy_rendezvous.sh` are deleted.
+- **Backups on Shadow and miyu** (abt-link's `bronze::ours()`: bronze, Shadow, then miyu, whose
+  traffic is paid): STUN and punch requests only. They relay nothing (the user, 2026-11-18): a
+  stream through them is at most 64 KB and 30 s, at most 12 a minute to a home, and stays TLS
+  to Diamond end to end (punch requests carry the device's token). With bronze down a device
+  gets a direct path or nothing; the app then says "Diamond is on · No direct path".
+- **Diamond** (`server/rendezvous.rs`) keeps its home on all three with abt-link's
+  `keep_homes`; its STUN asks all three; punch outcomes go to every server's hints.
+- **Devices** (`Apple/Direct`, iOS and Android TV) use abt-link's `bronze::Relay` for all three
+  (Torrbaby's own `relay.rs` and vendored ipstack are deleted; ipstack comes from the abt repo).
+
+The sections below describe the 2026-11-14 build and are kept as history; file names in them
+(`rendezvous/`, `relay.rs`, `e2e.rs`, `tcp.rs`) are gone.
+
 ## Current state (2026-11-14 evening; Apple 302, Android 116, server deployed 18:33)
 
 Built and deployed:
