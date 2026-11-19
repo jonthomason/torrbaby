@@ -415,6 +415,7 @@ final class L10n {
     IDS.put("Language", R.string.ui_89b86ab0e66f);
     IDS.put("Languages", R.string.ui_db07be184479);
     IDS.put("Languages unavailable", R.string.ui_4ece8db0cba2);
+    IDS.put("Largest first", R.string.ui_d2b6b373367d);
     IDS.put("Last checked %s", R.string.ui_b288f8c8e974);
     IDS.put("Leave Torrbaby?", R.string.ui_88a68e0e00b7);
     IDS.put("Let this device join?", R.string.ui_93f9edb5b925);

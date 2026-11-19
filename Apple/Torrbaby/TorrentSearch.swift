@@ -356,7 +356,7 @@ struct TorrentSearchView: View {
     @State private var scopeFilter = "all"
     @State private var seasonFilter: Int?
     @State private var episodeFilter: Int?
-    @AppStorage("torrentSearchSort") private var sortOrder = "match"
+    @AppStorage("torrentSearchOrder") private var sortOrder = "seeds"
     @State private var downloaderSeason: Int?
     @State private var searchedQuery = ""
     @State private var showDownloader = false
@@ -404,12 +404,17 @@ struct TorrentSearchView: View {
                 let seeds = (a.element.seeders ?? 0, b.element.seeders ?? 0)
                 return seeds.0 != seeds.1 ? seeds.0 > seeds.1 : a.offset < b.offset
             }.map(\.element)
-        case "seeds":
+        case "size":
+            return items.enumerated().sorted { a, b in
+                let size = (a.element.sizeBytes ?? 0, b.element.sizeBytes ?? 0)
+                return size.0 != size.1 ? size.0 > size.1 : a.offset < b.offset
+            }.map(\.element)
+        default:
+            // Most seeded first, whatever the kind of search.
             return items.enumerated().sorted { a, b in
                 let seeds = (a.element.seeders ?? 0, b.element.seeders ?? 0)
                 return seeds.0 != seeds.1 ? seeds.0 > seeds.1 : a.offset < b.offset
             }.map(\.element)
-        default: return items
         }
     }
     private static let titleKeys = NSCache<NSString, NSString>()
@@ -476,7 +481,7 @@ struct TorrentSearchView: View {
         if let season = activeDownloaderSeason, let show = picks.first?.item.title {
             let pending = picks.filter { $0.owned == nil }.count
             VStack(alignment: .leading, spacing: 8) {
-                Label("Automatic Episode Downloader", systemImage: "sparkles").font(.headline)
+                Label("Automatic Episode Downloader", systemImage: "sparkles").font(SearchFont.title)
                 Text(verbatim: [show, L10n.format("%d episodes found", picks.count), L10n.format("%d to add", pending),
                                 resolution == "all" ? L10n.text("Any resolution") : resolution].joined(separator: " · "))
                     .font(.caption).foregroundStyle(Theme.muted)
@@ -524,7 +529,7 @@ struct TorrentSearchView: View {
                     // The search in progress takes the page, not a small spinner under the box.
                     VStack(spacing: 14) {
                         ProgressView().controlSize(.large)
-                        Text("Searching…").font(.title3.weight(.semibold))
+                        Text("Searching…").font(SearchFont.rowTitle)
                         // Every share is opened to check its files, which takes a while.
                         if market == "china" { Text("Searching and checking links…").font(.callout).foregroundStyle(.secondary) }
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -609,7 +614,7 @@ struct TorrentSearchView: View {
             if changed { work?.cancel(); searching = false; titles = nil; chosen = nil; facts = nil; response = nil; error = nil
                 if query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 { findTitles() } }
         } label: {
-            Label(LocalizedStringKey(name), systemImage: icon).font(.subheadline.weight(.semibold)).padding(.horizontal, 12).frame(minHeight: regionHeight)
+            Label(LocalizedStringKey(name), systemImage: icon).font(SearchFont.control).padding(.horizontal, 12).frame(minHeight: regionHeight)
                 .foregroundStyle(selected ? Theme.onAccent : Color.white)
                 .background(selected ? Theme.accent : .clear, in: RoundedRectangle(cornerRadius: 6))
                 .contentShape(Rectangle())
@@ -633,14 +638,14 @@ struct TorrentSearchView: View {
     private func titleList(_ titles: [FindTitle]) -> some View {
         List {
             if titles.isEmpty {
-                Text("No titles found").font(.headline).foregroundStyle(Theme.muted).padding(.vertical, 8)
+                Text("No titles found").font(SearchFont.title).foregroundStyle(Theme.muted).padding(.vertical, 8)
             }
             ForEach(titles) { title in
                 Button { choose(title) } label: {
                     HStack(alignment: .top, spacing: 12) {
-                        poster(title.poster, width: 46)
+                        poster(title.poster, width: SearchFont.poster)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(verbatim: title.shownTitle).font(.headline)
+                            Text(verbatim: title.shownTitle).font(SearchFont.title)
                             if title.shownTitle != title.title { Text(verbatim: title.title).font(.caption).foregroundStyle(Theme.muted) }
                             if !title.line.isEmpty { Text(verbatim: title.line).font(.caption).foregroundStyle(Theme.muted) }
                             if let summary = title.summary, !summary.isEmpty { Text(verbatim: summary).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
@@ -660,7 +665,7 @@ struct TorrentSearchView: View {
             HStack(alignment: .center, spacing: 12) {
                 poster(title.poster, width: 34)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: title.shownTitle).font(.headline)
+                    Text(verbatim: title.shownTitle).font(SearchFont.title)
                     if !title.line.isEmpty { Text(verbatim: title.line).font(.caption).foregroundStyle(Theme.muted) }
                 }
                 Spacer(minLength: 0)
@@ -702,7 +707,7 @@ struct TorrentSearchView: View {
             HStack(spacing: 6) {
                 icon()
                 if !compactRegion { Text(LocalizedStringKey(name)) }
-            }.font(.subheadline.weight(.semibold)).padding(.horizontal, 10).frame(minHeight: regionHeight)
+            }.font(SearchFont.control).padding(.horizontal, 10).frame(minHeight: regionHeight)
                 .foregroundStyle(selected ? Theme.onAccent : Color.white)
                 .background(selected ? Theme.accent : .clear, in: RoundedRectangle(cornerRadius: 6))
                 .contentShape(Rectangle())
@@ -834,9 +839,9 @@ struct TorrentSearchView: View {
     }
     private var sortPicker: some View {
         Picker("Sort", selection: $sortOrder) {
-            Text("Best match").tag("match")
-            Text("Episode order").tag("episode")
             Text("Most seeds").tag("seeds")
+            Text("Largest first").tag("size")
+            Text("Episode order").tag("episode")
         }.pickerStyle(.menu).fixedSize().searchFilterControl()
     }
     @ViewBuilder private var searchStatus: some View {
@@ -915,7 +920,7 @@ struct TorrentSearchView: View {
     /// Show, season, episode and sort describe one search's results, so a different search
     /// starts without them. Sources and resolution are standing preferences and are kept.
     private func resetFilters() {
-        scopeFilter = "all"; seasonFilter = nil; episodeFilter = nil; downloaderSeason = nil; sortOrder = "match"
+        scopeFilter = "all"; seasonFilter = nil; episodeFilter = nil; downloaderSeason = nil; sortOrder = "seeds"
     }
     /// Search: the titles named so (then a title is chosen), or torrents by the words typed.
     private func search() {
@@ -1076,7 +1081,7 @@ struct EpisodeDownloaderSheet: View {
                     }
                     ForEach(notFound, id: \.self) { episode in
                         HStack {
-                            Text(L10n.format("Season %d Ep %d", season, episode)).font(.headline)
+                            Text(L10n.format("Season %d Ep %d", season, episode)).font(SearchFont.title)
                             Spacer()
                             Label("No release found", systemImage: "questionmark.circle").font(.caption.weight(.semibold)).foregroundStyle(Theme.muted)
                         }.padding(.vertical, 4)
@@ -1115,7 +1120,7 @@ struct EpisodeDownloaderSheet: View {
     private func row(_ pick: EpisodePick) -> some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(L10n.format("Season %d Ep %d", season, pick.episode)).font(.headline)
+                Text(L10n.format("Season %d Ep %d", season, pick.episode)).font(SearchFont.title)
                 Text(verbatim: release(pick).name).font(.caption).foregroundStyle(Theme.muted).lineLimit(2)
                 Text(verbatim: summary(release(pick))).font(.caption).monospacedDigit()
                 if pick.owned == nil, !added.contains(pick.episode), pick.alternatives.count > 1 {
@@ -1212,7 +1217,7 @@ private extension View {
     /// On iPhone and iPad a menu picker is bare text; give it the bordered pop-up look it has on the Mac.
     @ViewBuilder func searchFilterControl() -> some View {
         #if os(iOS)
-        self.tint(.white).padding(.horizontal, 4).frame(minHeight: 34)
+        self.font(SearchFont.control).tint(.white).padding(.horizontal, 4).frame(minHeight: 34)
             .background(Theme.control, in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.12), lineWidth: 1))
         #else
@@ -1226,6 +1231,18 @@ struct SearchReleaseFacts {
     var runtimeMinutes: Double?
     var episodeMinutes: Double?
     var seasonEpisodes: Int?
+}
+/// Search's type: compact on iPhone, iPad and Mac so more fits across; Apple TV keeps
+/// its larger sizes for reading from the sofa.
+enum SearchFont {
+    #if os(tvOS)
+    static let rowTitle = Font.title3.bold(), title = Font.headline, figures = Font.headline, control = Font.subheadline.weight(.semibold)
+    static let poster: CGFloat = 46
+    #else
+    static let rowTitle = Font.subheadline.weight(.semibold), title = Font.subheadline.weight(.semibold), figures = Font.footnote.weight(.semibold), control = Font.footnote.weight(.semibold)
+    static let poster: CGFloat = 38
+    #endif
+    static let detail = Font.caption
 }
 private struct SearchReleaseArtwork: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
@@ -1342,10 +1359,10 @@ private struct TorrentSearchRow: View {
                 identity: "\(item.title.lowercased()):\((item.hints.year ?? artworkYear).map(String.init) ?? ""):\(episodic ? "tv:\(item.hints.season ?? 0)" : "movie")",
                 season: item.hints.season, onFacts: { facts = $0 })
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.title).font(.title3.bold()).foregroundStyle(.primary).lineLimit(2)
+                Text(item.title).font(SearchFont.rowTitle).foregroundStyle(.primary).lineLimit(2)
                 if let cloud = item.cloud {
                     // Which episodes it holds is what decides a choice, so it leads.
-                    Text(verbatim: cloud.episodesLine).font(.headline).monospacedDigit()
+                    Text(verbatim: cloud.episodesLine).font(SearchFont.figures).monospacedDigit()
                         .foregroundStyle(cloud.complete == true ? Theme.accent : cloud.aired == nil ? Color.primary : Color.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1358,11 +1375,11 @@ private struct TorrentSearchRow: View {
                             Text(item.availability).foregroundStyle(item.seeders == 0 ? Color.orange : Theme.accent)
                         }
                     }
-                    .font(.headline).monospacedDigit()
+                    .font(SearchFont.figures).monospacedDigit()
                     .fixedSize(horizontal: false, vertical: true)
                 }
-                if !metadata.isEmpty { Text(metadata).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
-                if !tracks.isEmpty { Text(tracks).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                if !metadata.isEmpty { Text(metadata).font(SearchFont.detail).foregroundStyle(.secondary).lineLimit(2) }
+                if !tracks.isEmpty { Text(tracks).font(SearchFont.detail).foregroundStyle(.secondary).lineLimit(2) }
                 if item.cloud != nil {
                     // The sharer's own description, and when it was shared.
                     Text(verbatim: [item.name, item.added.map { String($0.prefix(10)) } ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))

@@ -18652,6 +18652,23 @@
           }
         }
       }
+    },
+    "Largest first": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Largest first"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "体积最大"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

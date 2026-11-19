@@ -404,6 +404,7 @@
     <string name="ui_89b86ab0e66f" formatted="false">Language</string>
     <string name="ui_db07be184479" formatted="false">Languages</string>
     <string name="ui_4ece8db0cba2" formatted="false">Languages unavailable</string>
+    <string name="ui_d2b6b373367d" formatted="false">Largest first</string>
     <string name="ui_b288f8c8e974" formatted="false">Last checked %s</string>
     <string name="ui_88a68e0e00b7" formatted="false">Leave Torrbaby?</string>
     <string name="ui_93f9edb5b925" formatted="false">Let this device join?</string>

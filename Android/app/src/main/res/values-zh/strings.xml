@@ -404,6 +404,7 @@
     <string name="ui_89b86ab0e66f" formatted="false">语言</string>
     <string name="ui_db07be184479" formatted="false">语言</string>
     <string name="ui_4ece8db0cba2" formatted="false">语言信息不可用</string>
+    <string name="ui_d2b6b373367d" formatted="false">体积最大</string>
     <string name="ui_b288f8c8e974" formatted="false">上次检查：%s</string>
     <string name="ui_88a68e0e00b7" formatted="false">退出 Torrbaby？</string>
     <string name="ui_93f9edb5b925" formatted="false">允许此设备加入？</string>

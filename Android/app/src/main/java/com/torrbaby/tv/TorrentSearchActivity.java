@@ -29,6 +29,9 @@ public final class TorrentSearchActivity extends Activity {
   private LinearLayout hiddenBox;
   private TextView hiddenTitle;
   private volatile int enrichmentGeneration;
+  private String order="seeds";
+  private static final String[] ORDERS={"seeds","size","episode"}, ORDER_NAMES={"Most seeds","Largest first","Episode order"};
+  private Button orderButton;
   private String resolutionLabel(){return resolution.equals("all")?L10n.t("All resolutions"):resolution;}
   /** Source errors from the last search, shown after the count. */
   private final List<String> notes=new ArrayList<>();
@@ -43,6 +46,15 @@ public final class TorrentSearchActivity extends Activity {
       JSONObject item=allResults.optJSONObject(i), hints=item.optJSONObject("hints");
       if(resolution.equals("all") || (hints!=null && resolution.equalsIgnoreCase(hints.optString("resolution"))))results.put(item);
     }
+    // Most seeded first unless another order was asked for; ties keep the server's order.
+    List<JSONObject> sorted=new ArrayList<>();for(int i=0;i<results.length();i++)sorted.add(results.optJSONObject(i));
+    Comparator<JSONObject> seeds=(a,b)->Long.compare(b.optLong("seeders",0),a.optLong("seeders",0));
+    if(order.equals("size"))sorted.sort((a,b)->Long.compare(b.optLong("size_bytes",0),a.optLong("size_bytes",0)));
+    else if(order.equals("episode"))sorted.sort(Comparator.<JSONObject>comparingInt(item->{JSONObject h=item.optJSONObject("hints");return h==null||(h.isNull("season")&&h.isNull("episode")&&h.isNull("episode_count"))?1:0;})
+      .thenComparingInt(item->{JSONObject h=item.optJSONObject("hints");return h==null?0:h.optInt("season",0);})
+      .thenComparingInt(item->{JSONObject h=item.optJSONObject("hints");return h==null?0:h.optInt("episode",0);}).thenComparing(seeds));
+    else sorted.sort(seeds);
+    results=new JSONArray(sorted);
     if(list!=null)((BaseAdapter)list.getAdapter()).notifyDataSetChanged();
     if(hiddenBox!=null&&list!=null){
       boolean hidden=results.length()==0&&allResults.length()>0;
@@ -134,7 +146,15 @@ public final class TorrentSearchActivity extends Activity {
         resolution=values[which];getPreferences(MODE_PRIVATE).edit().putString("resolution",resolution).apply();
         resolutionButton.setText(L10n.t("Resolution")+": "+resolutionLabel());enrichmentGeneration++;applyResolution();if(!searchedQuery.isEmpty()&&!searching)showCount();d.dismiss();
       }).show();
-    });Ui.add(resultsRoot,resolutionButton,240,44);
+    });
+    order=getPreferences(MODE_PRIVATE).getString("order","seeds");if(!Arrays.asList(ORDERS).contains(order))order="seeds";
+    orderButton=Ui.button(this,L10n.t(ORDER_NAMES[Arrays.asList(ORDERS).indexOf(order)]),()->new AppDialog(this).setTitle(L10n.t("Sort"))
+      .setSingleChoiceItems(L10n.labels(ORDER_NAMES),Arrays.asList(ORDERS).indexOf(order),(d,which)->{
+        order=ORDERS[which];getPreferences(MODE_PRIVATE).edit().putString("order",order).apply();
+        orderButton.setText(L10n.t(ORDER_NAMES[which]));applyResolution();d.dismiss();
+      }).show());
+    LinearLayout filters=new LinearLayout(this);filters.setOrientation(LinearLayout.HORIZONTAL);
+    Ui.add(filters,resolutionButton,240,44);Ui.gap(filters,12);Ui.add(filters,orderButton,220,44);Ui.add(resultsRoot,filters,-1,46);
     // Everything found is filtered out: say so in large type, or it reads as a failed search.
     hiddenBox=new LinearLayout(this);hiddenBox.setOrientation(LinearLayout.VERTICAL);hiddenBox.setGravity(Gravity.CENTER);hiddenBox.setVisibility(View.GONE);
     hiddenTitle=Ui.title(this,"",28);hiddenTitle.setGravity(Gravity.CENTER);hiddenBox.addView(hiddenTitle);
