@@ -368,6 +368,25 @@ impl Search {
         }
         result
     }
+    /// The Pirate Bay answers at most 100 results, the most seeded first: a long-running show
+    /// fills them with its newest seasons ("Dancing With The Stars": seasons 29-35 only, when
+    /// "… 1080p" alone finds 8-22). A full answer is asked again by picture size, and all merged.
+    async fn search_tpb(&self, terms: &str) -> Result<Vec<Item>> {
+        let ask = |terms: String| async move {
+            let mut url = reqwest::Url::parse("https://apibay.org/q.php").expect("valid URL");
+            url.query_pairs_mut().append_pair("q", &terms).append_pair("cat", "0");
+            parse_tpb(&self.read(url).await?)
+        };
+        let mut items = ask(terms.to_owned()).await?;
+        if items.len() >= TPB_LIMIT && stated_resolution(terms).is_none() {
+            let more = futures_util::future::join_all(["2160p", "1080p", "720p"].map(|size| ask(format!("{terms} {size}")))).await;
+            let mut seen: HashSet<String> = items.iter().map(|i| i.info_hash.to_lowercase()).collect();
+            for item in more.into_iter().flatten().flatten() {
+                if seen.insert(item.info_hash.to_lowercase()) { items.push(item) }
+            }
+        }
+        Ok(items)
+    }
     pub async fn search(&self, mut query: Query) -> Result<SearchResult> {
         query.query = query.query.split_whitespace().collect::<Vec<_>>().join(" ");
         ensure!(
@@ -416,14 +435,7 @@ impl Search {
             let terms = &terms;
             async move {
                 let result = if provider == "tpb" {
-                    let mut url = reqwest::Url::parse("https://apibay.org/q.php").expect("valid URL");
-                    url.query_pairs_mut()
-                        .append_pair("q", &terms)
-                        .append_pair("cat", "0");
-                    match self.read(url).await {
-                        Ok(raw) => parse_tpb(&raw),
-                        Err(e) => Err(e),
-                    }
+                    self.search_tpb(terms).await
                 } else if provider == "csv" {
                     let mut url =
                         reqwest::Url::parse("https://torrents-csv.com/service/search").expect("valid URL");
@@ -738,6 +750,8 @@ fn tpb_item(v: &Value) -> Option<Item> {
     row.added = number(v, "added").map(|n| n.to_string());
     Some(row)
 }
+/// The most The Pirate Bay answers to one query.
+const TPB_LIMIT: usize = 100;
 fn parse_tpb(raw: &str) -> Result<Vec<Item>> {
     let data: Vec<Value> = serde_json::from_str(raw)?;
     Ok(data.iter().take(200).filter_map(tpb_item).collect())
