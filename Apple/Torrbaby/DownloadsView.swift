@@ -520,6 +520,7 @@ struct DownloadAssetControl: View {
     var compact = false
     @State private var adding = false
     @State private var confirmDelete = false
+    @Environment(\.libraryActionFullWidth) private var fullWidth
     private var item: DownloadStorage.Item? {
         queue.items.first { $0.assetID == asset.id && $0.server == store.libraryKey && $0.state != .removed }
     }
@@ -532,14 +533,26 @@ struct DownloadAssetControl: View {
             if compact { compactControl }
             else if let item {
                 if item.state == .ready {
-                    HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Label("Downloaded", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.accent)
+                    Group { if fullWidth {
+                        // Stacked on a phone: one full-width bar, as wide as Play above it.
+                        HStack(spacing: 10) {
+                            Label("Downloaded", systemImage: "checkmark.circle.fill").font(.headline).foregroundStyle(Theme.accent)
                             Text(bytes(item.size)).font(.caption).foregroundStyle(Theme.muted)
+                            Spacer(minLength: 4)
+                            Button { confirmDelete = true } label: { Image(systemName: "trash").frame(width: 44, height: 44).contentShape(Rectangle()) }
+                                .buttonStyle(.plain).accessibilityLabel("Delete download")
+                        }.padding(.leading, 20).padding(.trailing, 6).frame(minHeight: 48).frame(maxWidth: .infinity)
+                            .background(Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius))
+                    } else {
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Label("Downloaded", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.accent)
+                                Text(bytes(item.size)).font(.caption).foregroundStyle(Theme.muted)
+                            }
+                            Button { confirmDelete = true } label: { Image(systemName: "trash") }
+                                .accessibilityLabel("Delete download").buttonStyle(MonoButtonStyle())
                         }
-                        Button { confirmDelete = true } label: { Image(systemName: "trash") }
-                            .accessibilityLabel("Delete download").buttonStyle(MonoButtonStyle())
-                    }
+                    } }
                     .confirmationDialog("Delete this download?", isPresented: $confirmDelete, titleVisibility: .visible) {
                         Button("Delete download", role: .destructive) { queue.remove(item.id) }
                     }

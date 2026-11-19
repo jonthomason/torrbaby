@@ -460,7 +460,6 @@ struct MediaLanguagesView: View {
             } else {
                 Label(LocalizedStringKey(info?.state == "failed" || (info == nil && problem != nil) ? "Languages unavailable" : "Checking languages…"), systemImage: "captions.bubble")
                 if info == nil, let problem { Text(verbatim: problem).font(.caption2).lineLimit(3) }
-                else if info == nil { Text(verbatim: "no details").font(.caption2) }
                 else if let info { Text(verbatim: info.state).font(.caption2) }
             }
         }.font(Self.detailFont).foregroundStyle(.secondary)
@@ -1087,7 +1086,9 @@ struct LibraryDetail: View {
         }.background(Theme.canvas).navigationTitle(title?.title ?? "Library")
         .onDisappear { playbackTask?.cancel() }
         // Cast and each file's tracks come with the page, not the list.
-        .task(id: titleID) { await store.loadDetails(titleID) }
+        // Again for another profile: a page opened while the profile settled (at launch) had its
+        // answer set aside and stayed at "Checking languages…".
+        .task(id: titleID + "|" + store.profileIdentity) { await store.loadDetails(titleID) }
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .background(MobilePlayerPresentation(playback: $playback, store: store).frame(width: 0, height: 0))
@@ -1260,12 +1261,12 @@ private struct LibraryActionButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(compact ? .subheadline.weight(.semibold) : .headline)
-            .lineLimit(fullWidth && !compact ? 1 : nil).minimumScaleFactor(fullWidth && !compact ? 0.8 : 1)
+            .lineLimit(fullWidth ? 1 : nil).minimumScaleFactor(fullWidth ? 0.8 : 1)
             // Sized to its label: Chinese breaks between any two characters, so a button offered
             // a hair less than its text's width wrapped its last character onto a second line.
             .fixedSize(horizontal: !fullWidth, vertical: false)
             .padding(.horizontal, compact ? 14 : 20)
-            .frame(maxWidth: fullWidth && !compact ? .infinity : nil)
+            .frame(maxWidth: fullWidth ? .infinity : nil)
             .frame(minHeight: compact ? 36 : 48)
             .foregroundStyle(prominent ? Theme.onAccent : Color.white)
             .background(prominent ? Theme.accent : Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius))
@@ -1293,7 +1294,21 @@ struct LibraryAssetActions: View {
     /// Start from Beginning, offered once the file has a saved position (as on TV).
     var restart: (() -> Void)?
     @State private var saving = false
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
     var body: some View {
+        #if os(iOS)
+        // A phone stacks them full width, like Play above, rather than leaving ragged rows.
+        if sizeClass == .compact {
+            VStack(spacing: 8) { actions }.font(.subheadline).libraryActionStyle(compact: true)
+                .environment(\.libraryActionFullWidth, true)
+        } else { flow }
+        #else
+        flow
+        #endif
+    }
+    private var flow: some View {
         LibraryActionFlow(spacing: 10) { actions }
             .font(.subheadline).libraryActionStyle(compact: true)
     }

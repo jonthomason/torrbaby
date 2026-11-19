@@ -614,7 +614,19 @@ async fn warm_playback_index(s:&Service)->Result<()> {
 async fn process_file(s:&Service,mut asset:Value)->Result<()> {
     let id=asset["id"].as_str().context("Missing asset ID")?.to_owned();
     let path=asset["path"].as_str().context("Missing asset path")?.to_owned();
-    let revision=crate::subtitle_jobs::revision(Path::new(&path))?;
+    let revision=match crate::subtitle_jobs::revision(Path::new(&path)) {
+        Ok(revision)=>revision,
+        Err(error) if !Path::new(&path).exists()=>{
+            // Gone before it started (moved by its package or filing, or deleted): wait for the
+            // scan to give its new path. Returning at once had its freed slot pick it again,
+            // 706 times in 2 s on 2026-11-19.
+            let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
+            db.connection.execute("UPDATE media_processing SET state='queued',retry_after=?,updated=? WHERE asset_id=?",rusqlite::params![now()+15.0,now(),id])?;
+            tracing::info!(asset=id,%error,"Processing paused: its file is not at its path");
+            return Ok(());
+        }
+        Err(error)=>return Err(error),
+    };
     let previous={let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
         let row=db.rows("SELECT * FROM media_processing WHERE asset_id=?",[&id])?.pop().context("Missing processing record")?;
         db.connection.execute("UPDATE media_processing SET state='running',error=NULL,updated=? WHERE asset_id=?",rusqlite::params![now(),id])?;row};

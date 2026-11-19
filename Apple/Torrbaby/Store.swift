@@ -1237,7 +1237,11 @@ final class Store: ObservableObject {
                 if attempt == 0 { try? await Task.sleep(for: .seconds(2)) }
             }
         }
-        guard let details, identity == profileIdentity else { return }
+        guard let details else { return }
+        guard identity == profileIdentity else {
+            Logger(subsystem: "org.torrbaby", category: "library").notice("Title details \(titleID, privacy: .public) set aside: the profile changed while they loaded")
+            return
+        }
         titleDetails[titleID] = details
         if var current = library { current.apply(details, to: titleID); library = current }
     }
