@@ -369,6 +369,7 @@ final class L10n {
     IDS.put("Font", R.string.ui_b97c4d4cddf2);
     IDS.put("Forced", R.string.ui_6f1b97e4c290);
     IDS.put("Forward", R.string.ui_ba4e72261283);
+    IDS.put("Full seasons", R.string.ui_96922bc6f273);
     IDS.put("Full · new downloads go to other drives", R.string.ui_2ccfd1b2fecc);
     IDS.put("General", R.string.ui_9239ee2cda84);
     IDS.put("Generated", R.string.ui_8eefdd52ad2d);
@@ -517,6 +518,7 @@ final class L10n {
     IDS.put("No shows are being watched", R.string.ui_f7dca3322c11);
     IDS.put("No subtitle jobs", R.string.ui_3e36b40ea99d);
     IDS.put("No supported subtitle source", R.string.ui_55b63277f6b3);
+    IDS.put("No titles found", R.string.ui_843480b31655);
     IDS.put("No titles match your search.", R.string.ui_34649c3ae595);
     IDS.put("No torrents", R.string.ui_879b4a9bb1c8);
     IDS.put("No trial made progress", R.string.ui_0180f27718d1);
@@ -700,13 +702,17 @@ final class L10n {
     IDS.put("Scan the new device's code", R.string.ui_f055be48fe66);
     IDS.put("Scan this code with Torrbaby on a phone or tablet that is already connected to your server.", R.string.ui_00839fc38e1c);
     IDS.put("Search", R.string.ui_bce06414177f);
+    IDS.put("Search TV shows.", R.string.ui_9ac904fe540c);
+    IDS.put("Search for", R.string.ui_0f53c93d9994);
     IDS.put("Search movies and TV shows", R.string.ui_c4cfc9981ae1);
     IDS.put("Search movies and TV shows.", R.string.ui_06040cbe6a6a);
+    IDS.put("Search movies.", R.string.ui_124d95a733df);
     IDS.put("Search online", R.string.ui_df65659012e9);
     IDS.put("Search rate limited", R.string.ui_d561e23a04d5);
     IDS.put("Search region", R.string.ui_c33f99863bee);
     IDS.put("Search titles, genres or year", R.string.ui_c51ba3511ecd);
     IDS.put("Search torrents", R.string.ui_d499e5b1e322);
+    IDS.put("Search torrents for “%s”", R.string.ui_2027d321df0a);
     IDS.put("Searching and checking links…", R.string.ui_2aa6b7d83c95);
     IDS.put("Searching for episode %d…", R.string.ui_25806b49a576);
     IDS.put("Searching for the missing episodes…", R.string.ui_00e59ec60399);

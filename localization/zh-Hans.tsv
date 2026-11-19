@@ -1055,3 +1055,10 @@ Opens connection settings	打开连接设置
 Diamond is on · No direct path	Diamond 在线 · 无直连路径
 Can’t stream right now: no direct path to Diamond.	暂时无法播放：没有到 Diamond 的直连路径。
 No direct path	无直连路径
+Full seasons	整季
+No titles found	未找到作品
+Search for	搜索类型
+Search movies.	搜索电影。
+Search TV shows.	搜索剧集。
+Search torrents for “%@”	按名称搜索种子：“%@”
+Search torrents for “%s”	按名称搜索种子：“%s”

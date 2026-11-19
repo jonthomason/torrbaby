@@ -158,7 +158,7 @@ impl std::fmt::Display for RateLimited {
 }
 impl std::error::Error for RateLimited {}
 
-fn release_key(item: &Item) -> String {
+pub(crate) fn release_key(item: &Item) -> String {
     if !item.info_hash.is_empty() { return item.info_hash.to_ascii_lowercase(); }
     // Group identical listings, not just identical display titles. Keep encodes/sizes distinct.
     format!("listing:{}:{}:{:?}:{:?}", item.sources.first().map(|s|s.provider.as_str()).unwrap_or(""),
@@ -1117,7 +1117,7 @@ fn audio_summary(name: &str) -> (Option<String>, Option<String>) {
 
 /// The picture size a release's name states ("2160p", "1080p"…), if it states one.
 pub fn stated_resolution(name: &str) -> Option<String> { hints(name).resolution }
-fn hints(name: &str) -> Hints {
+pub(crate) fn hints(name: &str) -> Hints {
     static YEAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b((?:19|20)\d{2})\b").expect("valid regex"));
     static EPISODE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)\bS(\d{1,2})(?:[ ._-]*E(\d{1,3}))?\b").expect("valid regex"));
@@ -1197,7 +1197,7 @@ fn hints(name: &str) -> Hints {
         evidence: "release_name".into(),
     }
 }
-fn words(s: &str) -> HashSet<String> {
+pub(crate) fn words(s: &str) -> HashSet<String> {
     s.split(|c: char| !c.is_alphanumeric())
         .filter(|s| !s.is_empty())
         .map(|s| s.to_lowercase())

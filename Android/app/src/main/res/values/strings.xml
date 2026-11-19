@@ -358,6 +358,7 @@
     <string name="ui_b97c4d4cddf2" formatted="false">Font</string>
     <string name="ui_6f1b97e4c290" formatted="false">Forced</string>
     <string name="ui_ba4e72261283" formatted="false">Forward</string>
+    <string name="ui_96922bc6f273" formatted="false">Full seasons</string>
     <string name="ui_2ccfd1b2fecc" formatted="false">Full · new downloads go to other drives</string>
     <string name="ui_9239ee2cda84" formatted="false">General</string>
     <string name="ui_8eefdd52ad2d" formatted="false">Generated</string>
@@ -506,6 +507,7 @@
     <string name="ui_f7dca3322c11" formatted="false">No shows are being watched</string>
     <string name="ui_3e36b40ea99d" formatted="false">No subtitle jobs</string>
     <string name="ui_55b63277f6b3" formatted="false">No supported subtitle source</string>
+    <string name="ui_843480b31655" formatted="false">No titles found</string>
     <string name="ui_34649c3ae595" formatted="false">No titles match your search.</string>
     <string name="ui_879b4a9bb1c8" formatted="false">No torrents</string>
     <string name="ui_0180f27718d1" formatted="false">No trial made progress</string>
@@ -689,13 +691,17 @@
     <string name="ui_f055be48fe66" formatted="false">Scan the new device\'s code</string>
     <string name="ui_00839fc38e1c" formatted="false">Scan this code with Torrbaby on a phone or tablet that is already connected to your server.</string>
     <string name="ui_bce06414177f" formatted="false">Search</string>
+    <string name="ui_9ac904fe540c" formatted="false">Search TV shows.</string>
+    <string name="ui_0f53c93d9994" formatted="false">Search for</string>
     <string name="ui_c4cfc9981ae1" formatted="false">Search movies and TV shows</string>
     <string name="ui_06040cbe6a6a" formatted="false">Search movies and TV shows.</string>
+    <string name="ui_124d95a733df" formatted="false">Search movies.</string>
     <string name="ui_df65659012e9" formatted="false">Search online</string>
     <string name="ui_d561e23a04d5" formatted="false">Search rate limited</string>
     <string name="ui_c33f99863bee" formatted="false">Search region</string>
     <string name="ui_c51ba3511ecd" formatted="false">Search titles, genres or year</string>
     <string name="ui_d499e5b1e322" formatted="false">Search torrents</string>
+    <string name="ui_2027d321df0a" formatted="false">Search torrents for “%s”</string>
     <string name="ui_2aa6b7d83c95" formatted="false">Searching and checking links…</string>
     <string name="ui_25806b49a576" formatted="false">Searching for episode %d…</string>
     <string name="ui_00e59ec60399" formatted="false">Searching for the missing episodes…</string>

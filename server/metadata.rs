@@ -161,6 +161,8 @@ pub fn chinese_summary_due(entity: &Value) -> Option<f64> {
 pub fn wants_summary_translation(entity: &Value) -> bool {
     entity["summary_zh_source"] == "none" && entity["summary"].as_str().is_some_and(|s| !s.trim().is_empty())
 }
+/// Japanese, not Chinese: it has kana (ドクターX ～外科医・大門未知子～ has kanji too).
+fn japanese(text: &str) -> bool { text.chars().any(|c| ('\u{3040}'..='\u{30ff}').contains(&c)) }
 fn chinese_name(detail: &Value, entity: &Value) -> String {
     let chinese = |text: &str| text.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c));
     [detail.get("title").or(detail.get("name")), detail.get("original_title").or(detail.get("original_name")), entity.get("original_title")]
@@ -380,7 +382,6 @@ impl Metadata {
     /// read as a bitrate: the film's runtime, or for `season` the number of
     /// episodes and their average length.
     pub async fn search_artwork(&self, name: &str, season: Option<u64>) -> Result<Value> {
-        use base64::Engine;
         if !self.configured() { return Ok(json!({"data":null})); }
         anyhow::ensure!(name.len() <= 4096, "Release name too long");
         static PACK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b(collection|trilogy|anthology|\d+[ -]+\d+[ ._-]+pack)\b").expect("valid regex"));
@@ -410,45 +411,8 @@ impl Metadata {
         }).collect::<Vec<_>>();
         let mut result = json!({"data":null});
         if data["total_pages"].as_u64().unwrap_or(1) <= 1 && exact.len() == 1 {
-            if let Some(path) = exact[0]["poster_path"].as_str().filter(|p|
-                p.starts_with('/') && p.len() < 256 && !p.contains("..")
-                    && p.chars().all(|c| c.is_ascii_alphanumeric() || "/._-".contains(c))) {
-                if cache.size.is_none() {
-                    let config = self.request("configuration", &[]).await?;
-                    cache.size = array(&config["images"]["poster_sizes"]).iter()
-                        .filter_map(Value::as_str)
-                        .filter_map(|size| Some((size.strip_prefix('w')?.parse::<u32>().ok()?, size)))
-                        .min_by_key(|(width, _)| *width).map(|(_, size)| size.to_owned());
-                }
-                if let Some(size) = cache.size.clone() {
-                    let image_key=format!("{size}{path}");
-                    use sha2::{Digest,Sha256};
-                    let file=self.artwork_dir.join(Sha256::digest(image_key.as_bytes()).iter().map(|b|format!("{b:02x}")).collect::<String>());
-                    let encoded=if let Some(value)=cache.images.get(&image_key) {value.clone()} else {
-                        let stored=std::fs::metadata(&file).ok().filter(|m|m.len()<=512*1024)
-                            .and_then(|_|std::fs::read(&file).ok());
-                        let bytes=if let Some(bytes)=stored {bytes} else {
-                            let mut response=self.client.get(format!("https://image.tmdb.org/t/p/{image_key}"))
-                                .send().await?.error_for_status()?;
-                            let mut bytes=Vec::new();
-                            while let Some(chunk)=response.chunk().await? {
-                                anyhow::ensure!(bytes.len()+chunk.len()<=512*1024,"Thumbnail too large");
-                                bytes.extend_from_slice(&chunk);
-                            }
-                            if std::fs::create_dir_all(&self.artwork_dir).is_ok() {
-                                let tmp=file.with_extension("tmp");
-                                if std::fs::write(&tmp,&bytes).is_ok(){let _=std::fs::rename(tmp,&file);}
-                                let mut files=std::fs::read_dir(&self.artwork_dir).into_iter().flatten().filter_map(Result::ok)
-                                    .filter_map(|e|{let m=e.metadata().ok()?;Some((m.modified().ok()?,m.len(),e.path()))}).collect::<Vec<_>>();
-                                files.sort_by_key(|e|e.0);let mut total:u64=files.iter().map(|e|e.1).sum();
-                                for (_,len,path) in files {if total<=64*1024*1024 {break;}if std::fs::remove_file(path).is_ok(){total=total.saturating_sub(len);}}
-                            }
-                            bytes
-                        };
-                        let encoded=base64::engine::general_purpose::STANDARD.encode(bytes);
-                        if cache.images.len()>=128 {cache.images.clear();}
-                        cache.images.insert(image_key,encoded.clone());encoded
-                    };
+            if let Some(path) = exact[0]["poster_path"].as_str() {
+                if let Some((encoded, size)) = Self::thumbnail_in(self, &mut cache, path).await? {
                     result = json!({"data":encoded,
                         "provider":"TMDB","provider_id":exact[0]["id"],"size":size,
                         "confidence":if year.is_empty() {"exact_unique_title"} else {"exact_title_year"}});
@@ -477,6 +441,113 @@ impl Metadata {
         if cache.entries.len() >= 128 { cache.entries.clear(); }
         cache.entries.insert(key, (std::time::Instant::now(), result.clone()));
         Ok(result)
+    }
+    /// TMDB's smallest poster for `path`, base64, with that size's name: from memory, the
+    /// 64 MB folder of fetched thumbnails, or TMDB. None for a path that is not a poster's.
+    async fn thumbnail_in(&self, cache: &mut SearchArtworkCache, path: &str) -> Result<Option<(String, String)>> {
+        use base64::Engine;
+        if !(path.starts_with('/') && path.len() < 256 && !path.contains("..")
+            && path.chars().all(|c| c.is_ascii_alphanumeric() || "/._-".contains(c))) { return Ok(None); }
+        if cache.size.is_none() {
+            let config = self.request("configuration", &[]).await?;
+            cache.size = array(&config["images"]["poster_sizes"]).iter()
+                .filter_map(Value::as_str)
+                .filter_map(|size| Some((size.strip_prefix('w')?.parse::<u32>().ok()?, size)))
+                .min_by_key(|(width, _)| *width).map(|(_, size)| size.to_owned());
+        }
+        let Some(size) = cache.size.clone() else { return Ok(None) };
+        let image_key=format!("{size}{path}");
+        use sha2::{Digest,Sha256};
+        let file=self.artwork_dir.join(Sha256::digest(image_key.as_bytes()).iter().map(|b|format!("{b:02x}")).collect::<String>());
+        if let Some(value)=cache.images.get(&image_key) { return Ok(Some((value.clone(), size))); }
+        let stored=std::fs::metadata(&file).ok().filter(|m|m.len()<=512*1024).and_then(|_|std::fs::read(&file).ok());
+        let bytes=if let Some(bytes)=stored {bytes} else {
+            let mut response=self.client.get(format!("https://image.tmdb.org/t/p/{image_key}")).send().await?.error_for_status()?;
+            let mut bytes=Vec::new();
+            while let Some(chunk)=response.chunk().await? {
+                anyhow::ensure!(bytes.len()+chunk.len()<=512*1024,"Thumbnail too large");
+                bytes.extend_from_slice(&chunk);
+            }
+            if std::fs::create_dir_all(&self.artwork_dir).is_ok() {
+                let tmp=file.with_extension("tmp");
+                if std::fs::write(&tmp,&bytes).is_ok(){let _=std::fs::rename(tmp,&file);}
+                let mut files=std::fs::read_dir(&self.artwork_dir).into_iter().flatten().filter_map(Result::ok)
+                    .filter_map(|e|{let m=e.metadata().ok()?;Some((m.modified().ok()?,m.len(),e.path()))}).collect::<Vec<_>>();
+                files.sort_by_key(|e|e.0);let mut total:u64=files.iter().map(|e|e.1).sum();
+                for (_,len,path) in files {if total<=64*1024*1024 {break;}if std::fs::remove_file(path).is_ok(){total=total.saturating_sub(len);}}
+            }
+            bytes
+        };
+        let encoded=base64::engine::general_purpose::STANDARD.encode(bytes);
+        if cache.images.len()>=128 {cache.images.clear();}
+        cache.images.insert(image_key,encoded.clone());
+        Ok(Some((encoded, size)))
+    }
+    /// Find's first step: films or series (`kind`) by name, with a small poster each, the
+    /// Chinese title and, for a series, its country. TMDB's answers are cached as always.
+    pub async fn find_titles(&self, query: &str, kind: &str) -> Result<Value> {
+        anyhow::ensure!(["movie","tv"].contains(&kind), "Invalid media kind");
+        let query = query.split_whitespace().collect::<Vec<_>>().join(" ");
+        anyhow::ensure!((1..=200).contains(&query.chars().count()), "Enter a title");
+        if !self.configured() { bail!("Connect TMDB in Settings to search by title"); }
+        let parameters = [("query", query.as_str()), ("include_adult", "false")];
+        let english = self.request(&format!("search/{kind}"), &[parameters[0], parameters[1], ("language", "en-US")]).await?;
+        // The Chinese titles come from the same search in Chinese; a miss only leaves them out.
+        let chinese = self.request(&format!("search/{kind}"), &[parameters[0], parameters[1], ("language", "zh-CN")]).await.unwrap_or(Value::Null);
+        let mut titles = Vec::new();
+        for hit in array(&english["results"]).iter().take(12) {
+            let Some(id) = hit["id"].as_u64() else { continue };
+            let zh = array(&chinese["results"]).iter().find(|c| c["id"] == hit["id"]).map(|c| chinese_name(c, &json!({}))).filter(|t| !japanese(t)).unwrap_or_default();
+            let date = hit["release_date"].as_str().or(hit["first_air_date"].as_str()).unwrap_or("");
+            titles.push(json!({"id":format!("tmdb:{kind}:{id}"),"kind":kind,"tmdb_id":id,
+                "title":hit.get("title").or(hit.get("name")),"original_title":hit.get("original_title").or(hit.get("original_name")),
+                "title_zh":zh,"year":date.get(..4).unwrap_or(""),"country":array(&hit["origin_country"]).first(),
+                "summary":hit["overview"],"votes":hit["vote_count"].as_u64().unwrap_or(0),"poster_path":hit["poster_path"]}));
+        }
+        // Posters one at a time under the thumbnail cache's lock (each is small and usually cached).
+        let mut cache = self.search_artwork.lock().await;
+        for title in &mut titles {
+            let path = title["poster_path"].take();
+            if let Some(path) = path.as_str() && let Ok(Some((data, _))) = self.thumbnail_in(&mut cache, path).await { title["poster"] = json!(data); }
+        }
+        Ok(json!({"titles":titles}))
+    }
+    /// What Find needs of one title before searching: the names releases may use (its title,
+    /// original title and TMDB's alternative titles), its Chinese name and year, and for a
+    /// series each season's aired episodes.
+    pub async fn title_facts(&self, kind: &str, id: u64) -> Result<Value> {
+        anyhow::ensure!(["movie","tv"].contains(&kind), "Invalid media kind");
+        let detail = self.request(&format!("{kind}/{id}"), &[("language","en-US"),("append_to_response","alternative_titles")]).await?;
+        let chinese = self.request(&format!("{kind}/{id}"), &[("language","zh-CN")]).await.unwrap_or(Value::Null);
+        let title = detail.get("title").or(detail.get("name")).and_then(Value::as_str).unwrap_or("").to_owned();
+        let original = detail.get("original_title").or(detail.get("original_name")).and_then(Value::as_str).unwrap_or("").to_owned();
+        let latin = |t: &str| !t.is_empty() && t.chars().all(|c| c.is_ascii() || c.is_alphabetic() && (c as u32) < 0x250);
+        let mut names = vec![title.clone()];
+        if latin(&original) { names.push(original.clone()); }
+        let alternatives = detail["alternative_titles"].get("titles").or(detail["alternative_titles"].get("results"));
+        for alt in array(alternatives.unwrap_or(&Value::Null)) {
+            let country = alt["iso_3166_1"].as_str().unwrap_or("");
+            if let Some(name) = alt["title"].as_str() && latin(name) && ["US","GB","","KR","CN","JP"].contains(&country) { names.push(name.to_owned()); }
+        }
+        let mut seen = std::collections::HashSet::new();
+        names.retain(|n| seen.insert(normalized(n)));
+        let date = detail["release_date"].as_str().or(detail["first_air_date"].as_str()).unwrap_or("");
+        let mut facts = json!({"id":format!("tmdb:{kind}:{id}"),"kind":kind,"title":title,"names":names,
+            "title_zh":Some(chinese_name(&chinese, &json!({"original_title":original}))).filter(|t| !japanese(t)).unwrap_or_default(),"year":date.get(..4).unwrap_or(""),
+            "country":array(&detail["origin_country"]).first()});
+        if kind == "tv" {
+            // Aired: every episode of an earlier season, up to the last aired one in its own.
+            let last = &detail["last_episode_to_air"];
+            let (last_season, last_episode) = (last["season_number"].as_u64().unwrap_or(0), last["episode_number"].as_u64().unwrap_or(0));
+            let seasons: Vec<Value> = array(&detail["seasons"]).iter().filter_map(|season| {
+                let number = season["season_number"].as_u64().filter(|n| *n > 0)?;
+                let episodes = season["episode_count"].as_u64().unwrap_or(0);
+                let aired = if number < last_season { episodes } else if number == last_season { last_episode.min(episodes.max(last_episode)) } else { 0 };
+                Some(json!({"season":number,"episodes":episodes,"aired":aired}))
+            }).collect();
+            facts["seasons"] = json!(seasons);
+        }
+        Ok(facts)
     }
     pub async fn search(&self, name: &str) -> Result<Value> {
         self.search_in(name, None).await

@@ -52,6 +52,16 @@ public final class TorrentSearchActivity extends Activity {
   }
   private int source, generation;
   private boolean china;
+  /**
+   * Find by title, as on Apple: films or TV shows, the title chosen from TMDB, then for a series
+   * whole seasons or one season's episodes. freeText: torrents by the words typed instead.
+   */
+  private boolean movies, freeText;
+  private JSONObject chosen;
+  private JSONArray airedSeasons = new JSONArray();
+  private String want = "season";
+  private int wantSeason;
+  private Button chosenButton;
   private boolean inDetail;
   private JSONObject selectedItem;
   private final Set<String> added = new HashSet<>();
@@ -83,12 +93,23 @@ public final class TorrentSearchActivity extends Activity {
     RadioButton world = new RadioButton(this); world.setText(L10n.t("World")); world.setId(View.generateViewId()); world.setTextColor(Ui.TEXT);
     RadioButton chinese = new RadioButton(this); chinese.setText(L10n.t("China")); chinese.setId(View.generateViewId()); chinese.setTextColor(Ui.TEXT);
     markets.addView(world); markets.addView(chinese); markets.check(china ? chinese.getId() : world.getId());
-    Ui.add(resultsRoot, markets, -1, 48);
+    movies = getPreferences(MODE_PRIVATE).getBoolean("movies", false);
+    RadioButton film = new RadioButton(this); film.setText(L10n.t("Movies")); film.setId(View.generateViewId()); film.setTextColor(Ui.TEXT);
+    RadioButton series = new RadioButton(this); series.setText(L10n.t("TV Shows")); series.setId(View.generateViewId()); series.setTextColor(Ui.TEXT);
+    RadioGroup kinds = new RadioGroup(this); kinds.setOrientation(LinearLayout.HORIZONTAL);
+    kinds.addView(film); kinds.addView(series); kinds.check(movies ? film.getId() : series.getId());
+    LinearLayout choices = Ui.row(this); choices.addView(markets); Ui.gap(choices, 40); choices.addView(kinds);
+    Ui.add(resultsRoot, choices, -1, 48);
+    kinds.setOnCheckedChangeListener((group, id) -> {
+      movies = id == film.getId(); getPreferences(MODE_PRIVATE).edit().putBoolean("movies", movies).apply();
+      freeText = false; chosen = null; showChosen();
+      if (query.getText().toString().trim().length() >= 2) findTitles();
+    });
     markets.setOnCheckedChangeListener((group,id) -> {
       china = id == chinese.getId(); getPreferences(MODE_PRIVATE).edit().putBoolean("china",china).apply();
       ++generation; source=0; sourceButton.setText(L10n.t("Recommended")); sourceButton.setVisibility(china?View.GONE:View.VISIBLE); results=new JSONArray();allResults=new JSONArray();enrichmentGeneration++;if(hiddenBox!=null){hiddenBox.setVisibility(View.GONE);list.setVisibility(View.VISIBLE);}
       ((BaseAdapter)list.getAdapter()).notifyDataSetChanged(); status.setText(""); searching=false; list.setEnabled(true);
-      if(query.getText().toString().trim().length()>=2)search();
+      if(chosen!=null)searchTitle(); else if(query.getText().toString().trim().length()>=2)search();
     });
     LinearLayout controls = Ui.row(this);
     query = new EditText(this); query.setSingleLine(true); query.setHint(L10n.t("Search torrents"));
@@ -103,6 +124,8 @@ public final class TorrentSearchActivity extends Activity {
     Ui.add(controls, sourceButton, 180, 46); Ui.add(resultsRoot, controls, -1, 48);
     // China is searched as Quark Drive shares, which have no source choice.
     sourceButton.setVisibility(china?View.GONE:View.VISIBLE);
+    // The chosen title and what is wanted of it; pressing it asks again.
+    chosenButton = Ui.button(this, "", this::askWant); chosenButton.setVisibility(View.GONE); Ui.add(resultsRoot, chosenButton, -2, 44);
     status = Ui.text(this, "", 14, Ui.MUTED); Ui.add(resultsRoot, status, -1, 36);
     resolution=getPreferences(MODE_PRIVATE).getString("resolution","all");
     resolutionButton=Ui.button(this,L10n.t("Resolution")+": "+resolutionLabel(),()->{
@@ -146,7 +169,7 @@ public final class TorrentSearchActivity extends Activity {
       if (state.containsKey("selected")) {
         try { JSONObject item=new JSONObject(state.getString("selected")); searchedQuery=state.getString("searched",""); if(isCloud(item))cloudDetails(item); else details(item); } catch (JSONException ignored) { }
       } else if (state.getBoolean("searching")) search();
-    } else if(initial != null && !initial.isEmpty()) { query.setText(initial); search(); }
+    } else if(initial != null && !initial.isEmpty()) { query.setText(initial); freeText = true; search(); }
   }
   @Override protected void onSaveInstanceState(Bundle state) {
     super.onSaveInstanceState(state);
@@ -165,7 +188,101 @@ public final class TorrentSearchActivity extends Activity {
    * under the remote sent focus to the first control on the page, the profile button.
    */
   private boolean searching;
-  private void search() {
+  /** Search: the titles named so, or torrents by the words typed. */
+  private void search() { if (freeText) searchText(); else findTitles(); }
+  private void findTitles() {
+    String value=query.getText().toString().trim(); if (value.length()<2 || searching) return;
+    int request=++generation; searching=true; chosen=null; showChosen(); status.setText(L10n.t("Searching…"));
+    ((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(query.getWindowToken(),0);
+    String kind=movies?"movie":"tv";
+    io.execute(() -> {
+      try {
+        JSONArray titles=ready().request("POST","/v1/search/titles",new JSONObject().put("query",value).put("kind",kind)).optJSONArray("titles");
+        runOnUiThread(() -> {
+          if(isDestroyed()||request!=generation)return;
+          searching=false; status.setText(titles==null||titles.length()==0?L10n.t("No titles found"):"");
+          int count=titles==null?0:titles.length(); String[] labels=new String[count+1];
+          boolean zh=L10n.locale().getLanguage().equals("zh");
+          for(int i=0;i<count;i++){JSONObject t=titles.optJSONObject(i);String name=zh&&!t.optString("title_zh").isEmpty()?t.optString("title_zh"):t.optString("title");
+            List<String> line=new ArrayList<>();if(!t.optString("year").isEmpty())line.add(t.optString("year"));if(!t.isNull("country")&&!t.optString("country").isEmpty())line.add(t.optString("country"));
+            labels[i]=name+(line.isEmpty()?"":"  ·  "+String.join(" · ",line));}
+          labels[count]=String.format(L10n.locale(),L10n.t("Search torrents for “%s”"),value);
+          new AppDialog(this).setTitle(L10n.t(movies?"Movies":"TV Shows")).setItems(labels,(d,which)->{
+            if(which==count){freeText=true;searchText();return;}
+            choose(titles.optJSONObject(which));
+          }).show();
+        });
+      } catch(Exception error){runOnUiThread(() -> {if(!isDestroyed()&&request==generation){searching=false;status.setText(MainActivity.message(error));}});}
+    });
+  }
+  private void choose(JSONObject title) {
+    chosen=title; want="season"; wantSeason=0; airedSeasons=new JSONArray(); showChosen();
+    if(title.optString("kind").equals("movie")){searchTitle();return;}
+    int request=++generation;
+    io.execute(() -> {
+      JSONArray seasons=new JSONArray();
+      try { JSONArray all=ready().request("POST","/v1/search/titles/facts",new JSONObject().put("id",title.optString("id"))).optJSONArray("seasons");
+        for(int i=0;all!=null&&i<all.length();i++)if(all.optJSONObject(i).optInt("aired")>0)seasons.put(all.optJSONObject(i).optInt("season"));
+      } catch(Exception ignored) { /* Without the seasons: whole seasons, any season. */ }
+      runOnUiThread(() -> {if(isDestroyed()||request!=generation)return;airedSeasons=seasons;askWant();});
+    });
+  }
+  /** Whole seasons or one season's episodes, then which season. */
+  private void askWant() {
+    if(chosen==null)return;
+    if(chosen.optString("kind").equals("movie")){searchTitle();return;}
+    String[] labels={L10n.t("Full seasons"),L10n.t("Single episodes")};
+    new AppDialog(this).setTitle(L10n.t("Download")).setSingleChoiceItems(labels,want.equals("episodes")?1:0,(d,which)->{
+      d.dismiss(); want=which==1?"episodes":"season";
+      int count=airedSeasons.length(); boolean any=want.equals("season");
+      if(count==0){wantSeason=0;searchTitle();return;}
+      String[] seasons=new String[count+(any?1:0)];
+      if(any)seasons[0]=L10n.t("All seasons");
+      for(int i=0;i<count;i++)seasons[i+(any?1:0)]=String.format(L10n.locale(),L10n.t("Season %d"),airedSeasons.optInt(i));
+      // Episodes start at the latest season, the one usually still airing.
+      int current=-1;for(int i=0;i<count;i++)if(airedSeasons.optInt(i)==wantSeason)current=i+(any?1:0);
+      if(current<0)current=any?0:count-1;
+      new AppDialog(this).setTitle(L10n.t("Season")).setSingleChoiceItems(seasons,current,(d2,pick)->{
+        d2.dismiss(); wantSeason=any&&pick==0?0:airedSeasons.optInt(pick-(any?1:0)); searchTitle();
+      }).show();
+    }).show();
+  }
+  private void showChosen() {
+    if(chosen==null){chosenButton.setVisibility(View.GONE);return;}
+    boolean zh=L10n.locale().getLanguage().equals("zh");
+    List<String> parts=new ArrayList<>();parts.add(zh&&!chosen.optString("title_zh").isEmpty()?chosen.optString("title_zh"):chosen.optString("title"));
+    if(!chosen.optString("year").isEmpty())parts.add(chosen.optString("year"));
+    if(chosen.optString("kind").equals("tv")){parts.add(L10n.t(want.equals("episodes")?"Single episodes":"Full seasons"));
+      parts.add(wantSeason>0?String.format(L10n.locale(),L10n.t("Season %d"),wantSeason):L10n.t("All seasons"));}
+    chosenButton.setText(String.join(" · ",parts));chosenButton.setVisibility(View.VISIBLE);
+  }
+  /** The chosen title's torrents: whole seasons or one season's episodes (a film: its releases). */
+  private void searchTitle() {
+    if(chosen==null)return; showChosen();
+    enrichmentGeneration++;
+    int request=++generation; int provider=source; boolean requestChina=china; searching=true; list.setEnabled(false); hiddenBox.setVisibility(View.GONE); list.setVisibility(View.VISIBLE); status.setText(L10n.t(requestChina?"Searching and checking links…":"Searching…"));
+    JSONObject title=chosen; String requestWant=want; int season=wantSeason;
+    io.execute(() -> {
+      try {
+        JSONArray sources=new JSONArray(); if(provider>0&&!requestChina)sources.put(provider==1?"tpb":provider==2?"nyaa":"csv");
+        JSONObject body=new JSONObject().put("title",title.optString("id")).put("market",requestChina?"china":"world").put("want",requestWant).put("sources",sources);
+        if(season>0)body.put("season",season);
+        show(request,ready().request("POST","/v1/search/torrents",body),title.optString("title"));
+      } catch(Exception error) {runOnUiThread(() -> {if(!isDestroyed()&&request==generation){searching=false;list.setEnabled(true);status.setText(MainActivity.message(error));}});}
+    });
+  }
+  private void show(int request, JSONObject response, String value) {
+    runOnUiThread(() -> {
+      if(isDestroyed() || request!=generation)return;
+      searching=false; list.setEnabled(true); searchedQuery=response.optString("query",value); allResults=response.optJSONArray("items"); if(allResults==null)allResults=new JSONArray();applyResolution();
+      List<String> messages=notes; messages.clear();
+      JSONArray providers=response.optJSONArray("providers");
+      if(providers!=null) for(int i=0;i<providers.length();i++) {JSONObject p=providers.optJSONObject(i); if(p!=null&&!p.isNull("error"))messages.add(label(p.optString("provider"))+": "+p.optString("error"));}
+      showCount(); ((BaseAdapter)list.getAdapter()).notifyDataSetChanged();
+      if(results.length()>0)list.requestFocus();
+    });
+  }
+  private void searchText() {
     String value=query.getText().toString().trim(); if (value.length()<2 || searching) return;
     enrichmentGeneration++;
     int request=++generation; int provider=source; boolean requestChina=china; searching=true; list.setEnabled(false); hiddenBox.setVisibility(View.GONE); list.setVisibility(View.VISIBLE); status.setText(L10n.t(requestChina?"Searching and checking links…":"Searching…"));
@@ -179,16 +296,7 @@ public final class TorrentSearchActivity extends Activity {
           if(getIntent().hasExtra("year"))body.put("year",getIntent().getIntExtra("year",0));
           if(getIntent().hasExtra("season"))body.put("season",getIntent().getIntExtra("season",0));
         }
-        JSONObject response=ready().request("POST","/v1/search/torrents",body);
-        runOnUiThread(() -> {
-          if(isDestroyed() || request!=generation)return;
-          searching=false; list.setEnabled(true); searchedQuery=response.optString("query",value); allResults=response.optJSONArray("items"); if(allResults==null)allResults=new JSONArray();applyResolution();
-          List<String> messages=notes; messages.clear();
-          JSONArray providers=response.optJSONArray("providers");
-          if(providers!=null) for(int i=0;i<providers.length();i++) {JSONObject p=providers.optJSONObject(i); if(p!=null&&!p.isNull("error"))messages.add(label(p.optString("provider"))+": "+p.optString("error"));}
-          showCount(); ((BaseAdapter)list.getAdapter()).notifyDataSetChanged();
-          if(results.length()>0)list.requestFocus();
-        });
+        show(request,ready().request("POST","/v1/search/torrents",body),value);
       } catch(Exception error) {runOnUiThread(() -> {if(!isDestroyed()&&request==generation){searching=false;list.setEnabled(true);status.setText(MainActivity.message(error));}});}
     });
   }

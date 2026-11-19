@@ -63,6 +63,7 @@ mod subtitles;
 mod text_encoding;
 mod telemetry;
 mod torrent_search;
+mod title_search;
 mod cloud;
 mod watcher;
 mod transmission;

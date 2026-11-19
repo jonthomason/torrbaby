@@ -358,6 +358,7 @@
     <string name="ui_b97c4d4cddf2" formatted="false">字体</string>
     <string name="ui_6f1b97e4c290" formatted="false">强制字幕</string>
     <string name="ui_ba4e72261283" formatted="false">前进</string>
+    <string name="ui_96922bc6f273" formatted="false">整季</string>
     <string name="ui_2ccfd1b2fecc" formatted="false">已满 · 新下载将存到其他硬盘</string>
     <string name="ui_9239ee2cda84" formatted="false">通用</string>
     <string name="ui_8eefdd52ad2d" formatted="false">已生成</string>
@@ -506,6 +507,7 @@
     <string name="ui_f7dca3322c11" formatted="false">没有正在追更的剧集</string>
     <string name="ui_3e36b40ea99d" formatted="false">暂无字幕任务</string>
     <string name="ui_55b63277f6b3" formatted="false">没有支持的字幕来源</string>
+    <string name="ui_843480b31655" formatted="false">未找到作品</string>
     <string name="ui_34649c3ae595" formatted="false">未找到匹配的影片。</string>
     <string name="ui_879b4a9bb1c8" formatted="false">暂无种子</string>
     <string name="ui_0180f27718d1" formatted="false">所有试下载均无进展</string>
@@ -689,13 +691,17 @@
     <string name="ui_f055be48fe66" formatted="false">扫描新设备的二维码</string>
     <string name="ui_00839fc38e1c" formatted="false">请用已连接到服务器的手机或平板上的 Torrbaby 扫描此设置码。</string>
     <string name="ui_bce06414177f" formatted="false">搜索</string>
+    <string name="ui_9ac904fe540c" formatted="false">搜索剧集。</string>
+    <string name="ui_0f53c93d9994" formatted="false">搜索类型</string>
     <string name="ui_c4cfc9981ae1" formatted="false">搜索电影和剧集</string>
     <string name="ui_06040cbe6a6a" formatted="false">搜索电影和剧集。</string>
+    <string name="ui_124d95a733df" formatted="false">搜索电影。</string>
     <string name="ui_df65659012e9" formatted="false">在线搜索</string>
     <string name="ui_d561e23a04d5" formatted="false">搜索请求过于频繁</string>
     <string name="ui_c33f99863bee" formatted="false">搜索地区</string>
     <string name="ui_c51ba3511ecd" formatted="false">搜索片名、类型或年份</string>
     <string name="ui_d499e5b1e322" formatted="false">搜索种子</string>
+    <string name="ui_2027d321df0a" formatted="false">按名称搜索种子：“%s”</string>
     <string name="ui_2aa6b7d83c95" formatted="false">正在搜索并检查链接…</string>
     <string name="ui_25806b49a576" formatted="false">正在搜索第 %d 集…</string>
     <string name="ui_00e59ec60399" formatted="false">正在搜索缺失的剧集…</string>

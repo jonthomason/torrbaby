@@ -1,4 +1,10 @@
+import OSLog
 import SwiftUI
+#if os(macOS)
+private typealias PlatformImage = NSImage
+#else
+private typealias PlatformImage = UIImage
+#endif
 
 struct TorrentSearchSource: Decodable {
     let provider: String
@@ -263,6 +269,26 @@ struct TorrentSearchItem: Decodable, Identifiable {
     }
     var size: String { sizeBytes.map { ByteCountFormatter.string(fromByteCount: Int64(clamping: $0), countStyle: .file) } ?? sizeLabel ?? "" }
 }
+/// Find's first step: a film or series from TMDB, chosen before any torrent site is asked.
+struct FindTitle: Decodable, Identifiable, Hashable {
+    let id: String
+    let kind: String
+    let title: String
+    var titleZh: String? = nil
+    var year: String? = nil
+    var country: String? = nil
+    var summary: String? = nil
+    var poster: String? = nil
+    var shownTitle: String { L10n.code.hasPrefix("zh") && !(titleZh ?? "").isEmpty ? titleZh! : title }
+    var line: String { [year, country].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ") }
+}
+struct FindTitles: Decodable { let titles: [FindTitle] }
+/// A chosen series' seasons, with how many episodes of each have aired.
+struct FindFacts: Decodable {
+    struct Season: Decodable, Hashable { let season: Int; let episodes: Int; let aired: Int }
+    var seasons: [Season]? = nil
+    var aired: [Int] { (seasons ?? []).filter { $0.aired > 0 }.map(\.season) }
+}
 struct TorrentSearchResponse: Decodable {
     struct Provider: Decodable { let provider: String; let count: Int; let error: String? }
     var items: [TorrentSearchItem]
@@ -312,9 +338,20 @@ struct TorrentSearchView: View {
     init(initialQuery: String = "", year: Int? = nil, season: Int? = nil, episode: Int? = nil) {
         _draft = State(initialValue: SearchDraft(initialQuery)); _year = State(initialValue: year)
         _season = State(initialValue: season); _episode = State(initialValue: episode)
+        _freeText = State(initialValue: !initialQuery.isEmpty)
     }
     @AppStorage("torrentSearchMarket") private var market = "world"
     @AppStorage("torrentSearchResolution") private var resolution = "all"
+    /// Find by title: films or TV shows; the titles found; the one chosen and what is wanted of it.
+    @AppStorage("findKind") private var kind = "tv"
+    @State private var titles: [FindTitle]?
+    @State private var chosen: FindTitle?
+    @State private var facts: FindFacts?
+    /// "season": whole seasons; "episodes": one season's episodes.
+    @State private var want = "season"
+    @State private var wantSeason: Int?
+    /// Searching torrents by the words typed, not by a title.
+    @State private var freeText = false
     @State private var source = "all"
     @State private var scopeFilter = "all"
     @State private var seasonFilter: Int?
@@ -491,6 +528,8 @@ struct TorrentSearchView: View {
                         // Every share is opened to check its files, which takes a while.
                         if market == "china" { Text("Searching and checking links…").font(.callout).foregroundStyle(.secondary) }
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if chosen == nil && !freeText, let titles {
+                    titleList(titles)
                 } else if let response {
                     if visibleItems.isEmpty && !searching {
                         if !response.providers.isEmpty && response.providers.allSatisfy({ $0.error != nil }) {
@@ -526,7 +565,7 @@ struct TorrentSearchView: View {
                         results(visibleItems, inline: false)
                     }
                 } else {
-                    ContentUnavailableView("Find your next watch", systemImage: "magnifyingglass", description: Text("Search movies and TV shows."))
+                    ContentUnavailableView("Find your next watch", systemImage: "magnifyingglass", description: Text(LocalizedStringKey(kind == "movie" ? "Search movies." : "Search TV shows.")))
                 }
             }
         }
@@ -552,6 +591,101 @@ struct TorrentSearchView: View {
         #else
         return width >= 640
         #endif
+    }
+    // MARK: Find by title
+    /// Films or TV shows: what the box looks up.
+    private var kindSelector: some View {
+        HStack(spacing: 2) {
+            kindOption("movie", name: "Movies", icon: "film")
+            kindOption("tv", name: "TV Shows", icon: "tv")
+        }.padding(3).background(Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius)).fixedSize()
+            .accessibilityElement(children: .contain).accessibilityLabel("Search for")
+    }
+    private func kindOption(_ value: String, name: String, icon: String) -> some View {
+        let selected = kind == value && !freeText
+        return Button {
+            let changed = kind != value || freeText
+            kind = value; freeText = false
+            if changed { work?.cancel(); searching = false; titles = nil; chosen = nil; facts = nil; response = nil; error = nil
+                if query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 { findTitles() } }
+        } label: {
+            Label(LocalizedStringKey(name), systemImage: icon).font(.subheadline.weight(.semibold)).padding(.horizontal, 12).frame(minHeight: regionHeight)
+                .foregroundStyle(selected ? Theme.onAccent : Color.white)
+                .background(selected ? Theme.accent : .clear, in: RoundedRectangle(cornerRadius: 6))
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
+    }
+    private func poster(_ encoded: String?, width: CGFloat) -> some View {
+        Group {
+            if let encoded, let data = Data(base64Encoded: encoded), let image = PlatformImage(data: data) {
+                #if os(macOS)
+                Image(nsImage: image).resizable().scaledToFill()
+                #else
+                Image(uiImage: image).resizable().scaledToFill()
+                #endif
+            } else {
+                RoundedRectangle(cornerRadius: 7).fill(Theme.panel).overlay(Image(systemName: kind == "movie" ? "film" : "tv").foregroundStyle(Theme.muted))
+            }
+        }.frame(width: width, height: width * 1.5).clipShape(RoundedRectangle(cornerRadius: 7)).accessibilityHidden(true)
+    }
+    /// The titles TMDB knows by that name; choosing one searches for it. The words alone stay
+    /// available for anything TMDB does not know.
+    private func titleList(_ titles: [FindTitle]) -> some View {
+        List {
+            if titles.isEmpty {
+                Text("No titles found").font(.headline).foregroundStyle(Theme.muted).padding(.vertical, 8)
+            }
+            ForEach(titles) { title in
+                Button { choose(title) } label: {
+                    HStack(alignment: .top, spacing: 12) {
+                        poster(title.poster, width: 46)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(verbatim: title.shownTitle).font(.headline)
+                            if title.shownTitle != title.title { Text(verbatim: title.title).font(.caption).foregroundStyle(Theme.muted) }
+                            if !title.line.isEmpty { Text(verbatim: title.line).font(.caption).foregroundStyle(Theme.muted) }
+                            if let summary = title.summary, !summary.isEmpty { Text(verbatim: summary).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                        }
+                        Spacer(minLength: 0)
+                    }.contentShape(Rectangle())
+                }.buttonStyle(.plain)
+            }
+            Button { freeText = true; searchText() } label: {
+                Label(L10n.format("Search torrents for “%@”", query.trimmingCharacters(in: .whitespacesAndNewlines)), systemImage: "text.magnifyingglass")
+            }.buttonStyle(.plain).foregroundStyle(Theme.accent).padding(.vertical, 6)
+        }.listStyle(.plain).canvasBackground()
+    }
+    /// The chosen title, and for a series what is wanted of it: whole seasons or one season's episodes.
+    private func chosenTitle(_ title: FindTitle) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 12) {
+                poster(title.poster, width: 34)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: title.shownTitle).font(.headline)
+                    if !title.line.isEmpty { Text(verbatim: title.line).font(.caption).foregroundStyle(Theme.muted) }
+                }
+                Spacer(minLength: 0)
+                Button("Change") { work?.cancel(); searching = false; chosen = nil; facts = nil; response = nil; selectedID = nil }
+                    .buttonStyle(MonoButtonStyle(compact: true))
+            }
+            if title.kind == "tv" {
+                HStack(spacing: 10) {
+                    Picker("Download", selection: $want) {
+                        Text("Full seasons").tag("season")
+                        Text("Single episodes").tag("episodes")
+                    }.pickerStyle(.segmented).fixedSize()
+                        .onChange(of: want) { if want == "episodes" && wantSeason == nil { wantSeason = facts?.aired.last ?? 1 }; searchTitle() }
+                    let seasons = facts?.aired ?? []
+                    if !seasons.isEmpty {
+                        Picker("Season", selection: $wantSeason) {
+                            if want == "season" { Text("All seasons").tag(Int?.none) }
+                            ForEach(seasons, id: \.self) { Text("Season \($0)").tag(Int?.some($0)) }
+                        }.pickerStyle(.menu).fixedSize().searchFilterControl()
+                            .onChange(of: wantSeason) { searchTitle() }
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+        }.padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
     }
     /// World or China, beside the search box. A narrow window keeps just the globe and flag.
     private var regionSelector: some View {
@@ -595,7 +729,7 @@ struct TorrentSearchView: View {
               regionSelector
                 .onChange(of: market) {
                     work?.cancel(); searching = false; response = nil; selectedID = nil; error = nil; source = "all"
-                    if query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 { search() }
+                    if chosen != nil { searchTitle() } else if query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 { search() }
                 }
               SearchBox(draft: draft, searching: searching, focused: $searchFocused, search: search,
                         edited: {
@@ -605,10 +739,13 @@ struct TorrentSearchView: View {
                             // Clears the box and results, ready for the next search.
                             work?.cancel(); searching = false
                             draft.text = ""; response = nil; selectedID = nil; error = nil
+                            titles = nil; chosen = nil; facts = nil; freeText = false
                             resetFilters()
                             focusNextSearch()
                         })
             }
+            kindSelector
+            if let chosen { chosenTitle(chosen) }
             ViewThatFits(in: .horizontal) {
                 HStack { if market != "china" { sourcePicker }; resolutionPicker; Spacer(); searchStatus }
                 VStack(alignment: .leading, spacing: 6) {
@@ -656,6 +793,9 @@ struct TorrentSearchView: View {
                     .onChange(of: resolution) { selectedID = visibleItems.first?.id }
     }
     @ViewBuilder private var refinements: some View {
+        if chosen != nil {
+            HStack { if want == "episodes" { episodePicker }; sortPicker; Spacer() }
+        } else {
         ViewThatFits(in: .horizontal) {
             HStack { scopePicker; seasonPicker; episodePicker; sortPicker; Spacer() }
             VStack(alignment: .leading, spacing: 6) {
@@ -663,7 +803,8 @@ struct TorrentSearchView: View {
                 HStack { episodePicker.labelsHidden(); sortPicker.labelsHidden(); Spacer() }
             }
         }
-        episodeDownloader
+        }
+        if chosen == nil || want == "episodes" { episodeDownloader }
     }
     private var scopePicker: some View {
         Picker("Show", selection: $scopeFilter) {
@@ -776,7 +917,66 @@ struct TorrentSearchView: View {
     private func resetFilters() {
         scopeFilter = "all"; seasonFilter = nil; episodeFilter = nil; downloaderSeason = nil; sortOrder = "match"
     }
+    /// Search: the titles named so (then a title is chosen), or torrents by the words typed.
     private func search() {
+        if freeText { searchText() } else { findTitles() }
+    }
+    private func findTitles() {
+        searchFocused = false
+        let wanted = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard wanted.count >= 2 else { return }
+        work?.cancel(); searching = true; error = nil
+        chosen = nil; facts = nil; response = nil; selectedID = nil; resetFilters()
+        let kind = kind
+        work = Task { @MainActor in
+            do {
+                let found: FindTitles = try await store.request("POST", "/v1/search/titles", body: ["query": wanted, "kind": kind], timeout: 30)
+                guard !Task.isCancelled else { return }
+                titles = found.titles
+            } catch {
+                guard !Task.isCancelled else { return }; self.error = error.localizedDescription
+            }
+            searching = false
+        }
+    }
+    private func choose(_ title: FindTitle) {
+        chosen = title; facts = nil; want = "season"; wantSeason = nil
+        if title.kind == "movie" { searchTitle(); return }
+        work?.cancel(); searching = true; error = nil
+        work = Task { @MainActor in
+            do {
+                let known: FindFacts = try await store.request("POST", "/v1/search/titles/facts", body: ["id": title.id], timeout: 30)
+                guard !Task.isCancelled else { return }
+                facts = known
+            } catch {
+                guard !Task.isCancelled else { return }
+                // Without the seasons the search still runs: whole seasons, any season.
+                Logger(subsystem: "org.torrbaby", category: "find").error("Title facts \(title.id, privacy: .public): \(String(describing: error), privacy: .public)")
+            }
+            searchTitle()
+        }
+    }
+    /// The chosen title's torrents: whole seasons or one season's episodes (a film: its releases).
+    private func searchTitle() {
+        guard let chosen else { return }
+        if want == "episodes" && wantSeason == nil { wantSeason = facts?.aired.last ?? 1 }
+        work?.cancel(); searching = true; error = nil; response = nil; selectedID = nil
+        scopeFilter = "all"; seasonFilter = nil; episodeFilter = nil; downloaderSeason = wantSeason
+        var body: [String: Any] = ["title": chosen.id, "market": market, "want": want, "sources": source == "all" ? [] : [source]]
+        if let wantSeason { body["season"] = wantSeason }
+        work = Task { @MainActor in
+            do {
+                // Episodes ask for each aired episode by its tag: allow for that.
+                let value: TorrentSearchResponse = try await store.request("POST", "/v1/search/torrents", body: body, timeout: market == "china" ? 90 : 60)
+                guard !Task.isCancelled else { return }; response = value
+                selectedID = visibleItems.first?.id
+            } catch {
+                guard !Task.isCancelled else { return }; self.error = error.localizedDescription
+            }
+            searching = false
+        }
+    }
+    private func searchText() {
         searchFocused = false
         guard query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 else { return }
         let wanted = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()

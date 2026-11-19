@@ -738,6 +738,57 @@ fn compressed_json(value: &Value) -> Response {
 }
 /// Cloud shares for a title, each copy set against the series' episodes when the
 /// metadata service knows the series. A failed lookup only leaves the totals out.
+/// Mainland titles are found as cloud-drive shares, not torrents. Every result has been
+/// opened and holds real video; a share holding a series in several qualities is one result
+/// for each, so each states its own picture and episodes.
+pub(crate) async fn china_search(s: &Arc<Service>, query: &str) -> Result<crate::torrent_search::SearchResult> {
+        let found = cloud_search(s, query).await?;
+        let (show, _) = crate::cloud::title_and_season(query);
+        let year = found["show"]["year"].as_str().and_then(|y| y.parse::<u16>().ok());
+        let mut copies: Vec<(&Value, &Value, usize)> = Vec::new();
+        for share in found["shares"].as_array().into_iter().flatten() {
+            for (index, copy) in share["copies"].as_array().into_iter().flatten().enumerate() {
+                // The same release shared by someone else: same picture and episodes, the same size to within 1%.
+                let again = copies.iter().any(|(_, other, _)| other["resolution"] == copy["resolution"] && other["fps"] == copy["fps"] && other["episodes"] == copy["episodes"]
+                    && other["total_bytes"].as_u64().zip(copy["total_bytes"].as_u64()).is_some_and(|(a, b)| a.abs_diff(b) <= a.max(b) / 100));
+                if !again { copies.push((share, copy, index)); }
+            }
+        }
+        copies.sort_by_key(|(_, copy, _)| crate::cloud::preference(copy));
+        // The likeliest choices have their tracks read in the background, so their sound is known by the next look.
+        let unread: Vec<(String, String)> = copies.iter().filter(|(_, copy, _)| copy["measured"].is_null()).take(5)
+            .filter_map(|(share, copy, _)| Some((share["url"].as_str()?.to_owned(), copy["key"].as_str()?.to_owned()))).collect();
+        if !unread.is_empty() {
+            let service = s.clone();
+            tokio::spawn(async move { for (url, copy) in unread { if let Err(error) = service.cloud.probe(&url, &copy).await { eprintln!("Cloud search: could not read a copy's tracks: {error}"); } } });
+        }
+        let items: Vec<crate::torrent_search::Item> = copies.into_iter().filter_map(|(share, copy, index)| {
+            let url = share["url"].as_str()?;
+            let id = url.rsplit('/').next()?.split('?').next()?;
+            let several = share["copies"].as_array().is_some_and(|all| all.len() > 1);
+            let title = share["title"].as_str().filter(|t| !t.is_empty()).unwrap_or(query);
+            let folder = copy["folder"].as_str().and_then(|f| f.rsplit('/').next()).map(crate::cloud::visible).filter(|f| !f.is_empty());
+            let name = match &folder { Some(folder) if several && folder != title => format!("{title} · {folder}"), _ => title.to_owned() };
+            let mut item = crate::torrent_search::cloud_item(name, &if several { format!("{id}#{index}") } else { id.to_owned() }, url, copy["total_bytes"].as_u64(),
+                share["posted"].as_str().filter(|p| !p.is_empty()).map(str::to_owned), copy["video_count"].as_u64().unwrap_or(0), &show, copy["key"].as_str());
+            // What the files are, not what the title happens to say.
+            let episodes: Vec<u16> = copy["episodes"].as_array().into_iter().flatten().filter_map(|n| n.as_u64().map(|n| n as u16)).collect();
+            item.hints.year = year.or(item.hints.year);
+            item.hints.season = copy["season"].as_u64().map(|n| n as u16); item.hints.season_end = None;
+            item.hints.episode = episodes.first().copied();
+            item.hints.episode_end = episodes.last().copied().filter(|_| episodes.len() > 1);
+            item.hints.episode_count = (episodes.len() > 1).then_some(episodes.len() as u16);
+            item.hints.resolution = copy["resolution"].as_str().map(str::to_owned);
+            if let Some(codec) = copy["codec"].as_str() { item.hints.video_codec = Some(codec.to_owned()); }
+            let mut detail = copy.clone();
+            detail["show"] = found["show"]["title"].clone();
+            detail["mirrors"] = json!(share["mirrors"].as_array().map_or(0, Vec::len));
+            item.cloud = Some(detail);
+            Some(item)
+        }).collect();
+        Ok(crate::torrent_search::SearchResult {
+            query: query.to_owned(), providers: vec![crate::torrent_search::ProviderStatus { provider: "quark".into(), count: items.len(), error: None }], items, cached: false })
+}
 pub(crate) async fn cloud_search(s: &Service, query: &str) -> Result<Value> {
     let mut found = s.cloud.search(query).await?;
     let (title, season) = crate::cloud::title_and_season(query);
@@ -810,57 +861,17 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
     if method==Method::POST {
         if let Some(id)=path.strip_prefix("/v1/trials/") {return crate::trials::action(s,id,&body).await;}
     }
+    if method == Method::POST && path == "/v1/search/torrents" && !body["title"].is_null() {
+        return Ok(serde_json::to_value(crate::title_search::search(s, &body).await?)?);
+    }
+    if method == Method::POST && path == "/v1/search/titles" {
+        return s.metadata.find_titles(text(&body, "query")?, text(&body, "kind")?).await;
+    }
+    if method == Method::POST && path == "/v1/search/titles/facts" {
+        return crate::title_search::facts(s, text(&body, "id")?).await;
+    }
     if method == Method::POST && path == "/v1/search/torrents" && body["market"] == "china" {
-        // Mainland titles are found as cloud-drive shares, not torrents. Every result has
-        // been opened and holds real video; a share holding a series in several qualities
-        // is one result for each, so each states its own picture and episodes.
-        let query = text(&body, "query")?;
-        let found = cloud_search(s, query).await?;
-        let (show, _) = crate::cloud::title_and_season(query);
-        let year = found["show"]["year"].as_str().and_then(|y| y.parse::<u16>().ok());
-        let mut copies: Vec<(&Value, &Value, usize)> = Vec::new();
-        for share in found["shares"].as_array().into_iter().flatten() {
-            for (index, copy) in share["copies"].as_array().into_iter().flatten().enumerate() {
-                // The same release shared by someone else: same picture and episodes, the same size to within 1%.
-                let again = copies.iter().any(|(_, other, _)| other["resolution"] == copy["resolution"] && other["fps"] == copy["fps"] && other["episodes"] == copy["episodes"]
-                    && other["total_bytes"].as_u64().zip(copy["total_bytes"].as_u64()).is_some_and(|(a, b)| a.abs_diff(b) <= a.max(b) / 100));
-                if !again { copies.push((share, copy, index)); }
-            }
-        }
-        copies.sort_by_key(|(_, copy, _)| crate::cloud::preference(copy));
-        // The likeliest choices have their tracks read in the background, so their sound is known by the next look.
-        let unread: Vec<(String, String)> = copies.iter().filter(|(_, copy, _)| copy["measured"].is_null()).take(5)
-            .filter_map(|(share, copy, _)| Some((share["url"].as_str()?.to_owned(), copy["key"].as_str()?.to_owned()))).collect();
-        if !unread.is_empty() {
-            let service = s.clone();
-            tokio::spawn(async move { for (url, copy) in unread { if let Err(error) = service.cloud.probe(&url, &copy).await { eprintln!("Cloud search: could not read a copy's tracks: {error}"); } } });
-        }
-        let items: Vec<crate::torrent_search::Item> = copies.into_iter().filter_map(|(share, copy, index)| {
-            let url = share["url"].as_str()?;
-            let id = url.rsplit('/').next()?.split('?').next()?;
-            let several = share["copies"].as_array().is_some_and(|all| all.len() > 1);
-            let title = share["title"].as_str().filter(|t| !t.is_empty()).unwrap_or(query);
-            let folder = copy["folder"].as_str().and_then(|f| f.rsplit('/').next()).map(crate::cloud::visible).filter(|f| !f.is_empty());
-            let name = match &folder { Some(folder) if several && folder != title => format!("{title} · {folder}"), _ => title.to_owned() };
-            let mut item = crate::torrent_search::cloud_item(name, &if several { format!("{id}#{index}") } else { id.to_owned() }, url, copy["total_bytes"].as_u64(),
-                share["posted"].as_str().filter(|p| !p.is_empty()).map(str::to_owned), copy["video_count"].as_u64().unwrap_or(0), &show, copy["key"].as_str());
-            // What the files are, not what the title happens to say.
-            let episodes: Vec<u16> = copy["episodes"].as_array().into_iter().flatten().filter_map(|n| n.as_u64().map(|n| n as u16)).collect();
-            item.hints.year = year.or(item.hints.year);
-            item.hints.season = copy["season"].as_u64().map(|n| n as u16); item.hints.season_end = None;
-            item.hints.episode = episodes.first().copied();
-            item.hints.episode_end = episodes.last().copied().filter(|_| episodes.len() > 1);
-            item.hints.episode_count = (episodes.len() > 1).then_some(episodes.len() as u16);
-            item.hints.resolution = copy["resolution"].as_str().map(str::to_owned);
-            if let Some(codec) = copy["codec"].as_str() { item.hints.video_codec = Some(codec.to_owned()); }
-            let mut detail = copy.clone();
-            detail["show"] = found["show"]["title"].clone();
-            detail["mirrors"] = json!(share["mirrors"].as_array().map_or(0, Vec::len));
-            item.cloud = Some(detail);
-            Some(item)
-        }).collect();
-        return Ok(serde_json::to_value(crate::torrent_search::SearchResult {
-            query: query.to_owned(), providers: vec![crate::torrent_search::ProviderStatus { provider: "quark".into(), count: items.len(), error: None }], items, cached: false })?);
+        return Ok(serde_json::to_value(china_search(s, text(&body, "query")?).await?)?);
     }
     if method == Method::POST && path == "/v1/search/torrents" {
         let mut result=s.torrent_search.search(serde_json::from_value(body)?).await?;
