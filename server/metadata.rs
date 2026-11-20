@@ -230,11 +230,15 @@ pub struct Metadata {
 const TMDB_REQUESTS_PER_SECOND: u64 = 8;
 impl Metadata {
     pub fn new(directory: &Path) -> Result<Self> {
+        // TMDB from China is slow or blocked; it goes the way the torrent searches go (the
+        // search tunnel, docs/search-proxy.md), whose far end opens TMDB and the search sites only.
+        let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(20)).redirect(reqwest::redirect::Policy::none());
+        if let Ok(proxy) = std::env::var("TORRBABY_SEARCH_PROXY") {
+            anyhow::ensure!(!proxy.trim().is_empty(), "TORRBABY_SEARCH_PROXY must not be empty");
+            builder = builder.proxy(reqwest::Proxy::all(&proxy).map_err(|_| anyhow::anyhow!("Invalid search proxy configuration"))?);
+        }
         Ok(Self {
-            client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(20))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()?,
+            client: builder.build()?,
             token: directory.join("tmdb.token"),
             host: Mutex::new("api.tmdb.org".to_owned()),
             cache: Mutex::new(std::collections::HashMap::new()),
@@ -444,10 +448,8 @@ impl Metadata {
     }
     /// TMDB's smallest poster for `path`, base64, with that size's name: from memory, the
     /// 64 MB folder of fetched thumbnails, or TMDB. None for a path that is not a poster's.
-    async fn thumbnail_in(&self, cache: &mut SearchArtworkCache, path: &str) -> Result<Option<(String, String)>> {
-        use base64::Engine;
-        if !(path.starts_with('/') && path.len() < 256 && !path.contains("..")
-            && path.chars().all(|c| c.is_ascii_alphanumeric() || "/._-".contains(c))) { return Ok(None); }
+    /// The smallest poster size TMDB offers, asked once.
+    async fn poster_size(&self, cache: &mut SearchArtworkCache) -> Result<Option<String>> {
         if cache.size.is_none() {
             let config = self.request("configuration", &[]).await?;
             cache.size = array(&config["images"]["poster_sizes"]).iter()
@@ -455,30 +457,44 @@ impl Metadata {
                 .filter_map(|size| Some((size.strip_prefix('w')?.parse::<u32>().ok()?, size)))
                 .min_by_key(|(width, _)| *width).map(|(_, size)| size.to_owned());
         }
-        let Some(size) = cache.size.clone() else { return Ok(None) };
-        let image_key=format!("{size}{path}");
+        Ok(cache.size.clone())
+    }
+    fn poster_path_ok(path: &str) -> bool {
+        path.starts_with('/') && path.len() < 256 && !path.contains("..") && path.chars().all(|c| c.is_ascii_alphanumeric() || "/._-".contains(c))
+    }
+    /// A poster's bytes ("w92/abc.jpg"), from the artwork folder or else image.tmdb.org,
+    /// without the thumbnail cache's lock, so several can be fetched at once.
+    async fn poster_bytes(&self, image_key: &str) -> Result<Vec<u8>> {
         use sha2::{Digest,Sha256};
         let file=self.artwork_dir.join(Sha256::digest(image_key.as_bytes()).iter().map(|b|format!("{b:02x}")).collect::<String>());
-        if let Some(value)=cache.images.get(&image_key) { return Ok(Some((value.clone(), size))); }
-        let stored=std::fs::metadata(&file).ok().filter(|m|m.len()<=512*1024).and_then(|_|std::fs::read(&file).ok());
-        let bytes=if let Some(bytes)=stored {bytes} else {
+        if let Some(bytes)=std::fs::metadata(&file).ok().filter(|m|m.len()<=512*1024).and_then(|_|std::fs::read(&file).ok()) { return Ok(bytes); }
+        // A poster is a nicety: one that is slow to come is left out rather than holding up the answer.
+        let bytes = tokio::time::timeout(Duration::from_secs(6), async {
             let mut response=self.client.get(format!("https://image.tmdb.org/t/p/{image_key}")).send().await?.error_for_status()?;
             let mut bytes=Vec::new();
             while let Some(chunk)=response.chunk().await? {
                 anyhow::ensure!(bytes.len()+chunk.len()<=512*1024,"Thumbnail too large");
                 bytes.extend_from_slice(&chunk);
             }
-            if std::fs::create_dir_all(&self.artwork_dir).is_ok() {
-                let tmp=file.with_extension("tmp");
-                if std::fs::write(&tmp,&bytes).is_ok(){let _=std::fs::rename(tmp,&file);}
-                let mut files=std::fs::read_dir(&self.artwork_dir).into_iter().flatten().filter_map(Result::ok)
-                    .filter_map(|e|{let m=e.metadata().ok()?;Some((m.modified().ok()?,m.len(),e.path()))}).collect::<Vec<_>>();
-                files.sort_by_key(|e|e.0);let mut total:u64=files.iter().map(|e|e.1).sum();
-                for (_,len,path) in files {if total<=64*1024*1024 {break;}if std::fs::remove_file(path).is_ok(){total=total.saturating_sub(len);}}
-            }
-            bytes
-        };
-        let encoded=base64::engine::general_purpose::STANDARD.encode(bytes);
+            Ok::<_, anyhow::Error>(bytes)
+        }).await.map_err(|_| anyhow::anyhow!("Poster took too long"))??;
+        if std::fs::create_dir_all(&self.artwork_dir).is_ok() {
+            let tmp=file.with_extension(format!("{}.tmp", uuid::Uuid::new_v4().simple()));
+            if std::fs::write(&tmp,&bytes).is_ok(){let _=std::fs::rename(tmp,&file);}
+            let mut files=std::fs::read_dir(&self.artwork_dir).into_iter().flatten().filter_map(Result::ok)
+                .filter_map(|e|{let m=e.metadata().ok()?;Some((m.modified().ok()?,m.len(),e.path()))}).collect::<Vec<_>>();
+            files.sort_by_key(|e|e.0);let mut total:u64=files.iter().map(|e|e.1).sum();
+            for (_,len,path) in files {if total<=64*1024*1024 {break;}if std::fs::remove_file(path).is_ok(){total=total.saturating_sub(len);}}
+        }
+        Ok(bytes)
+    }
+    async fn thumbnail_in(&self, cache: &mut SearchArtworkCache, path: &str) -> Result<Option<(String, String)>> {
+        use base64::Engine;
+        if !Self::poster_path_ok(path) { return Ok(None); }
+        let Some(size) = self.poster_size(cache).await? else { return Ok(None) };
+        let image_key=format!("{size}{path}");
+        if let Some(value)=cache.images.get(&image_key) { return Ok(Some((value.clone(), size))); }
+        let encoded=base64::engine::general_purpose::STANDARD.encode(self.poster_bytes(&image_key).await?);
         if cache.images.len()>=128 {cache.images.clear();}
         cache.images.insert(image_key,encoded.clone());
         Ok(Some((encoded, size)))
@@ -491,9 +507,11 @@ impl Metadata {
         anyhow::ensure!((1..=200).contains(&query.chars().count()), "Enter a title");
         if !self.configured() { bail!("Connect TMDB in Settings to search by title"); }
         let parameters = [("query", query.as_str()), ("include_adult", "false")];
-        let english = self.request(&format!("search/{kind}"), &[parameters[0], parameters[1], ("language", "en-US")]).await?;
-        // The Chinese titles come from the same search in Chinese; a miss only leaves them out.
-        let chinese = self.request(&format!("search/{kind}"), &[parameters[0], parameters[1], ("language", "zh-CN")]).await.unwrap_or(Value::Null);
+        // The Chinese titles come from the same search in Chinese, asked alongside; a miss only leaves them out.
+        let path = format!("search/{kind}");
+        let (in_english, in_chinese) = ([parameters[0], parameters[1], ("language", "en-US")], [parameters[0], parameters[1], ("language", "zh-CN")]);
+        let (english, chinese) = tokio::join!(self.request(&path, &in_english), self.request(&path, &in_chinese));
+        let (english, chinese) = (english?, chinese.unwrap_or(Value::Null));
         let mut titles = Vec::new();
         for hit in array(&english["results"]).iter().take(12) {
             let Some(id) = hit["id"].as_u64() else { continue };
@@ -504,11 +522,33 @@ impl Metadata {
                 "title_zh":zh,"year":date.get(..4).unwrap_or(""),"country":array(&hit["origin_country"]).first(),
                 "summary":hit["overview"],"votes":hit["vote_count"].as_u64().unwrap_or(0),"poster_path":hit["poster_path"]}));
         }
-        // Posters one at a time under the thumbnail cache's lock (each is small and usually cached).
-        let mut cache = self.search_artwork.lock().await;
-        for title in &mut titles {
-            let path = title["poster_path"].take();
-            if let Some(path) = path.as_str() && let Ok(Some((data, _))) = self.thumbnail_in(&mut cache, path).await { title["poster"] = json!(data); }
+        // Posters: those in memory at once, the rest fetched together (each gives up after a few
+        // seconds) with no lock held meanwhile, so twelve slow images cost one wait, not twelve.
+        use base64::Engine;
+        let paths: Vec<Option<String>> = titles.iter_mut().map(|t| t["poster_path"].take().as_str().filter(|p| Self::poster_path_ok(p)).map(str::to_owned)).collect();
+        let (size, mut wanted) = {
+            let mut cache = self.search_artwork.lock().await;
+            let size = self.poster_size(&mut cache).await.ok().flatten();
+            let mut wanted = Vec::new();
+            if let Some(size) = &size {
+                for (index, path) in paths.iter().enumerate() {
+                    let Some(path) = path else { continue };
+                    let key = format!("{size}{path}");
+                    match cache.images.get(&key) { Some(data) => titles[index]["poster"] = json!(data), None => wanted.push((index, key)) }
+                }
+            }
+            (size, wanted)
+        };
+        if size.is_some() && !wanted.is_empty() {
+            let fetched = futures_util::future::join_all(wanted.iter().map(|(_, key)| self.poster_bytes(key))).await;
+            let mut cache = self.search_artwork.lock().await;
+            for ((index, key), bytes) in wanted.drain(..).zip(fetched) {
+                let Ok(bytes) = bytes else { continue };
+                let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+                if cache.images.len()>=128 {cache.images.clear();}
+                cache.images.insert(key, encoded.clone());
+                titles[index]["poster"] = json!(encoded);
+            }
         }
         Ok(json!({"titles":titles}))
     }

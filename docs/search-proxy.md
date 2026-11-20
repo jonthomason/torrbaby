@@ -1,53 +1,43 @@
 # Search proxy operations
 
-Deployed 2026-11-10. Only the daemon's indexer HTTP client uses
-`TORRBABY_SEARCH_PROXY=socks5h://127.0.0.1:18780`. DNS for those requests resolves
-on Tungsten. Transmission, media playback, TMDB, and global routing are unchanged.
+Since 2026-11-20 the search tunnel ends on **shadow**, reached over **ABT** (it was Tungsten,
+in Hong Kong, over a Tailscale relay: slow, and retired). Only two HTTP clients in the daemon
+use `TORRBABY_SEARCH_PROXY=socks5h://127.0.0.1:18780`: the torrent search sites' and TMDB's
+(titles, details and posters). DNS for those requests resolves on shadow.
+
+**Transmission never goes through it, and cannot.** Transmission has no proxy setting and its
+sockets use the home network (checked: every peer socket on 192.168.1.x or the China Telecom
+IPv6, none on ABT's 198.18.0.2). And shadow itself refuses: the tunnel's account may open only
+the destinations below, so no peer, tracker or other site is reachable through it whatever
+Diamond sends.
 
 ## Services
 
 - Diamond: `~/Library/LaunchAgents/org.torrbaby.search-proxy.plist`, ordinary
-  `/usr/bin/ssh -NT -D 127.0.0.1:18780`, dedicated `torrbaby-search` account.
-- Tungsten: `sshd-torrbaby.service` runs the installed OpenSSH daemon on its
-  private Tailnet address, port 2222. This is **not Tailscale SSH**: ordinary
-  public-key authentication and a pinned OpenSSH host key are required.
-- Public port 22 was intermittent from Diamond. The additional listener binds
-  only the private address and accepts only the dedicated account. Existing
-  public SSH and Tailscale SSH settings were not changed.
-- No custom runtime application is installed on Tungsten. The tunnel and server
-  use OpenSSH, launchd, and systemd.
-
-Diamond's dedicated private key stays in `~/.ssh/torrbaby_search_ed25519`.
-Its verified host key is pinned in `~/.ssh/torrbaby_search_known_hosts`.
-Neither is stored in this repository. The account has no shell sessions, agent
-forwarding, remote forwarding, PTY, or tunnel-device access. `PermitOpen` allows:
+  `/usr/bin/ssh -NT -D 127.0.0.1:18780` as `torrbaby-search@72.212.83.129` (shadow), with
+  `ProxyCommand "~/Library/Application Support/ABT/bin/abt" connect %h %p` and
+  `HostKeyAlias=shadow.jonthomason.com`. The previous (Tungsten) agent is kept under
+  `~/Library/Application Support/Torrbaby/backups/search-proxy-tungsten-*.plist`.
+- Shadow: system account `torrbaby-search` (no shell, `restrict,port-forwarding` key) and
+  `/etc/ssh/sshd_config.d/60-torrbaby-search.conf`: public key only, local forwarding only,
+  no TTY, agent, X11, tunnel device or stream forwarding, `ForceCommand /usr/sbin/nologin`, and
 
 ```
-apibay.org:443 torrents-csv.com:443 nyaa.si:443 www.1lou.me:80
-share.dmhy.org:443 mikanani.me:443
+PermitOpen api.tmdb.org:443 image.tmdb.org:443 apibay.org:443 torrents-csv.com:443
+           nyaa.si:443 www.1lou.me:80 share.dmhy.org:443 mikanani.me:443
 ```
 
-The tunnel restarts through launchd, with SSH keepalives and a 30-second restart
-throttle. Logs are in `~/Library/Logs/Torrbaby/search-proxy*.log` on Diamond.
+Diamond's private key stays in `~/.ssh/torrbaby_search_ed25519`; shadow's host key is pinned
+in `~/.ssh/torrbaby_search_known_hosts` (read from shadow over an authenticated session).
+Neither is in this repository. A new search site needs its `host:port` added to `PermitOpen`
+(`sshd -t`, then `systemctl reload ssh`).
 
-## Validation
+## Validation (2026-11-20)
 
-All six sources returned HTTP 200 through the SOCKS proxy. An unrelated
-`example.com:443` request was refused by the destination allowlist.
-Live API: China `逐玉 全40` returned 16 results in 0.78s; listing 964046 resolved
-43 files (40 episodes), 29,038,658,781 bytes, in 15.81s; World CSV search took
-1.14s. Cross-market provider selection returned 400. Upstream failures remain
-possible; these measurements are successful checks, not a latency guarantee.
+Through the tunnel: TMDB API 3.0 s (first request, tunnel setup), poster 0.76 s, apibay 1.2 s,
+torrents-csv 1.2 s, nyaa 1.7 s. `example.com:443` and `api.themoviedb.org:443` refused in 0.2 s.
 
 ## Rollback
 
-Before enabling the environment variable, the daemon plist, SQLite database,
-and three pending subtitle jobs were backed up on Diamond under
-`~/Library/Application Support/Torrbaby/backups/search-proxy-20261110-100342`.
-All three jobs were requeued after the brief restart.
-
-To revert routing, remove only `TORRBABY_SEARCH_PROXY` from the daemon plist and
-restart the daemon, preserving pending subtitle jobs. Then boot out the dedicated
-search-proxy LaunchAgent. Do not restore the old database or touch the separate
-Firefox proxy. Tungsten's dedicated service/account can subsequently be disabled
-if no longer needed. Client builds do not need to change for proxy configuration.
+Put the backed-up plist back, `launchctl bootout` and `bootstrap` the agent. Removing
+`TORRBABY_SEARCH_PROXY` from the daemon plist sends searches and TMDB straight from Diamond.
