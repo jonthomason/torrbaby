@@ -25,6 +25,15 @@ const STAGING: &str = "Torrbaby";
 /// Pieces fetched at once. The drive's own client keeps to a few; many long-running
 /// connections are what it throttles.
 const CONNECTIONS: u64 = 4;
+/// A cookie header with some of its values replaced or added, order kept.
+fn merge_cookie(cookie: &str, renewed: &[(String, String)]) -> String {
+    let mut pairs: Vec<(String, String)> = cookie.split(';').filter_map(|pair| pair.split_once('='))
+        .map(|(name, value)| (name.trim().to_owned(), value.trim().to_owned())).filter(|(name, _)| !name.is_empty()).collect();
+    for (name, value) in renewed {
+        match pairs.iter_mut().find(|(have, _)| have == name) { Some(pair) => pair.1 = value.clone(), None => pairs.push((name.clone(), value.clone())) }
+    }
+    pairs.iter().map(|(name, value)| format!("{name}={value}")).collect::<Vec<_>>().join("; ")
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 struct JobFile {
@@ -439,6 +448,29 @@ impl Cloud {
         file.write_all(&serde_json::to_vec(&json!({"cookie": cookie}))?)?; file.sync_all()?;
         Ok(std::fs::rename(staged, &self.cookie_file)?)
     }
+    /// Quark renews its short-lived session cookie (__puus) in the Set-Cookie of its answers.
+    /// The API keeps accepting the long-lived one, but the download servers refuse a stale
+    /// session with HTTP 412 after a few days, so every renewal is kept with the login.
+    fn renew_cookie(&self, sent: &str, response: &reqwest::Response) {
+        let renewed: Vec<(String, String)> = response.headers().get_all(reqwest::header::SET_COOKIE).iter()
+            .filter_map(|value| value.to_str().ok())
+            .filter_map(|value| value.split(';').next()?.split_once('='))
+            .map(|(name, value)| (name.trim().to_owned(), value.trim().to_owned()))
+            .filter(|(name, value)| !name.is_empty() && !value.is_empty() && !value.eq_ignore_ascii_case("deleted"))
+            .collect();
+        if renewed.is_empty() { return; }
+        // Only onto the login that was sent: one replaced meanwhile is left alone.
+        let Some(saved) = self.cookie().filter(|saved| saved == sent) else { return };
+        let merged = merge_cookie(&saved, &renewed);
+        if merged == saved { return; }
+        let names: Vec<&str> = renewed.iter().map(|(name, _)| name.as_str()).collect();
+        match self.set_cookie(&merged) {
+            Ok(()) => tracing::info!(?names, "Quark renewed the login session"),
+            Err(error) => tracing::warn!(%error, "Could not keep Quark's renewed login session"),
+        }
+    }
+    /// The freshest login for a request: the saved one, renewed since the job began.
+    fn fresh(&self, cookie: &str) -> String { self.cookie().unwrap_or_else(|| cookie.to_owned()) }
     pub fn clear_cookie(&self) -> Result<()> {
         match std::fs::remove_file(&self.cookie_file) { Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()), _ => Ok(()) }
     }
@@ -452,6 +484,7 @@ impl Cloud {
             .timeout(Duration::from_secs(40));
         if let Some(cookie) = cookie { request = request.header("Cookie", cookie); }
         let response = request.send().await.map_err(|e| anyhow::anyhow!("Quark could not be reached{}", if e.is_timeout() { " in time" } else { "" }))?;
+        if let Some(cookie) = cookie { self.renew_cookie(cookie, &response); }
         let answer: Value = response.json().await.map_err(|_| anyhow::anyhow!("Quark did not answer as expected"))?;
         if answer["code"].as_i64().unwrap_or(-1) != 0 {
             bail!("Quark: {} ({})", answer["message"].as_str().unwrap_or("request refused"), answer["code"]);
@@ -697,10 +730,16 @@ impl Cloud {
         file.set_len(size).await?;
         let mut ranges = vec![(0, EDGE.min(size))];
         if size > 2 * EDGE { ranges.push((size - EDGE, size)); }
+        let cookie = self.fresh(cookie);
         for (start, end) in ranges {
-            let response = self.http.get(link).header("User-Agent", DESKTOP).header("Referer", "https://pan.quark.cn/").header("Cookie", cookie)
+            let response = self.http.get(link).header("User-Agent", DESKTOP).header("Referer", "https://pan.quark.cn/").header("Cookie", &cookie)
                 .header("Range", format!("bytes={start}-{}", end - 1)).timeout(Duration::from_secs(60)).send().await.map_err(|_| anyhow::anyhow!("Quark could not be reached"))?;
-            ensure!(response.status().is_success(), "Quark refused the download");
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                tracing::warn!(%status, body = %body.chars().take(300).collect::<String>(), "Quark refused a sample");
+                anyhow::bail!("Quark refused the download");
+            }
             let bytes = response.bytes().await.map_err(|_| anyhow::anyhow!("Quark stopped answering"))?;
             file.seek(std::io::SeekFrom::Start(start)).await?;
             file.write_all(&bytes[..bytes.len().min((end - start) as usize)]).await?;
@@ -1082,6 +1121,9 @@ impl Cloud {
         use tokio::io::{AsyncSeekExt, AsyncWriteExt};
         let link = self.call("/file/download", &[], Some(json!({"fids": [fid]})), Some(cookie), true).await?;
         let url = link["data"][0]["download_url"].as_str().context("Quark gave no download link")?.to_owned();
+        // The asking may have renewed the session; the pieces go with the renewed one.
+        let cookie = self.fresh(cookie);
+        let cookie = cookie.as_str();
         let piece = link["data"][0]["range_size"].as_u64().filter(|n| (1 << 20..=1 << 30).contains(n)).unwrap_or(20_485_760);
         let parent = destination.parent().context("Invalid destination")?;
         crate::drives::create_media_folder(parent)?;
@@ -1116,11 +1158,21 @@ impl Cloud {
                 while let Some(index) = wanted.get(next.fetch_add(1, Ordering::Relaxed) as usize).copied() {
                     let (start, end) = span(index);
                     let mut whole = false;
+                    // What the drive last said, so a failure names its cause in the log.
+                    let mut last = String::new();
                     for _attempt in 0..6u32 {
                         let sent = self.http.get(&url).header("User-Agent", DESKTOP).header("Referer", "https://pan.quark.cn/").header("Cookie", cookie)
                             .header("Range", format!("bytes={start}-{}", end - 1)).send().await;
-                        let Ok(mut response) = sent else { tokio::time::sleep(Duration::from_secs(3)).await; continue };
-                        if !response.status().is_success() { tokio::time::sleep(Duration::from_secs(3)).await; continue; }
+                        let mut response = match sent {
+                            Ok(response) => response,
+                            Err(error) => { last = format!("not reached: {error}"); tokio::time::sleep(Duration::from_secs(3)).await; continue }
+                        };
+                        if !response.status().is_success() {
+                            let status = response.status();
+                            let body = response.text().await.unwrap_or_default();
+                            last = format!("HTTP {status}: {}", body.chars().take(300).collect::<String>());
+                            tokio::time::sleep(Duration::from_secs(3)).await; continue;
+                        }
                         file.seek(std::io::SeekFrom::Start(start)).await?;
                         let mut got = 0u64;
                         while let Ok(Some(chunk)) = response.chunk().await {
@@ -1133,9 +1185,11 @@ impl Cloud {
                         file.flush().await?;
                         if got == end - start { whole = true; break; }
                         // A piece cut short is fetched again from its start.
+                        last = format!("cut short at {got} of {} bytes", end - start);
                         self.progress.fetch_sub(got, Ordering::Relaxed);
                         tokio::time::sleep(Duration::from_secs(2)).await;
                     }
+                    if !whole { tracing::warn!(piece = index, file = %destination.display(), drive = %last, "Cloud piece failed six times"); }
                     ensure!(whole, "The download kept stopping");
                     if let Ok(mut done) = done.lock() { done.insert(index); }
                 }
@@ -1383,6 +1437,12 @@ impl Cloud {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_renewed_session_replaces_its_value_and_keeps_the_rest() {
+        let renewed = vec![("__puus".to_owned(), "new".to_owned()), ("extra".to_owned(), "1".to_owned())];
+        assert_eq!(merge_cookie("a=1; __puus=old; __pus=keep", &renewed), "a=1; __puus=new; __pus=keep; extra=1");
+        assert_eq!(merge_cookie("a=1;b=2", &[]), "a=1; b=2");
+    }
     #[test]
     fn episode_numbers_are_read_from_the_usual_file_names() {
         assert_eq!(episode("4e291a34/02.mkv"), (None, Some(2)));
