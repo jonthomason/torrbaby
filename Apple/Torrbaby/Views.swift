@@ -867,7 +867,7 @@ struct TransferRow: View {
                     if let year = title.year { Text(verbatim: year).font(SearchFont.detail).foregroundStyle(Theme.muted) }
                 }
                 if !tags.isEmpty { SearchTags(tags: tags) }
-                status.font(SearchFont.detail.monospacedDigit()).foregroundStyle(Theme.muted).lineLimit(1).minimumScaleFactor(0.85)
+                status.font(SearchFont.detail.monospacedDigit()).foregroundStyle(Theme.muted).lineLimit(1)
                 if !torrent.completed { TransferBar(value: torrent.percentDone, color: stateColor) }
                 if let operation = torrent.fileOperation {
                     Text(LocalizedStringKey(operation.label)).font(SearchFont.detail).foregroundStyle(operation.error == nil ? Color.secondary : Color.orange)
@@ -882,21 +882,29 @@ struct TransferRow: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
-    /// "Downloading · 42% of 8.3 GB · ↓ 24 Mbps · ~12m", or for a finished one "Seeding · 8.3 GB · ↑ 3.1 Mbps · Ratio 1.02".
+    /// Two lines: what it is doing and how far ("Downloading · 42% of 8.3 GB", peers at the end),
+    /// then how fast and how long ("↓ 24 Mbps · ~12m remaining", or "↑ 3.1 Mbps · Ratio 1.02").
     @ViewBuilder private var status: some View {
-        HStack(spacing: 5) {
-            Text(LocalizedStringKey(torrent.stateName)).foregroundStyle(stateColor)
-            dot
-            if torrent.completed { Text(verbatim: bytes(torrent.size)) }
-            else { Text(verbatim: L10n.format("%@ of %@", torrent.percentDone.formatted(.percent.precision(.fractionLength(0))), bytes(torrent.size))) }
-            if !torrent.completed && torrent.status == 4 {
-                dot; Label(rate(torrent.rateDownload), systemImage: "arrow.down").labelStyle(TightLabel()).foregroundStyle(Theme.accent)
-                dot; Text(verbatim: torrent.etaText)
-            } else if torrent.rateUpload > 0 || torrent.status == 6 {
-                dot; Label(rate(torrent.rateUpload), systemImage: "arrow.up").labelStyle(TightLabel())
-                dot; Text(verbatim: L10n.format("Ratio %@", max(0, torrent.uploadRatio).formatted(.number.precision(.fractionLength(2)))))
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 5) {
+                Text(LocalizedStringKey(torrent.stateName)).foregroundStyle(stateColor)
+                dot
+                if torrent.completed { Text(verbatim: bytes(torrent.size)) }
+                else { Text(verbatim: L10n.format("%@ of %@", torrent.percentDone.formatted(.percent.precision(.fractionLength(0))), bytes(torrent.size))) }
+                Spacer(minLength: 6)
+                if torrent.status == 4 || torrent.status == 6 { Text(verbatim: peerCount(torrent.peersConnected)) }
             }
-            if torrent.status == 4 || torrent.status == 6 { dot; Text(verbatim: peerCount(torrent.peersConnected)) }
+            if !torrent.completed && torrent.status == 4 {
+                HStack(spacing: 5) {
+                    Label(rate(torrent.rateDownload), systemImage: "arrow.down").labelStyle(TightLabel()).foregroundStyle(Theme.accent)
+                    if !torrent.isStalled { dot; Text(verbatim: torrent.etaText) }
+                }
+            } else if torrent.rateUpload > 0 || torrent.status == 6 {
+                HStack(spacing: 5) {
+                    Label(rate(torrent.rateUpload), systemImage: "arrow.up").labelStyle(TightLabel())
+                    dot; Text(verbatim: L10n.format("Ratio %@", max(0, torrent.uploadRatio).formatted(.number.precision(.fractionLength(2)))))
+                }
+            }
         }
     }
     private var dot: some View { Text(verbatim: "·") }

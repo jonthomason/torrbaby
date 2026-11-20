@@ -86,7 +86,12 @@ struct Torrent: Codable, Identifiable, Hashable {
     /// The title as the library knows it (TMDB's, with its year), else the release's name tidied.
     func title(_ match: MetadataCandidate?) -> (name: String, year: String?) {
         if let match, !match.title.isEmpty { return (match.title, match.year.isEmpty ? nil : match.year) }
-        return (displayName, hints?.year.map(String.init))
+        // Unmatched: the name up to its year, season or first tag ("F1 The Movie (2025) [2160p]…" is "F1 The Movie").
+        let name = displayName
+        let cut = name.range(of: #"(?i)[\[(【]|\b(19|20)\d{2}\b|\bS\d{1,2}(E\d{1,3})?\b|\b(2160p|1080p|720p|480p|4k|bluray|web-?dl|webrip|hdtv|x26[45]|h ?26[45]|hevc)\b"#, options: .regularExpression)
+        let head = cut.map { String(name[..<$0.lowerBound]) } ?? name
+        let cleaned = head.trimmingCharacters(in: CharacterSet(charactersIn: " -–—._+"))
+        return (cleaned.count >= 2 ? cleaned : name, hints?.year.map(String.init))
     }
     var isJunk: Bool { fileOperation?.action == "junk" }
     var id: String { hashString }
