@@ -54,6 +54,11 @@ pub fn resolve_episode_title(asset: &mut Value, entity: &Value) {
 static ISSUE_PART: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"第\s*(\d{1,3})\s*期\s*[(（]\s*([一二三四五六七八九十]|\d{1,2})\s*[)）]").expect("valid regex")
 });
+/// A weekly episode in halves: "第6期上" and "第6期下" (not their bonus cuts, "第6期上纯享·…").
+static ISSUE_HALF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"第\s*(\d{1,3})\s*期\s*([上下])").expect("valid regex"));
+static NOISE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"【[^】]*】|\[[^\]]*\]|(?i)[-._ ]*(?:4k|2160p|1080p|高码率|60fps)[-._ ]*").expect("valid regex")
+});
 static ISSUE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"第\s*\d{1,3}\s*期").expect("valid regex"));
 static DATED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:19|20)\d{2}[.\-_]\d{1,2}[.\-_]\d{1,2}").expect("valid regex"));
 static BONUS: LazyLock<Regex> = LazyLock::new(|| {
@@ -64,7 +69,7 @@ static BONUS: LazyLock<Regex> = LazyLock::new(|| {
 /// "2026.07.21-通告日"). Such a label must stay in the file's name: it is all that tells the
 /// part or the bonus video apart.
 pub fn variety_labelled(stem: &str) -> bool {
-    ISSUE_PART.is_match(stem) || ((ISSUE.is_match(stem) || DATED.is_match(stem)) && BONUS.is_match(stem))
+    issue_part(stem).is_some() || ((ISSUE.is_match(stem) || DATED.is_match(stem)) && BONUS.is_match(stem))
 }
 
 /// A variety show's weekly episode ("第3期") comes in parts, "第3期(一)" to "第3期(四)", and
@@ -75,7 +80,7 @@ pub fn variety(asset: &mut Value, path: &Path, roots: &[&str]) {
     let Some(object) = asset.as_object_mut() else { return };
     for key in ["issue", "issue_part", "label"] { object.remove(key); }
     let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { return };
-    if ISSUE_PART.is_match(stem) || !variety_labelled(stem) { return; }
+    if issue_part(stem).is_some() || !variety_labelled(stem) { return; }
     // The show's folder names the show; a library root does not.
     let folder = path.parent().filter(|parent| !roots.iter().any(|root| *parent == Path::new(root)))
         .and_then(|parent| parent.file_name()).and_then(|name| name.to_str());
@@ -84,7 +89,8 @@ pub fn variety(asset: &mut Value, path: &Path, roots: &[&str]) {
     if let Some(rest) = folder.and_then(|folder| label.strip_prefix(folder)).map(|rest| rest.trim_start_matches([' ', '-'])) {
         label = rest.to_owned();
     }
-    let label = label.trim_matches([' ', '-']).to_owned();
+    let label = NOISE.replace_all(&label, " ").replace('_', " ");
+    let label = label.split_whitespace().collect::<Vec<_>>().join(" ").trim_matches([' ', '-']).to_owned();
     if !EPISODE.is_match(stem) {
         // Without an episode number the name alone would not find the show.
         let Some(folder) = folder else { return };
@@ -97,14 +103,18 @@ pub fn variety(asset: &mut Value, path: &Path, roots: &[&str]) {
 
 /// The episode, part and description a variety show's file name states in Chinese:
 /// "2026-07-31 【正片】第5期(一) 小海进修情商课句句点黄渤【4K】" is episode 5, part 1, "小海进修情商课句句点黄渤".
+/// "2026.11.14_第6期上_4K_60fps" is episode 6, part 1; "第6期下", part 2.
 pub fn issue_part(stem: &str) -> Option<(u64, u64, String)> {
-    let found = ISSUE_PART.captures(stem)?;
-    let numeral = &found[2];
-    let part = numeral.parse::<u64>().ok()
-        .or_else(|| "一二三四五六七八九十".chars().position(|c| numeral.starts_with(c)).map(|i| i as u64 + 1))?;
-    static NOISE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"【[^】]*】|\[[^\]]*\]|(?i)[-. ]*(?:4k|2160p|1080p|高码率|60fps)[-. ]*").expect("valid regex")
-    });
+    let (found, part) = match ISSUE_PART.captures(stem) {
+        Some(found) => {
+            let numeral = &found[2];
+            let part = numeral.parse::<u64>().ok()
+                .or_else(|| "一二三四五六七八九十".chars().position(|c| numeral.starts_with(c)).map(|i| i as u64 + 1))?;
+            (found, part)
+        }
+        None if !BONUS.is_match(stem) => { let found = ISSUE_HALF.captures(stem)?; let part = if &found[2] == "上" { 1 } else { 2 }; (found, part) }
+        None => return None,
+    };
     let rest = NOISE.replace_all(&stem[found.get(0)?.end()..], " ");
     // A wrapper around the label ("20260710(第2期(一))") leaves its closing bracket behind.
     let rest = rest.trim().trim_start_matches([')', '）']).trim_matches(|c: char| c.is_whitespace() || "-_.".contains(c));
@@ -658,6 +668,20 @@ mod tests {
         let plain = scan("Friends - S01E02.mkv");
         assert_eq!((plain["season"].clone(), plain["episode"].clone(), plain["label"].clone()), (json!(1), json!(2), Value::Null));
         assert!(!variety_labelled("The Pilot (2020)"));
+        // Halves (上, 下) are parts; their bonus cuts stay extras, with a tidy label.
+        let half = "/TV/现在就出发/现在就出发 - S04E06 - 2026.11.15_第6期下_4K_60fps.mp4";
+        assert_eq!(part(half), Some(2));
+        assert_eq!(part_title(half).as_deref(), Some("Part 2"));
+        assert_eq!(part("现在就出发 - S04E06 - 2026.11.14_第6期上_4K_60fps.mp4"), Some(1));
+        assert_eq!(part_file_name("现在就出发", 4, "2026.11.21_第7期上_4K_60fps", "mp4").as_deref(), Some("现在就出发 - S04E07 - Part 1.mp4"));
+        assert_eq!(part("现在就出发 - 2026.11.14_第6期上纯享·笨蛋杀手_4K_60fps.mp4"), None);
+        let path = PathBuf::from("/TV/现在就出发/现在就出发 - 2026.11.14_第6期上纯享·笨蛋杀手_4K_60fps.mp4");
+        let mut cut = json!({});
+        variety(&mut cut, &path, &roots);
+        assert_eq!((cut["season"].clone(), cut["label"].clone()), (json!(0), json!("2026.11.14 第6期上纯享·笨蛋杀手")));
+        let mut whole = json!({"season": 4, "episode": 6});
+        variety(&mut whole, Path::new(half), &roots);
+        assert_eq!((whole["season"].clone(), whole["episode"].clone()), (json!(4), json!(6)));
     }
     #[test]
     fn pending_package_keeps_identity_and_matches_through_completion_and_move() {
