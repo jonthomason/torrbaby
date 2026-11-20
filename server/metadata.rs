@@ -515,6 +515,45 @@ impl Metadata {
     /// What Find needs of one title before searching: the names releases may use (its title,
     /// original title and TMDB's alternative titles), its Chinese name and year, and for a
     /// series each season's aired episodes.
+    /// A release's artwork and running time when Find already knows its title: no name
+    /// matching, so "Deadpool and Wolverine" gets the poster of "Deadpool & Wolverine".
+    pub async fn title_artwork(&self, title: &str, season: Option<u64>) -> Result<Value> {
+        if !self.configured() { return Ok(json!({"data":null})); }
+        let mut parts = title.splitn(3, ':');
+        let (Some("tmdb"), Some(kind), Some(id)) = (parts.next(), parts.next(), parts.next().and_then(|n| n.parse::<u64>().ok())) else {
+            anyhow::bail!("Invalid title");
+        };
+        anyhow::ensure!(["movie","tv"].contains(&kind), "Invalid media kind");
+        let season = season.filter(|_| kind == "tv");
+        let key = format!("title:{kind}:{id}:{}", season.map(|s| s.to_string()).unwrap_or_default());
+        let mut cache = self.search_artwork.lock().await;
+        if let Some((at, value)) = cache.entries.get(&key) {
+            if at.elapsed() < Duration::from_secs(6 * 3600) { return Ok(value.clone()); }
+        }
+        let detail = self.request(&format!("{kind}/{id}"), &[("language", "en-US")]).await?;
+        let mut result = json!({"data":null});
+        if let Some(path) = detail["poster_path"].as_str() {
+            if let Some((encoded, size)) = Self::thumbnail_in(self, &mut cache, path).await? {
+                result = json!({"data":encoded,"provider":"TMDB","provider_id":id,"size":size,"confidence":"chosen_title"});
+            }
+        }
+        // Running time is optional: a failed lookup only leaves the estimate out.
+        if kind == "movie" {
+            if let Some(minutes) = detail["runtime"].as_f64().filter(|m| *m > 0.0) { result["runtime_minutes"] = json!(minutes); }
+        } else if let Some(season) = season {
+            if let Ok(detail) = self.request(&format!("tv/{id}/season/{season}"), &[("language", "en-US")]).await {
+                let episodes = array(&detail["episodes"]);
+                let lengths: Vec<f64> = episodes.iter().filter_map(|e| e["runtime"].as_f64()).filter(|m| *m > 0.0).collect();
+                if !lengths.is_empty() {
+                    result["episode_minutes"] = json!(lengths.iter().sum::<f64>() / lengths.len() as f64);
+                    result["season_episodes"] = json!(episodes.len());
+                }
+            }
+        }
+        if cache.entries.len() >= 128 { cache.entries.clear(); }
+        cache.entries.insert(key, (std::time::Instant::now(), result.clone()));
+        Ok(result)
+    }
     pub async fn title_facts(&self, kind: &str, id: u64) -> Result<Value> {
         anyhow::ensure!(["movie","tv"].contains(&kind), "Invalid media kind");
         let detail = self.request(&format!("{kind}/{id}"), &[("language","en-US"),("append_to_response","alternative_titles")]).await?;

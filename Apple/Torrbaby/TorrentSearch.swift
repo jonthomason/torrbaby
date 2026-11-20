@@ -297,11 +297,35 @@ struct TorrentSearchItem: Decodable, Identifiable {
     }
 }
 struct SearchTag: Hashable { let text: String; var strong = false }
+/// Left-aligned rows of small views, wrapping at the width offered.
+struct SearchTagFlow: Layout {
+    var spacing: CGFloat = 4
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, line: CGFloat = 0, widest: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > 0 && x + size.width > width { y += line + spacing; x = 0; line = 0 }
+            x += size.width + spacing; line = max(line, size.height); widest = max(widest, x - spacing)
+        }
+        return CGSize(width: min(widest, width), height: y + line)
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, line: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > bounds.minX && x + size.width > bounds.maxX { y += line + spacing; x = bounds.minX; line = 0 }
+            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing; line = max(line, size.height)
+        }
+    }
+}
 /// A release's tags as small outlined capsules; the ones that set a copy apart are brighter.
 struct SearchTags: View {
     let tags: [SearchTag]
     var body: some View {
-        HStack(spacing: 4) {
+        // Wraps onto a second line rather than push the row wider than the screen.
+        SearchTagFlow(spacing: 4) {
             ForEach(tags, id: \.self) { tag in
                 Text(verbatim: tag.text).font(.caption2.weight(.semibold)).lineLimit(1).fixedSize()
                     .padding(.horizontal, 5).padding(.vertical, 1)
@@ -991,14 +1015,14 @@ struct TorrentSearchView: View {
     #endif
     @ViewBuilder private func ordinaryRow(_ item: TorrentSearchItem, inline: Bool) -> some View {
             if item.isCloud && !inline {
-                NavigationLink { CloudShareView(item: item, query: response?.query ?? query) } label: { TorrentSearchRow(item: item, ownership: ownership(item), artworkYear: artworkYear(item)) }
+                NavigationLink { CloudShareView(item: item, query: response?.query ?? query) } label: { TorrentSearchRow(item: item, ownership: ownership(item), artworkYear: artworkYear(item), titleID: chosen?.id) }
             } else if inline {
-                TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true }, ownership: ownership(item), artworkYear: artworkYear(item))
+                TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true }, ownership: ownership(item), artworkYear: artworkYear(item), titleID: chosen?.id)
                     .contentShape(Rectangle()).onTapGesture { selectedID = item.id }
                     .listRowBackground(selectedID == item.id ? Theme.accent.opacity(0.13) : Color.clear)
                     .accessibilityAddTraits(selectedID == item.id ? .isSelected : [])
             } else {
-                NavigationLink { TorrentSearchDetail(item: item, onAdded: { prepareNextSearch = true }).id(item.id) } label: { TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true }, ownership: ownership(item), artworkYear: artworkYear(item)) }
+                NavigationLink { TorrentSearchDetail(item: item, onAdded: { prepareNextSearch = true }).id(item.id) } label: { TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true }, ownership: ownership(item), artworkYear: artworkYear(item), titleID: chosen?.id) }
             }
     }
     #if os(macOS)
@@ -1431,6 +1455,7 @@ private struct SearchReleaseArtwork: View {
     let name: String
     let identity: String
     var season: Int? = nil
+    var titleID: String? = nil
     var onFacts: (SearchReleaseFacts) -> Void = { _ in }
     @State private var data: Data?
     private static var facts: [String: SearchReleaseFacts] = [:]
@@ -1450,9 +1475,9 @@ private struct SearchReleaseArtwork: View {
             }
         }.frame(width: 34, height: 51).clipShape(RoundedRectangle(cornerRadius: 7))
             .accessibilityHidden(true)
-            .task(id: store.server + identity) {
+            .task(id: store.server + identity + (titleID ?? "")) {
                 data = nil
-                let key = store.server + identity
+                let key = titleID.map { store.server + $0 + ":\(season ?? 0)" } ?? store.server + identity
                 if let known = Self.facts[key] { onFacts(known) }
                 if let cached = Self.cache.object(forKey: key as NSString) { data = cached as Data; return }
                 let request: Task<Data?, Never>
@@ -1462,6 +1487,7 @@ private struct SearchReleaseArtwork: View {
                         defer {Self.inFlight[key]=nil}
                         do {
                             var body: [String: Any] = ["name": name]
+                            if let titleID { body["title"] = titleID }
                             if let season { body["season"] = season }
                             let artwork: Artwork = try await store.request("POST", "/v1/search/torrents/artwork", body: body, timeout: 20)
                             if Self.facts.count > 400 { Self.facts.removeAll() }
@@ -1489,6 +1515,8 @@ private struct TorrentSearchRow: View {
     var trialSelected: Set<String> = []
     var ownership: String? = nil
     var artworkYear: Int? = nil
+    /// The title chosen in Find: its poster and running time, without matching the release's name.
+    var titleID: String? = nil
     @State private var adding = false
     @State private var added = false
     @State private var addError: String?
@@ -1562,11 +1590,17 @@ private struct TorrentSearchRow: View {
                         .font(SearchFont.detail).foregroundStyle(.secondary).lineLimit(1)
                 }
                 notes
-            }.frame(maxWidth: .infinity, alignment: .leading)
-            Text(verbatim: displayedSize).font(SearchFont.figures).monospacedDigit().foregroundStyle(Theme.accent)
-                .lineLimit(1).minimumScaleFactor(0.8).frame(width: SearchColumns.size, alignment: .trailing)
-            SeedCount(seeders: item.cloud == nil && !item.isCloud ? item.seeders : nil, label: item.availability)
-                .frame(width: SearchColumns.seeds, alignment: .trailing)
+            }.frame(maxWidth: .infinity, alignment: .leading).layoutPriority(1)
+            let size = Text(verbatim: displayedSize).font(SearchFont.figures).monospacedDigit().foregroundStyle(Theme.accent)
+                .lineLimit(1).minimumScaleFactor(0.8)
+            let seeds = SeedCount(seeders: item.cloud == nil && !item.isCloud ? item.seeders : nil, label: item.availability)
+            if compactRow {
+                // A phone has room for one figures column: size over seeds, leaving the name its width.
+                VStack(alignment: .trailing, spacing: 4) { size; seeds }.frame(width: SearchColumns.size, alignment: .trailing)
+            } else {
+                size.frame(width: SearchColumns.size, alignment: .trailing)
+                seeds.frame(width: SearchColumns.seeds, alignment: .trailing)
+            }
             action.frame(width: SearchColumns.action, alignment: .trailing)
         }.padding(.vertical, 3).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
     }
@@ -1605,7 +1639,7 @@ private struct TorrentSearchRow: View {
         // A cloud share's own name says little; the series' title and year find its artwork.
         return SearchReleaseArtwork(name: item.cloud?.show != nil && item.hints.year != nil ? "\(item.title) \(item.hints.year!) S\(String(format: "%02d", item.hints.season ?? 1))" : item.hints.year == nil && artworkYear != nil ? "\(item.title) \(artworkYear!)\(episodic ? " S01" : "")" : item.name,
             identity: "\(item.title.lowercased()):\((item.hints.year ?? artworkYear).map(String.init) ?? ""):\(episodic ? "tv:\(item.hints.season ?? 0)" : "movie")",
-            season: item.hints.season, onFacts: { facts = $0 })
+            season: item.hints.season, titleID: titleID, onFacts: { facts = $0 })
     }
     /// The Apple TV's row, and the Mac's trial picker: everything stacked beside the artwork.
     private var stackedBody: some View {
