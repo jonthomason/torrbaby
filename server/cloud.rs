@@ -115,6 +115,28 @@ static SHARE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^https://pan\.quar
 pub fn visible(name: &str) -> String {
     name.chars().filter(|c| !matches!(c, '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}')).collect()
 }
+/// The pieces of one weekly episode in a share ("第7期上", "第7期下", or marked some way this
+/// code has never seen) are its parts, numbered together: as their names state when those are
+/// distinct, else 上, 中, 下, then by air date and name. Paths not numbered here keep their own.
+fn number_pieces<'a>(paths: impl Iterator<Item = &'a str>) -> HashMap<String, u64> {
+    let mut pieces: HashMap<u64, Vec<(&str, Option<u64>, (u8, String, String))>> = HashMap::new();
+    for path in paths {
+        let leaf = visible(path.rsplit('/').next().unwrap_or(path));
+        let stem = clean(leaf.rsplit_once('.').map_or(leaf.as_str(), |(stem, _)| stem));
+        if let Some((number, stated, _)) = crate::scanner::issue_piece(&stem) {
+            pieces.entry(number).or_default().push((path, stated, crate::scanner::piece_order(&stem)));
+        }
+    }
+    let mut numbered = HashMap::new();
+    for (_, mut group) in pieces {
+        let stated: std::collections::HashSet<u64> = group.iter().filter_map(|(_, part, _)| *part).collect();
+        if group.len() < 2 || stated.len() == group.len() { continue; }
+        group.sort_by(|a, b| a.2.cmp(&b.2));
+        for (index, (path, _, _)) in group.into_iter().enumerate() { numbered.insert(path.to_owned(), index as u64 + 1); }
+    }
+    numbered
+}
+
 /// Season and episode a file name states, if any: "S01E02", "第12集", "EP12", "12.mkv".
 pub fn episode(name: &str) -> (Option<u64>, Option<u64>) {
     // A date in the name ("2026.07.02-先导片") is not an episode number.
@@ -997,6 +1019,7 @@ impl Cloud {
         // or they would all be filed as the one episode and replace each other.
         let mut shared: HashMap<(u64, u64), usize> = HashMap::new();
         for (path, _) in &chosen { let (stated, number) = episode(path); if let Some(number) = number { *shared.entry((stated.unwrap_or(season), number)).or_default() += 1; } }
+        let numbered = if film { HashMap::new() } else { number_pieces(chosen.iter().map(|(path, _)| path.as_str())) };
         let files = chosen.into_iter().map(|(path, size)| {
             let extension = path.rsplit('.').next().unwrap_or("mkv").to_ascii_lowercase();
             let (stated, number) = episode(&path);
@@ -1004,7 +1027,10 @@ impl Cloud {
             let stem = clean(leaf.rsplit_once('.').map_or(leaf.as_str(), |(stem, _)| stem));
             // A variety show's part is one episode and one part ("S03E05 - Part 1"); its bonus
             // videos keep their own label without a number, and the library lists them as extras.
-            let part = (!film).then(|| crate::scanner::part_file_name(&title, stated.unwrap_or(season), &stem, &extension)).flatten();
+            let part = match numbered.get(&path) {
+                Some(&part) => crate::scanner::issue_piece(&stem).map(|(issue, _, rest)| crate::scanner::numbered_part_name(&title, stated.unwrap_or(season), issue, part, &rest, &extension)),
+                None => (!film).then(|| crate::scanner::part_file_name(&title, stated.unwrap_or(season), &stem, &extension)).flatten(),
+            };
             let bonus = !film && part.is_none() && crate::scanner::variety_labelled(&stem);
             let name = match number {
                 _ if part.is_some() => part.unwrap_or_default(),
@@ -1451,6 +1477,30 @@ impl Cloud {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_shares_pieces_of_one_episode_are_numbered_together() {
+        let share = ["X/S04/2026.11.21_第7期上_4K_60fps.mp4", "X/S04/2026.11.22_第7期下_4K_60fps.mp4",
+            "X/S04/2026.11.21_第7期上·某某纯享_4K_60fps.mp4", "X/S04/2026.11.28_第8期_4K.mp4",
+            // Marks never seen: ordered by air date.
+            "X/S04/第9期 精彩看点 2026.12.06.mp4", "X/S04/第9期 正片 2026.12.05.mp4",
+            // 上, 中, 下 in their order, not the dates'.
+            "X/第10期下.mp4", "X/第10期中.mp4", "X/第10期上.mp4",
+            // Parts whose names are distinct keep them, even with one missing.
+            "X/第11期(一).mp4", "X/第11期(三).mp4"];
+        let numbered = number_pieces(share.into_iter());
+        // The part each ends up with: numbered here, or as its own name states.
+        let of = |path: &str| numbered.get(path).copied().or_else(|| {
+            let stem = path.rsplit('/').next().unwrap().rsplit_once('.').unwrap().0;
+            crate::scanner::issue_piece(stem).and_then(|(_, part, _)| part)
+        });
+        assert_eq!((of(share[0]), of(share[1]), of(share[2]), of(share[3])), (Some(1), Some(2), None, None));
+        assert_eq!((of(share[5]), of(share[4])), (Some(1), Some(2)));
+        assert_eq!((of("X/第10期上.mp4"), of("X/第10期中.mp4"), of("X/第10期下.mp4")), (Some(1), Some(2), Some(3)));
+        assert_eq!((of("X/第11期(一).mp4"), of("X/第11期(三).mp4")), (Some(1), Some(3)));
+        assert!(!numbered.contains_key("X/第11期(三).mp4"));
+        let (issue, _, rest) = crate::scanner::issue_piece("2026.11.22_第7期下_4K_60fps").unwrap();
+        assert_eq!(crate::scanner::numbered_part_name("现在就出发", 4, issue, 2, &rest, "mp4"), "现在就出发 - S04E07 - Part 2.mp4");
+    }
     #[test]
     fn a_renewed_session_replaces_its_value_and_keeps_the_rest() {
         let renewed = vec![("__puus".to_owned(), "new".to_owned()), ("extra".to_owned(), "1".to_owned())];

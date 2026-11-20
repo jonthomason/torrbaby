@@ -54,8 +54,9 @@ pub fn resolve_episode_title(asset: &mut Value, entity: &Value) {
 static ISSUE_PART: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"第\s*(\d{1,3})\s*期\s*[(（]\s*([一二三四五六七八九十]|\d{1,2})\s*[)）]").expect("valid regex")
 });
-/// A weekly episode in halves: "第6期上" and "第6期下" (not their bonus cuts, "第6期上纯享·…").
-static ISSUE_HALF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"第\s*(\d{1,3})\s*期\s*([上下])").expect("valid regex"));
+/// A weekly episode in halves: "第6期上", "第6期下集", "第6期(上)" (not their bonus cuts, "第6期上纯享·…").
+/// 下 is Part 2; a download numbers 上, 中, 下 from the share as a whole (`issue_piece`).
+static ISSUE_HALF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"第\s*(\d{1,3})\s*期\s*[(（]?\s*([上中下])\s*(?:集|篇|部分?)?\s*[)）]?").expect("valid regex"));
 static NOISE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"【[^】]*】|\[[^\]]*\]|(?i)[-._ ]*(?:4k|2160p|1080p|高码率|60fps)[-._ ]*").expect("valid regex")
 });
@@ -112,7 +113,7 @@ pub fn issue_part(stem: &str) -> Option<(u64, u64, String)> {
                 .or_else(|| "一二三四五六七八九十".chars().position(|c| numeral.starts_with(c)).map(|i| i as u64 + 1))?;
             (found, part)
         }
-        None if !BONUS.is_match(stem) => { let found = ISSUE_HALF.captures(stem)?; let part = if &found[2] == "上" { 1 } else { 2 }; (found, part) }
+        None if !BONUS.is_match(stem) => { let found = ISSUE_HALF.captures(stem)?; let part = match &found[2] { "上" => 1, "中" => 2, _ => 2 }; (found, part) }
         None => return None,
     };
     let rest = NOISE.replace_all(&stem[found.get(0)?.end()..], " ");
@@ -148,6 +149,51 @@ pub fn part_file_name(title: &str, season: u64, stem: &str, extension: &str) -> 
     let rest = rest.replace(['/', ':'], " ");
     Some(if rest.is_empty() { format!("{title} - S{season:02}E{episode:02} - Part {part}.{extension}") }
         else { format!("{title} - S{season:02}E{episode:02} - Part {part} - {rest}.{extension}") })
+}
+
+/// A main video of a variety show's weekly episode, whatever marks its part: the episode,
+/// the part its name states (None when it states none) and the rest of its name. Bonus cuts
+/// are not pieces. A download numbers a share's pieces of one episode together (cloud::add).
+pub fn issue_piece(stem: &str) -> Option<(u64, Option<u64>, String)> {
+    if let Some((episode, part, rest)) = issue_part(stem) { return Some((episode, Some(part), rest)); }
+    if BONUS.is_match(stem) { return None; }
+    static NUMBER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"第\s*(\d{1,3})\s*期").expect("valid regex"));
+    let found = NUMBER.captures(stem)?;
+    let rest = NOISE.replace_all(&stem[found.get(0)?.end()..], " ").replace('_', " ");
+    let rest = rest.split_whitespace().collect::<Vec<_>>().join(" ");
+    Some((found[1].parse().ok()?, None, rest.trim_matches(|c: char| c.is_whitespace() || "-_.)）".contains(c)).to_owned()))
+}
+
+/// Where a piece goes among its episode's pieces: 上 before 中 before 下, else by air date and name.
+pub fn piece_order(stem: &str) -> (u8, String, String) {
+    let rank = ISSUE_HALF.captures(stem).map_or(1, |found| match &found[2] { "上" => 0, "中" => 1, _ => 2 });
+    let date = DATED.find(stem).map(|m| m.as_str().replace(['-', '_'], ".")).unwrap_or_default();
+    (rank, date, stem.to_owned())
+}
+
+/// The library name for a part a download numbered: "Show - S04E07 - Part 2[ - rest].mp4".
+pub fn numbered_part_name(title: &str, season: u64, episode: u64, part: u64, rest: &str, extension: &str) -> String {
+    let rest = rest.replace(['/', ':'], " ");
+    if rest.is_empty() { format!("{title} - S{season:02}E{episode:02} - Part {part}.{extension}") }
+    else { format!("{title} - S{season:02}E{episode:02} - Part {part} - {rest}.{extension}") }
+}
+
+/// Main videos from different days filed under one episode and part: an episode numbering
+/// this library does not understand yet (a variety show's halves read as whole episodes, say).
+/// Logged with the files when a scan first finds them, rather than shown as one episode twice.
+fn report_shared_episodes(assets: &[Value], old: &HashSet<String>) {
+    let mut groups: HashMap<(String, u64, u64, Option<u64>), Vec<&str>> = HashMap::new();
+    for asset in assets {
+        let (Some(path), Some(season), Some(episode)) = (asset["path"].as_str(), asset["season"].as_u64(), asset["episode"].as_u64()) else { continue };
+        if season == 0 || asset["role"] == "extra" { continue; }
+        let folder = Path::new(path).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        groups.entry((folder, season, episode, part(path))).or_default().push(path);
+    }
+    for ((_, season, episode, part), paths) in groups {
+        let dates: HashSet<&str> = paths.iter().filter_map(|p| DATED.find(p).map(|m| m.as_str())).collect();
+        if paths.len() < 2 || dates.len() < 2 || paths.iter().all(|p| old.contains(*p)) { continue; }
+        tracing::warn!(season, episode, ?part, files = ?paths, "Videos from different days are filed as one episode");
+    }
 }
 
 pub fn video(path: &Path) -> bool {
@@ -246,6 +292,8 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
     // Every drive's library folders, which name no show (variety()).
     let library_roots: Vec<String> = drives.all_roots().map(|(_, _, root)| root.to_string_lossy().into_owned()).collect();
     let library_roots: Vec<&str> = library_roots.iter().map(String::as_str).collect();
+    let old_paths: HashSet<String> = old.iter().filter(|a| a["season"].as_u64().is_some_and(|s| s > 0))
+        .filter_map(|a| a["path"].as_str().map(str::to_owned)).collect();
     // A drive that is not connected is skipped whole: its files are not gone, only away.
     let online = drives.online();
     let incomplete = incomplete.filter(|dir| dir.is_absolute() && dir.components().count() > 2
@@ -553,6 +601,8 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
         }
         assets.push(asset);
     }
+    let known: HashSet<String> = old_paths;
+    report_shared_episodes(&assets, &known);
     Inventory { assets, errors, superseded }
 }
 
