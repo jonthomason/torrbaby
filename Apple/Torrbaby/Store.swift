@@ -403,7 +403,22 @@ final class Store: ObservableObject {
     /// quality (away from home it may not keep up; there is no lower-quality mode).
     /// `usingFallback` only orders routes: the home name is retried while away.
     var canStream: Bool { connected }
-    var connectionLabel: String { connected ? "Connected" : "Offline" }
+    /// The sidebar's status: how the app reaches Diamond at a glance ("Connected · ABT (IPv6)",
+    /// "Connected · TB (Bronze)"), so Settings → Connection is needed only for more.
+    var connectionLabel: String {
+        guard connected else { return L10n.text("Offline") }
+        let (source, way): (String?, String?) = switch path {
+        case .abt: ("ABT", ["lan": "LAN", "punched": L10n.text("Direct"), "ipv6": "IPv6", "bronze": "Bronze"][abtPath ?? ""])
+        case .tunnel: ("TB", nil)
+        case .direct: ("TB", L10n.text("Direct"))
+        case .relay: ("TB", "Bronze")
+        case .home: (nil, "LAN")
+        case .tailscale: (nil, "Tailscale")
+        case .offline: (nil, nil)
+        }
+        let detail = [source, way.map { source == nil ? $0 : "(\($0))" }].compactMap { $0 }.joined(separator: " ")
+        return detail.isEmpty ? L10n.text("Connected") : L10n.format("Connected · %@", detail)
+    }
     /// The one deliberate use of colour in the chrome: a light for the connection.
     var connectionColor: Color { connected ? .green : .red }
     func saveFallback(_ address: String) throws {

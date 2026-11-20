@@ -26,7 +26,8 @@ pub fn complete(t: &Value) -> bool {
     t["metadata_percent_complete"].as_f64() == Some(1.0)
         && t["percent_done"].as_f64() == Some(1.0)
         && t["left_until_done"].as_u64() == Some(0)
-        && t["error"].as_u64() == Some(0)
+        // A tracker's warning (1) or error (2) says nothing about the data; a local error (3) does.
+        && t["error"].as_u64() != Some(3)
         && matches!(t["status"].as_u64(), Some(0 | 5 | 6))
         && files(t)
             .map(|f| !f.is_empty() && f.iter().all(|f| f["bytes_completed"] == f["length"]))
@@ -708,6 +709,15 @@ fn identified(hash: &str, files: &[Value], assets: &[Value]) -> bool {
 #[cfg(test)]
 mod identification_tests {
     use super::*;
+    #[test]
+    fn a_tracker_that_does_not_answer_leaves_a_finished_download_finished() {
+        let finished = |error: u64| json!({"metadata_percent_complete":1.0,"percent_done":1.0,"left_until_done":0,"error":error,"status":6,
+            "files":[{"name":"a.mkv","length":10,"bytes_completed":10}],"file_stats":[{"wanted":true}]});
+        assert!(complete(&finished(0)));
+        assert!(complete(&finished(1)), "tracker warning");
+        assert!(complete(&finished(2)), "tracker error: IPv4 connection failed");
+        assert!(!complete(&finished(3)), "local error: the data is not there");
+    }
     #[test]
     fn release_adverts_do_not_block_an_identified_pack() {
         let files = vec![json!({"name":"Show/Show.S01E01.mkv"}), json!({"name":"Show/visit www.example.invalid.MKV"}), json!({"name":"Show/notes.DOC"})];

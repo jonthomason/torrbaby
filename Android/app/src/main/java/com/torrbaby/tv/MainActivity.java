@@ -1101,7 +1101,8 @@ public class MainActivity extends Activity {
   /** Why a torrent needs the user: an error, a stall, or a finished download the library cannot file. */
   private static String torrentIssue(JSONObject item) {
     boolean complete = item.optDouble("percent_done", 0) >= 1;
-    if (item.optInt("error") != 0) return item.optString("error_string");
+    // Transmission's error 3 is the data or disk; a tracker that did not answer (1, 2) is routine.
+    if (item.optInt("error") == 3) return item.optString("error_string");
     if (complete) return item.isNull("library_issue") || item.optString("library_issue").isEmpty() ? null : item.optString("library_issue");
     int state = item.optInt("status");
     if (state == 0) return null;
@@ -1321,7 +1322,7 @@ public class MainActivity extends Activity {
             Ui.text(this, "About " + Math.max(1, eta / 60) + " min remaining", 12, Ui.MUTED),
             -1,
             -2);
-      if (item.optInt("error") != 0) {
+      if (item.optInt("error") == 3) {
         Ui.gap(row, 8);
         Ui.add(row, Ui.text(this, item.optString("error_string"), 13, 0xffcccccc), -1, -2);
       }

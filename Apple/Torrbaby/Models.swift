@@ -97,9 +97,12 @@ struct Torrent: Codable, Identifiable, Hashable {
     var id: String { hashString }
     var completed: Bool { percentDone >= 1 }
     var needsAttention: Bool { progressIssue != nil }
+    /// Transmission's error 3, a problem with the data or the disk. A tracker that did not answer
+    /// (1, 2) is routine with several trackers; a stalled download is caught by its own check.
+    var localError: Bool { error == 3 }
     var progressIssue: String? {
-        guard !completed else { return error != 0 ? errorString : libraryIssue.map { L10n.text($0) } }
-        if error != 0 { return errorString }
+        guard !completed else { return localError ? errorString : libraryIssue.map { L10n.text($0) } }
+        if localError { return errorString }
         guard status != 0 else { return nil }
         if isStalled { return L10n.text("Transmission reports this torrent as stalled") }
         if status == 4 && rateDownload == 0 && Date().timeIntervalSince1970 - max(addedDate, activityDate) > 300 {
@@ -109,7 +112,7 @@ struct Torrent: Codable, Identifiable, Hashable {
     }
     var stateName: String {
         if let operation = fileOperation { return operation.label }
-        if error != 0 { return L10n.text("Needs attention") }
+        if localError { return L10n.text("Needs attention") }
         switch status {
         case 0: return L10n.text("Paused")
         case 1: return L10n.text("Waiting to verify")

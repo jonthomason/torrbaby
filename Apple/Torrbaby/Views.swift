@@ -185,8 +185,8 @@ struct SidebarConnectionStatus: View {
         Button(action: open) {
             HStack(spacing: 7) {
                 Circle().fill(store.connectionColor).frame(width: 7, height: 7)
-                Text(LocalizedStringKey(store.connectionLabel))
-                    .font(.caption.weight(.semibold))
+                Text(verbatim: store.connectionLabel)
+                    .font(.caption.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.8)
             }
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.horizontal, 18).padding(.vertical, 6)

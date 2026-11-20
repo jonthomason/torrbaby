@@ -18890,6 +18890,23 @@
           }
         }
       }
+    },
+    "Connected · %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connected · %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已连接 · %@"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
