@@ -551,6 +551,7 @@
     <string name="ui_c0a8060f3b11" formatted="false">原始语言</string>
     <string name="ui_7a38047cc7f2" formatted="false">原始画质 · 原生播放器</string>
     <string name="ui_c9d98984ac76" formatted="false">其他剧集</string>
+    <string name="ui_15c63142b751" formatted="false">其他资源</string>
     <string name="ui_ca07ceefc22c" formatted="false">节点</string>
     <string name="ui_aafa767bada4" formatted="false">粘贴或选择新设备上显示的设置码图片</string>
     <string name="ui_6d7a0f94ea60" formatted="false">粘贴图片</string>
@@ -720,6 +721,7 @@
     <string name="ui_fd877c9a4fd7" formatted="false">做种目标</string>
     <string name="ui_6f27fe72ee93" formatted="false">做种将停止。此页列出的所有服务器文件将为所有用户永久删除。此操作无法撤销。</string>
     <string name="ui_a7c66748478a" formatted="false">做种将停止，这些服务器文件将被永久删除。此操作无法撤销。</string>
+    <string name="ui_505d6a6ad497" formatted="false">做种</string>
     <string name="ui_8598222918d3" formatted="false">选择</string>
     <string name="ui_913afff1faf7" formatted="false">全选</string>
     <string name="ui_618cfb0a5361" formatted="false">取消全选</string>

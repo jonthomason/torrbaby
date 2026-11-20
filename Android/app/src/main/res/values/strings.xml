@@ -551,6 +551,7 @@
     <string name="ui_c0a8060f3b11" formatted="false">Original</string>
     <string name="ui_7a38047cc7f2" formatted="false">Original quality · Native player</string>
     <string name="ui_c9d98984ac76" formatted="false">Other episodes</string>
+    <string name="ui_15c63142b751" formatted="false">Other releases</string>
     <string name="ui_ca07ceefc22c" formatted="false">PEERS</string>
     <string name="ui_aafa767bada4" formatted="false">Paste or choose a picture of the code shown on the new device</string>
     <string name="ui_6d7a0f94ea60" formatted="false">Paste picture</string>
@@ -720,6 +721,7 @@
     <string name="ui_fd877c9a4fd7" formatted="false">Seeding target</string>
     <string name="ui_6f27fe72ee93" formatted="false">Seeding will stop. All server files listed on this page will be permanently deleted for everyone. This cannot be undone.</string>
     <string name="ui_a7c66748478a" formatted="false">Seeding will stop. These server files will be permanently deleted. This cannot be undone.</string>
+    <string name="ui_505d6a6ad497" formatted="false">Seeds</string>
     <string name="ui_8598222918d3" formatted="false">Select</string>
     <string name="ui_913afff1faf7" formatted="false">Select all</string>
     <string name="ui_618cfb0a5361" formatted="false">Select none</string>

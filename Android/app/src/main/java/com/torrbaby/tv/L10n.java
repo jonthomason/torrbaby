@@ -562,6 +562,7 @@ final class L10n {
     IDS.put("Original", R.string.ui_c0a8060f3b11);
     IDS.put("Original quality · Native player", R.string.ui_7a38047cc7f2);
     IDS.put("Other episodes", R.string.ui_c9d98984ac76);
+    IDS.put("Other releases", R.string.ui_15c63142b751);
     IDS.put("PEERS", R.string.ui_ca07ceefc22c);
     IDS.put("Paste or choose a picture of the code shown on the new device", R.string.ui_aafa767bada4);
     IDS.put("Paste picture", R.string.ui_6d7a0f94ea60);
@@ -731,6 +732,7 @@ final class L10n {
     IDS.put("Seeding target", R.string.ui_fd877c9a4fd7);
     IDS.put("Seeding will stop. All server files listed on this page will be permanently deleted for everyone. This cannot be undone.", R.string.ui_6f27fe72ee93);
     IDS.put("Seeding will stop. These server files will be permanently deleted. This cannot be undone.", R.string.ui_a7c66748478a);
+    IDS.put("Seeds", R.string.ui_505d6a6ad497);
     IDS.put("Select", R.string.ui_8598222918d3);
     IDS.put("Select all", R.string.ui_913afff1faf7);
     IDS.put("Select none", R.string.ui_618cfb0a5361);

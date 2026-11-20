@@ -114,6 +114,9 @@ pub struct Hints {
     #[serde(default)]
     pub audio_channels: Option<String>,
     pub languages: Vec<String>,
+    /// The picture's dynamic range when the name states it: "Dolby Vision", "HDR10+" or "HDR".
+    #[serde(default)]
+    pub hdr: Option<String>,
     pub evidence: String,
 }
 #[derive(Clone, Deserialize, Serialize)]
@@ -1147,6 +1150,12 @@ pub(crate) fn hints(name: &str) -> Hints {
     static LANG: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)\b(ENG|CHS|CHT|JPN|MULTI|DUAL[ ._-]AUDIO)\b").expect("valid regex"));
     static COMPLETE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"全(\d{1,3})集").expect("valid regex"));
+    static VISION: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)\b(?:DV|DoVi|Dolby[ ._-]?Vision)\b|杜比视界").expect("valid regex"));
+    static HDR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bHDR(10)?(\+|Plus)?(?:[^a-z]|$)").expect("valid regex"));
+    let hdr = if VISION.is_match(name) { Some("Dolby Vision".to_owned()) } else {
+        HDR.captures(name).map(|c| if c.get(2).is_some() { "HDR10+".to_owned() } else { "HDR".to_owned() })
+    };
     static CHINESE_EPISODES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"第(\d{1,3})(?:[-—至](\d{1,3}))?集").expect("valid regex"));
     let episode_count = COMPLETE.captures(name).and_then(|c| c[1].parse::<u16>().ok()).filter(|n| *n > 0);
     let chinese_episodes = CHINESE_EPISODES.captures(name);
@@ -1194,6 +1203,7 @@ pub(crate) fn hints(name: &str) -> Hints {
         audio_kind: audio_summary(name).0,
         audio_channels: audio_summary(name).1,
         languages,
+        hdr,
         evidence: "release_name".into(),
     }
 }
@@ -1474,6 +1484,10 @@ mod listing_dedup_tests {
     use super::*;
     #[test]
     fn identical_posts_group_but_different_encodes_do_not() {
+        assert_eq!(hints("Show S01 2160p WEB-DL DV HDR H265").hdr.as_deref(), Some("Dolby Vision"));
+        assert_eq!(hints("Film 2021 2160p HDR10+ x265").hdr.as_deref(), Some("HDR10+"));
+        assert_eq!(hints("Film 2021 2160p UHD BluRay HDR").hdr.as_deref(), Some("HDR"));
+        assert_eq!(hints("Film 2021 1080p DVDRip HDRip").hdr, None);
         let a=item("逐玉 2160p HDR".into(),String::new(),Source{provider:"1lou".into(),id:"1".into(),url:String::new()});
         let mut b=a.clone();b.sources[0].id="2".into();assert_eq!(release_key(&a),release_key(&b));
         b.name="逐玉 2160p Dolby Vision".into();assert_ne!(release_key(&a),release_key(&b));
