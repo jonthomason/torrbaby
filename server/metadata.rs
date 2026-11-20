@@ -10,8 +10,9 @@ use tokio::sync::Mutex;
 
 static YEAR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?:^|\D)((?:19|20)\d{2})(?:\D|$)").expect("valid regex"));
+// A file may hold two episodes, as two-part pilots and finales do: S01E01E02, S01E01-E02, S01E01-02.
 static SEASON: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:^|[^a-z0-9])(?:s\d{1,2}(?:[ ._-]*e\d{1,3})?|season[ ._-]*\d{1,2}|\d{1,2}x\d{2})(?:[^a-z0-9]|$)").expect("valid regex")
+    Regex::new(r"(?i)(?:^|[^a-z0-9])(?:s\d{1,2}(?:[ ._-]*e\d{1,3}(?:-?e\d{1,3}|-\d{1,3})*)?|season[ ._-]*\d{1,2}|\d{1,2}x\d{2})(?:[^a-z0-9]|$)").expect("valid regex")
 });
 pub static SERIES_PACK: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\bcomplete[ ._-]+(?:tv[ ._-]+)?series\b").expect("valid regex")
@@ -1162,6 +1163,14 @@ mod prefixed_name_tests {
     }
 
     /// `identify` against recorded TMDB responses: no token, no network.
+    #[test]
+    fn a_file_holding_two_episodes_is_an_episode_of_its_series() {
+        for name in ["Star Trek TNG S01E01E02 Encounter at Farpoint  (1080p x265 10bit Joy)", "Lost.S01E01-E02.Pilot.1080p", "Lost S01E01-02 Pilot"] {
+            let (query, _, kind) = parse_name(name);
+            assert_eq!(kind, "tv", "{name}");
+            assert!(query == "Star Trek TNG" || query == "Lost", "{name}: {query}");
+        }
+    }
     #[tokio::test]
     async fn identify_stops_at_the_first_exact_match_from_recorded_responses() {
         let root = std::env::temp_dir().join(format!("torrbaby-identify-{}", uuid::Uuid::new_v4()));
