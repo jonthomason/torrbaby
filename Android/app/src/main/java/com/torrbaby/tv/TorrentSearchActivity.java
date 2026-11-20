@@ -21,7 +21,7 @@ public final class TorrentSearchActivity extends Activity {
   private LinearLayout resultsRoot;
   private EditText query;
   private TextView status;
-  private Button search, sourceButton;
+  private Button search;
   private ListView list;
   private JSONArray results = new JSONArray(), allResults = new JSONArray();
   private String resolution="all";
@@ -32,6 +32,7 @@ public final class TorrentSearchActivity extends Activity {
   private String order="seeds";
   private static final String[] ORDERS={"seeds","size","episode"}, ORDER_NAMES={"Most seeds","Largest first","Episode order"};
   private Button orderButton;
+  private LinearLayout filters;
   private String resolutionLabel(){return resolution.equals("all")?L10n.t("All resolutions"):resolution;}
   /** Source errors from the last search, shown after the count. */
   private final List<String> notes=new ArrayList<>();
@@ -56,13 +57,14 @@ public final class TorrentSearchActivity extends Activity {
     else sorted.sort(seeds);
     results=new JSONArray(sorted);
     if(list!=null)((BaseAdapter)list.getAdapter()).notifyDataSetChanged();
+    if(filters!=null)filters.setVisibility(allResults.length()>0?View.VISIBLE:View.GONE);
     if(hiddenBox!=null&&list!=null){
       boolean hidden=results.length()==0&&allResults.length()>0;
       hiddenTitle.setText(String.format(L10n.locale(),L10n.t("%d releases hidden by filters"),allResults.length()));
       hiddenBox.setVisibility(hidden?View.VISIBLE:View.GONE);list.setVisibility(hidden?View.GONE:View.VISIBLE);
     }
   }
-  private int source, generation;
+  private int generation;
   private boolean china;
   /**
    * Find by title, as on Apple: films or TV shows, the title chosen from TMDB, then for a series
@@ -77,9 +79,7 @@ public final class TorrentSearchActivity extends Activity {
   private boolean inDetail;
   private JSONObject selectedItem;
   private final Set<String> added = new HashSet<>();
-  private static final String[] SOURCE_NAMES = {"Recommended", "The Pirate Bay", "Nyaa", "Torrent CSV"};
 
-  private String[] sourceNames() { return china ? new String[]{"Recommended"} : SOURCE_NAMES; }
   /**
    * The connection, with the server's address. Find is a top-level tab, so it can open before
    * the library has found the server in this run (the saved connection holds no address): find
@@ -119,7 +119,7 @@ public final class TorrentSearchActivity extends Activity {
     });
     markets.setOnCheckedChangeListener((group,id) -> {
       china = id == chinese.getId(); getPreferences(MODE_PRIVATE).edit().putBoolean("china",china).apply();
-      ++generation; source=0; sourceButton.setText(L10n.t("Recommended")); sourceButton.setVisibility(china?View.GONE:View.VISIBLE); results=new JSONArray();allResults=new JSONArray();enrichmentGeneration++;if(hiddenBox!=null){hiddenBox.setVisibility(View.GONE);list.setVisibility(View.VISIBLE);}
+      ++generation; results=new JSONArray();allResults=new JSONArray();filters.setVisibility(View.GONE);enrichmentGeneration++;if(hiddenBox!=null){hiddenBox.setVisibility(View.GONE);list.setVisibility(View.VISIBLE);}
       ((BaseAdapter)list.getAdapter()).notifyDataSetChanged(); status.setText(""); searching=false; list.setEnabled(true);
       if(chosen!=null)searchTitle(); else if(query.getText().toString().trim().length()>=2)search();
     });
@@ -130,12 +130,7 @@ public final class TorrentSearchActivity extends Activity {
     query.setOnEditorActionListener((v, action, event) -> { if (action == EditorInfo.IME_ACTION_SEARCH || (event != null && event.getAction() == KeyEvent.ACTION_UP && event.getKeyCode() == KeyEvent.KEYCODE_ENTER)) { search(); return true; } return false; });
     controls.addView(query, new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1));
     search = Ui.button(this, L10n.t("Search"), this::search); Ui.add(controls, search, 120, 46);
-    Ui.gap(controls, 12);
-    sourceButton = Ui.button(this, L10n.t(SOURCE_NAMES[0]), () -> new AppDialog(this).setTitle(L10n.t("Sources"))
-        .setSingleChoiceItems(L10n.labels(sourceNames()), source, (dialog, which) -> { source=which; sourceButton.setText(L10n.t(sourceNames()[which])); dialog.dismiss(); }).show());
-    Ui.add(controls, sourceButton, 180, 46); Ui.add(resultsRoot, controls, -1, 48);
-    // China is searched as Quark Drive shares, which have no source choice.
-    sourceButton.setVisibility(china?View.GONE:View.VISIBLE);
+    Ui.add(resultsRoot, controls, -1, 48);
     // The chosen title and what is wanted of it; pressing it asks again.
     chosenButton = Ui.button(this, "", this::askWant); chosenButton.setVisibility(View.GONE); Ui.add(resultsRoot, chosenButton, -2, 44);
     status = Ui.text(this, "", 14, Ui.MUTED); Ui.add(resultsRoot, status, -1, 36);
@@ -153,7 +148,8 @@ public final class TorrentSearchActivity extends Activity {
         order=ORDERS[which];getPreferences(MODE_PRIVATE).edit().putString("order",order).apply();
         orderButton.setText(L10n.t(ORDER_NAMES[which]));applyResolution();d.dismiss();
       }).show());
-    LinearLayout filters=new LinearLayout(this);filters.setOrientation(LinearLayout.HORIZONTAL);
+    // Filters belong to the releases, so they appear with them and not while a title is chosen.
+    filters=new LinearLayout(this);filters.setOrientation(LinearLayout.HORIZONTAL);filters.setVisibility(View.GONE);
     Ui.add(filters,resolutionButton,240,44);Ui.gap(filters,12);Ui.add(filters,orderButton,220,44);Ui.add(resultsRoot,filters,-1,46);
     // Everything found is filtered out: say so in large type, or it reads as a failed search.
     hiddenBox=new LinearLayout(this);hiddenBox.setOrientation(LinearLayout.VERTICAL);hiddenBox.setGravity(Gravity.CENTER);hiddenBox.setVisibility(View.GONE);
@@ -180,8 +176,6 @@ public final class TorrentSearchActivity extends Activity {
     String initial = getIntent().getStringExtra("query");
     if (state != null) {
       query.setText(state.getString("query", ""));
-      source = state.getInt("source", 0);
-      sourceButton.setText(L10n.t(sourceNames()[source]));
       try { allResults = new JSONArray(state.getString("results", "[]"));applyResolution(); } catch (JSONException ignored) { }
       added.addAll(state.getStringArrayList("added") == null ? Collections.emptyList() : state.getStringArrayList("added"));
       ((BaseAdapter)list.getAdapter()).notifyDataSetChanged();
@@ -194,7 +188,6 @@ public final class TorrentSearchActivity extends Activity {
   @Override protected void onSaveInstanceState(Bundle state) {
     super.onSaveInstanceState(state);
     state.putString("query", query.getText().toString());
-    state.putInt("source", source);
     state.putString("searched", searchedQuery);
     state.putString("results", allResults.toString());
     state.putStringArrayList("added", new ArrayList<>(added));
@@ -212,7 +205,7 @@ public final class TorrentSearchActivity extends Activity {
   private void search() { if (freeText) searchText(); else findTitles(); }
   private void findTitles() {
     String value=query.getText().toString().trim(); if (value.length()<2 || searching) return;
-    int request=++generation; searching=true; chosen=null; showChosen(); status.setText(L10n.t("Searching…"));
+    int request=++generation; searching=true; chosen=null; showChosen(); filters.setVisibility(View.GONE); status.setText(L10n.t("Searching…"));
     ((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(query.getWindowToken(),0);
     String kind=movies?"movie":"tv";
     io.execute(() -> {
@@ -280,11 +273,11 @@ public final class TorrentSearchActivity extends Activity {
   private void searchTitle() {
     if(chosen==null)return; showChosen();
     enrichmentGeneration++;
-    int request=++generation; int provider=source; boolean requestChina=china; searching=true; list.setEnabled(false); hiddenBox.setVisibility(View.GONE); list.setVisibility(View.VISIBLE); status.setText(L10n.t(requestChina?"Searching and checking links…":"Searching…"));
+    int request=++generation; boolean requestChina=china; searching=true; list.setEnabled(false); hiddenBox.setVisibility(View.GONE); list.setVisibility(View.VISIBLE); status.setText(L10n.t(requestChina?"Searching and checking links…":"Searching…"));
     JSONObject title=chosen; String requestWant=want; int season=wantSeason;
     io.execute(() -> {
       try {
-        JSONArray sources=new JSONArray(); if(provider>0&&!requestChina)sources.put(provider==1?"tpb":provider==2?"nyaa":"csv");
+        JSONArray sources=new JSONArray();
         JSONObject body=new JSONObject().put("title",title.optString("id")).put("market",requestChina?"china":"world").put("want",requestWant).put("sources",sources);
         if(season>0)body.put("season",season);
         show(request,ready().request("POST","/v1/search/torrents",body),title.optString("title"));
@@ -305,11 +298,11 @@ public final class TorrentSearchActivity extends Activity {
   private void searchText() {
     String value=query.getText().toString().trim(); if (value.length()<2 || searching) return;
     enrichmentGeneration++;
-    int request=++generation; int provider=source; boolean requestChina=china; searching=true; list.setEnabled(false); hiddenBox.setVisibility(View.GONE); list.setVisibility(View.VISIBLE); status.setText(L10n.t(requestChina?"Searching and checking links…":"Searching…"));
+    int request=++generation; boolean requestChina=china; searching=true; list.setEnabled(false); hiddenBox.setVisibility(View.GONE); list.setVisibility(View.VISIBLE); status.setText(L10n.t(requestChina?"Searching and checking links…":"Searching…"));
     ((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(query.getWindowToken(),0);
     io.execute(() -> {
       try {
-        JSONArray sources=new JSONArray(); if(provider>0&&!requestChina)sources.put(provider==1?"tpb":provider==2?"nyaa":"csv");
+        JSONArray sources=new JSONArray();
         JSONObject body = new JSONObject().put("query",value).put("market",requestChina?"china":"world").put("sources",sources);
         // Context applies only while searching the original library title.
         if(value.equals(getIntent().getStringExtra("query"))) {

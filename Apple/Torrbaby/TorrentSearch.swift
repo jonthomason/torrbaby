@@ -413,7 +413,6 @@ struct TorrentSearchView: View {
     @State private var wantSeason: Int?
     /// Searching torrents by the words typed, not by a title.
     @State private var freeText = false
-    @State private var source = "all"
     @State private var scopeFilter = "all"
     @State private var seasonFilter: Int?
     @State private var episodeFilter: Int?
@@ -613,7 +612,7 @@ struct TorrentSearchView: View {
                                 Button("Show all") { resolution = "all"; scopeFilter = "all"; seasonFilter = nil; episodeFilter = nil; selectedID = visibleItems.first?.id }
                             }
                         } else {
-                            ContentUnavailableView("No releases found", systemImage: "magnifyingglass", description: Text("Try a shorter title or another source."))
+                            ContentUnavailableView("No releases found", systemImage: "magnifyingglass", description: Text("Try a shorter title."))
                         }
                     } else if usesColumns(geometry.size.width) {
                         HStack(spacing: 0) {
@@ -817,11 +816,12 @@ struct TorrentSearchView: View {
                 }
             }
             .onChange(of: market) {
-                work?.cancel(); searching = false; response = nil; selectedID = nil; error = nil; source = "all"
+                work?.cancel(); searching = false; response = nil; selectedID = nil; error = nil
                 if chosen != nil { searchTitle() } else if query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 { search() }
             }
             if let chosen { chosenTitle(chosen) }
-            filterBar
+            // Filters belong to the releases (phase 2), not to choosing a title.
+            if response != nil { filterBar }
             if response != nil && (chosen == nil || want == "episodes") { episodeDownloader }
             if let error { Text(L10n.text(error)).font(.caption).foregroundStyle(.orange) }
             if let response {
@@ -836,13 +836,10 @@ struct TorrentSearchView: View {
         HStack(spacing: 10) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    if market != "china" { sourcePicker }
                     resolutionPicker
-                    if response != nil {
-                        if chosen == nil { scopePicker; seasonPicker; episodePicker }
-                        else if want == "episodes" { episodePicker }
-                        sortPicker
-                    }
+                    if chosen == nil { scopePicker; seasonPicker; episodePicker }
+                    else if want == "episodes" { episodePicker }
+                    sortPicker
                     if year != nil || season != nil || episode != nil {
                         Button { year = nil; season = nil; episode = nil; search() } label: {
                             HStack(spacing: 5) {
@@ -855,24 +852,6 @@ struct TorrentSearchView: View {
             }.scrollClipDisabled()
             searchStatus.fixedSize()
         }
-    }
-    private static let sourceNames = ["all": "Recommended", "tpb": "The Pirate Bay", "csv": "Torrent CSV", "nyaa": "Nyaa"]
-    @ViewBuilder private var sourcePicker: some View {
-        #if os(tvOS)
-                Picker("Sources", selection: $source) {
-                    Text("Recommended").tag("all")
-                    Text("The Pirate Bay").tag("tpb")
-                    Text("Torrent CSV").tag("csv")
-                    Text("Nyaa").tag("nyaa")
-                }.pickerStyle(.segmented)
-        #else
-        SearchChipMenu(title: "Sources", selection: $source, current: Text(LocalizedStringKey(Self.sourceNames[source] ?? "Recommended")), icon: "antenna.radiowaves.left.and.right") {
-            Text("Recommended").tag("all")
-            Text("The Pirate Bay").tag("tpb")
-            Text("Torrent CSV").tag("csv")
-            Text("Nyaa").tag("nyaa")
-        }
-        #endif
     }
     private var resolutionPicker: some View {
         SearchChipMenu(title: "Resolution", selection: $resolution, current: resolution == "all" ? Text("All resolutions") : Text(verbatim: resolution)) {
@@ -1109,7 +1088,7 @@ struct TorrentSearchView: View {
         if want == "episodes" && wantSeason == nil { wantSeason = facts?.aired.last ?? 1 }
         work?.cancel(); searching = true; error = nil; response = nil; selectedID = nil
         scopeFilter = "all"; seasonFilter = nil; episodeFilter = nil; downloaderSeason = wantSeason
-        var body: [String: Any] = ["title": chosen.id, "market": market, "want": want, "sources": source == "all" ? [] : [source]]
+        var body: [String: Any] = ["title": chosen.id, "market": market, "want": want, "sources": [] as [String]]
         if let wantSeason { body["season"] = wantSeason }
         work = Task { @MainActor in
             do {
@@ -1129,7 +1108,7 @@ struct TorrentSearchView: View {
         let wanted = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if wanted != searchedQuery { resetFilters(); searchedQuery = wanted }
         work?.cancel(); searching = true; error = nil
-        var body: [String: Any] = ["query": query, "market": market, "sources": source == "all" ? [] : [source]]
+        var body: [String: Any] = ["query": query, "market": market, "sources": [] as [String]]
         if let year { body["year"] = year }; if let season { body["season"] = season }; if let episode { body["episode"] = episode }
         work = Task { @MainActor in
             do {

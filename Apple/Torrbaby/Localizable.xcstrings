@@ -18703,6 +18703,23 @@
           }
         }
       }
+    },
+    "Try a shorter title.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Try a shorter title."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请尝试更短的片名。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

@@ -920,7 +920,7 @@ final class L10n {
     IDS.put("Trial needs attention", R.string.ui_cd2272fc7169);
     IDS.put("Trials", R.string.ui_3dcdcafebd57);
     IDS.put("Try a different title.", R.string.ui_c17f217d8b8e);
-    IDS.put("Try a shorter title or another source.", R.string.ui_bcabdf3a5848);
+    IDS.put("Try a shorter title.", R.string.ui_65f95c717b9c);
     IDS.put("Try again", R.string.ui_042c862e4467);
     IDS.put("Try reconnecting", R.string.ui_8310b022d173);
     IDS.put("Tunnel source", R.string.ui_67ec7d482d82);
