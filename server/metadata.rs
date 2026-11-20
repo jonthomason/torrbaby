@@ -681,7 +681,17 @@ impl Metadata {
             }
             let data = self.request(&format!("search/{kind}"), &parameters).await?;
             let hits = search_candidates(&data, kind);
-            let exact = exact_candidates(&attempt, &attempt_year, &hits);
+            let mut exact = exact_candidates(&attempt, &attempt_year, &hits);
+            // A release often carries the festival year, TMDB the release year (Kill Me Three Times:
+            // 2014 against 2015). One title of exactly this name a year either side is the one meant.
+            if exact.is_empty() && !fallback {
+                if let Ok(year) = attempt_year.parse::<i32>() {
+                    let near: Vec<&Value> = exact_candidates(&attempt, "", &hits).into_iter()
+                        .filter(|c| c["year"].as_str().and_then(|y| y.parse::<i32>().ok()).is_some_and(|y| (y - year).abs() == 1)).collect();
+                    let same_name = exact_candidates(&attempt, "", &hits).len();
+                    if near.len() == 1 && same_name == 1 { exact = near; }
+                }
+            }
             tried.push(json!(attempt));
             for hit in &hits {
                 if candidates.len() < 8 && !candidates.iter().any(|c| c["provider_id"] == hit["provider_id"]) {
@@ -1158,6 +1168,18 @@ mod prefixed_name_tests {
         assert!(found["exact"].is_null());
         assert_eq!(found["attempts"].as_array().unwrap().len(), MAX_MATCH_QUERIES);
         assert_eq!(found["candidates"].as_array().unwrap().len(), 1);
+        // The festival year against TMDB's release year: the one film of that name, a year on.
+        record(&[("query", "Kill Me Three Times")], json!([
+            {"id":274857,"title":"Kill Me Three Times","original_title":"Kill Me Three Times","release_date":"2015-04-10"},
+            {"id":7,"title":"Tiny Times 3","original_title":"","release_date":"2014-07-17"}]));
+        let found = metadata.identify("Kill.Me.Three.Times.2014.1080p.BluRay.x264.YIFY", None).await.unwrap();
+        assert_eq!(found["exact"]["provider_id"], "274857");
+        // Two of that name a year either side: no guess.
+        record(&[("query", "Twins Apart")], json!([
+            {"id":1,"title":"Twins Apart","original_title":"","release_date":"2013-01-01"},
+            {"id":2,"title":"Twins Apart","original_title":"","release_date":"2015-01-01"}]));
+        record(&[("query", "Apart"), ("year", "2014")], json!([]));
+        assert!(metadata.identify("Twins.Apart.2014.1080p", None).await.unwrap()["exact"].is_null());
         std::fs::remove_dir_all(root).unwrap();
     }
 }
