@@ -1417,12 +1417,12 @@ private struct LibraryFilePreview: Decodable {
     let blockedReasons: [String]
     let confirmationToken: String
 }
-private struct LibraryFileOperation: Decodable {
+struct LibraryFileOperation: Decodable {
     let id: String
     let phase: String
     let error: String?
 }
-private struct LibraryFileOperations: Decodable { let operations: [LibraryFileOperation] }
+struct LibraryFileOperations: Decodable { let operations: [LibraryFileOperation] }
 
 #if os(tvOS)
 private struct TVFocusableRow: ViewModifier {
@@ -1444,7 +1444,9 @@ struct LibraryFileManagement: View {
     let assetID: String
     @Environment(\.dismiss) private var dismiss
     @State private var preview: LibraryFilePreview?
-    @State private var operation: LibraryFileOperation?
+    @State private var operationID: String?
+    /// The store follows the operation to the end, so leaving this screen still updates the library.
+    private var operation: LibraryFileOperation? { operationID.flatMap { store.followedRemovals[$0] } }
     @State private var pendingAction: String?
     @State private var submitting = false
     @State private var error: String?
@@ -1529,21 +1531,8 @@ struct LibraryFileManagement: View {
             do { preview = try await store.request("GET", path) }
             catch { if !Task.isCancelled { self.error = error.localizedDescription } }
         }
-        .task(id: operation?.id) {
-            guard let id = operation?.id else { return }
-            while !Task.isCancelled && operation?.phase != "done" {
-                do {
-                    try await Task.sleep(for: .seconds(3))
-                    let result: LibraryFileOperations = try await store.request("GET", "/v1/library/operations")
-                    guard let latest = result.operations.first(where: { $0.id == id }) else { throw APIError(message: "Operation status is unavailable. The server may still be processing it.") }
-                    operation = latest
-                    error = nil
-                    if latest.phase == "done" { await store.refresh() }
-                } catch {
-                    if Task.isCancelled { return }
-                    self.error = error.localizedDescription
-                }
-            }
+        .onChange(of: operationID.flatMap { store.followedRemovalErrors[$0] }) { _, failure in
+            if let failure { error = failure }
         }
     }
     private func submit(_ action: String) {
@@ -1552,7 +1541,9 @@ struct LibraryFileManagement: View {
         Task {
             defer { submitting = false }
             do {
-                operation = try await store.request("POST", path, body: ["action": action, "confirmation_token": preview.confirmationToken])
+                let started: LibraryFileOperation = try await store.request("POST", path, body: ["action": action, "confirmation_token": preview.confirmationToken])
+                store.follow(started)
+                operationID = started.id
                 await store.refresh()
             } catch { self.error = error.localizedDescription }
         }

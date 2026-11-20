@@ -87,6 +87,9 @@ struct NeedsServerStatus: ViewModifier {
 @MainActor
 final class Store: ObservableObject {
     @Published var profiles: [UserProfile] = []
+    /// File removals this device started, followed to the end whether or not their screen is open.
+    @Published private(set) var followedRemovals: [String: LibraryFileOperation] = [:]
+    @Published private(set) var followedRemovalErrors: [String: String] = [:]
     @Published var activeProfile: UserProfile?
     @Published var profileError: String?
     @Published var choosingProfile = false
@@ -1385,6 +1388,27 @@ final class Store: ObservableObject {
     }
     /// `polling` marks the periodic refresh; a refresh after a user action does everything
     /// and waits for one already under way so it shows that action.
+    /// Follows a file removal until the server finishes it, then shows the library without it.
+    func follow(_ started: LibraryFileOperation) {
+        let known = followedRemovals[started.id] != nil
+        followedRemovals[started.id] = started
+        guard !known, started.phase != "done" else { if started.phase == "done" { Task { await refresh() } }; return }
+        Task { [weak self] in
+            while let self, self.followedRemovals[started.id]?.phase != "done" {
+                try? await Task.sleep(for: .seconds(3))
+                do {
+                    let result: LibraryFileOperations = try await self.request("GET", "/v1/library/operations")
+                    // The server drops only finished removals (when the download is added again).
+                    self.followedRemovals[started.id] = result.operations.first(where: { $0.id == started.id })
+                        ?? LibraryFileOperation(id: started.id, phase: "done", error: nil)
+                    self.followedRemovalErrors[started.id] = nil
+                } catch {
+                    self.followedRemovalErrors[started.id] = error.localizedDescription
+                }
+            }
+            await self?.refresh()
+        }
+    }
     func refresh(polling: Bool = false) async {
         // A refresh after a user action must show that action: wait out a poll that
         // started earlier rather than being dropped in its favour.
