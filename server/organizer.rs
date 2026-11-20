@@ -732,9 +732,23 @@ mod identification_tests {
 /// connected drive (its drive was retired), downloads in progress stay in their own
 /// drive's Downloads, under a temporary name, and the default folder is a connected
 /// drive's Downloads. Looked at once a minute.
+/// Public trackers Transmission adds to every public torrent (its `default_trackers`, one per
+/// tier). Find's magnets carry only the hash and name, so without these a download finds its
+/// peers through DHT alone, and even a popular release crawls. Each answered from Diamond
+/// (2026-11-20); HTTP ones too, in case UDP announces are refused on the way.
+const DEFAULT_TRACKERS: &[&str] = &[
+    "udp://tracker.opentrackr.org:1337/announce",
+    "http://tracker.opentrackr.org:1337/announce",
+    "udp://open.demonii.com:1337/announce",
+    "udp://open.stealth.si:80/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+    "udp://exodus.desync.com:6969/announce",
+    "http://open.tracker.cl:1337/announce",
+];
+
 async fn tend_session(s: &Service, drives: &Drives) {
     let script = event_script(s).to_string_lossy().into_owned();
-    let Ok(session) = s.rpc.call("session_get", json!({"fields":["download_dir","incomplete_dir","incomplete_dir_enabled","rename_partial_files",
+    let Ok(session) = s.rpc.call("session_get", json!({"fields":["download_dir","incomplete_dir","incomplete_dir_enabled","rename_partial_files","default_trackers",
         "script_torrent_added_enabled","script_torrent_added_filename","script_torrent_done_enabled","script_torrent_done_filename",
         "script_torrent_done_seeding_enabled","script_torrent_done_seeding_filename"]})).await else { return };
     let online = drives.online();
@@ -752,10 +766,12 @@ async fn tend_session(s: &Service, drives: &Drives) {
         if session[format!("script_torrent_{event}_enabled")] != true { change.insert(format!("script_torrent_{event}_enabled"), json!(true)); }
         if session[format!("script_torrent_{event}_filename")] != script.as_str() { change.insert(format!("script_torrent_{event}_filename"), json!(script)); }
     }
+    let trackers = DEFAULT_TRACKERS.join("\n\n");
+    if session["default_trackers"].as_str().map(str::trim) != Some(trackers.as_str()) { change.insert("default_trackers".into(), json!(trackers)); }
     if change.is_empty() { return; }
     let change = Value::Object(change);
     match s.rpc.call("session_set", change.clone()).await {
-        Ok(_) => tracing::info!(settings = %change, "Set Transmission's folders for the drives in use"),
+        Ok(_) => tracing::info!(settings = %change, "Set Transmission's folders, event hooks or default trackers"),
         Err(error) => tracing::warn!(%error, "Could not set Transmission's folders"),
     }
 }

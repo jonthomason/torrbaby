@@ -2329,6 +2329,13 @@ fn byte_range(header: Option<&str>, size: u64) -> Result<(u64, u64)> {
 fn library_issues(mut torrents: Value, jobs: &Value) -> Value {
     if let Some(rows) = torrents.as_array_mut() {
         for torrent in rows {
+            // What the release's name says (picture, range, sound, source, codec, seasons and
+            // episodes), read as Find reads search results, so the transfers show the same tags.
+            if let Some(name) = torrent["name"].as_str() {
+                let mut hints = json!(crate::torrent_search::hints(name));
+                if let Some(object) = hints.as_object_mut() { object.remove("evidence"); }
+                torrent["hints"] = hints;
+            }
             let job = &jobs[torrent["hash_string"].as_str().unwrap_or("")];
             if job["phase"] == "blocked" && torrent["percent_done"].as_f64().is_some_and(|done| done >= 1.0) {
                 if let Some(reason) = job["error"].as_str().filter(|reason| !reason.is_empty()) {
