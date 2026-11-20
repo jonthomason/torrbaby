@@ -82,7 +82,9 @@ fn wanted(missing: &Value) -> Vec<(u64, Vec<u64>)> {
     let owned = |season: &Value| season["aired"].as_u64().unwrap_or(0) > season["missing"].as_array().map_or(0, Vec::len) as u64;
     let newest = seasons.iter().filter(|s| owned(s)).filter_map(|s| s["season"].as_u64()).max();
     seasons.iter().filter(|s| owned(s) || (newest.is_some() && s["season"].as_u64() == newest.map(|n| n + 1))).filter_map(|s| {
-        let episodes: Vec<u64> = s["missing"].as_array()?.iter().filter_map(|e| e["episode"].as_u64()).collect();
+        // A variety show's missing part is sought as its weekly episode (第7期), as its files are numbered.
+        let mut episodes: Vec<u64> = s["missing"].as_array()?.iter().filter_map(|e| e["issue"].as_u64().or(e["episode"].as_u64())).collect();
+        episodes.dedup();
         (!episodes.is_empty()).then(|| Some((s["season"].as_u64()?, episodes))).flatten()
     }).collect()
 }
@@ -300,5 +302,8 @@ mod tests {
         let sampled = json!({"seasons": [{"season": 1, "aired": 10, "missing": []}, {"season": 2, "aired": 3, "missing": [{"episode": 1}, {"episode": 2}, {"episode": 3}]}, {"season": 3, "aired": 1, "missing": [{"episode": 1}]}]});
         assert_eq!(wanted(&sampled), vec![(2, vec![1, 2, 3])]);
         assert!(wanted(&json!({"seasons": [{"season": 1, "aired": 0, "missing": []}]})).is_empty());
+        // A variety show's missing parts are sought as their weekly episode, once.
+        let parted = json!({"seasons": [{"season": 4, "aired": 14, "missing": [{"episode": 13, "issue": 7}, {"episode": 14, "issue": 7}]}]});
+        assert_eq!(wanted(&parted), vec![(4, vec![7])]);
     }
 }

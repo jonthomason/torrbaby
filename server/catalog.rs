@@ -45,9 +45,16 @@ impl Database {
         static RANGE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)S(\d{1,2})E(\d{1,4})((?:[-_ ]?E\d{1,4})+)").expect("valid regex"));
         static NUMBER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"\d+").expect("valid regex"));
         let mut present = std::collections::HashSet::<(u64, u64)>::new();
+        // A variety show's files are its weekly episodes and their parts ("S04E06 - Part 2"),
+        // where TMDB numbers every part through the season ("Episode 6 (Part 2)" is S04E12).
+        let mut pieces = std::collections::HashSet::<(u64, u64, Option<u64>)>::new();
+        let mut parted = std::collections::HashSet::<u64>::new();
         for asset in self.visible_assets()? {
             if asset["entity_id"] != title || (asset["available"] != true && asset["offline"] != true) || asset["role"] == "extra" { continue; }
             let (Some(season), Some(episode)) = (asset["season"].as_u64(), asset["episode"].as_u64()) else { continue };
+            let part = asset["path"].as_str().and_then(crate::scanner::part);
+            if part.is_some() { parted.insert(season); }
+            pieces.insert((season, episode, part));
             present.insert((season, episode));
             let name = asset["path"].as_str().and_then(|p| std::path::Path::new(p).file_name()?.to_str()).unwrap_or("");
             if let Some(range) = RANGE.captures(name).filter(|c| c[1].parse::<u64>().ok() == Some(season) && c[2].parse::<u64>().ok() == Some(episode)) {
@@ -62,8 +69,18 @@ impl Database {
             if season == 0 || aired.is_none() { continue; }
             let entry = seasons.entry(season).or_default();
             entry.0 += 1;
-            if !present.contains(&(season, number)) {
-                entry.1.push(json!({"episode":number,"title":episode["title"],"airdate":aired}));
+            static PART: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)^\s*Episode\s+(\d+)\s*\(\s*Part\s+(\d+)\s*\)\s*$").expect("valid regex"));
+            let piece = parted.contains(&season).then(|| PART.captures(episode["title"].as_str().unwrap_or(""))).flatten()
+                .and_then(|found| Some((found[1].parse::<u64>().ok()?, found[2].parse::<u64>().ok()?)));
+            let held = match piece {
+                // The weekly episode and part TMDB's title names, or that episode whole.
+                Some((issue, part)) => pieces.contains(&(season, issue, Some(part))) || pieces.contains(&(season, issue, None)),
+                None => present.contains(&(season, number)),
+            };
+            if !held {
+                let mut gap = json!({"episode":number,"title":episode["title"],"airdate":aired});
+                if let Some((issue, _)) = piece { gap["issue"] = json!(issue); }
+                entry.1.push(gap);
             }
         }
         Ok(json!({"id":title,"title":entity["title"],"original_title":entity["original_title"],"year":title_year(&entity, std::path::Path::new("")),
@@ -656,6 +673,35 @@ mod continue_watching_tests {
         assert_eq!(next["resume_position"],123.0);
         assert_eq!(db.rows("SELECT profile_id FROM profile_hidden_titles",[])?.len(),1);
         assert_eq!(db.rows("SELECT profile_id FROM profile_hidden_titles",[])?[0]["profile_id"],other);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod missing_tests {
+    use serde_json::json;
+    #[test]
+    fn a_variety_shows_parts_cover_tmdbs_per_part_episodes() -> anyhow::Result<()> {
+        let root = std::env::temp_dir().join(format!("torrbaby-missing-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root)?;
+        let db = crate::storage::Database::open(&root.join("state.sqlite3"), None)?;
+        let episode = |n: u64, title: &str, date: &str| json!({"season": 4, "episode": n, "title": title, "airdate": date});
+        let entity = json!({"id": "show", "kind": "tv", "title": "Natural High", "episodes": [
+            episode(1, "Episode 1 (Part 1)", "2026-10-10"), episode(2, "Episode 1 (Part 2)", "2026-10-11"),
+            episode(3, "Episode 2 (Part 1)", "2026-10-17"), episode(4, "Episode 2 (Part 2)", "2026-10-18"),
+            episode(5, "Episode 3 (Part 1)", "2026-10-24"), episode(6, "Episode 3 (Part 2)", "2026-10-25")]});
+        db.connection.execute("INSERT INTO library_entities VALUES(?,?)", rusqlite::params!["show", entity.to_string()])?;
+        for (id, path, number) in [("a", "/TV/X/X - S04E01 - Part 1.mp4", 1), ("b", "/TV/X/X - S04E01 - Part 2.mp4", 1),
+                                   ("c", "/TV/X/X - S04E02 - 2026.10.18_第2期下_4K.mp4", 2), ("d", "/TV/X/X - S04E03 - Part 1.mp4", 3)] {
+            let asset = json!({"id": id, "entity_id": "show", "path": path, "season": 4, "episode": number, "available": true, "complete": true});
+            db.connection.execute("INSERT INTO library_assets VALUES(?,?)", rusqlite::params![id, asset.to_string()])?;
+        }
+        let missing = db.missing_episodes("show")?;
+        let gaps: Vec<(u64, u64)> = missing["seasons"][0]["missing"].as_array().unwrap().iter()
+            .map(|m| (m["episode"].as_u64().unwrap(), m["issue"].as_u64().unwrap())).collect();
+        // 第2期上 and 第3期下 are missing, as TMDB's episodes 3 and 6.
+        assert_eq!(gaps, vec![(3, 2), (6, 3)]);
+        std::fs::remove_dir_all(root).ok();
         Ok(())
     }
 }
