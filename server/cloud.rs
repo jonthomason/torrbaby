@@ -92,6 +92,9 @@ pub struct Cloud {
     pace: Mutex<std::collections::VecDeque<(Instant, u64)>>,
     /// Jobs the member has cancelled while they were running.
     cancelled: Mutex<std::collections::HashSet<String>>,
+    /// When each retrying job goes again. A deadline, not a sleep: other jobs and the
+    /// member's own Retry are not held up meanwhile.
+    retry_at: Mutex<HashMap<String, Instant>>,
     /// What reading a copy's first video found, by share and copy; kept on disk.
     probes_file: PathBuf,
     probes: Mutex<HashMap<String, Value>>,
@@ -427,6 +430,7 @@ impl Cloud {
             wake: tokio::sync::Notify::new(),
             pace: Mutex::new(std::collections::VecDeque::new()),
             cancelled: Mutex::new(std::collections::HashSet::new()),
+            retry_at: Mutex::new(HashMap::new()),
             probes: Mutex::new(std::fs::read(data.join("cloud-probes.json")).ok().and_then(|raw| serde_json::from_slice(&raw).ok()).unwrap_or_default()),
             probes_file: data.join("cloud-probes.json"),
             probing: tokio::sync::Mutex::new(()),
@@ -1363,6 +1367,14 @@ impl Cloud {
                 }
                 crate::drives::commit("cloud", pending);
             }
+            // Retries whose time has come go back in the queue.
+            let due: Vec<String> = self.retry_at.lock().map(|mut at| {
+                let due: Vec<String> = at.iter().filter(|(_, when)| **when <= Instant::now()).map(|(id, _)| id.clone()).collect();
+                for id in &due { at.remove(id); }
+                due
+            }).unwrap_or_default();
+            for id in &due { self.update(id, |j| if j.state == "retrying" { j.state = "queued".into(); }); }
+            let retry = self.retry_at.lock().ok().and_then(|at| at.values().min().copied());
             let next = self.jobs.lock().ok().and_then(|jobs| jobs.iter().find(|j| j.state == "queued" && !away(j)).cloned());
             let Some(job) = next else {
                 // Torrents that were still seeding when their episodes were bettered are let go once
@@ -1370,7 +1382,7 @@ impl Cloud {
                 // go for an hour without activity is looked at again in an hour.
                 let waiting = self.reap(s).await;
                 if tidy.is_some_and(|at| at <= Instant::now()) { self.sweep().await; tidy = None; }
-                let next = [tidy, waiting.then(|| Instant::now() + Duration::from_secs(3600))].into_iter().flatten().min();
+                let next = [tidy, retry, waiting.then(|| Instant::now() + Duration::from_secs(3600))].into_iter().flatten().min();
                 tokio::select! { _ = self.wake.notified() => {}, () = crate::wake::CLOUD.wait(next) => {} }
                 continue;
             };
@@ -1396,14 +1408,16 @@ impl Cloud {
                 }
                 Some(Err(error)) => {
                     tracing::warn!(job = job.id, %error, "Cloud download failed");
-                    // A dropped connection or a slow answer is ordinary over a long series:
-                    // wait and go on from the videos already fetched, a few times, before giving up.
+                    // A dropped connection or a slow answer is ordinary over a long series, and
+                    // Quark refuses every download (HTTP 412) for a few minutes after a burst of
+                    // requests: wait longer each time and go on from the pieces already fetched,
+                    // for about an hour in all before giving up. A finished video starts the count again.
+                    const WAITS: [u64; 6] = [60, 120, 300, 600, 1200, 1800];
                     let attempts = job.attempts + 1;
-                    let again = attempts <= 4 && self.cookie().is_some();
-                    self.update(&job.id, |j| { j.attempts = attempts; j.state = if again { "retrying" } else { "failed" }.into(); j.error = Some(error.to_string()); });
-                    if again {
-                        tokio::time::sleep(Duration::from_secs(30 * attempts as u64)).await;
-                        self.update(&job.id, |j| if j.state == "retrying" { j.state = "queued".into(); });
+                    let wait = WAITS.get(attempts as usize - 1).copied().filter(|_| self.cookie().is_some());
+                    self.update(&job.id, |j| { j.attempts = attempts; j.state = if wait.is_some() { "retrying" } else { "failed" }.into(); j.error = Some(error.to_string()); });
+                    if let Some(wait) = wait {
+                        if let Ok(mut at) = self.retry_at.lock() { at.insert(job.id.clone(), Instant::now() + Duration::from_secs(wait)); }
                     }
                 }
             }
@@ -1429,7 +1443,7 @@ impl Cloud {
     pub fn retry(&self, id: &str) -> Value {
         let mut queued = false;
         self.update(id, |job| if job.state == "failed" || job.state == "retrying" { job.state = "queued".into(); job.error = None; job.attempts = 0; queued = true; });
-        if queued { self.wake.notify_one(); }
+        if queued { if let Ok(mut at) = self.retry_at.lock() { at.remove(id); } self.wake.notify_one(); }
         json!({"queued": queued})
     }
 }
