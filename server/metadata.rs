@@ -25,8 +25,9 @@ static TECHNICAL: LazyLock<Regex> = LazyLock::new(|| {
 static PREFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^www\.[^ ]+\s*[- ]*").expect("valid regex"));
 
 /// The matcher's revision. Raised when it learns to name more (a country tag without a year,
-/// & for and, a title a year off TMDB's: 2), so torrents it could not name are looked up again.
-pub const MATCHER: u64 = 2;
+/// & for and, a title a year off TMDB's: 2; TMDB's other titles: 3), so torrents it could not
+/// name are looked up again.
+pub const MATCHER: u64 = 3;
 
 pub fn parse_name(name: &str) -> (String, String, &'static str) {
     let name = PREFIX.replace(name, "");
@@ -696,6 +697,25 @@ impl Metadata {
                     if near.len() == 1 && same_name == 1 { exact = near; }
                 }
             }
+            // The release may use one of TMDB's other titles ("F1 The Movie" is F1, "Star Wars
+            // Episode IV A New Hope" is Star Wars): the year's candidates are asked for theirs.
+            let mut alternative: Option<Value> = None;
+            if exact.is_empty() && !fallback && !attempt_year.is_empty() {
+                let wanted = normalized(&attempt.replace('&', " and "));
+                let mut found = Vec::new();
+                for hit in hits.iter().filter(|c| c["year"] == attempt_year.as_str()).take(3) {
+                    let Some(id) = hit["provider_id"].as_str() else { continue };
+                    let Ok(titles) = self.request(&format!("{kind}/{id}/alternative_titles"), &[]).await else { continue };
+                    let names = array(titles.get("titles").or(titles.get("results")).unwrap_or(&Value::Null)).iter()
+                        .filter_map(|t| t["title"].as_str()).map(|t| normalized(&t.replace('&', " and "))).collect::<Vec<_>>();
+                    if names.contains(&wanted) { found.push(hit.clone()); }
+                }
+                if found.len() == 1 { alternative = found.pop(); }
+            }
+            if let Some(hit) = alternative {
+                return Ok(json!({"query":query,"year":year,"kind":kind,"candidates":hits.iter().take(8).cloned().collect::<Vec<_>>(),"exact":hit,
+                    "matched_query":attempt,"matched_year":attempt_year,"attempts":[attempt]}));
+            }
             tried.push(json!(attempt));
             for hit in &hits {
                 if candidates.len() < 8 && !candidates.iter().any(|c| c["provider_id"] == hit["provider_id"]) {
@@ -1183,6 +1203,14 @@ mod prefixed_name_tests {
             {"id":1,"title":"Twins Apart","original_title":"","release_date":"2013-01-01"},
             {"id":2,"title":"Twins Apart","original_title":"","release_date":"2015-01-01"}]));
         record(&[("query", "Apart"), ("year", "2014")], json!([]));
+        // Known by another of its titles.
+        record(&[("query", "F1 The Movie")], json!([
+            {"id":911430,"title":"F1","original_title":"F1","release_date":"2025-06-25"},
+            {"id":8,"title":"Silver Spoon","original_title":"","release_date":"2021-01-01"}]));
+        std::fs::write(root.join("tmdb-cache").join(tmdb_cache_key("movie/911430/alternative_titles", &[])),
+            serde_json::to_vec(&json!({"id":911430,"titles":[{"iso_3166_1":"US","title":"F1 The Movie"}]})).unwrap()).unwrap();
+        let found = metadata.identify("F1.The.Movie.2025.2160p.WEB", None).await.unwrap();
+        assert_eq!(found["exact"]["provider_id"], "911430");
         assert!(metadata.identify("Twins.Apart.2014.1080p", None).await.unwrap()["exact"].is_null());
         std::fs::remove_dir_all(root).unwrap();
     }
