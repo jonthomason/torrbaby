@@ -106,6 +106,8 @@ fn search_candidates(data: &Value, kind: &str) -> Vec<Value> {
 fn exact_candidates<'a>(query: &str, year: &str, candidates: &'a [Value]) -> Vec<&'a Value> {
     static COUNTRY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)[\s(\[]+(US|USA|UK|AU|NZ|CA)[)\]]*\s*$").expect("valid regex"));
     let tag = COUNTRY.captures(query).map(|c| match c[1].to_ascii_uppercase().as_str() { "USA" => "US".to_owned(), "UK" => "GB".to_owned(), other => other.to_owned() });
+    // "Deadpool and Wolverine" is TMDB's "Deadpool & Wolverine".
+    let normalized = |value: &str| normalized(&value.replace('&', " and "));
     let untagged = tag.as_ref().map(|_| normalized(&COUNTRY.replace(query, ""))).filter(|q| !q.is_empty());
     let query = normalized(query);
     candidates.iter().filter(|c| {
@@ -1120,6 +1122,8 @@ mod prefixed_name_tests {
         assert_eq!((us.len(), us[0]["provider_id"].clone()), (1, json!("1508")));
         assert_eq!(exact_candidates("Strictly UK", "", &[json!({"title":"Strictly","original_title":"Strictly","year":"2004","country":"GB"})]).len(), 1);
         assert!(exact_candidates("Dancing With The Stars NZ", "", &dances).is_empty());
+        let deadpool = [json!({"provider_id":"533535","title":"Deadpool & Wolverine","original_title":"Deadpool & Wolverine","year":"2024"})];
+        assert_eq!(exact_candidates("Deadpool and Wolverine", "2024", &deadpool).len(), 1, "& is and");
     }
 
     /// `identify` against recorded TMDB responses: no token, no network.
