@@ -53,6 +53,13 @@ struct Track {
     count: u64,
     pts: Vec<u64>,
     audio_samples: u64,
+    /// Audio: frames of timeline left empty at splices (see `splice`), after the frames written.
+    gap_frames: u64,
+    /// Audio: splices smoothed so far, and the frame count at the last one.
+    splices: u32,
+    last_splice: Option<u64>,
+    /// Audio: where the stamps sit against the written cadence since the last splice (under half a frame).
+    residual_ns: i128,
     origin_ns: Option<u64>,
     codec_delay_ns: u64,
     visual_boxes: Vec<u8>,
@@ -170,6 +177,25 @@ fn sample_table(kind: &[u8; 4], numbers: &[u32]) -> Result<Vec<u8>> {
 /// assigns every packet to exactly one cadence slot: missing or duplicated
 /// frames and cumulative drift remain rejected because each packet is compared
 /// with the absolute cadence from the track origin, never with its neighbour.
+/// What to do with an audio frame stamped off its place in the stream's cadence.
+#[derive(Debug, PartialEq)]
+enum Splice { Within, Drop, Gap(u64) }
+
+/// Broadcast captures are cut where the adverts were, and the audio jumps there by a few tens
+/// of milliseconds either way (Dancing with the Stars S26E01: eight cuts, -35 to +15 ms). A
+/// frame overlapping its predecessor by half a frame or more is dropped; one arriving half a
+/// frame or more late leaves that much timeline empty (heard as silence); anything closer plays
+/// on. Audio thus stays within half a frame of the picture. Only isolated cuts are smoothed: at
+/// most 2 s each, a minute or more apart, 64 in all. Audio running on another clock drifts a
+/// little every frame and is still refused, as is a file torn by seconds.
+fn splice(offset_ns: i128, frame_ns: u128, count: u64, splices: u32, last: Option<u64>) -> Result<Splice> {
+    let apart = last.is_none_or(|last| (count - last) as u128 * frame_ns >= 60_000_000_000);
+    ensure!(offset_ns.unsigned_abs() <= 2_000_000_000 && splices < 64 && apart,
+        "Audio offset/gap needs additional timing support");
+    let frames = (offset_ns.abs() + frame_ns as i128 / 2) / frame_ns as i128;
+    Ok(if frames == 0 { Splice::Within } else if offset_ns < 0 { Splice::Drop } else { Splice::Gap(frames as u64) })
+}
+
 fn cadence_tolerance_ns(frame_ns: u128, scale: u64) -> u128 {
     (frame_ns / 4).max(scale as u128)
 }
@@ -406,6 +432,10 @@ fn remux_pass(input: &Path, output: &Path, max_bytes: u64, mapping: Mapping,
                 duration_ns: 0,
                 video: false,
                 count: 0,
+                gap_frames: 0,
+                splices: 0,
+                last_splice: None,
+                residual_ns: 0,
                 pts: Vec::new(),
                 audio_samples: crate::audio_transcode::FRAME_SAMPLES,
                 // The copy is written on the file's own timeline, starting at zero.
@@ -512,6 +542,10 @@ fn remux_pass(input: &Path, output: &Path, max_bytes: u64, mapping: Mapping,
                 duration_ns,
                 video,
                 count: 0,
+                gap_frames: 0,
+                splices: 0,
+                last_splice: None,
+                residual_ns: 0,
                 pts: Vec::new(),
                 audio_samples: if matches!(codec, "ac3" | "eac3") {
                     1536
@@ -682,15 +716,23 @@ fn remux_pass(input: &Path, output: &Path, max_bytes: u64, mapping: Mapping,
                 }
                 let rate = t.stream.params.sample_rate.unwrap() as u128;
                 let expected = origin as u128
-                    + t.count as u128 * t.audio_samples as u128 * 1_000_000_000 / rate;
+                    + (t.count + t.gap_frames) as u128 * t.audio_samples as u128 * 1_000_000_000 / rate;
                 let frame_ns = t.audio_samples as u128 * 1_000_000_000 / rate;
-                ensure!(
-                    expected.abs_diff(ns as u128) <= cadence_tolerance_ns(frame_ns, scale),
-                    "Audio offset/gap needs additional timing support"
-                );
+                let offset = ns as i128 - expected as i128 - t.residual_ns;
+                if offset.unsigned_abs() > cadence_tolerance_ns(frame_ns, scale) {
+                    let found = splice(offset, frame_ns, t.count, t.splices, t.last_splice)?;
+                    t.splices += 1;
+                    t.last_splice = Some(t.count);
+                    match found {
+                        // The stamps sit this much off the cadence from here on; later frames are held to it.
+                        Splice::Within => t.residual_ns += offset,
+                        Splice::Drop => { t.residual_ns += offset + frame_ns as i128; continue; }
+                        Splice::Gap(frames) => { t.residual_ns += offset - (frames * frame_ns as u64) as i128; t.gap_frames += frames; }
+                    }
+                }
                 let start_samples = (start * rate as i128).div_euclid(1_000_000_000);
                 packet.pts =
-                    Some((start_samples + (t.count * t.audio_samples) as i128).try_into()?);
+                    Some((start_samples + ((t.count + t.gap_frames) * t.audio_samples) as i128).try_into()?);
                 packet.dts = packet.pts;
                 packet.duration = Some(t.audio_samples as i64);
             }
@@ -752,7 +794,7 @@ fn remux_pass(input: &Path, output: &Path, max_bytes: u64, mapping: Mapping,
                 } else {
                     let rate = t.stream.params.sample_rate.unwrap() as i128;
                     let samples = (start * rate).div_euclid(1_000_000_000)
-                        + (t.count * t.audio_samples) as i128;
+                        + ((t.count + t.gap_frames) * t.audio_samples) as i128;
                     (samples * 1000).div_euclid(rate)
                 };
                 (t.stream.index + 1, end_ms.max(0) as u64)
@@ -1438,6 +1480,19 @@ mod timing_tests {
     }
 
     #[test]
+    fn isolated_audio_cuts_are_smoothed_and_faults_are_not() {
+        let frame = 42_666_666u128; // HE-AAC, 2048 samples at 48 kHz
+        assert_eq!(splice(-27_000_000, frame, 1000, 0, None).unwrap(), Splice::Drop);
+        assert_eq!(splice(15_000_000, frame, 1000, 0, None).unwrap(), Splice::Within);
+        assert!(splice(15_000_000, frame, 1100, 1, Some(1000)).is_err(), "small shifts count too");
+        assert_eq!(splice(30_000_000, frame, 1000, 0, None).unwrap(), Splice::Gap(1));
+        assert_eq!(splice(-35_000_000, frame, 30_000, 1, Some(18_000)).unwrap(), Splice::Drop);
+        assert!(splice(30_000_000, frame, 1100, 1, Some(1000)).is_err(), "a minute apart");
+        assert!(splice(3_000_000_000, frame, 1000, 0, None).is_err(), "seconds torn");
+        assert!(splice(30_000_000, frame, 900_000, 64, Some(1)).is_err(), "too many");
+    }
+
+    #[test]
     fn quantization_jitter_is_accepted_and_missing_audio_frames_are_not() {
         // Citizen Kane / Gone Girl: some packets are stamped 2 ms early, never drifting.
         let mut jitter = aac_ms(240);
@@ -1448,13 +1503,27 @@ mod timing_tests {
         assert_eq!(durations[0].0, 120 * 41_708_333 / 1_000_000);
         assert_eq!(durations[1].0, 240 * 1024 * 1000 / 48000);
 
+        // One frame missing at a cut: its place is kept as a moment of silence, nothing shifts.
         let mut missing = aac_ms(241);
         missing.remove(100);
         let (result, mp4) = remux(&Fixture { video_pts_ms: video_ms(0..120), aac_ms: Some(missing), dts: false, hevc_nals: None });
+        assert_eq!(result.unwrap()["audio_tracks"], 1);
+        assert_eq!(track_durations(&mp4.unwrap())[1].0, 241 * 1024 * 1000 / 48000);
+        // One frame stamped over its predecessor at a cut: dropped, nothing shifts.
+        let mut overlap = aac_ms(241);
+        for ms in &mut overlap[100..] { *ms -= 21; }
+        let (result, mp4) = remux(&Fixture { video_pts_ms: video_ms(0..120), aac_ms: Some(overlap), dts: false, hevc_nals: None });
+        assert_eq!(result.unwrap()["audio_tracks"], 1);
+        assert_eq!(track_durations(&mp4.unwrap())[1].0, 240 * 1024 * 1000 / 48000);
+        // Two cuts within a minute: not a splice but a fault.
+        let mut torn = aac_ms(241);
+        torn.remove(150); torn.remove(100);
+        let (result, mp4) = remux(&Fixture { video_pts_ms: video_ms(0..120), aac_ms: Some(torn), dts: false, hevc_nals: None });
         assert_eq!(result.unwrap_err().to_string(), "Audio offset/gap needs additional timing support");
         assert!(mp4.is_none(), "failed remux must remove its output");
 
-        let drift: Vec<i64> = aac_ms(240).iter().enumerate().map(|(i, ms)| ms + i as i64 / 20).collect();
+        // Audio on its own clock drifts every frame: several corrections within a minute are refused.
+        let drift: Vec<i64> = aac_ms(240).iter().enumerate().map(|(i, ms)| ms + i as i64 / 8).collect();
         assert!(remux(&Fixture { video_pts_ms: video_ms(0..120), aac_ms: Some(drift), dts: false, hevc_nals: None }).0.is_err());
     }
 

@@ -37,7 +37,9 @@ struct Job {
 // appended after it no longer fail; those earlier failures are retried once.
 // Version 7 takes implicit HE-AAC (its configuration names only the 24 kHz core; Matroska gives
 // the 48 kHz output: The Office S01), which failed as "AAC layout mismatch"; retried once.
-const PREPARATION_VERSION: u32 = 7;
+// Version 8 smooths the audio's jumps at a broadcast capture's advert cuts (remux::splice), which
+// failed as "Audio offset/gap needs additional timing support" (Dancing with the Stars S26); retried once.
+const PREPARATION_VERSION: u32 = 8;
 /// The preparation version from which indexes carry random-access tables (see version 5).
 const RANDOM_ACCESS_VERSION: u32 = 5;
 const LAYOUT_VERSION: u32 = 3;
