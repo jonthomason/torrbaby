@@ -1245,6 +1245,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             }
             record["hash"] = json!(hash);
             record["updated_at"] = json!(now());
+            record["matcher"] = json!(crate::metadata::MATCHER);
             save_torrent_metadata(s, &record)?;
             return Ok(record);
         }
@@ -2998,11 +2999,12 @@ async fn collect_metadata(s: &Service) -> Result<Option<std::time::Instant>> {
             let hash = text(&torrent, "hash_string")?;
             if s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?.hidden_package(hash)? { continue; }
             let old = torrent_metadata(s, hash)?;
-            // A match stands; no match is looked for again a day on, an error 15 minutes on.
+            // A match stands; no match is looked for again a day on, an error 15 minutes on, and
+            // at once when the matcher has learnt more since (metadata::MATCHER).
             if let Some(r) = old.as_ref() {
                 if r["confirmed"] == true || r["status"] == "matched" { continue; }
                 let due = r["updated_at"].as_f64().unwrap_or(0.0) + if r["status"] == "error" { 900.0 } else { 86400.0 };
-                if due > now() { sooner(&mut next, due); continue; }
+                if due > now() && r["matcher"].as_u64() == Some(crate::metadata::MATCHER) { sooner(&mut next, due); continue; }
             }
             let mut record = match s.metadata.search(text(&torrent, "name")?).await {
                 Ok(record) => record,

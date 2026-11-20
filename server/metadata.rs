@@ -24,6 +24,10 @@ static TECHNICAL: LazyLock<Regex> = LazyLock::new(|| {
 });
 static PREFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^www\.[^ ]+\s*[- ]*").expect("valid regex"));
 
+/// The matcher's revision. Raised when it learns to name more (a country tag without a year,
+/// & for and, a title a year off TMDB's: 2), so torrents it could not name are looked up again.
+pub const MATCHER: u64 = 2;
+
 pub fn parse_name(name: &str) -> (String, String, &'static str) {
     let name = PREFIX.replace(name, "");
     let name = name.trim_start_matches("[BT下载]");
