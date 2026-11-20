@@ -415,6 +415,18 @@ final class Store: ObservableObject {
     }
     @Published var token: String = Credentials.read()
     @Published var torrents: [Torrent] = []
+    /// Torrents already seen in Needs attention on this device. It only grows (to a few hundred),
+    /// so a download that is stalled now and then does not light the menu's dot again.
+    @Published private(set) var attentionSeen: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "attentionSeen") ?? [])
+    var attentionTorrents: Set<String> { Set(torrents.filter { !$0.isJunk && $0.needsAttention }.map(\.id)) }
+    /// Something in Needs attention that has not been looked at: the menu shows a dot.
+    var hasNewAttention: Bool { !attentionTorrents.isSubset(of: attentionSeen) }
+    func markAttentionSeen() {
+        let seen = attentionSeen.union(attentionTorrents)
+        guard seen != attentionSeen else { return }
+        attentionSeen = seen.count > 500 ? attentionTorrents : seen
+        UserDefaults.standard.set(Array(attentionSeen), forKey: "attentionSeen")
+    }
     /// The server's status changes on nearly every poll (uptime, free space, processing
     /// progress). It lives in `ServerActivity`, which only the screens that show it observe;
     /// the store itself announces a change only when the connection comes or goes, so the

@@ -486,6 +486,7 @@ final class L10n {
     IDS.put("Moving to Junk…", R.string.ui_5df5902ecdb5);
     IDS.put("Name", R.string.ui_709a23220f2c);
     IDS.put("Needs attention", R.string.ui_a126722ec044);
+    IDS.put("New", R.string.ui_6403f2b7eb2a);
     IDS.put("New Tab", R.string.ui_bbeec6fc8b45);
     IDS.put("New Tab (⌘T)", R.string.ui_dfdde1f46ede);
     IDS.put("New code", R.string.ui_6499c7afe865);
@@ -538,6 +539,7 @@ final class L10n {
     IDS.put("Not enough free space", R.string.ui_8d845d16e535);
     IDS.put("Not enough free space on any drive", R.string.ui_7d7dbf6869ce);
     IDS.put("Not enough free space on that drive", R.string.ui_e07feb82ca22);
+    IDS.put("Not in the library yet: choose its title", R.string.ui_f804fd4766d0);
     IDS.put("Not needed", R.string.ui_2518be9b9cea);
     IDS.put("Not progressing", R.string.ui_0008c8375b5d);
     IDS.put("Not set up", R.string.ui_be8f2e94e7b3);

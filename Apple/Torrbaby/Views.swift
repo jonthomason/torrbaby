@@ -338,6 +338,7 @@ struct RootView: View {
                     HStack(spacing: 12) {
                         Image(systemName: section.icon).frame(width: 24)
                         Text(LocalizedStringKey(section.rawValue))
+                        if section == .attention && store.hasNewAttention { NewDot() }
                         Spacer(minLength: 0)
                     }.font(.body.weight(selected ? .semibold : .regular)).padding(.horizontal, 12).frame(height: rowHeight)
                         .foregroundStyle(selected ? Theme.onAccent : Color.white)
@@ -380,6 +381,7 @@ struct RootView: View {
                                     .frame(width: 29, height: 29).background(section.badge.tint.gradient, in: RoundedRectangle(cornerRadius: 7))
                                     .accessibilityHidden(true)
                                 Text(LocalizedStringKey(section.rawValue)).foregroundStyle(Color.primary)
+                                if section == .attention && store.hasNewAttention { NewDot() }
                                 Spacer(minLength: 0)
                                 Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary).accessibilityHidden(true)
                             }.contentShape(Rectangle())
@@ -633,7 +635,12 @@ struct TorrentListView: View {
             return included && (search.isEmpty || t.name.localizedCaseInsensitiveContains(search))
         })
     }
-    var body: some View { torrentContent.modifier(NeedsLiveTorrents()) }
+    var body: some View {
+        torrentContent.modifier(NeedsLiveTorrents())
+            // Looking at Needs attention is seeing what is new there.
+            .onAppear { if section == .attention { store.markAttentionSeen() } }
+            .onChange(of: store.attentionTorrents) { if section == .attention { store.markAttentionSeen() } }
+    }
     @ViewBuilder private var torrentContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -1113,3 +1120,10 @@ private struct MouseHistoryNavigation: NSViewRepresentable {
     }
 }
 #endif
+
+/// A small dot beside a menu item with something new in it.
+struct NewDot: View {
+    var body: some View {
+        Circle().fill(.orange).frame(width: 7, height: 7).accessibilityLabel(Text("New"))
+    }
+}

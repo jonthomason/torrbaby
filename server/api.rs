@@ -1593,7 +1593,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
         if let Some(torrents) = cached {
             let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
             let operations = db.library_operations()?;
-            return Ok(library_issues(crate::library_files::annotate_torrents(torrents, &operations), &db.jobs()?));
+            return Ok(library_issues(crate::library_files::annotate_torrents(torrents, &operations), &db.jobs()?, &unmatched(&db)?));
         }
         let torrents = s
             .rpc
@@ -1602,7 +1602,7 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             .take();
         let db = s.db.lock().map_err(|_| anyhow::anyhow!("Database unavailable"))?;
         let operations = db.library_operations()?;
-        return Ok(library_issues(crate::library_files::annotate_torrents(torrents, &operations), &db.jobs()?));
+        return Ok(library_issues(crate::library_files::annotate_torrents(torrents, &operations), &db.jobs()?, &unmatched(&db)?));
     }
     let effective = if path == "/v1/status" || path == "/v1/storage" || path.starts_with("/v1/attention") {
         Some(s.effective_config()?)
@@ -2326,7 +2326,18 @@ fn byte_range(header: Option<&str>, size: u64) -> Result<(u64, u64)> {
 
 /// Why a finished download has not been filed into the library, for the
 /// clients' "Needs attention" list (for example, a title waiting to be identified).
-fn library_issues(mut torrents: Value, jobs: &Value) -> Value {
+/// Torrents with a finished video the library could not name: its lookup ended in review or
+/// no match, so it is filed nowhere a member would look. Needs attention lists them.
+fn unmatched(db: &crate::storage::Database) -> Result<std::collections::HashSet<String>> {
+    Ok(db.rows("SELECT DISTINCT json_extract(document,'$.torrent_hash') AS hash FROM library_assets
+        WHERE json_extract(document,'$.entity_id') IS NULL AND json_extract(document,'$.status') IN ('review','no_match')
+        AND json_extract(document,'$.complete') = 1 AND json_extract(document,'$.available') = 1
+        AND coalesce(json_extract(document,'$.role'),'') != 'extra' AND coalesce(json_extract(document,'$.container'),'') != 'not_media'
+        AND json_extract(document,'$.torrent_hash') IS NOT NULL", [])?
+        .iter().filter_map(|row| row["hash"].as_str().map(str::to_owned)).collect())
+}
+
+fn library_issues(mut torrents: Value, jobs: &Value, unmatched: &std::collections::HashSet<String>) -> Value {
     if let Some(rows) = torrents.as_array_mut() {
         for torrent in rows {
             // What the release's name says (picture, range, sound, source, codec, seasons and
@@ -2336,11 +2347,16 @@ fn library_issues(mut torrents: Value, jobs: &Value) -> Value {
                 if let Some(object) = hints.as_object_mut() { object.remove("evidence"); }
                 torrent["hints"] = hints;
             }
-            let job = &jobs[torrent["hash_string"].as_str().unwrap_or("")];
-            if job["phase"] == "blocked" && torrent["percent_done"].as_f64().is_some_and(|done| done >= 1.0) {
+            let hash = torrent["hash_string"].as_str().unwrap_or("").to_owned();
+            let job = &jobs[hash.as_str()];
+            let finished = torrent["percent_done"].as_f64().is_some_and(|done| done >= 1.0);
+            if job["phase"] == "blocked" && finished {
                 if let Some(reason) = job["error"].as_str().filter(|reason| !reason.is_empty()) {
                     torrent["library_issue"] = json!(reason);
                 }
+            }
+            if finished && torrent["library_issue"].is_null() && unmatched.contains(&hash) {
+                torrent["library_issue"] = json!("Not in the library yet: choose its title");
             }
         }
     }

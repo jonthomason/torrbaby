@@ -475,6 +475,7 @@
     <string name="ui_5df5902ecdb5" formatted="false">正在移至废弃区…</string>
     <string name="ui_709a23220f2c" formatted="false">名称</string>
     <string name="ui_a126722ec044" formatted="false">需要处理</string>
+    <string name="ui_6403f2b7eb2a" formatted="false">新</string>
     <string name="ui_bbeec6fc8b45" formatted="false">新建标签页</string>
     <string name="ui_dfdde1f46ede" formatted="false">新建标签页（⌘T）</string>
     <string name="ui_6499c7afe865" formatted="false">新建代码</string>
@@ -527,6 +528,7 @@
     <string name="ui_8d845d16e535" formatted="false">可用空间不足</string>
     <string name="ui_7d7dbf6869ce" formatted="false">所有硬盘的可用空间都不足</string>
     <string name="ui_e07feb82ca22" formatted="false">那块硬盘的可用空间不足</string>
+    <string name="ui_f804fd4766d0" formatted="false">尚未加入媒体库：请选择片名</string>
     <string name="ui_2518be9b9cea" formatted="false">不需要</string>
     <string name="ui_0008c8375b5d" formatted="false">无进展</string>
     <string name="ui_be8f2e94e7b3" formatted="false">未设置</string>

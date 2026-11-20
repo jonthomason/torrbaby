@@ -475,6 +475,7 @@
     <string name="ui_5df5902ecdb5" formatted="false">Moving to Junk…</string>
     <string name="ui_709a23220f2c" formatted="false">Name</string>
     <string name="ui_a126722ec044" formatted="false">Needs attention</string>
+    <string name="ui_6403f2b7eb2a" formatted="false">New</string>
     <string name="ui_bbeec6fc8b45" formatted="false">New Tab</string>
     <string name="ui_dfdde1f46ede" formatted="false">New Tab (⌘T)</string>
     <string name="ui_6499c7afe865" formatted="false">New code</string>
@@ -527,6 +528,7 @@
     <string name="ui_8d845d16e535" formatted="false">Not enough free space</string>
     <string name="ui_7d7dbf6869ce" formatted="false">Not enough free space on any drive</string>
     <string name="ui_e07feb82ca22" formatted="false">Not enough free space on that drive</string>
+    <string name="ui_f804fd4766d0" formatted="false">Not in the library yet: choose its title</string>
     <string name="ui_2518be9b9cea" formatted="false">Not needed</string>
     <string name="ui_0008c8375b5d" formatted="false">Not progressing</string>
     <string name="ui_be8f2e94e7b3" formatted="false">Not set up</string>

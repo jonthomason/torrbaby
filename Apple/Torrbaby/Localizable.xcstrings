@@ -18856,6 +18856,40 @@
           }
         }
       }
+    },
+    "New": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新"
+          }
+        }
+      }
+    },
+    "Not in the library yet: choose its title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not in the library yet: choose its title"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚未加入媒体库：请选择片名"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
