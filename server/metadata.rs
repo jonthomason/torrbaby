@@ -94,21 +94,25 @@ fn search_candidates(data: &Value, kind: &str) -> Vec<Value> {
         json!({"provider":"TMDB","provider_id":id,"kind":kind,"title":hit.get("title").or(hit.get("name")),
             "original_title":hit.get("original_title").or(hit.get("original_name")),"year":date.get(..4).unwrap_or(""),
             "genres":[],"content_rating":null,"duration_minutes":null,"summary":hit["overview"],"thumbnail":image(&hit["poster_path"],"w500"),
-            "logo":null,"source_url":format!("https://www.themoviedb.org/{kind}/{id}"),"episodes":[],"votes":hit["vote_count"].as_u64().unwrap_or(0)})
+            "logo":null,"source_url":format!("https://www.themoviedb.org/{kind}/{id}"),"episodes":[],"votes":hit["vote_count"].as_u64().unwrap_or(0),
+            "country":array(&hit["origin_country"]).first().cloned().unwrap_or(Value::Null)})
     }).collect()
 }
 
 /// Candidates whose normalized title or original title equals the query, in the given year.
-/// With a year, a release's country tag ("The Office (US) (2005)") need not be in TMDB's
-/// title: the year tells the US Office from the UK one (2001).
+/// A release's country tag ("The Office (US) (2005)", "Dancing.With.The.Stars.US.S35E05") need
+/// not be in TMDB's title: with a year, the year tells the US Office from the UK one (2001);
+/// without one, the show must come from that country.
 fn exact_candidates<'a>(query: &str, year: &str, candidates: &'a [Value]) -> Vec<&'a Value> {
-    static COUNTRY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)[\s(\[]+(?:US|USA|UK|AU|NZ|CA)[)\]]*\s*$").expect("valid regex"));
-    let untagged = (!year.is_empty()).then(|| normalized(&COUNTRY.replace(query, ""))).filter(|q| !q.is_empty());
+    static COUNTRY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)[\s(\[]+(US|USA|UK|AU|NZ|CA)[)\]]*\s*$").expect("valid regex"));
+    let tag = COUNTRY.captures(query).map(|c| match c[1].to_ascii_uppercase().as_str() { "USA" => "US".to_owned(), "UK" => "GB".to_owned(), other => other.to_owned() });
+    let untagged = tag.as_ref().map(|_| normalized(&COUNTRY.replace(query, ""))).filter(|q| !q.is_empty());
     let query = normalized(query);
     candidates.iter().filter(|c| {
         let titles = [normalized(c["title"].as_str().unwrap_or("")), normalized(c["original_title"].as_str().unwrap_or(""))];
+        let untagged_ok = untagged.as_ref().is_some_and(|u| titles.contains(u)) && (!year.is_empty() || c["country"].as_str() == tag.as_deref());
         !query.is_empty()
-            && titles.iter().any(|t| *t == query || untagged.as_ref() == Some(t))
+            && (titles.contains(&query) || untagged_ok)
             && (year.is_empty() || c["year"] == year)
     }).collect()
 }
@@ -1109,6 +1113,13 @@ mod prefixed_name_tests {
         assert_eq!(exact_candidates("The Office (US", "2005", &offices).len(), 1, "a country tag with the year");
         assert_eq!(exact_candidates("The Office US", "2001", &offices)[0]["year"], "2001");
         assert!(exact_candidates("The Office (US", "", &offices).is_empty(), "no year: the tag must match");
+        // No year: the tag is the show's country ("Dancing.With.The.Stars.US.S35E05").
+        let dances = [json!({"provider_id":"1508","title":"Dancing with the Stars","original_title":"Dancing with the Stars","year":"2005","country":"US"}),
+                      json!({"provider_id":"9","title":"Dancing with the Stars","original_title":"Dancing with the Stars","year":"2004","country":"AU"})];
+        let us = exact_candidates("Dancing With The Stars US", "", &dances);
+        assert_eq!((us.len(), us[0]["provider_id"].clone()), (1, json!("1508")));
+        assert_eq!(exact_candidates("Strictly UK", "", &[json!({"title":"Strictly","original_title":"Strictly","year":"2004","country":"GB"})]).len(), 1);
+        assert!(exact_candidates("Dancing With The Stars NZ", "", &dances).is_empty());
     }
 
     /// `identify` against recorded TMDB responses: no token, no network.
