@@ -25,9 +25,9 @@ static TECHNICAL: LazyLock<Regex> = LazyLock::new(|| {
 static PREFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^www\.[^ ]+\s*[- ]*").expect("valid regex"));
 
 /// The matcher's revision. Raised when it learns to name more (a country tag without a year,
-/// & for and, a title a year off TMDB's: 2; TMDB's other titles: 3), so torrents it could not
-/// name are looked up again.
-pub const MATCHER: u64 = 3;
+/// & for and, a title a year off TMDB's: 2; TMDB's other titles: 3; a widely rated namesake
+/// five times ahead: 4), so torrents it could not name are looked up again.
+pub const MATCHER: u64 = 4;
 
 pub fn parse_name(name: &str) -> (String, String, &'static str) {
     let name = PREFIX.replace(name, "");
@@ -733,7 +733,8 @@ impl Metadata {
                 let mut ranked = exact.clone();
                 ranked.sort_by_key(|c| std::cmp::Reverse(c["votes"].as_u64().unwrap_or(0)));
                 let (first, second) = (ranked[0]["votes"].as_u64().unwrap_or(0), ranked[1]["votes"].as_u64().unwrap_or(0));
-                if first >= 100 && first >= second.saturating_mul(10) {
+                // A widely rated film well ahead counts too (The Odyssey 2026: 5,202 votes against 783).
+                if (first >= 100 && first >= second.saturating_mul(10)) || (first >= 1000 && first >= second.saturating_mul(5)) {
                     let exact = ranked[0].clone();
                     return Ok(json!({"query":query,"year":year,"kind":kind,"candidates":candidates,"exact":exact,
                         "matched_query":attempt,"matched_year":attempt_year,"attempts":tried}));
