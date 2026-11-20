@@ -13,7 +13,7 @@ struct TorrentSearchSource: Decodable {
     var label: String { Self.label(provider) }
     static func label(_ provider: String) -> String { ["tpb":"The Pirate Bay", "csv":"Torrent CSV", "nyaa":"Nyaa", "quark": L10n.text("Quark Drive")][provider] ?? provider }
 }
-struct TorrentReleaseHints: Decodable {
+struct TorrentReleaseHints: Codable, Hashable {
     let year: Int?
     let season: Int?
     var seasonEnd: Int? = nil
@@ -270,26 +270,30 @@ struct TorrentSearchItem: Decodable, Identifiable {
     }
     var size: String { sizeBytes.map { ByteCountFormatter.string(fromByteCount: Int64(clamping: $0), countStyle: .file) } ?? sizeLabel ?? "" }
     /// Picture, range, sound, source and codec as short tags: "4K", "DV", "Atmos", "WEB-DL", "HEVC".
+    var tags: [SearchTag] { hints.tags }
+}
+extension TorrentReleaseHints {
+    /// Picture, range, sound, source and codec as short tags, as Find and the transfers show them.
     var tags: [SearchTag] {
         var tags: [SearchTag] = []
-        if let resolution = hints.resolution { tags.append(SearchTag(text: resolution == "2160p" ? "4K" : resolution, strong: resolution == "2160p")) }
-        if let hdr = hints.hdr { tags.append(SearchTag(text: hdr == "Dolby Vision" ? "DV" : hdr, strong: true)) }
-        let channels = hints.audioChannels.map { " " + $0 } ?? ""
-        switch hints.audioKind {
+        if let resolution = resolution { tags.append(SearchTag(text: resolution == "2160p" ? "4K" : resolution, strong: resolution == "2160p")) }
+        if let hdr = hdr { tags.append(SearchTag(text: hdr == "Dolby Vision" ? "DV" : hdr, strong: true)) }
+        let channels = audioChannels.map { " " + $0 } ?? ""
+        switch audioKind {
         case "lossless_atmos": tags.append(SearchTag(text: "TrueHD Atmos", strong: true))
         case "dtsx": tags.append(SearchTag(text: "DTS:X", strong: true))
         case "atmos": tags.append(SearchTag(text: "Atmos", strong: true))
         case "lossless": tags.append(SearchTag(text: L10n.text("Lossless") + channels))
-        case "surround": tags.append(SearchTag(text: hints.audioChannels ?? L10n.text("Surround")))
+        case "surround": tags.append(SearchTag(text: audioChannels ?? L10n.text("Surround")))
         case "stereo": tags.append(SearchTag(text: L10n.text("Stereo")))
         case "mono": tags.append(SearchTag(text: L10n.text("Mono")))
         default: break
         }
-        if let source = hints.releaseSource {
+        if let source = releaseSource {
             let key = source.lowercased().filter(\.isLetter)
             tags.append(SearchTag(text: key == "webdl" ? "WEB-DL" : key == "webrip" ? "WEBRip" : key == "bluray" ? "Blu-ray" : key == "remux" ? "Remux" : source))
         }
-        if let codec = hints.videoCodec?.uppercased() {
+        if let codec = videoCodec?.uppercased() {
             let key = codec.filter { $0.isLetter || $0.isNumber }
             tags.append(SearchTag(text: ["X265", "H265", "HEVC"].contains(key) ? "HEVC" : ["X264", "H264"].contains(key) ? "H.264" : key == "XVID" ? "XviD" : codec))
         }

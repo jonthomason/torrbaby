@@ -32,6 +32,7 @@ final class L10n {
     IDS.put("%dm left", R.string.ui_659748ef61cf);
     IDS.put("%s free of %s", R.string.ui_9b722d3ba900);
     IDS.put("1 DOWNLOAD", R.string.ui_c428b17e2512);
+    IDS.put("1 FILE", R.string.ui_a6456c91027d);
     IDS.put("1 episode", R.string.ui_54fc19e5c9f4);
     IDS.put("1 seed", R.string.ui_8256cd5880d0);
     IDS.put("1 video", R.string.ui_9fa45ef1a516);
@@ -247,6 +248,7 @@ final class L10n {
     IDS.put("Delete all", R.string.ui_08170580cbf4);
     IDS.put("Delete all downloaded episodes", R.string.ui_ca7287103bcf);
     IDS.put("Delete download", R.string.ui_d41b502f0510);
+    IDS.put("Delete files", R.string.ui_223d8539d808);
     IDS.put("Delete files from server…", R.string.ui_3ddb8541a199);
     IDS.put("Delete permanently", R.string.ui_e63b5153bde0);
     IDS.put("Delete this device’s download?", R.string.ui_b14c902794f5);
@@ -406,6 +408,7 @@ final class L10n {
     IDS.put("Keep", R.string.ui_466fc492747c);
     IDS.put("Keep downloading", R.string.ui_032fdc17f648);
     IDS.put("Keep file extensions and episode numbers.", R.string.ui_44d9c7e94283);
+    IDS.put("Keep files", R.string.ui_97f3e76f3d09);
     IDS.put("Keep files on server", R.string.ui_0ecad4174400);
     IDS.put("Keep free", R.string.ui_60bcc51c0842);
     IDS.put("Keep free (GB)", R.string.ui_ed7e27d64487);
@@ -662,6 +665,7 @@ final class L10n {
     IDS.put("Rename", R.string.ui_d3f4cb898fbe);
     IDS.put("Rename through Transmission", R.string.ui_f013e1dcb608);
     IDS.put("Rename torrent", R.string.ui_7d1e95ef4177);
+    IDS.put("Rename…", R.string.ui_94ac9a58b609);
     IDS.put("Replaced with better: %d", R.string.ui_36e312c84c30);
     IDS.put("Resolution", R.string.ui_516aae52959d);
     IDS.put("Resume", R.string.ui_b3bd0b5a7049);

@@ -6,83 +6,41 @@ struct TorrentDetail: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     let hash: String
-    @State private var showRemove = false
+    @State private var removing: Torrent?
     @State private var showRename = false
+    @State private var showDetails = false
     @Environment(\.openWindow) private var openWindow
     @State private var playback: Playback?
     @State private var loadingPlayback = false
     var torrent: Torrent? { store.torrents.first { $0.id == hash } }
+    private var record: MediaMetadata? { store.metadata.first { $0.hash == hash } }
     var body: some View { statusContent.modifier(NeedsServerStatus()) }
     @ViewBuilder private var statusContent: some View {
         Group {
             if let t = torrent {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 22) {
-                        HStack(alignment: .top, spacing: 18) {
-                            Image(systemName: "film.stack.fill").font(.system(size: 38)).foregroundStyle(Theme.accent)
-                                .frame(width: 78, height: 94).background(Theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-                            VStack(alignment: .leading, spacing: 9) {
-                                Text(t.displayName).font(.system(size: 25, weight: .bold, design: .rounded)).textSelection(.enabled)
-                                Text(t.stateName).font(.subheadline.weight(.medium)).foregroundStyle(t.needsAttention ? .orange : Theme.accent)
-                                Text("\(bytes(t.size)) · \(t.files.count) files").font(.caption).foregroundStyle(Theme.muted)
-                            }
-                        }
-                        if t.error != 0 { Label(t.errorString, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange) }
-                        Card {
-                            VStack(alignment: .leading, spacing: 16) {
-                                HStack {
-                                    Text(LocalizedStringKey(t.completed ? "Download complete" : "Download progress")).font(.headline)
-                                    Spacer()
-                                    Text(t.percentDone, format: .percent.precision(.fractionLength(1))).monospacedDigit().foregroundStyle(Theme.accent)
-                                }
-                                TorrentProgressGauge(value: t.percentDone)
-                                ViewThatFits(in: .horizontal) {
-                                    HStack(spacing: 24) { transferStats(t) }
-                                    VStack(alignment: .leading, spacing: 12) { transferStats(t) }
-                                }
-                            }
-                        }
+                    VStack(alignment: .leading, spacing: 18) {
+                        header(t)
+                        if let issue = t.progressIssue { Label(issue, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange) }
+                        progress(t)
                         ViewThatFits(in: .horizontal) {
-                            HStack(spacing: 12) { actions(t) }
-                            VStack(alignment: .leading, spacing: 12) { actions(t) }
+                            HStack(spacing: 10) { actions(t) }
+                            VStack(alignment: .leading, spacing: 10) { actions(t) }
                         }.disabled(store.busy || !store.connected)
-                        // Progress and controls come first; what the library made of it follows.
-                        MetadataCard(torrent: t)
-                        TransferHistoryView(compact: false, torrentHash: t.id, uploadOnly: t.completed)
-                        if let job = store.status?.jobs[hash] {
-                            Card {
-                                VStack(alignment: .leading, spacing: 10) {
-                                    Label("Organizer · \(job.phase.capitalized)", systemImage: "sparkles").font(.headline)
-                                    if let error = job.error { Text(L10n.text(error)).font(.callout).foregroundStyle(.orange) }
-                                    if let destination = job.destination { Text(destination).font(.caption).foregroundStyle(Theme.muted).textSelection(.enabled) }
-                                    HStack {
-                                        Button("Retry organization") { store.action(t, "retry") }
-                                        Button("Ignore") { store.action(t, "ignore") }.disabled(job.phase == "moving")
-                                    }.buttonStyle(MonoButtonStyle()).disabled(store.busy)
-                                }
-                            }
-                        }
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Text("FILES").font(.caption.weight(.semibold)).tracking(1.5).foregroundStyle(Theme.muted)
-                                Spacer()
-                                Text("Original quality · Native player").font(.caption2).foregroundStyle(Theme.muted)
-                            }
-                            ForEach(Array(t.files.enumerated()), id: \.offset) { index, file in
-                                TorrentFileRow(torrent: t, index: index, file: file, loading: loadingPlayback) { play(t, index) }
-                            }
-                        }
-                        Card {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Label("Location", systemImage: "folder").font(.headline)
-                                Text(t.downloadDir).font(.callout).foregroundStyle(Theme.muted).textSelection(.enabled)
-                                Text("Added " + Date(timeIntervalSince1970: t.addedDate).formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(Theme.muted)
-                                Text(t.id).font(.caption2.monospaced()).foregroundStyle(Theme.muted).textSelection(.enabled)
-                            }
-                        }
-                    }.padding(24).frame(maxWidth: 1000).frame(maxWidth: .infinity)
+                        if let job = store.status?.jobs[hash] { organizer(t, job) }
+                        if record?.selected == nil { MetadataCard(torrent: t) }
+                        TransferHistoryView(compact: true, torrentHash: t.id, uploadOnly: t.completed)
+                        files(t)
+                        DisclosureGroup(isExpanded: $showDetails) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(verbatim: t.downloadDir).textSelection(.enabled)
+                                Text(verbatim: L10n.format("Added %@", Date(timeIntervalSince1970: t.addedDate).formatted(date: .abbreviated, time: .shortened)))
+                                Text(verbatim: t.id).font(.caption2.monospaced()).textSelection(.enabled)
+                            }.font(.caption).foregroundStyle(Theme.muted).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
+                        } label: { Text("Details").font(.caption.weight(.semibold)).foregroundStyle(Theme.muted) }
+                    }.padding(20).frame(maxWidth: 900).frame(maxWidth: .infinity)
                 }.background(Theme.canvas)
-                .sheet(isPresented: $showRemove) { LocalizedInterface { RemoveTorrentView(torrent: t) } }
+                .removeTorrentAlert($removing)
                 .sheet(isPresented: $showRename) { LocalizedInterface { RenameView(torrent: t) } }
             } else {
                 ContentUnavailableView("Torrent removed", systemImage: "checkmark.circle", description: Text("This torrent is no longer in Transmission."))
@@ -90,41 +48,95 @@ struct TorrentDetail: View {
         }
         .navigationTitle("Torrent details")
         #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
         .background(MobilePlayerPresentation(playback: $playback, store: store).frame(width: 0, height: 0))
         #endif
     }
-    @ViewBuilder func transferStats(_ t: Torrent) -> some View {
-        Label(rate(t.rateDownload), systemImage: "arrow.down").foregroundStyle(Theme.accent)
-        Label(rate(t.rateUpload), systemImage: "arrow.up").foregroundStyle(Theme.muted)
-        Text(verbatim: peerCount(t.peersConnected)).foregroundStyle(Theme.muted)
-        Text("Ratio \(max(0, t.uploadRatio), specifier: "%.2f")").foregroundStyle(Theme.muted)
-        if !t.completed { Text(t.etaText).foregroundStyle(Theme.muted) }
-        Text("\(bytes(t.downloaded)) / \(bytes(t.size))").foregroundStyle(Theme.muted)
+    /// Poster, the title the library knows it by, the release's tags and its own name.
+    private func header(_ t: Torrent) -> some View {
+        let title = t.title(record?.selected)
+        let tags = (t.scope.map { [SearchTag(text: $0)] } ?? []) + (t.hints?.tags ?? [])
+        return HStack(alignment: .top, spacing: 14) {
+            ZStack {
+                Theme.accent.opacity(0.10)
+                if record?.selected?.thumbnail != nil { LibraryArtwork(id: "torrent:" + t.id) }
+                else { Image(systemName: t.completed ? "film" : "arrow.down").font(.title2).foregroundStyle(Theme.accent) }
+            }.frame(width: 72, height: 104).clipShape(RoundedRectangle(cornerRadius: 7)).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(verbatim: title.name).font(.title3.weight(.bold)).textSelection(.enabled)
+                    if let year = title.year { Text(verbatim: year).font(.subheadline).foregroundStyle(Theme.muted) }
+                }
+                if !tags.isEmpty { SearchTags(tags: tags) }
+                Text(verbatim: t.name).font(.caption2).foregroundStyle(Theme.muted).lineLimit(2).textSelection(.enabled)
+            }
+        }
     }
-    @ViewBuilder func actions(_ t: Torrent) -> some View {
+    /// State and percentage over the labelled bar, then one line of figures.
+    private func progress(_ t: Torrent) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(LocalizedStringKey(t.stateName)).font(.subheadline.weight(.semibold)).foregroundStyle(t.needsAttention ? .orange : Theme.accent)
+                Spacer()
+                Text(verbatim: t.completed ? bytes(t.size) : L10n.format("%@ of %@", bytes(t.downloaded), bytes(t.size)))
+                    .font(.caption.monospacedDigit()).foregroundStyle(Theme.muted)
+            }
+            if !t.completed { TorrentProgressGauge(value: t.percentDone) }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 14) { figures(t) }
+                VStack(alignment: .leading, spacing: 6) { figures(t) }
+            }.font(.caption.monospacedDigit()).foregroundStyle(Theme.muted)
+        }.padding(14).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+    }
+    @ViewBuilder private func figures(_ t: Torrent) -> some View {
+        if !t.completed { Label(rate(t.rateDownload), systemImage: "arrow.down").foregroundStyle(Theme.accent) }
+        Label(rate(t.rateUpload), systemImage: "arrow.up")
+        Text(verbatim: peerCount(t.peersConnected))
+        if t.completed { Text(verbatim: L10n.format("Ratio %@", max(0, t.uploadRatio).formatted(.number.precision(.fractionLength(2))))) }
+        else { Text(verbatim: t.etaText) }
+    }
+    @ViewBuilder private func actions(_ t: Torrent) -> some View {
         if let operation = t.fileOperation {
             Text(LocalizedStringKey(operation.label)).foregroundStyle(.secondary)
         } else {
-        Button { store.action(t, t.status == 0 ? "start" : "stop") } label: {
-            Label(LocalizedStringKey(t.status == 0 ? "Resume" : "Pause"), systemImage: t.status == 0 ? "play.fill" : "pause.fill")
-        }.buttonStyle(MonoButtonStyle(prominent: true)).foregroundStyle(Theme.onAccent)
-        // Jumps the queue: starts now, ahead of other downloads. Also in the row's long-press menu.
-        if !t.completed {
-            // Once chosen it reads as a state; pressing again returns it to an ordinary download.
-            Button { store.action(t, t.downloadsFirst ? "unprioritize" : "prioritize") } label: {
-                Label(LocalizedStringKey(t.downloadsFirst ? "Downloading first" : "Download first"), systemImage: t.downloadsFirst ? "checkmark" : "arrow.up.to.line")
-            }.buttonStyle(MonoButtonStyle()).foregroundStyle(t.downloadsFirst ? Theme.accent : Color.primary)
-                .accessibilityHint(Text(LocalizedStringKey(t.downloadsFirst ? "Stop downloading first" : "")))
-                .disabled(store.busy || !store.connected)
+            Button { store.action(t, t.status == 0 ? "start" : "stop") } label: {
+                Label(LocalizedStringKey(t.status == 0 ? "Resume" : "Pause"), systemImage: t.status == 0 ? "play.fill" : "pause.fill")
+            }.buttonStyle(MonoButtonStyle(prominent: true)).foregroundStyle(Theme.onAccent)
+            // Jumps the queue: starts now, ahead of other downloads. Pressing again makes it ordinary.
+            if !t.completed {
+                Button { store.action(t, t.downloadsFirst ? "unprioritize" : "prioritize") } label: {
+                    Label(LocalizedStringKey(t.downloadsFirst ? "Downloading first" : "Download first"), systemImage: t.downloadsFirst ? "checkmark" : "arrow.up.to.line")
+                }.buttonStyle(MonoButtonStyle()).foregroundStyle(t.downloadsFirst ? Theme.accent : Color.primary)
+            }
+            Menu {
+                Button("Rename…") { showRename = true }.disabled(!t.completed)
+                Button("Look up again") { store.action(t, "metadata-refresh") }
+                Divider()
+                Button("Verify downloaded data") { store.action(t, "verify") }
+                Button("Reannounce to trackers") { store.action(t, "reannounce") }
+                Button("Retry organization") { store.action(t, "retry") }
+                Button("Ignore for organization") { store.action(t, "ignore") }
+            } label: { Label("More", systemImage: "ellipsis") }.menuStyle(.borderlessButton).fixedSize()
+            Button(role: .destructive) { removing = t } label: { Label("Remove", systemImage: "trash") }.buttonStyle(MonoButtonStyle())
         }
-        Menu {
-            Button("Verify downloaded data") { store.action(t, "verify") }
-            Button("Reannounce to trackers") { store.action(t, "reannounce") }
-            Button("Retry organization") { store.action(t, "retry") }
-            Button("Ignore for organization") { store.action(t, "ignore") }
-        } label: { Label("More", systemImage: "ellipsis") }.menuStyle(.borderlessButton)
-        Button { showRename = true } label: { Label("Rename", systemImage: "pencil") }.buttonStyle(MonoButtonStyle()).disabled(!t.completed)
-        Button(role: .destructive) { showRemove = true } label: { Label("Remove", systemImage: "trash") }.buttonStyle(MonoButtonStyle())
+    }
+    private func organizer(_ t: Torrent, _ job: Job) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Organizer · \(job.phase.capitalized)", systemImage: "sparkles").font(.subheadline.weight(.semibold))
+            if let error = job.error { Text(L10n.text(error)).font(.callout).foregroundStyle(.orange) }
+            HStack {
+                Button("Retry organization") { store.action(t, "retry") }
+                Button("Ignore") { store.action(t, "ignore") }.disabled(job.phase == "moving")
+            }.buttonStyle(MonoButtonStyle(compact: true)).disabled(store.busy)
+        }.padding(14).frame(maxWidth: .infinity, alignment: .leading).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+    }
+    private func files(_ t: Torrent) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(t.files.count == 1 ? "1 FILE" : "\(t.files.count) FILES").font(.caption.weight(.semibold)).tracking(1.4).foregroundStyle(Theme.muted).padding(.bottom, 6)
+            ForEach(Array(t.files.enumerated()), id: \.offset) { index, file in
+                TorrentFileRow(torrent: t, index: index, file: file, loading: loadingPlayback) { play(t, index) }
+                if index < t.files.count - 1 { Divider().opacity(0.5) }
+            }
         }
     }
     func play(_ t: Torrent, _ index: Int) {
@@ -147,47 +159,27 @@ struct TorrentDetail: View {
     }
 }
 
-struct RemoveTorrentView: View {
+extension View {
+    /// Removing a torrent: one alert, its name, and three choices.
+    func removeTorrentAlert(_ torrent: Binding<Torrent?>) -> some View { modifier(RemoveTorrentAlert(torrent: torrent)) }
+}
+private struct RemoveTorrentAlert: ViewModifier {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
-    @Environment(\.dismiss) var dismiss
-    let torrent: Torrent
-    var body: some View {
-        NavigationStack {
-            Form {
-                SwiftUI.Section {
-                    Text(torrent.displayName).font(.headline)
-                    Text("Removing stops this torrent and removes it from Transmission.").foregroundStyle(.secondary)
-                }
-                SwiftUI.Section {
-                    Button("Remove torrent, keep files") {
-                        remove(deleteData: false)
-                    }
-                    Text("Stop tracking the torrent in Transmission. Keep all downloaded files on Diamond.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                SwiftUI.Section {
-                    Button("Remove torrent and delete files", role: .destructive) {
-                        remove(deleteData: true)
-                    }
-                    Text("Permanently delete this torrent’s downloaded files, including partial downloads.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }.formStyle(.grouped).canvasBackground()
-            .disabled(store.busy || !store.connected)
-            .navigationTitle("Remove torrent")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-            }
-        }.presentationDetents([.medium, .large])
-        #if os(macOS)
-        .frame(width: 560, height: 420)
-        #endif
+    @Binding var torrent: Torrent?
+    func body(content: Content) -> some View {
+        let shown = torrent
+        let name = shown.map { t in t.title(store.metadata.first { $0.hash == t.id }?.selected).name } ?? ""
+        content.alert(L10n.format("Remove “%@”?", name), isPresented: Binding(get: { torrent != nil }, set: { if !$0 { torrent = nil } })) {
+            Button("Keep files") { remove(shown, deleteData: false) }
+            Button("Delete files", role: .destructive) { remove(shown, deleteData: true) }
+            Button("Cancel", role: .cancel) {}
+        }
     }
-    private func remove(deleteData: Bool) {
+    private func remove(_ torrent: Torrent?, deleteData: Bool) {
+        guard let torrent else { return }
         store.perform {
             try await store.send("POST", "/v1/torrents/\(torrent.id)/remove", body: ["delete_data": deleteData, "confirm_hash": torrent.id])
-            dismiss()
         }
     }
 }
@@ -297,11 +289,11 @@ struct TorrentFileRow: View {
     let loading: Bool
     let play: () -> Void
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Image(systemName: file.isVideo ? "play.rectangle" : "doc").foregroundStyle(file.isVideo ? Theme.accent : Theme.muted)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(file.name).font(.callout).textSelection(.enabled)
-                Text(LocalizedStringKey(bytes(file.length) + (file.complete ? "" : " · Incomplete"))).font(.caption).foregroundStyle(Theme.muted)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: (file.name as NSString).lastPathComponent).font(.footnote).textSelection(.enabled).lineLimit(2)
+                Text(LocalizedStringKey(bytes(file.length) + (file.complete ? "" : " · Incomplete"))).font(.caption2).foregroundStyle(Theme.muted)
             }
             Spacer()
             if file.isVideo && file.complete {
@@ -311,7 +303,7 @@ struct TorrentFileRow: View {
                     .accessibilityLabel("Play \(file.name)")
                     .disabled(loading || !store.connected)
             }
-        }.padding(16).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+        }.padding(.vertical, 8)
     }
 }
 

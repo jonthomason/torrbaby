@@ -613,10 +613,11 @@ struct TorrentListView: View {
     @State private var selected: Set<String> = []
     @State private var confirmingBulkRemove = false
     @State private var bulkProgress: String?
+    /// The header's rates as one line on iPhone and iPad, as cards on the Mac.
     #if os(iOS)
-    @AppStorage("compactMobileTorrentView") private var compact = true
+    private let compact = true
     #else
-    @AppStorage("compactTorrentView") private var compact = false
+    private let compact = false
     #endif
     var filtered: [Torrent] {
         sortSelection.wrappedValue.ordered(store.torrents.filter { t in
@@ -687,7 +688,7 @@ struct TorrentListView: View {
                     ContentUnavailableView(search.isEmpty ? "All clear" : "No matches", systemImage: search.isEmpty ? "checkmark.circle" : "magnifyingglass", description: Text(LocalizedStringKey(search.isEmpty ? "" : "Try a different title.")))
                         .padding(.vertical, 40)
                 } else {
-                    LazyVStack(spacing: compact ? 4 : 10) {
+                    LazyVStack(spacing: 6) {
                         ForEach(filtered) { torrent in listItem(torrent) }
                     }
                 }
@@ -711,7 +712,7 @@ struct TorrentListView: View {
                 try? await Task.sleep(for: .seconds(cloudJobs.contains(where: \.isActive) ? 3 : 15))
             }
         }
-        .sheet(item: $removing) { item in LocalizedInterface { RemoveTorrentView(torrent: item) } }
+        .removeTorrentAlert($removing)
         .confirmationDialog(L10n.format("Remove %d torrents?", selectedTorrents.count), isPresented: $confirmingBulkRemove, titleVisibility: .visible) {
             Button(L10n.format("Remove %d torrents, keep files", selectedTorrents.count)) { removeSelected(deleteData: false) }
             Button(L10n.format("Remove %d torrents and delete files", selectedTorrents.count), role: .destructive) { removeSelected(deleteData: true) }
@@ -720,22 +721,9 @@ struct TorrentListView: View {
             Text("Deleting files permanently removes their downloaded data, including partial downloads.")
         }
         .onChange(of: filtered.map(\.id)) { _, ids in selected.formIntersection(ids) }
-        .toolbar {
-            ToolbarItem(placement: {
-                #if os(iOS)
-                .topBarTrailing
-                #else
-                .primaryAction
-                #endif
-            }()) {
-                Button { compact.toggle() } label: {
-                    Label(LocalizedStringKey(compact ? "Comfortable view" : "Compact view"), systemImage: compact ? "rectangle.grid.1x2" : "list.bullet")
-                }.help(compact ? "Switch to comfortable view" : "Switch to compact view")
-            }
-            #if os(iOS)
-            LanguageToolbar()
-            #endif
-        }
+        #if os(iOS)
+        .toolbar { LanguageToolbar() }
+        #endif
         .refreshable { await store.refresh() }
     }
     private func listItem(_ torrent: Torrent) -> some View {
@@ -781,14 +769,7 @@ struct TorrentListView: View {
               #endif
             }
     }
-    @ViewBuilder private func row(_ torrent: Torrent) -> some View {
-        #if os(iOS)
-        MobileTorrentRow(torrent: torrent, showReason: section == .attention, compact: compact)
-        #else
-        if compact { CompactTorrentRow(torrent: torrent, showReason: section == .attention) }
-        else { TorrentRow(torrent: torrent, showReason: section == .attention) }
-        #endif
-    }
+    private func row(_ torrent: Torrent) -> some View { TransferRow(torrent: torrent, showReason: section == .attention) }
     private var selectable: [Torrent] { filtered.filter { $0.fileOperation == nil } }
     private var selectedTorrents: [Torrent] { selectable.filter { selected.contains($0.id) } }
     private func toggle(_ torrent: Torrent) {
@@ -866,156 +847,84 @@ struct Metric: View {
     }
 }
 
-struct TorrentRow: View {
+/// A transfer as Find shows a release: its poster, the title the library knows it by, the
+/// release's tags (picture, sound, source, seasons and episodes), then one line of state,
+/// size, speed and time left, over a thin progress bar while it downloads.
+struct TransferRow: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
     let torrent: Torrent
     var showReason = false
-    var color: Color { torrent.needsAttention ? .orange : torrent.completed ? Theme.muted : Theme.accent }
+    private var title: (name: String, year: String?) { torrent.title(store.metadata.first { $0.hash == torrent.id }?.selected) }
+    private var stateColor: Color { torrent.needsAttention ? .orange : torrent.completed ? Theme.muted : Theme.accent }
+    private var tags: [SearchTag] { (torrent.scope.map { [SearchTag(text: $0)] } ?? []) + (torrent.hints?.tags ?? []) }
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-          HStack(alignment: .top, spacing: 16) {
-            TorrentThumbnail(torrent: torrent).frame(width: 46, height: 64)
-            VStack(alignment: .leading, spacing: 9) {
-                Text(torrent.displayName).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.torrent).lineLimit(2).multilineTextAlignment(.leading)
-                HStack(spacing: 8) {
-                    Text(LocalizedStringKey(torrent.stateName)).foregroundStyle(color)
-                    Text("·").foregroundStyle(Theme.muted)
-                    Text(bytes(torrent.size)).foregroundStyle(Theme.muted)
-                    Spacer(minLength: 0)
-                }.font(.caption)
-                Text("\(bytes(torrent.downloaded)) of \(bytes(torrent.size))")
-                    .font(.caption.monospacedDigit()).foregroundStyle(Theme.muted)
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 16) { TorrentActivity(torrent: torrent) }
-                    VStack(alignment: .leading, spacing: 5) { TorrentActivity(torrent: torrent) }
-                }.font(.caption).foregroundStyle(Theme.muted).monospacedDigit()
-                if showReason, let reason = torrent.progressIssue { Text(reason).font(.caption).foregroundStyle(.orange) }
-            }
-            Image(systemName: "chevron.right").font(.caption.weight(.medium)).foregroundStyle(Theme.muted).padding(.top, 18)
-          }
-          if !torrent.completed { TorrentProgressGauge(value: torrent.percentDone) }
+        HStack(alignment: .top, spacing: 10) {
+            TorrentThumbnail(torrent: torrent).frame(width: SearchFont.poster, height: SearchFont.poster * 1.45)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(verbatim: title.name).font(SearchFont.rowTitle).foregroundStyle(Theme.torrent).lineLimit(2).multilineTextAlignment(.leading)
+                    if let year = title.year { Text(verbatim: year).font(SearchFont.detail).foregroundStyle(Theme.muted) }
+                }
+                if !tags.isEmpty { SearchTags(tags: tags) }
+                status.font(SearchFont.detail.monospacedDigit()).foregroundStyle(Theme.muted).lineLimit(1).minimumScaleFactor(0.85)
+                if !torrent.completed { TransferBar(value: torrent.percentDone, color: stateColor) }
+                if let operation = torrent.fileOperation {
+                    Text(LocalizedStringKey(operation.label)).font(SearchFont.detail).foregroundStyle(operation.error == nil ? Color.secondary : Color.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if showReason, let reason = torrent.progressIssue { Text(reason).font(SearchFont.detail).foregroundStyle(.orange).lineLimit(2) }
+            }.layoutPriority(1).frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(Theme.muted).padding(.top, 3)
         }
-        .padding(17).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.04)))
+        .padding(.vertical, 9).padding(.horizontal, 11)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 9))
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
-}
-
-struct CompactTorrentRow: View {
-    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
-    let torrent: Torrent
-    let showReason: Bool
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-          HStack(spacing: 12) {
-            TorrentThumbnail(torrent: torrent).frame(width: 32, height: 46)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(torrent.displayName).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.torrent).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
-                HStack(spacing: 6) {
-                    Text(LocalizedStringKey(torrent.stateName)).foregroundStyle(torrent.needsAttention ? .orange : torrent.completed ? Theme.muted : Theme.accent)
-                        .frame(width: 76, alignment: .leading)
-                    Text("\(bytes(torrent.downloaded)) / \(bytes(torrent.size))")
-                        .monospacedDigit().frame(width: 150, alignment: .trailing)
-                    Text(peerCount(torrent.peersConnected)).monospacedDigit()
-                        .frame(width: 65, alignment: .trailing)
-                }.font(.system(size: 10)).foregroundStyle(Theme.muted).lineLimit(1)
-                HStack(spacing: 10) {
-                    if !torrent.completed { TransferRate(value: torrent.rateDownload, upload: false) }
-                    TransferRate(value: torrent.rateUpload, upload: true)
-                    Text("Ratio \(max(0, torrent.uploadRatio), specifier: "%.2f")")
-                        .frame(width: 82, alignment: .trailing).foregroundStyle(Theme.muted)
-                    if !torrent.completed { Text(LocalizedStringKey(torrent.etaText)).frame(width: 160, alignment: .leading) }
-                }.font(.caption2.monospacedDigit()).foregroundStyle(Theme.muted)
-                if let operation = torrent.fileOperation {
-                    Text(LocalizedStringKey(operation.label)).font(.caption2).foregroundStyle(operation.error == nil ? Color.secondary : Color.orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if showReason, let reason = torrent.progressIssue { Text(reason).font(.caption2).foregroundStyle(.orange).lineLimit(2) }
+    /// "Downloading · 42% of 8.3 GB · ↓ 24 Mbps · ~12m", or for a finished one "Seeding · 8.3 GB · ↑ 3.1 Mbps · Ratio 1.02".
+    @ViewBuilder private var status: some View {
+        HStack(spacing: 5) {
+            Text(LocalizedStringKey(torrent.stateName)).foregroundStyle(stateColor)
+            dot
+            if torrent.completed { Text(verbatim: bytes(torrent.size)) }
+            else { Text(verbatim: L10n.format("%@ of %@", torrent.percentDone.formatted(.percent.precision(.fractionLength(0))), bytes(torrent.size))) }
+            if !torrent.completed && torrent.status == 4 {
+                dot; Label(rate(torrent.rateDownload), systemImage: "arrow.down").labelStyle(TightLabel()).foregroundStyle(Theme.accent)
+                dot; Text(verbatim: torrent.etaText)
+            } else if torrent.rateUpload > 0 || torrent.status == 6 {
+                dot; Label(rate(torrent.rateUpload), systemImage: "arrow.up").labelStyle(TightLabel())
+                dot; Text(verbatim: L10n.format("Ratio %@", max(0, torrent.uploadRatio).formatted(.number.precision(.fractionLength(2)))))
             }
-            Spacer(minLength: 0)
-            Image(systemName: "chevron.right").font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.muted)
-          }
-          if !torrent.completed { TorrentProgressGauge(value: torrent.percentDone) }
-        }.padding(.horizontal, 13).padding(.vertical, 10)
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 9))
-            .accessibilityElement(children: .combine)
-    }
-}
-
-#if os(iOS)
-/// Two deliberate layouts: compact columns on iPad, a short card on narrow screens.
-/// Never turn every activity field into a separate line.
-private struct MobileTorrentRow: View {
-    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
-    let torrent: Torrent
-    let showReason: Bool
-    let compact: Bool
-    private var color: Color { torrent.needsAttention ? .orange : torrent.completed ? Theme.muted : Theme.accent }
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            CompactTorrentRow(torrent: torrent, showReason: showReason).frame(minWidth: 650)
-            narrow
+            if torrent.status == 4 || torrent.status == 6 { dot; Text(verbatim: peerCount(torrent.peersConnected)) }
         }
     }
-    private var narrow: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
-                TorrentThumbnail(torrent: torrent).frame(width: 38, height: 54)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(torrent.displayName).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.torrent)
-                        .lineLimit(compact ? 2 : 3).multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    HStack {
-                        Text(LocalizedStringKey(torrent.stateName)).foregroundStyle(color)
-                        Spacer(minLength: 8)
-                        Label("\(torrent.peersConnected)", systemImage: "person.2")
-                            .foregroundStyle(Theme.muted)
-                            .accessibilityLabel(peerCount(torrent.peersConnected))
-                    }.font(.caption2).monospacedDigit()
-                }
-            }
-            if !torrent.completed { TorrentProgressGauge(value: torrent.percentDone) }
-            HStack(spacing: 10) {
-                if !torrent.completed { TransferRate(value: torrent.rateDownload, upload: false, numberWidth: 65) }
-                TransferRate(value: torrent.rateUpload, upload: true, numberWidth: 65)
-                Spacer(minLength: 0)
-                Text("Ratio \(max(0, torrent.uploadRatio), specifier: "%.2f")")
-                    .foregroundStyle(Theme.muted).frame(width: 65, alignment: .trailing)
-            }.font(.caption2.monospacedDigit()).lineLimit(1)
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text(LocalizedStringKey(torrent.completed ? bytes(torrent.size) : "\(bytes(torrent.downloaded)) / \(bytes(torrent.size))"))
-                    .monospacedDigit()
-                Spacer(minLength: 0)
-                if !torrent.completed {
-                    Text(LocalizedStringKey(torrent.etaText)).monospacedDigit().multilineTextAlignment(.trailing)
-                }
-            }.font(.caption2).foregroundStyle(Theme.muted).lineLimit(1).minimumScaleFactor(0.85)
-            if showReason, let reason = torrent.progressIssue {
-                Text(reason).font(.caption2).foregroundStyle(.orange).lineLimit(2)
-            }
-        }.padding(14).background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
-            .contentShape(Rectangle()).accessibilityElement(children: .combine)
+    private var dot: some View { Text(verbatim: "·") }
+}
+/// An icon and its text close together, for figures in a line.
+struct TightLabel: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 2) { configuration.icon.imageScale(.small); configuration.title }
     }
 }
-#endif
+/// A thin progress bar for a row; the detail page keeps the labelled gauge.
+struct TransferBar: View {
+    let value: Double
+    var color = Theme.accent
+    private var fraction: Double { value.isFinite ? min(1, max(0, value)) : 0 }
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Capsule().fill(color.opacity(0.16))
+                Capsule().fill(color).frame(width: max(3, geometry.size.width * fraction))
+            }
+        }.frame(height: 3).padding(.top, 2)
+            .accessibilityElement(children: .ignore).accessibilityLabel("Download progress")
+            .accessibilityValue(Text(verbatim: "\(Int(fraction * 100))%"))
+    }
+}
 
 func peerCount(_ count: Int) -> String { L10n.format(count == 1 ? "%lld peer" : "%lld peers", count) }
-
-private struct TransferRate: View {
-    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
-    let value: Int64
-    let upload: Bool
-    var numberWidth: CGFloat = 82
-    var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: upload ? "arrow.up" : "arrow.down").frame(width: 12)
-            Text(LocalizedStringKey(value == 0 ? "0 KB/s" : rate(value)))
-                .monospacedDigit().frame(width: numberWidth, alignment: .trailing)
-        }.foregroundStyle(upload ? Theme.muted : Theme.accent)
-            .fixedSize(horizontal: true, vertical: false)
-    }
-}
 
 private struct TorrentThumbnail: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
@@ -1056,24 +965,6 @@ struct TorrentProgressGauge: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Download progress")
             .accessibilityValue(label)
-    }
-}
-
-struct TorrentActivity: View {
-    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
-    let torrent: Torrent
-    var body: some View {
-        if !torrent.completed {
-            TransferRate(value: torrent.rateDownload, upload: false)
-        }
-        TransferRate(value: torrent.rateUpload, upload: true)
-        Text("\(peerCount(torrent.peersConnected)) · \(torrent.peersSendingToUs) sending").frame(width: 160, alignment: .leading)
-        if !torrent.completed { Text(LocalizedStringKey(torrent.etaText)) }
-        Text("Ratio \(max(0, torrent.uploadRatio), specifier: "%.2f")")
-        if let uploaded = torrent.uploadedEver { Text("\(bytes(uploaded)) uploaded") }
-        if torrent.activityDate > 0 {
-            Text("Active \(Date(timeIntervalSince1970: torrent.activityDate), style: .relative) ago")
-        }
     }
 }
 

@@ -65,6 +65,29 @@ struct Torrent: Codable, Identifiable, Hashable {
     var fileOperation: TorrentFileOperation? = nil
     /// Why the server has not filed this finished download into the library.
     var libraryIssue: String? = nil
+    /// What the release's name says (picture, sound, source, seasons, episodes), as Find reads it.
+    var hints: TorrentReleaseHints? = nil
+    /// The videos it holds, for a series pack with no stated episodes.
+    var videoCount: Int { files.filter(\.isVideo).count }
+    /// Which part of a series the release is: "S35 E05", "S01–S06", "Season 2 · E01–E10", "12 episodes".
+    var scope: String? {
+        guard let hints else { return nil }
+        if let season = hints.season {
+            let seasons = hints.seasonEnd.map { $0 > season ? String(format: "S%02d–S%02d", season, $0) : String(format: "S%02d", season) } ?? String(format: "S%02d", season)
+            if let episode = hints.episode {
+                if let end = hints.episodeEnd, end > episode { return seasons + String(format: " E%02d–E%02d", episode, end) }
+                return seasons + String(format: " E%02d", episode)
+            }
+            return hints.seasonEnd.map { $0 > season } == true ? seasons : L10n.format("Season %d", season) + (videoCount > 1 ? " · " + L10n.format("%d episodes", videoCount) : "")
+        }
+        if let count = hints.episodeCount, count > 1 { return L10n.format("%d episodes", count) }
+        return nil
+    }
+    /// The title as the library knows it (TMDB's, with its year), else the release's name tidied.
+    func title(_ match: MetadataCandidate?) -> (name: String, year: String?) {
+        if let match, !match.title.isEmpty { return (match.title, match.year.isEmpty ? nil : match.year) }
+        return (displayName, hints?.year.map(String.init))
+    }
     var isJunk: Bool { fileOperation?.action == "junk" }
     var id: String { hashString }
     var completed: Bool { percentDone >= 1 }
@@ -96,7 +119,7 @@ struct Torrent: Codable, Identifiable, Hashable {
     var displayName: String {
         var value = name
         if files.count == 1 && name == files[0].name { value = (value as NSString).deletingPathExtension }
-        return value.replacingOccurrences(of: ".", with: " ").replacingOccurrences(of: "_", with: " ")
+        return value.replacingOccurrences(of: ".", with: " ").replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: "+", with: " ")
     }
     var size: Int64 { files.reduce(0) { $0 + $1.length } }
     var downloaded: Int64 { files.reduce(0) { $0 + $1.bytesCompleted } }
@@ -386,7 +409,12 @@ struct Playback: Identifiable, Codable, Hashable {
 }
 
 func bytes(_ count: Int64) -> String { ByteCountFormatter.string(fromByteCount: count, countStyle: .file) }
-func rate(_ count: Int64) -> String { bytes(count) + "/s" }
+/// A transfer speed in megabits per second: "0.8 Mbps", "42 Mbps".
+func rate(_ count: Int64) -> String {
+    let megabits = Double(max(0, count)) * 8 / 1_000_000
+    if megabits == 0 { return "0 Mbps" }
+    return megabits < 10 ? String(format: "%.1f Mbps", megabits) : String(format: "%.0f Mbps", megabits)
+}
 
 struct TransferSample: Codable, Identifiable {
     let time: Double
