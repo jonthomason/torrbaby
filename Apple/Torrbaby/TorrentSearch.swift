@@ -541,28 +541,30 @@ struct TorrentSearchView: View {
         let picks = downloaderPicks
         if let season = activeDownloaderSeason, let show = picks.first?.item.title {
             let pending = picks.filter { $0.owned == nil }.count
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Automatic Episode Downloader", systemImage: "sparkles").font(SearchFont.title)
-                Text(verbatim: [show, L10n.format("%d episodes found", picks.count), L10n.format("%d to add", pending),
-                                resolution == "all" ? L10n.text("Any resolution") : resolution].joined(separator: " · "))
-                    .font(.caption).foregroundStyle(Theme.muted)
-                HStack(spacing: 10) {
-                    if downloaderSeasons.count > 1 {
-                        Menu {
-                            Picker("Season", selection: Binding(get: { season }, set: { downloaderSeason = $0 })) {
-                                ForEach(downloaderSeasons, id: \.self) { Text("Season \($0)").tag($0) }
-                            }
-                        } label: { Label("Season \(season)", systemImage: "chevron.up.chevron.down") }
-                            .buttonStyle(MonoButtonStyle(compact: true)).fixedSize()
-                    } else {
-                        Text("Season \(season)").font(.subheadline.weight(.semibold))
-                    }
-                    Button(L10n.format("Review %d episodes", picks.count)) { showDownloader = true }
-                        .buttonStyle(MonoButtonStyle(prominent: true, compact: true))
-                    Spacer(minLength: 0)
+            let info = Text(verbatim: [show, L10n.format("%d episodes found", picks.count), L10n.format("%d to add", pending),
+                                       resolution == "all" ? L10n.text("Any resolution") : resolution].joined(separator: " · "))
+            let heading = HStack(spacing: 8) {
+                Image(systemName: "sparkles").font(.system(size: 13, weight: .semibold))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Automatic Episode Downloader").font(SearchFont.control)
+                    info.font(.caption2).foregroundStyle(Theme.muted).lineLimit(1)
                 }
-            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+            }
+            let actions = HStack(spacing: 6) {
+                if downloaderSeasons.count > 1 {
+                    SearchChipMenu(title: "Season", selection: Binding(get: { season }, set: { downloaderSeason = $0 }), current: Text("Season \(season)")) {
+                        ForEach(downloaderSeasons, id: \.self) { Text("Season \($0)").tag($0) }
+                    }
+                }
+                Button(L10n.format("Review %d episodes", picks.count)) { showDownloader = true }
+                    .buttonStyle(SearchChipStyle(prominent: true))
+            }
+            // A strip, not a panel: one line where it fits, the buttons below on a phone.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { heading; Spacer(minLength: 8); actions }
+                VStack(alignment: .leading, spacing: 8) { heading; actions }
+            }.padding(.horizontal, 10).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.muted.opacity(0.3), lineWidth: 0.75))
                 .sheet(isPresented: $showDownloader) {
                     LocalizedInterface { EpisodeDownloaderSheet(show: show, season: season, picks: picks) }.environmentObject(store)
                 }
@@ -664,22 +666,33 @@ struct TorrentSearchView: View {
         HStack(spacing: 2) {
             kindOption("movie", name: "Movies", icon: "film")
             kindOption("tv", name: "TV Shows", icon: "tv")
-        }.padding(3).background(Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius)).fixedSize()
+        }.segmentTrack()
             .accessibilityElement(children: .contain).accessibilityLabel("Search for")
     }
     private func kindOption(_ value: String, name: String, icon: String) -> some View {
-        let selected = kind == value && !freeText
-        return Button {
+        segment(name, selected: kind == value && !freeText) {
+            Image(systemName: icon).font(.system(size: 11, weight: .semibold))
+        } action: {
             let changed = kind != value || freeText
             kind = value; freeText = false
             if changed { work?.cancel(); searching = false; titles = nil; chosen = nil; facts = nil; response = nil; error = nil
                 if query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 { findTitles() } }
-        } label: {
-            Label(LocalizedStringKey(name), systemImage: icon).font(SearchFont.control).padding(.horizontal, 12).frame(minHeight: regionHeight)
+        }
+    }
+    /// One choice of a segmented pair (World/China, Movies/TV Shows, Full seasons/Single
+    /// episodes): all three are drawn alike, at the chips' height.
+    private func segment<Icon: View>(_ name: String, selected: Bool, showName: Bool = true, @ViewBuilder icon: () -> Icon = { EmptyView() }, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                icon()
+                if showName { Text(LocalizedStringKey(name)) }
+            }.font(SearchFont.control).lineLimit(1).fixedSize()
+                .padding(.horizontal, 10).frame(height: SearchFont.chip - 4)
                 .foregroundStyle(selected ? Theme.onAccent : Color.white)
-                .background(selected ? Theme.accent : .clear, in: RoundedRectangle(cornerRadius: 6))
+                .background(selected ? Theme.accent : .clear, in: RoundedRectangle(cornerRadius: SearchFont.chipRadius - 2))
                 .contentShape(Rectangle())
-        }.buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
+        }.buttonStyle(.plain)
+            .accessibilityLabel(LocalizedStringKey(name)).accessibilityAddTraits(selected ? .isSelected : [])
     }
     private func poster(_ encoded: String?, width: CGFloat) -> some View {
         Group {
@@ -744,53 +757,31 @@ struct TorrentSearchView: View {
     }
     @ViewBuilder private func chosenWant(_ title: FindTitle) -> some View {
         if title.kind == "tv" {
-            Picker("Download", selection: $want) {
-                Text("Full seasons").tag("season")
-                Text("Single episodes").tag("episodes")
-            }.pickerStyle(.segmented).fixedSize()
+            HStack(spacing: 2) {
+                segment("Full seasons", selected: want == "season") { want = "season" }
+                segment("Single episodes", selected: want == "episodes") { want = "episodes" }
+            }.segmentTrack().accessibilityElement(children: .contain).accessibilityLabel("Download")
                 .onChange(of: want) { if want == "episodes" && wantSeason == nil { wantSeason = facts?.aired.last ?? 1 }; searchTitle() }
             let seasons = facts?.aired ?? []
             if !seasons.isEmpty {
-                Picker("Season", selection: $wantSeason) {
+                SearchChipMenu(title: "Season", selection: $wantSeason, current: wantSeason.map { Text("Season \($0)") } ?? Text("All seasons")) {
                     if want == "season" { Text("All seasons").tag(Int?.none) }
                     ForEach(seasons, id: \.self) { Text("Season \($0)").tag(Int?.some($0)) }
-                }.pickerStyle(.menu).fixedSize().searchFilterControl()
-                    .onChange(of: wantSeason) { searchTitle() }
+                }.onChange(of: wantSeason) { searchTitle() }
             }
         }
     }
     private var changeButton: some View {
         Button("Change") { work?.cancel(); searching = false; chosen = nil; facts = nil; response = nil; selectedID = nil }
-            .buttonStyle(MonoButtonStyle(compact: true)).fixedSize()
+            .buttonStyle(SearchChipStyle()).fixedSize()
     }
-    /// World or China, beside the search box. A narrow window keeps just the globe and flag.
+    /// World or China. A phone keeps just the globe and flag.
     private var regionSelector: some View {
         HStack(spacing: 2) {
-            regionOption("world", name: "World") { Image(systemName: "globe") }
-            regionOption("china", name: "China") { Text(verbatim: "🇨🇳") }
-        }.padding(3).background(Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius))
-            .fixedSize()
+            segment("World", selected: market == "world", showName: !compactRegion) { Image(systemName: "globe").font(.system(size: 11, weight: .semibold)) } action: { market = "world" }
+            segment("China", selected: market == "china", showName: !compactRegion) { Text(verbatim: "🇨🇳").font(.system(size: 12)) } action: { market = "china" }
+        }.segmentTrack()
             .accessibilityElement(children: .contain).accessibilityLabel("Search region")
-    }
-    private func regionOption<Icon: View>(_ value: String, name: String, @ViewBuilder icon: () -> Icon) -> some View {
-        let selected = market == value
-        return Button { market = value } label: {
-            HStack(spacing: 6) {
-                icon()
-                if !compactRegion { Text(LocalizedStringKey(name)) }
-            }.font(SearchFont.control).padding(.horizontal, 10).frame(minHeight: regionHeight)
-                .foregroundStyle(selected ? Theme.onAccent : Color.white)
-                .background(selected ? Theme.accent : .clear, in: RoundedRectangle(cornerRadius: 6))
-                .contentShape(Rectangle())
-        }.buttonStyle(.plain)
-            .accessibilityLabel(LocalizedStringKey(name)).accessibilityAddTraits(selected ? .isSelected : [])
-    }
-    private var regionHeight: CGFloat {
-        #if os(tvOS)
-        56
-        #else
-        38
-        #endif
     }
     private var compactRegion: Bool {
         #if os(iOS)
@@ -799,44 +790,39 @@ struct TorrentSearchView: View {
         false
         #endif
     }
+    private var searchBox: some View {
+        SearchBox(draft: draft, searching: searching, focused: $searchFocused, search: search,
+                  edited: {
+                      if prepareNextSearch { year = nil; season = nil; episode = nil; prepareNextSearch = false }
+                  },
+                  clear: {
+                      // Clears the box and results, ready for the next search.
+                      work?.cancel(); searching = false
+                      draft.text = ""; response = nil; selectedID = nil; error = nil
+                      titles = nil; chosen = nil; facts = nil; freeText = false
+                      resetFilters()
+                      focusNextSearch()
+                  })
+    }
+    /// The box; then where and what (World/China, Movies/TV Shows) with the drive's space; the
+    /// chosen title; then every filter as a chip on one row that scrolls sideways rather than wrap.
     private var searchHeader: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-              regionSelector
-                .onChange(of: market) {
-                    work?.cancel(); searching = false; response = nil; selectedID = nil; error = nil; source = "all"
-                    if chosen != nil { searchTitle() } else if query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 { search() }
-                }
-              SearchBox(draft: draft, searching: searching, focused: $searchFocused, search: search,
-                        edited: {
-                            if prepareNextSearch { year = nil; season = nil; episode = nil; prepareNextSearch = false }
-                        },
-                        clear: {
-                            // Clears the box and results, ready for the next search.
-                            work?.cancel(); searching = false
-                            draft.text = ""; response = nil; selectedID = nil; error = nil
-                            titles = nil; chosen = nil; facts = nil; freeText = false
-                            resetFilters()
-                            focusNextSearch()
-                        })
-            }
-            kindSelector
-            if let chosen { chosenTitle(chosen) }
+        VStack(alignment: .leading, spacing: 10) {
+            searchBox
             ViewThatFits(in: .horizontal) {
-                HStack { if market != "china" { sourcePicker }; resolutionPicker; Spacer(); searchStatus }
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack { if market != "china" { sourcePicker.labelsHidden() }; Spacer(); resolutionPicker.labelsHidden() }
-                    searchStatus
+                HStack(spacing: 8) { regionSelector; kindSelector; Spacer(minLength: 12); MediaDriveSpace(compact: true) }
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) { regionSelector; kindSelector; Spacer(minLength: 0) }
+                    MediaDriveSpace(compact: true)
                 }
             }
-            MediaDriveSpace(compact: true)
-            if response != nil { refinements }
-            if year != nil || season != nil || episode != nil {
-                HStack {
-                    Text([year.map { "\($0)" }, season.map { "Season \($0)" }, episode.map { "Episode \($0)" }].compactMap { $0 }.joined(separator: " · "))
-                    Button("Clear filters") { year = nil; season = nil; episode = nil; search() }
-                }.font(.caption).foregroundStyle(.secondary)
+            .onChange(of: market) {
+                work?.cancel(); searching = false; response = nil; selectedID = nil; error = nil; source = "all"
+                if chosen != nil { searchTitle() } else if query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 { search() }
             }
+            if let chosen { chosenTitle(chosen) }
+            filterBar
+            if response != nil && (chosen == nil || want == "episodes") { episodeDownloader }
             if let error { Text(L10n.text(error)).font(.caption).foregroundStyle(.orange) }
             if let response {
                 ForEach(response.providers.filter { $0.error != nil }, id: \.provider) { provider in
@@ -844,76 +830,90 @@ struct TorrentSearchView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-        }.padding(16)
+        }.padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 8)
     }
-    private var sourcePicker: some View {
+    private var filterBar: some View {
+        HStack(spacing: 10) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    if market != "china" { sourcePicker }
+                    resolutionPicker
+                    if response != nil {
+                        if chosen == nil { scopePicker; seasonPicker; episodePicker }
+                        else if want == "episodes" { episodePicker }
+                        sortPicker
+                    }
+                    if year != nil || season != nil || episode != nil {
+                        Button { year = nil; season = nil; episode = nil; search() } label: {
+                            HStack(spacing: 5) {
+                                Text(verbatim: [year.map { "\($0)" }, season.map { L10n.format("Season %d", $0) }, episode.map { L10n.format("Episode %d", $0) }].compactMap { $0 }.joined(separator: " · "))
+                                Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).opacity(0.6)
+                            }
+                        }.buttonStyle(SearchChipStyle()).accessibilityLabel("Clear filters")
+                    }
+                }
+            }.scrollClipDisabled()
+            searchStatus.fixedSize()
+        }
+    }
+    private static let sourceNames = ["all": "Recommended", "tpb": "The Pirate Bay", "csv": "Torrent CSV", "nyaa": "Nyaa"]
+    @ViewBuilder private var sourcePicker: some View {
+        #if os(tvOS)
                 Picker("Sources", selection: $source) {
                     Text("Recommended").tag("all")
                     Text("The Pirate Bay").tag("tpb")
                     Text("Torrent CSV").tag("csv")
                     Text("Nyaa").tag("nyaa")
-                }
-                #if os(tvOS)
-                .pickerStyle(.segmented)
-                #else
-                .pickerStyle(.menu).fixedSize().searchFilterControl()
-                #endif
+                }.pickerStyle(.segmented)
+        #else
+        SearchChipMenu(title: "Sources", selection: $source, current: Text(LocalizedStringKey(Self.sourceNames[source] ?? "Recommended")), icon: "antenna.radiowaves.left.and.right") {
+            Text("Recommended").tag("all")
+            Text("The Pirate Bay").tag("tpb")
+            Text("Torrent CSV").tag("csv")
+            Text("Nyaa").tag("nyaa")
+        }
+        #endif
     }
     private var resolutionPicker: some View {
-                Picker("Resolution", selection: $resolution) {
+        SearchChipMenu(title: "Resolution", selection: $resolution, current: resolution == "all" ? Text("All resolutions") : Text(verbatim: resolution)) {
                     Text("All resolutions").tag("all")
                     Text(verbatim:"2160p").tag("2160p")
                     Text(verbatim:"1080p").tag("1080p")
                     Text(verbatim:"720p").tag("720p")
-                }.pickerStyle(.menu).fixedSize().searchFilterControl()
-                    .onChange(of: resolution) { selectedID = visibleItems.first?.id }
-    }
-    @ViewBuilder private var refinements: some View {
-        if chosen != nil {
-            HStack { if want == "episodes" { episodePicker }; sortPicker; Spacer() }
-        } else {
-        ViewThatFits(in: .horizontal) {
-            HStack { scopePicker; seasonPicker; episodePicker; sortPicker; Spacer() }
-            VStack(alignment: .leading, spacing: 6) {
-                HStack { scopePicker.labelsHidden(); seasonPicker.labelsHidden(); Spacer() }
-                HStack { episodePicker.labelsHidden(); sortPicker.labelsHidden(); Spacer() }
-            }
-        }
-        }
-        if chosen == nil || want == "episodes" { episodeDownloader }
+        }.onChange(of: resolution) { selectedID = visibleItems.first?.id }
     }
     private var scopePicker: some View {
-        Picker("Show", selection: $scopeFilter) {
+        SearchChipMenu(title: "Show", selection: $scopeFilter, current: Text(LocalizedStringKey(scopeFilter == "seasons" ? "Complete seasons" : scopeFilter == "episodes" ? "Single episodes" : "All releases"))) {
             Text("All releases").tag("all")
             Text("Complete seasons").tag("seasons")
             Text("Single episodes").tag("episodes")
-        }.pickerStyle(.menu).fixedSize().searchFilterControl()
+        }
             .onChange(of: scopeFilter) { selectedID = visibleItems.first?.id }
     }
     @ViewBuilder private var seasonPicker: some View {
         if availableSeasons.count > 1 {
-            Picker("Season", selection: $seasonFilter) {
+            SearchChipMenu(title: "Season", selection: $seasonFilter, current: seasonFilter.map { Text("Season \($0)") } ?? Text("All seasons")) {
                 Text("All seasons").tag(Int?.none)
                 ForEach(availableSeasons, id: \.self) { Text("Season \($0)").tag(Int?.some($0)) }
-            }.pickerStyle(.menu).fixedSize().searchFilterControl()
+            }
                 .onChange(of: seasonFilter) { episodeFilter = nil; selectedID = visibleItems.first?.id }
         }
     }
     @ViewBuilder private var episodePicker: some View {
         if availableEpisodes.count > 1 {
-            Picker("Episode", selection: $episodeFilter) {
+            SearchChipMenu(title: "Episode", selection: $episodeFilter, current: episodeFilter.map { Text("Episode \($0)") } ?? Text("All episodes")) {
                 Text("All episodes").tag(Int?.none)
                 ForEach(availableEpisodes, id: \.self) { Text("Episode \($0)").tag(Int?.some($0)) }
-            }.pickerStyle(.menu).fixedSize().searchFilterControl()
+            }
                 .onChange(of: episodeFilter) { selectedID = visibleItems.first?.id }
         }
     }
     private var sortPicker: some View {
-        Picker("Sort", selection: $sortOrder) {
+        SearchChipMenu(title: "Sort", selection: $sortOrder, current: Text(LocalizedStringKey(sortOrder == "size" ? "Largest first" : sortOrder == "episode" ? "Episode order" : "Most seeds")), icon: "arrow.up.arrow.down") {
             Text("Most seeds").tag("seeds")
             Text("Largest first").tag("size")
             Text("Episode order").tag("episode")
-        }.pickerStyle(.menu).fixedSize().searchFilterControl()
+        }
     }
     @ViewBuilder private var searchStatus: some View {
                 if let response, !searching {
@@ -1325,27 +1325,39 @@ private struct SearchBox: View {
     let edited: () -> Void
     let clear: () -> Void
     var body: some View {
+        #if os(tvOS)
         HStack(spacing: 12) {
             Image(systemName: "magnifyingglass").foregroundStyle(Theme.accent)
             field.focused(focused).onSubmit(search).autocorrectionDisabled().textFieldStyle(.plain)
                 .onChange(of: draft.text) { _, _ in edited() }
-            #if !os(tvOS)
-            if !draft.text.isEmpty {
-                Button(action: clear) { Image(systemName: "xmark.circle.fill").font(.title3).foregroundStyle(Theme.muted) }
-                    .buttonStyle(.plain).accessibilityLabel("Clear search")
-            }
-            #endif
-            #if os(iOS)
-            // The phone's keyboard has no key of its own to put it away.
-            if focused.wrappedValue {
-                Button { focused.wrappedValue = false } label: { Image(systemName: "keyboard.chevron.compact.down").font(.title3) }
-                    .buttonStyle(.plain).foregroundStyle(Theme.muted).accessibilityLabel("Hide keyboard")
-            }
-            #endif
             Button(action: search) { Text(LocalizedStringKey(searching ? "Searching…" : "Search")) }
                 .buttonStyle(MonoButtonStyle(prominent: true))
                 .disabled(draft.text.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || searching)
         }.padding(12).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+        #else
+        // One line the chips' height plus a little: field, clear, Search.
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.muted)
+            field.font(.callout).focused(focused).onSubmit(search).autocorrectionDisabled().textFieldStyle(.plain)
+                .onChange(of: draft.text) { _, _ in edited() }
+            if !draft.text.isEmpty {
+                Button(action: clear) { Image(systemName: "xmark.circle.fill").font(.system(size: 15)).foregroundStyle(Theme.muted) }
+                    .buttonStyle(.plain).accessibilityLabel("Clear search")
+            }
+            #if os(iOS)
+            // The phone's keyboard has no key of its own to put it away.
+            if focused.wrappedValue {
+                Button { focused.wrappedValue = false } label: { Image(systemName: "keyboard.chevron.compact.down").font(.system(size: 15)) }
+                    .buttonStyle(.plain).foregroundStyle(Theme.muted).accessibilityLabel("Hide keyboard")
+            }
+            #endif
+            Button(action: search) { Text(LocalizedStringKey(searching ? "Searching…" : "Search")) }
+                .buttonStyle(SearchChipStyle(prominent: true))
+                .disabled(draft.text.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || searching)
+        }.padding(.leading, 12).padding(.trailing, 4).frame(height: SearchFont.chip + 8)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: SearchFont.chipRadius + 2))
+            .overlay(RoundedRectangle(cornerRadius: SearchFont.chipRadius + 2).stroke(.white.opacity(0.12), lineWidth: 0.5))
+        #endif
     }
     @ViewBuilder private var field: some View {
         #if os(tvOS)
@@ -1355,15 +1367,63 @@ private struct SearchBox: View {
         #endif
     }
 }
-private extension View {
-    /// On iPhone and iPad a menu picker is bare text; give it the bordered pop-up look it has on the Mac.
-    @ViewBuilder func searchFilterControl() -> some View {
-        #if os(iOS)
-        self.font(SearchFont.control).tint(.white).padding(.horizontal, 4).frame(minHeight: 34)
-            .background(Theme.control, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.12), lineWidth: 1))
+extension View {
+    /// Every control at the top of Find is one of these: the same height, corners, type and fill,
+    /// so a row of them lines up whatever they say.
+    func searchChip(selected: Bool = false) -> some View {
+        self.font(SearchFont.control).lineLimit(1).fixedSize()
+            .padding(.horizontal, 10).frame(height: SearchFont.chip)
+            .foregroundStyle(selected ? Theme.onAccent : Color.white)
+            .background(selected ? Theme.accent : Theme.control, in: RoundedRectangle(cornerRadius: SearchFont.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: SearchFont.chipRadius).stroke(.white.opacity(selected ? 0 : 0.1), lineWidth: 0.5))
+            .contentShape(RoundedRectangle(cornerRadius: SearchFont.chipRadius))
+    }
+}
+extension View {
+    /// The track behind a segmented pair: a chip's height and fill, the choice inset by 2.
+    func segmentTrack() -> some View {
+        self.padding(2).frame(height: SearchFont.chip)
+            .background(Theme.control, in: RoundedRectangle(cornerRadius: SearchFont.chipRadius))
+            .overlay(RoundedRectangle(cornerRadius: SearchFont.chipRadius).stroke(.white.opacity(0.1), lineWidth: 0.5))
+            .fixedSize()
+    }
+}
+/// A button in the chip vocabulary; prominent is filled white. The Apple TV keeps its own buttons.
+struct SearchChipStyle: ButtonStyle {
+    var prominent = false
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        #if os(tvOS)
+        MonoButtonStyle(prominent: prominent, compact: true).makeBody(configuration: configuration)
         #else
-        self
+        configuration.label.searchChip(selected: prominent).opacity(enabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
+        #endif
+    }
+}
+/// A menu that shows its current choice as a chip: "1080p ▾", "Most seeds ▾".
+struct SearchChipMenu<Value: Hashable, Options: View>: View {
+    let title: LocalizedStringKey
+    @Binding var selection: Value
+    let current: Text
+    var icon: String? = nil
+    @ViewBuilder let options: () -> Options
+    var body: some View {
+        #if os(tvOS)
+        Picker(title, selection: $selection) { options() }.pickerStyle(.menu)
+        #else
+        Menu {
+            Picker(title, selection: $selection) { options() }.pickerStyle(.inline).labelsHidden()
+        } label: {
+            HStack(spacing: 5) {
+                if let icon { Image(systemName: icon).font(.system(size: 10, weight: .bold)).opacity(0.7) }
+                current
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)).opacity(0.55)
+            }.searchChip()
+        }
+        #if os(macOS)
+        .menuStyle(.button)
+        #endif
+        .buttonStyle(.plain).menuIndicator(.hidden).fixedSize().accessibilityLabel(title)
         #endif
     }
 }
@@ -1379,10 +1439,10 @@ struct SearchReleaseFacts {
 enum SearchFont {
     #if os(tvOS)
     static let rowTitle = Font.title3.bold(), title = Font.headline, figures = Font.headline, control = Font.subheadline.weight(.semibold)
-    static let poster: CGFloat = 46
+    static let poster: CGFloat = 46, chip: CGFloat = 56, chipRadius: CGFloat = 8
     #else
     static let rowTitle = Font.subheadline.weight(.semibold), title = Font.subheadline.weight(.semibold), figures = Font.footnote.weight(.semibold), control = Font.footnote.weight(.semibold)
-    static let poster: CGFloat = 38
+    static let poster: CGFloat = 38, chip: CGFloat = 30, chipRadius: CGFloat = 7
     #endif
     static let detail = Font.caption
 }
