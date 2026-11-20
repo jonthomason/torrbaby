@@ -5,12 +5,16 @@ in Hong Kong, over a Tailscale relay: slow, and retired). Only two HTTP clients 
 use `TORRBABY_SEARCH_PROXY=socks5h://127.0.0.1:18780`: the torrent search sites' and TMDB's
 (titles, details and posters). DNS for those requests resolves on shadow.
 
-**Transmission never goes through it, and cannot.** Transmission has no proxy setting and its
-sockets use the home network (checked: every peer socket on 192.168.1.x or the China Telecom
-IPv6, none on ABT's 198.18.0.2). And shadow itself refuses: ABT's exit lets the `diamond`
-device reach only the destinations below, TCP only (abt-server `[exit_only]`, ABT commit
-a92e71a), so no peer, tracker or DHT node is reachable through shadow whatever Diamond sends,
-its ABT VPN included. Refusals are logged: `journalctl -u abt-server | grep "exit refused"`.
+**Transmission never goes through it, nor through ABT at all.** Since 2026-11-20 it runs as jont
+in its own group, `_torrbaby_bt` (gid 442), from `/Library/LaunchDaemons/org.torrbaby.transmission.plist`
+with no proxy variables, and pf (anchor `com.apple/torrbaby-bt`, `/etc/pf.anchors/torrbaby-bt`,
+kept loaded by `org.torrbaby.pf`) lets that group out only on en0, plus its RPC replies from
+port 9091 on lo0; everything else it sends (ABT's and Tailscale's utun, en1, the local SOCKS
+port) is dropped and logged. Proven by sending as gid 442 through each. brew's own agent is
+off (`sh.brew.transmission-cli.plist.off`): never `brew services start transmission-cli`, which
+would start an unrestricted copy. With that in place Diamond's use of ABT's exit is unrestricted
+(the `[exit_only]` allowlist that briefly limited it is removed; backup on shadow:
+`/etc/abt/server.toml.before-diamond-unrestricted`).
 
 ## Services
 
@@ -19,23 +23,13 @@ its ABT VPN included. Refusals are logged: `journalctl -u abt-server | grep "exi
   127.0.0.1:18780 through ABT's exit as device `diamond` (search.toml is client.toml's key and
   server lines plus `socks`; owner only, not in this repository). Earlier agents (SSH to
   Tungsten, then SSH to shadow) are kept under `~/Library/Application Support/Torrbaby/backups/`.
-- Shadow: `/etc/abt/server.toml`:
-
-```
-[exit_only]
-diamond = ["api.tmdb.org:443", "image.tmdb.org:443", "apibay.org:443", "torrents-csv.com:443",
-           "nyaa.si:443", "www.1lou.me:80", "share.dmhy.org:443", "mikanani.me:443"]
-```
-
-  A new search site needs its `host:port` added there and abt-server restarted (ABT's
-  deploy/shadow.sh arms the dead-man switch). Backup before the change:
-  `/etc/abt/server.toml.before-exit-only`. The SSH account `torrbaby-search` on shadow
-  (sshd `PermitOpen` with the same list) is unused now and can be removed.
+- Shadow: nothing specific to Torrbaby. The SSH account `torrbaby-search` (sshd `PermitOpen`)
+  from the first move is unused and can be removed.
 
 ## Validation (2026-11-20)
 
 Through `abt socks`: TMDB API 1.2 s, poster 0.55 s, apibay 0.5-0.7 s, nyaa 1.1 s; example.com
-refused by the exit in 0.2 s. Find's title search (12 results) went from 13-15 s to 0.6-2.6 s.
+refused by the exit in 0.2 s while the allowlist stood. Find's title search (12 results) went from 13-15 s to 0.6-2.6 s.
 
 ## Rollback
 
