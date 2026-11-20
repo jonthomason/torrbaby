@@ -158,10 +158,17 @@ struct TVRootView: View {
                         }
                     }
                     HStack(spacing: 8) {
+                        // Who is watching, as a button that looks like one: their face, their name and a
+                        // chevron, on a quiet fill even without focus.
                         Button { store.choosingProfile = true } label: {
-                            if let profile = store.activeProfile { ProfileAvatar(profile: profile, size: 40) }
-                            else { Image(systemName: "person.crop.circle") }
-                        }.buttonStyle(TVMonochromeButtonStyle()).accessibilityLabel("Switch user")
+                            HStack(spacing: 12) {
+                                if let profile = store.activeProfile { ProfileAvatar(profile: profile, size: 40) }
+                                else { Image(systemName: "person.crop.circle") }
+                                Text(verbatim: store.activeProfile?.name ?? L10n.text("Choose a user")).font(.system(size: 24, weight: .semibold))
+                                Image(systemName: "chevron.down").font(.system(size: 18, weight: .bold)).opacity(0.7)
+                            }.padding(.leading, -8)
+                        }.buttonStyle(TVMonochromeButtonStyle(resting: true))
+                            .accessibilityLabel(Text(L10n.text("Switch user") + ": " + (store.activeProfile?.name ?? "")))
                         Image("TorrbabyLogo").resizable().scaledToFit().frame(width: 44, height: 44)
                         Spacer()
                     }

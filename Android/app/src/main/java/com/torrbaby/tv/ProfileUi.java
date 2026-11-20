@@ -39,11 +39,18 @@ final class ProfileUi {
     if(api.profileAppearance!=null && !api.profileAppearance.optString("name").isEmpty())return api.profileAppearance;
     JSONObject value=new JSONObject();try{value.put("id",api.profile).put("name",api.profileName);}catch(Exception ignored){}return value;
   }
+  /** A symbol, not words: the same in every language. */
+  private static final String CHEVRON = "\u25BE";
   static LinearLayout badge(Activity a,Api api,Runnable action) {
-    LinearLayout button=Ui.row(a);button.setGravity(Gravity.CENTER_VERTICAL);Ui.focus(button);Ui.pad(button,10,4);
+    // Who is watching, as a button that looks like one: face, name and a chevron on a quiet fill.
+    LinearLayout button=Ui.row(a);button.setGravity(Gravity.CENTER_VERTICAL);Ui.focus(button);Ui.pad(button,12,4);
+    android.graphics.drawable.StateListDrawable fill=new android.graphics.drawable.StateListDrawable();
+    fill.addState(new int[]{android.R.attr.state_focused},Ui.shape(0x00000000,0xffffffff,a));
+    fill.addState(new int[]{},Ui.shape(0x38ffffff,0,a));button.setBackground(fill);
     button.setTag("profile-badge");
     JSONObject person=person(api);button.addView(avatar(a,person,36));Ui.gap(button,10);
-    Ui.add(button,Ui.text(a,person.optString("name"),15,Ui.TEXT),-2,-2);
+    TextView name=Ui.text(a,person.optString("name"),17,Ui.TEXT);name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);Ui.add(button,name,-2,-2);
+    Ui.gap(button,8);Ui.add(button,Ui.text(a,CHEVRON,17,Ui.MUTED),-2,-2);
     button.setContentDescription(L10n.t("Switch user")+": "+person.optString("name"));button.setOnClickListener(v->action.run());
     return button;
   }
