@@ -109,6 +109,25 @@ fn reopen_for_everything(db:&Database,flags:Flags)->Result<usize> {
     if reopened>0 {tracing::info!(reopened,"Every title will take OpenSubtitles' English and Chinese where it has them");}
     Ok(reopened)
 }
+/// Finished titles (not bonus material) with subtitles in one of English and Chinese only:
+/// done again, behind titles that have none. Files with no subtitle tracks of their own were
+/// signed off with OpenSubtitles' English alone, the Chinese they had dropped (216 titles,
+/// 2026-11-21); a pass now keeps or makes the other language.
+fn reopen_one_language(db:&Database)->Result<usize> {
+    let rows=db.rows("SELECT m.asset_id,m.revision,i.document FROM media_processing m JOIN media_inventory i ON i.asset_id=m.asset_id AND i.revision=m.revision LEFT JOIN library_assets a ON a.id=m.asset_id WHERE m.state='ready' AND m.subtitles_state='ready' AND coalesce(json_extract(a.document,'$.role'),'')!='extra'",[])?;
+    let mut reopened=0;
+    for row in rows {
+        let (Some(id),Some(revision),Some(document))=(row["asset_id"].as_str(),row["revision"].as_str(),row["document"].as_str()) else{continue};
+        let Ok(info)=serde_json::from_str::<Value>(document) else{continue};
+        let has=|language:&str|info["prepared"].as_array().is_some_and(|jobs|jobs.iter().any(|j|j["state"]=="ready" && j["language"]==language));
+        if has("en")==has("zh-Hans") {continue;}
+        let changed=db.connection.execute("UPDATE media_processing SET subtitles_state='pending',stage='subtitles',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![now(),id,revision])?;
+        if changed>0 {db.connection.execute("INSERT INTO subtitle_priorities(asset_id,priority) VALUES(?,-1) ON CONFLICT(asset_id) DO NOTHING",[id])?;}
+        reopened+=changed;
+    }
+    if reopened>0 {tracing::warn!(reopened,"Titles with subtitles in one language only will make the other");}
+    Ok(reopened)
+}
 /// Subtitle errors a later build no longer has: the subtitle store's old 4,096-file cap, and
 /// a subtitle track in neither English nor Chinese blocking the picture and the speech.
 const RETIRED_SUBTITLE_ERRORS:[&str;5]=[crate::subtitle_jobs::STORAGE_FULL,crate::ocr_subtitles::UNIDENTIFIED_LANGUAGE,
@@ -146,6 +165,7 @@ fn sweep(db:&Database,flags:Flags)->Result<()> {
     reopen_for_people_english(db,flags)?;
     reopen_for_people_chinese(db,flags)?;
     reopen_for_everything(db,flags)?;
+    reopen_one_language(db)?;
     reopen_untranscribed(db)?;
     Ok(())
 }
@@ -1009,6 +1029,24 @@ mod tests {
         let version:i64=db.connection.query_row("SELECT version FROM credits_analysis WHERE asset_id='current'",[],|r|r.get(0))?;
         assert_eq!(version,0,"cached result must not short-circuit the rescan");
         assert!(rescan(&db,&json!({"scope":"bogus"})).is_err());
+        Ok(())
+    }
+    #[test]
+    fn titles_with_one_language_are_done_again()->Result<()> {
+        let db=database()?;
+        for id in ["english","both","neither"] {enroll(&db,id,"r1")?;}
+        db.connection.execute("UPDATE media_processing SET state='ready',stage='complete',inventory_state='ready',subtitles_state='ready',credits_state='ready',completed_at=1",[])?;
+        let prepared=|languages:&[&str]|json!({"prepared":languages.iter().map(|l|json!({"state":"ready","language":l})).collect::<Vec<_>>()}).to_string();
+        for (id,languages) in [("english",&["en"][..]),("both",&["en","zh-Hans"]),("neither",&[])] {
+            db.connection.execute("INSERT INTO media_inventory VALUES(?,'r1',?,0)",rusqlite::params![id,prepared(languages)])?;
+        }
+        assert_eq!(reopen_one_language(&db)?,1);
+        let row=db.rows("SELECT state,subtitles_state FROM media_processing WHERE asset_id='english'",[])?.remove(0);
+        assert_eq!((row["state"].as_str(),row["subtitles_state"].as_str()),(Some("queued"),Some("pending")));
+        // Once it has both it stays settled.
+        db.connection.execute("UPDATE media_inventory SET document=? WHERE asset_id='english'",[prepared(&["en","zh-Hans"])])?;
+        db.connection.execute("UPDATE media_processing SET state='ready',subtitles_state='ready' WHERE asset_id='english'",[])?;
+        assert_eq!(reopen_one_language(&db)?,0);
         Ok(())
     }
     #[test]
