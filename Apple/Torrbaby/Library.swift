@@ -756,11 +756,10 @@ struct LibraryBrowser: View {
             TextField("Search movies and TV shows", text: $search).textFieldStyle(.plain).autocorrectionDisabled()
                 .focused($searchFocused).submitLabel(.search).onSubmit { searchFocused = false }
             if !search.isEmpty {
-                Button { search = "" } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.muted).frame(width: 30, height: 38).contentShape(Rectangle())
-                }.buttonStyle(.plain).accessibilityLabel("Clear search")
+                Button { search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.muted) }
+                    .buttonStyle(.plain).accessibilityLabel("Clear search")
             }
-        }.padding(.leading, 10).padding(.trailing, search.isEmpty ? 10 : 2).frame(height: 38).background(Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius))
+        }.padding(.horizontal, 10).frame(height: 38).background(Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius))
         let field = HStack(spacing: 10) {
             box
             if searchFocused {
