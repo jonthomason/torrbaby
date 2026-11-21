@@ -332,6 +332,7 @@ final class L10n {
     IDS.put("Erase this drive as APFS or Mac OS Extended (Journaled), not case-sensitive, in Disk Utility, then add it", R.string.ui_679d499c7e39);
     IDS.put("Estimating…", R.string.ui_e8642ee5ad7e);
     IDS.put("Every title is copied and checked before its original is removed. Downloads in progress move too. This can take hours.", R.string.ui_c7db4a0b384e);
+    IDS.put("Everything here has been watched.", R.string.ui_587ec01dfb96);
     IDS.put("Exit", R.string.ui_f83b6fe3aebf);
     IDS.put("Explore", R.string.ui_b965ae66fcc4);
     IDS.put("Extracting", R.string.ui_c3c5fb3f17e9);
@@ -378,6 +379,7 @@ final class L10n {
     IDS.put("Generated subtitles", R.string.ui_a1af0d20ca98);
     IDS.put("Genre", R.string.ui_2aa31fca5e4f);
     IDS.put("Hide keyboard", R.string.ui_a4f9034380e4);
+    IDS.put("Hide watched", R.string.ui_1c1c54e35bcc);
     IDS.put("History", R.string.ui_90ccd6497400);
     IDS.put("Home", R.string.ui_70f8bb9a8a53);
     IDS.put("Home network", R.string.ui_3c44197b81c9);

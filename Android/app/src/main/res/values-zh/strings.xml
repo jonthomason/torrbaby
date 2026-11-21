@@ -321,6 +321,7 @@
     <string name="ui_679d499c7e39" formatted="false">请先在“磁盘工具”中将此硬盘抹掉为 APFS 或“Mac OS 扩展（日志式）”格式（不区分大小写），然后再添加</string>
     <string name="ui_e8642ee5ad7e" formatted="false">正在估算…</string>
     <string name="ui_c7db4a0b384e" formatted="false">每部影片都会先复制并校验，然后才移除原文件。正在进行的下载也会一并移动。这可能需要数小时。</string>
+    <string name="ui_587ec01dfb96" formatted="false">这里的内容都已看完。</string>
     <string name="ui_f83b6fe3aebf" formatted="false">退出</string>
     <string name="ui_b965ae66fcc4" formatted="false">查看详情</string>
     <string name="ui_c3c5fb3f17e9" formatted="false">提取中</string>
@@ -367,6 +368,7 @@
     <string name="ui_a1af0d20ca98" formatted="false">生成的字幕</string>
     <string name="ui_2aa31fca5e4f" formatted="false">类型</string>
     <string name="ui_a4f9034380e4" formatted="false">隐藏键盘</string>
+    <string name="ui_1c1c54e35bcc" formatted="false">隐藏已看</string>
     <string name="ui_90ccd6497400" formatted="false">历史记录</string>
     <string name="ui_70f8bb9a8a53" formatted="false">首页</string>
     <string name="ui_3c44197b81c9" formatted="false">家庭网络</string>

@@ -681,16 +681,22 @@ struct LibraryBrowser: View {
     @FocusState private var searchFocused: Bool
     #endif
     @State private var genre = "All genres"
-    @State private var order = "Recently added"
+    /// Remembered across visits; Movies and TV Shows share them.
+    @AppStorage("libraryOrder") private var order = "Recently added"
+    @AppStorage("libraryHidesWatched") private var hidesWatched = false
     var titles: [LibraryTitle] {
         let result = store.library?.titles.filter { title in
             (kind == nil || title.kind == kind) && (genre == "All genres" || title.genres.contains(genre)) &&
+            (isHome || !hidesWatched || !title.watched) &&
             (search.isEmpty || title.searchNames.contains { $0.localizedCaseInsensitiveContains(search) } || title.genres.contains { $0.localizedCaseInsensitiveContains(search) })
         } ?? []
+        // Titles imported together share an added time; the title settles their order, which
+        // was otherwise arbitrary and changed from one visit to the next.
+        let alphabetical = { (a: LibraryTitle, b: LibraryTitle) in a.title.localizedStandardCompare(b.title) == .orderedAscending }
         return result.sorted {
-            if order == "Release date" { return ($0.year ?? "", $0.title) > ($1.year ?? "", $1.title) }
-            if order == "Title" { return $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-            return $0.addedAt > $1.addedAt
+            if order == "Release date" { return $0.year != $1.year ? ($0.year ?? "") > ($1.year ?? "") : alphabetical($0, $1) }
+            if order == "Alphabetical" { return alphabetical($0, $1) }
+            return $0.addedAt != $1.addedAt ? $0.addedAt > $1.addedAt : alphabetical($0, $1)
         }
     }
     var genres: [String] { Array(Set((store.library?.titles ?? []).filter { kind == nil || $0.kind == kind }.flatMap(\.genres))).sorted() }
@@ -724,10 +730,16 @@ struct LibraryBrowser: View {
     private var sortMenu: some View {
         Menu {
             Picker("Sort", selection: $order) {
-                ForEach(["Recently added", "Release date", "Title"], id: \.self) { Text(LocalizedStringKey($0)).tag($0) }
+                ForEach(["Recently added", "Release date", "Alphabetical"], id: \.self) { Text(LocalizedStringKey($0)).tag($0) }
             }
         } label: { Label(LocalizedStringKey(order), systemImage: "arrow.up.arrow.down") }
             .accessibilityLabel("Sort")
+    }
+    private var watchedToggle: some View {
+        Button { hidesWatched.toggle() } label: {
+            Label("Hide watched", systemImage: hidesWatched ? "eye.slash.fill" : "eye.slash")
+        }.buttonStyle(MonoButtonStyle(prominent: hidesWatched))
+            .accessibilityAddTraits(hidesWatched ? .isSelected : [])
     }
     #if os(iOS)
     @State private var controlsTucked = false
@@ -743,8 +755,8 @@ struct LibraryBrowser: View {
             }
         }.padding(.horizontal, 10).frame(height: 38).background(Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius))
         return ViewThatFits(in: .horizontal) {
-            if isHome { field } else { HStack(spacing: 10) { field.frame(minWidth: 260); genreMenu; sortMenu } }
-            VStack(alignment: .leading, spacing: 8) { field; HStack(spacing: 10) { genreMenu; sortMenu; Spacer(minLength: 0) } }
+            if isHome { field } else { HStack(spacing: 10) { field.frame(minWidth: 260); genreMenu; sortMenu; watchedToggle } }
+            VStack(alignment: .leading, spacing: 8) { field; HStack(spacing: 10) { genreMenu; sortMenu; watchedToggle; Spacer(minLength: 0) } }
         }.buttonStyle(MonoButtonStyle())
     }
     #endif
@@ -781,7 +793,7 @@ struct LibraryBrowser: View {
                     }
                 }
                 #if !os(iOS)
-                if !isHome && !titles.isEmpty { HStack(spacing: 10) { genreMenu; sortMenu; Spacer(minLength: 0) }.buttonStyle(MonoButtonStyle()).fixedSize(horizontal: false, vertical: true) }
+                if !isHome && !titles.isEmpty { HStack(spacing: 10) { genreMenu; sortMenu; watchedToggle; Spacer(minLength: 0) }.buttonStyle(MonoButtonStyle()).fixedSize(horizontal: false, vertical: true) }
                 #endif
                 if !store.offline, let error = store.libraryError ?? store.library?.error { Text(L10n.text(error)).font(.callout).foregroundStyle(.orange) }
                 if titles.isEmpty {
@@ -798,7 +810,7 @@ struct LibraryBrowser: View {
                     } else if store.library == nil {
                         ContentUnavailableView("Library unavailable", systemImage: "film.stack")
                     } else {
-                        ContentUnavailableView("Your library", systemImage: "film.stack", description: Text(LocalizedStringKey(search.isEmpty ? "No movies or shows yet." : "No titles match your search.")))
+                        ContentUnavailableView("Your library", systemImage: "film.stack", description: Text(LocalizedStringKey(!search.isEmpty ? "No titles match your search." : hidesWatched && !isHome ? "Everything here has been watched." : "No movies or shows yet.")))
                     }
                 } else if browsing {
                     ForEach(homeShelves, id: \.name) { section in shelf(section.name, section.items) }
