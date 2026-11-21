@@ -48,7 +48,8 @@ struct SubtitleQueueView: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
     @Environment(\.scenePhase) private var phase
-    private let groups = [("Needs attention", ["failed", "stale", "expired"]), ("Waiting", ["queued", "scanning", "interrupted"]), ("Finished", ["ready"])]
+    // Finished files are not listed (the server sends only work to do or to look at).
+    private let groups = [("Needs attention", ["failed", "stale", "expired"]), ("Waiting", ["queued", "scanning", "interrupted"])]
     var body: some View { statusContent.modifier(NeedsServerStatus()) }
     @ViewBuilder private var statusContent: some View {
         List {
@@ -86,7 +87,7 @@ struct SubtitleQueueView: View {
                                     .onTapGesture { prioritize(item) }
                                     .accessibilityAction(named: "Prioritize processing") { prioritize(item) }
                                     #if os(macOS)
-                                    .help(item.state == "ready" ? "" : "Click to prioritize this title in the processing queue")
+                                    .help("Click to prioritize this title in the processing queue")
                                     #endif
                             }
                         }

@@ -851,7 +851,8 @@ pub fn summary(db:&Database,jobs:&crate::subtitle_jobs::Manager)->Result<Value> 
             if translating && !settled("credits_state") {if let Some(q)=queues.get_mut("credits") {q.0+=1;}}
         }
         if state=="running"{running.push(json!({"asset_id":id,"title":title,"source":detail["source"],"show":named["show"],"season":named["season"],"episode":named["episode"],"episode_name":named["episode_name"],"language":detail["target"].as_str().unwrap_or(""),"stage":stage,"method":detail["extraction_method"],"completed_cues":cues,"total_cues":total}));}
-        queue.push(item);
+        // Finished files are only counted: the list is the work still to do, or to look at.
+        if state!="ready" {queue.push(item);}
     }
     // Files per minute: those that finished each queue in the last hour.
     let hour=now()-3600.0;
