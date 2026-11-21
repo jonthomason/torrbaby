@@ -677,7 +677,7 @@ struct LibraryBrowser: View {
     @State private var heroPlayback: Playback?
     #endif
     @State private var search = ""
-    #if os(macOS)
+    #if !os(tvOS)
     @FocusState private var searchFocused: Bool
     #endif
     @State private var genre = "All genres"
@@ -749,14 +749,24 @@ struct LibraryBrowser: View {
     /// Search, genre and sort sit above the first row and start scrolled out of view, so a
     /// page opens on its artwork; pulling down reveals them, like the system search drawer.
     private var pullDownControls: some View {
-        let field = HStack(spacing: 6) {
+        // As the system search bar: ⓧ clears the words, Cancel (while typing) clears them and puts
+        // the keyboard away, as do the Search key and scrolling the page.
+        let box = HStack(spacing: 6) {
             Image(systemName: "magnifyingglass").foregroundStyle(Theme.muted)
             TextField("Search movies and TV shows", text: $search).textFieldStyle(.plain).autocorrectionDisabled()
+                .focused($searchFocused).submitLabel(.search).onSubmit { searchFocused = false }
             if !search.isEmpty {
-                Button { search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.muted) }
-                    .buttonStyle(.plain).accessibilityLabel("Clear")
+                Button { search = "" } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.muted).frame(width: 30, height: 38).contentShape(Rectangle())
+                }.buttonStyle(.plain).accessibilityLabel("Clear search")
             }
-        }.padding(.horizontal, 10).frame(height: 38).background(Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius))
+        }.padding(.leading, 10).padding(.trailing, search.isEmpty ? 10 : 2).frame(height: 38).background(Theme.control, in: RoundedRectangle(cornerRadius: Theme.radius))
+        let field = HStack(spacing: 10) {
+            box
+            if searchFocused {
+                Button("Cancel") { search = ""; searchFocused = false }.buttonStyle(.plain).foregroundStyle(Theme.accent).fixedSize()
+            }
+        }.animation(.easeOut(duration: 0.15), value: searchFocused)
         return ViewThatFits(in: .horizontal) {
             if isHome { field } else { HStack(spacing: 10) { field.frame(minWidth: 260); genreMenu; sortMenu; watchedToggle } }
             VStack(alignment: .leading, spacing: 8) { field; HStack(spacing: 10) { genreMenu; sortMenu; watchedToggle; Spacer(minLength: 0) } }
@@ -826,6 +836,7 @@ struct LibraryBrowser: View {
           }
         }.background(Theme.canvas)
         #if os(iOS)
+        .scrollDismissesKeyboard(.immediately)
         // Runs once the library has content to scroll, and not again when returning to the page.
         .task(id: titles.isEmpty) {
             guard !controlsTucked, !titles.isEmpty, search.isEmpty else { return }
