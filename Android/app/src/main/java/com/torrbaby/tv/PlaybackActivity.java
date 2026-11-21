@@ -323,7 +323,8 @@ public class PlaybackActivity extends Activity {
     android.widget.FrameLayout.LayoutParams layout =
         new android.widget.FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.START);
     // Inside the television's overscan margin; the next-episode button holds the right side.
-    layout.setMargins(Ui.dp(this, 48), 0, Ui.dp(this, 260), Ui.dp(this, 100));
+    // A TV keeps clear of its overscan; a phone's edge is the screen's own.
+    layout.setMargins(Ui.dp(this, phone ? 16 : 48), 0, Ui.dp(this, phone ? 16 : 260), Ui.dp(this, 100));
     view.addView(heading, layout);
     // Sit just above the progress bar, wherever this Media3 version lays it out.
     View progress = view.findViewById(androidx.media3.ui.R.id.exo_progress);
