@@ -283,25 +283,59 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
     // nothing more: no reading of picture tracks, translation, OpenSubtitles or transcription
     // (the user's rule, 2026-11-16).
     let extra=asset["role"]=="extra";
-    // A file with no subtitle tracks takes the transcript path (OpenSubtitles, the picture,
-    // the speech) and OpenSubtitles' overrides after it. Applied to the empty track plan
-    // first, they planned OpenSubtitles' English alone: the Chinese read from the picture
-    // (兰香如故) or translated from the transcript (Star Trek, 1966) was dropped and the
-    // file signed off with English only (216 titles, found 2026-11-21).
-    let trackless=planned.is_empty();
-    if extra {
-        let bitmap=|track:u64| tracks.iter().any(|t|t["track"]==track && t["sidecar"]!=true && matches!(t["codec"].as_str(),Some("S_HDMV/PGS"|"S_VOBSUB")));
-        planned.retain(|(path,track,_,target)| target.is_none() && !(path.as_path()==input && bitmap(*track)));
-    } else if !trackless {
-        people_before_pictures(s,asset,id,&input,&info,&mut planned).await?;
-        prefer_people_english(s,asset,id,&input,&info,&mut planned).await?;
-        prefer_people_chinese(s,asset,id,&input,&mut planned).await?;
-        people_everywhere(s,asset,id,&input,&mut planned).await?;
+    let outcome=plan_subtitles(&Live{s,asset,id,input:&input},&input,&info,extra,planned).await?;
+    let Outcome{mut prepared,jobs,complete,mut progress,..}=outcome;
+    // While replacements are made (OpenSubtitles' English for a transcript, then its Chinese
+    // translated on device), each language keeps the subtitles it had until its new ones
+    // are ready: a title never loses subtitles before the new ones exist.
+    if !complete { keep_until_replaced(&mut prepared, info["prepared"].as_array().map(Vec::as_slice).unwrap_or(&[])); }
+    // Every title but bonus material ends with English and Chinese: there is always a way
+    // (OpenSubtitles, the file's tracks, the picture, the speech, translation on device). The
+    // one exception is a title with no subtitles anywhere whose speech is neither English nor
+    // Mandarin, which the transcript path records. Anything else is a fault to fix, not a
+    // finished title: it is reported (Needs attention) with what was made, never signed off quietly.
+    if complete && !extra && let Some(error)=missing_subtitles(&prepared,&progress) {
+        tracing::error!(asset=id,%error,"Subtitles incomplete");
+        progress=json!({"state":"failed","error":error});
     }
-    let mut outcome=advance_jobs(s,asset,id,&planned)?;
-    if outcome.no_source && !extra {
-        // No usable English or Chinese subtitles: transcribe the English or Mandarin
-        // audio, then translate the transcript to the other language like any text track.
+    info["prepared"]=json!(prepared);info["jobs"]=json!(jobs);
+    info["preparation_state"]=json!(if complete {"ready"}else if progress["state"]=="failed" {"failed"}else{"preparing"});
+    {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;save(&db,id,&revision,&info)?;}
+    Ok(progress)
+}
+
+type Planned=(std::path::PathBuf,u64,&'static str,Option<&'static str>);
+/// What subtitle planning asks of the world: the jobs already made, OpenSubtitles, the
+/// transcript (picture or speech), and starting the planned jobs.
+trait Sources {
+    /// The job that makes `target` (None: the source language as it is) from a track of a file.
+    fn job(&self,path:&std::path::Path,track:u64,source:&str,target:Option<&str>)->Option<Value>;
+    /// How a subtitle file the server keeps was made ("opensubtitles", "ocr", "speech"); None for a release's own.
+    fn method(&self,path:&std::path::Path)->Option<&'static str>;
+    /// Whether every title is to take OpenSubtitles' subtitles.
+    fn everything(&self)->bool;
+    async fn people_english(&self)->Result<Option<std::path::PathBuf>>;
+    async fn people_chinese(&self)->Result<Option<std::path::PathBuf>>;
+    async fn people_everywhere(&self,language:&str)->Result<Option<std::path::PathBuf>>;
+    fn set_aside(&self,tag:&str,reason:&str)->Result<()>;
+    async fn transcript(&self)->Result<crate::speech_subtitles::Transcript>;
+    /// Start or check the planned jobs.
+    fn advance(&self,planned:&[Planned])->Result<Outcome>;
+}
+/// The server's own sources for one file.
+struct Live<'a>{s:&'a Service,asset:&'a Value,id:&'a str,input:&'a std::path::Path}
+impl Sources for Live<'_> {
+    fn job(&self,path:&std::path::Path,track:u64,source:&str,target:Option<&str>)->Option<Value> {
+        self.s.subtitle_jobs.lookup(self.id,path,track,&Some(source.to_owned()),&target.map(str::to_owned))
+    }
+    fn method(&self,path:&std::path::Path)->Option<&'static str> {crate::speech_subtitles::method(&self.s.data_dir,path)}
+    fn everything(&self)->bool {crate::opensubtitles::everything(&self.s.data_dir)}
+    async fn people_english(&self)->Result<Option<std::path::PathBuf>> {crate::speech_subtitles::people_english(self.s,self.asset,self.input).await}
+    async fn people_chinese(&self)->Result<Option<std::path::PathBuf>> {crate::speech_subtitles::people_chinese(self.s,self.asset,self.input).await}
+    async fn people_everywhere(&self,language:&str)->Result<Option<std::path::PathBuf>> {crate::speech_subtitles::people_everywhere(self.s,self.asset,self.input,language).await}
+    fn set_aside(&self,tag:&str,reason:&str)->Result<()> {crate::speech_subtitles::set_aside(self.s,self.asset,self.input,tag,reason)}
+    async fn transcript(&self)->Result<crate::speech_subtitles::Transcript> {
+        let (s,id)=(self.s,self.id);
         let report=|done:u64,total:u64,source:&str|{
             if let Ok(db)=s.db.lock() {
                 // "source" says whether subtitles are being read from the picture or the
@@ -310,13 +344,41 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
                 let _=db.connection.execute("UPDATE media_processing SET stage='transcription',detail=?,updated=? WHERE asset_id=? AND state='running'",rusqlite::params![detail.to_string(),now(),id]);
             }
         };
-        match crate::speech_subtitles::transcript(s,asset,&input,report).await? {
+        crate::speech_subtitles::transcript(s,self.asset,self.input,report).await
+    }
+    fn advance(&self,planned:&[Planned])->Result<Outcome> {advance_jobs(self.s,self.asset,self.id,planned)}
+}
+/// Which sources make a file's English and Chinese subtitles, and the jobs for them: its own
+/// tracks (`planned`), OpenSubtitles, the picture, the speech, and translation on device.
+/// Everything it asks of the world goes through `src`, so the whole decision can be tested.
+async fn plan_subtitles(src:&impl Sources,input:&std::path::Path,info:&Value,extra:bool,mut planned:Vec<Planned>)->Result<Outcome> {
+    // A file with no subtitle tracks takes the transcript path (OpenSubtitles, the picture,
+    // the speech) and OpenSubtitles' overrides after it. Applied to the empty track plan
+    // first, they planned OpenSubtitles' English alone: the Chinese read from the picture
+    // (兰香如故) or translated from the transcript (Star Trek, 1966) was dropped and the
+    // file signed off with English only (216 titles, found 2026-11-21).
+    let trackless=planned.is_empty();
+    if extra {
+        let tracks=info["subtitle_tracks"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+        let bitmap=|track:u64| tracks.iter().any(|t|t["track"]==track && t["sidecar"]!=true && matches!(t["codec"].as_str(),Some("S_HDMV/PGS"|"S_VOBSUB")));
+        planned.retain(|(path,track,_,target)| target.is_none() && !(path.as_path()==input && bitmap(*track)));
+    } else if !trackless {
+        people_before_pictures(src,input,info,&mut planned).await?;
+        prefer_people_english(src,input,info,&mut planned).await?;
+        prefer_people_chinese(src,&mut planned).await?;
+        people_everywhere(src,&mut planned).await?;
+    }
+    let mut outcome=src.advance(&planned)?;
+    if outcome.no_source && !extra {
+        // No usable English or Chinese subtitles: transcribe the English or Mandarin
+        // audio, then translate the transcript to the other language like any text track.
+        match src.transcript().await? {
             crate::speech_subtitles::Transcript::Ready(path,language) => {
                 let mut planned=vec![(path.clone(),1,language,None),(path,1,language,Some(if language=="en" {"zh-Hans"}else{"en"}))];
-                prefer_people_english(s,asset,id,&input,&info,&mut planned).await?;
-                prefer_people_chinese(s,asset,id,&input,&mut planned).await?;
-                people_everywhere(s,asset,id,&input,&mut planned).await?;
-                outcome=advance_jobs(s,asset,id,&planned)?;
+                prefer_people_english(src,input,info,&mut planned).await?;
+                prefer_people_chinese(src,&mut planned).await?;
+                people_everywhere(src,&mut planned).await?;
+                outcome=src.advance(&planned)?;
             }
             crate::speech_subtitles::Transcript::Rejected(reason) => {
                 outcome.progress["reason"]=json!(format!("{}; {reason}",outcome.progress["reason"].as_str().unwrap_or("No supported English or Chinese subtitle source")));
@@ -327,42 +389,46 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
             }
         }
     }
-    let Outcome{mut prepared,jobs,complete,progress,..}=outcome;
-    // While replacements are made (OpenSubtitles' English for a transcript, then its Chinese
-    // translated on device), each language keeps the subtitles it had until its new ones
-    // are ready: a title never loses subtitles before the new ones exist.
-    if !complete { keep_until_replaced(&mut prepared, info["prepared"].as_array().map(Vec::as_slice).unwrap_or(&[])); }
-    info["prepared"]=json!(prepared);info["jobs"]=json!(jobs);
-    info["preparation_state"]=json!(if complete {"ready"}else if progress["state"]=="failed" {"failed"}else{"preparing"});
-    {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;save(&db,id,&revision,&info)?;}
-    Ok(progress)
+    Ok(outcome)
 }
-
+/// What is wrong with a finished pass's subtitles: one language only (naming how it was
+/// made), or none without the transcript path's verdict that none can be made.
+fn missing_subtitles(prepared:&[Value],progress:&Value)->Option<String> {
+    let made=|language:&str|prepared.iter().find(|j|j["state"]=="ready" && j["language"]==language);
+    let (have,missing)=match (made("en"),made("zh-Hans")) {
+        (Some(job),None)=>(job,"Chinese"),
+        (None,Some(job))=>(job,"English"),
+        (Some(_),Some(_))=>return None,
+        (None,None)=>return (progress["state"]!="not_applicable").then(||"No subtitles were made".to_owned()),
+    };
+    let how=have["target"].as_str().map(|_|"translation".to_owned()).or_else(||have["extraction_method"].as_str().map(str::to_owned)).unwrap_or_default();
+    Some(format!("Subtitles were made in {} only ({how}); nothing made {missing}",if missing=="Chinese" {"English"} else {"Chinese"}))
+}
 struct Outcome { prepared:Vec<Value>, jobs:Vec<Value>, complete:bool, progress:Value, no_source:bool }
 /// English the server made itself (read from a bitmap track, or translated from Chinese read
 /// from the picture) gives way to English people wrote, from OpenSubtitles; the picture's
 /// Chinese stays. A title with a translation by the external fleet waits for a later round
 /// (the user's rule, 2026-11-15).
-async fn prefer_people_english(s:&Service,asset:&Value,id:&str,input:&std::path::Path,info:&Value,planned:&mut [(std::path::PathBuf,u64,&'static str,Option<&'static str>)])->Result<()> {
+async fn prefer_people_english(src:&impl Sources,input:&std::path::Path,info:&Value,planned:&mut [Planned])->Result<()> {
     let bitmap=|track:u64| info["subtitle_tracks"].as_array().is_some_and(|tracks|tracks.iter().any(|t|t["track"]==track && t["sidecar"]!=true && matches!(t["codec"].as_str(),Some("S_HDMV/PGS"|"S_VOBSUB"))));
     let read=planned.iter().position(|(path,track,language,target)|*language=="en" && target.is_none() && path.as_path()==input && bitmap(*track));
     // Only English translated from the picture's Chinese; English translated from a Chinese
     // subtitle track is not transcribed, and is reviewed before anything replaces it.
-    let picture=|path:&std::path::Path|crate::speech_subtitles::method(&s.data_dir,path)==Some("ocr");
+    let picture=|path:&std::path::Path|src.method(path)==Some("ocr");
     let translated=planned.iter().position(|(path,_,language,target)|*language=="zh-Hans" && *target==Some("en") && picture(path));
     if read.is_none() && translated.is_none() {return Ok(());}
-    let fleet=planned.iter().any(|(path,track,language,target)|s.subtitle_jobs.lookup(id,path,*track,&Some((*language).to_owned()),&target.map(str::to_owned)).is_some_and(|job|job["translated_by"]=="fleet"));
+    let fleet=planned.iter().any(|(path,track,language,target)|src.job(path,*track,language,*target).is_some_and(|job|job["translated_by"]=="fleet"));
     if fleet {
-        crate::speech_subtitles::set_aside(s,asset,input,"en","Translated by the external fleet: a later round")?;
+        src.set_aside("en","Translated by the external fleet: a later round")?;
         return Ok(());
     }
-    let Some(english)=crate::speech_subtitles::people_english(s,asset,input).await? else {return Ok(())};
+    let Some(english)=src.people_english().await? else {return Ok(())};
     if let Some(at)=read {
         let (path,track,_,_)=planned[at].clone();
         planned[at]=(english.clone(),1,"en",None);
         // Its Chinese: a translation already made stays; otherwise it comes from the new English.
         if let Some(chinese)=planned.iter().position(|(p,t,language,target)|*p==path && *t==track && *language=="en" && *target==Some("zh-Hans")) {
-            let made=s.subtitle_jobs.lookup(id,&path,track,&Some("en".to_owned()),&Some("zh-Hans".to_owned())).is_some_and(|job|job["state"]=="ready");
+            let made=src.job(&path,track,"en",Some("zh-Hans")).is_some_and(|job|job["state"]=="ready");
             if !made {planned[chinese]=(english.clone(),1,"en",Some("zh-Hans"));}
         }
     }
@@ -374,22 +440,22 @@ async fn prefer_people_english(s:&Service,asset:&Value,id:&str,input:&std::path:
 /// of a Chinese track's reading, and an unlabelled track is not read to find its language when
 /// OpenSubtitles has English or Chinese (the other comes by translation on device). A track
 /// already read stays. English tracks: `prefer_people_english`.
-async fn people_before_pictures(s:&Service,asset:&Value,id:&str,input:&std::path::Path,info:&Value,planned:&mut Vec<(std::path::PathBuf,u64,&'static str,Option<&'static str>)>)->Result<()> {
+async fn people_before_pictures(src:&impl Sources,input:&std::path::Path,info:&Value,planned:&mut Vec<Planned>)->Result<()> {
     let bitmap=|track:u64| info["subtitle_tracks"].as_array().is_some_and(|tracks|tracks.iter().any(|t|t["track"]==track && t["sidecar"]!=true && matches!(t["codec"].as_str(),Some("S_HDMV/PGS"|"S_VOBSUB"))));
-    let unread=|planned:&[(std::path::PathBuf,u64,&'static str,Option<&'static str>)],language:&str|planned.iter().find(|(path,track,l,target)|
+    let unread=|planned:&[Planned],language:&str|planned.iter().find(|(path,track,l,target)|
         *l==language && target.is_none() && path.as_path()==input && bitmap(*track)
-        && !s.subtitle_jobs.lookup(id,path,*track,&Some(language.to_owned()),&None).is_some_and(|job|job["state"]=="ready"))
+        && !src.job(path,*track,language,None).is_some_and(|job|job["state"]=="ready"))
         .map(|(_,track,_,_)|*track);
     if let Some(track)=unread(planned,"zh-Hans") {
-        if let Some(chinese)=crate::speech_subtitles::people_chinese(s,asset,input).await? {
+        if let Some(chinese)=src.people_chinese().await? {
             for entry in planned.iter_mut().filter(|(path,t,l,_)|path.as_path()==input && *t==track && *l=="zh-Hans") {
                 *entry=(chinese.clone(),1,"zh-Hans",entry.3);
             }
         }
     }
     if let Some(track)=unread(planned,"auto") {
-        let english=crate::speech_subtitles::people_english(s,asset,input).await?;
-        let chinese=crate::speech_subtitles::people_chinese(s,asset,input).await?;
+        let english=src.people_english().await?;
+        let chinese=src.people_chinese().await?;
         let replacement=match (english,chinese) {
             (Some(en),Some(zh))=>Some(vec![(en,1,"en",None),(zh,1,"zh-Hans",None)]),
             (Some(en),None)=>Some(vec![(en.clone(),1,"en",None),(en,1,"en",Some("zh-Hans"))]),
@@ -408,31 +474,30 @@ async fn people_before_pictures(s:&Service,asset:&Value,id:&str,input:&std::path
 /// (Parasite's, translated while Chinese downloads were off): it stays until the download is
 /// ready (or is dropped mid-way). Other translations already made, and any by the external
 /// fleet, stay as they are.
-async fn prefer_people_chinese(s:&Service,asset:&Value,id:&str,input:&std::path::Path,planned:&mut [(std::path::PathBuf,u64,&'static str,Option<&'static str>)])->Result<()> {
+async fn prefer_people_chinese(src:&impl Sources,planned:&mut [Planned])->Result<()> {
     let Some(at)=planned.iter().position(|(_,_,language,target)|*language=="en" && *target==Some("zh-Hans")) else {return Ok(())};
     let (path,track,_,_)=&planned[at];
-    let existing=s.subtitle_jobs.lookup(id,path,*track,&Some("en".to_owned()),&Some("zh-Hans".to_owned()));
-    let interim=crate::speech_subtitles::method(&s.data_dir,path)==Some("opensubtitles")
+    let existing=src.job(path,*track,"en",Some("zh-Hans"));
+    let interim=src.method(path)==Some("opensubtitles")
         && !existing.as_ref().is_some_and(|job|job["translated_by"]=="fleet");
     if !interim && existing.as_ref().is_some_and(|job|matches!(job["state"].as_str(),Some("ready"|"running"|"queued"|"external"))) {return Ok(());}
-    if let Some(chinese)=crate::speech_subtitles::people_chinese(s,asset,input).await? {planned[at]=(chinese,1,"zh-Hans",None);}
+    if let Some(chinese)=src.people_chinese().await? {planned[at]=(chinese,1,"zh-Hans",None);}
     Ok(())
 }
 /// While every title is to take OpenSubtitles' subtitles (`opensubtitles::everything`), its
 /// English and Chinese replace whatever would make those languages; a language it lacks
 /// keeps its source, and a Chinese translation not made yet is made from its English.
-async fn people_everywhere(s:&Service,asset:&Value,id:&str,input:&std::path::Path,planned:&mut Vec<Planned>)->Result<()> {
-    if !crate::opensubtitles::everything(&s.data_dir) {return Ok(());}
-    let english=crate::speech_subtitles::people_everywhere(s,asset,input,"en").await?;
-    let chinese=crate::speech_subtitles::people_everywhere(s,asset,input,"zh-cn").await?;
+async fn people_everywhere(src:&impl Sources,planned:&mut Vec<Planned>)->Result<()> {
+    if !src.everything() {return Ok(());}
+    let english=src.people_everywhere("en").await?;
+    let chinese=src.people_everywhere("zh-cn").await?;
     if english.is_none() && chinese.is_none() {return Ok(());}
     // A translation of a speech transcript is made again from OpenSubtitles' text (the user's
     // rule, 2026-11-15); other translations already made stay.
-    replace_with_people(planned,english.as_deref(),chinese.as_deref(),|path,track,source,target|crate::speech_subtitles::method(&s.data_dir,path)!=Some("speech")
-        && s.subtitle_jobs.lookup(id,path,track,&Some(source.to_owned()),&Some(target.to_owned())).is_some_and(|job|job["state"]=="ready"));
+    replace_with_people(planned,english.as_deref(),chinese.as_deref(),|path,track,source,target|src.method(path)!=Some("speech")
+        && src.job(path,track,source,Some(target)).is_some_and(|job|job["state"]=="ready"));
     Ok(())
 }
-type Planned=(std::path::PathBuf,u64,&'static str,Option<&'static str>);
 fn replace_with_people(planned:&mut Vec<Planned>,english:Option<&std::path::Path>,chinese:Option<&std::path::Path>,translated:impl Fn(&std::path::Path,u64,&str,&str)->bool) {
     let output=|entry:&Planned|entry.3.unwrap_or(entry.2);
     for entry in planned.iter_mut() {
@@ -526,6 +591,110 @@ pub fn summary(db: &Database, jobs: &crate::subtitle_jobs::Manager) -> Result<Va
     crate::processing::summary(db, jobs)
 }
 
+#[cfg(test)]
+mod whole_plan_tests {
+    use super::*;
+    use std::path::{Path,PathBuf};
+    /// A file's own subtitles, and what its transcript path finds.
+    #[derive(Clone,Copy,Debug,PartialEq)]
+    enum Kind { Trackless, TranscribedEarlier, ChineseDrama, Silent, EnglishTrack, ChineseTrack, BothTracks, UnlabelledTrack, EnglishPictureTrack }
+    struct Fake { kind:Kind, english:bool, chinese:bool }
+    const VIDEO:&str="/m/a.mkv";
+    fn ost(language:&str)->PathBuf {PathBuf::from(format!("/t/a.{language}.opensubtitles.srt"))}
+    impl Sources for Fake {
+        fn job(&self,_:&Path,_:u64,_:&str,_:Option<&str>)->Option<Value> {None}
+        fn method(&self,path:&Path)->Option<&'static str> {
+            let name=path.to_str()?;
+            if !name.starts_with("/t/") {None} else if name.ends_with(".opensubtitles.srt") {Some("opensubtitles")} else if name.ends_with(".burned.srt") {Some("ocr")} else {Some("speech")}
+        }
+        fn everything(&self)->bool {true}
+        async fn people_english(&self)->Result<Option<PathBuf>> {Ok(self.english.then(||ost("en")))}
+        async fn people_chinese(&self)->Result<Option<PathBuf>> {Ok(self.chinese.then(||ost("zh-Hans")))}
+        async fn people_everywhere(&self,language:&str)->Result<Option<PathBuf>> {Ok(if language=="en" {self.english.then(||ost("en"))} else {self.chinese.then(||ost("zh-Hans"))})}
+        fn set_aside(&self,_:&str,_:&str)->Result<()> {Ok(())}
+        /// As speech_subtitles::transcript: a Chinese name reads the picture first, any other
+        /// asks OpenSubtitles first; a transcript made earlier is kept.
+        async fn transcript(&self)->Result<crate::speech_subtitles::Transcript> {
+            use crate::speech_subtitles::Transcript::*;
+            Ok(match self.kind {
+                Kind::ChineseDrama=>Ready(PathBuf::from("/t/a.zh-Hans.burned.srt"),"zh-Hans"),
+                Kind::TranscribedEarlier=>Ready(PathBuf::from("/t/a.en.srt"),"en"),
+                _ if self.english=>Ready(ost("en"),"en"),
+                _ if self.chinese=>Ready(ost("zh-Hans"),"zh-Hans"),
+                Kind::Trackless=>Ready(PathBuf::from("/t/a.en.srt"),"en"),
+                _=>Rejected("No speech".into()),
+            })
+        }
+        /// Every planned job made: the language it gives and how. An unlabelled track reads as English.
+        fn advance(&self,planned:&[Planned])->Result<Outcome> {
+            let prepared=planned.iter().map(|(path,_,language,target)|{
+                let output=match target.unwrap_or(language) {"auto" if target.is_some()=>"zh-Hans","auto"=>"en",other=>other};
+                let source=self.method(path).unwrap_or("track");
+                json!({"state":"ready","language":output,"target":target.map(|_|output),"how":if target.is_some() {format!("translation of {source}")} else {source.to_owned()}})
+            }).collect();
+            Ok(Outcome{prepared,jobs:Vec::new(),complete:true,progress:json!({"state":if planned.is_empty() {"not_applicable"} else {"ready"}}),no_source:planned.is_empty()})
+        }
+    }
+    fn tracks(kind:Kind)->Vec<Value> {
+        let text=|track:u64,language:&str|json!({"track":track,"language":language,"codec":"S_TEXT/UTF8","text_extractable":true,"extraction_supported":true});
+        match kind {
+            Kind::EnglishTrack=>vec![text(3,"eng")],
+            Kind::ChineseTrack=>vec![text(3,"chi")],
+            Kind::BothTracks=>vec![text(3,"eng"),text(4,"chi")],
+            Kind::UnlabelledTrack=>vec![json!({"track":3,"codec":"S_HDMV/PGS","extraction_supported":true})],
+            Kind::EnglishPictureTrack=>vec![json!({"track":3,"language":"eng","codec":"S_HDMV/PGS","extraction_supported":true})],
+            _=>Vec::new(),
+        }
+    }
+    /// Every kind of file crossed with what OpenSubtitles has: each ends with English and
+    /// Chinese from the right source (OpenSubtitles first; then the file's own text, the
+    /// picture's Chinese, the speech; then translation of the other language on device), or,
+    /// silent with nothing on OpenSubtitles, with neither.
+    #[test]
+    fn every_title_ends_with_english_and_chinese_from_the_right_source() -> Result<()> {
+        let runtime=tokio::runtime::Builder::new_current_thread().build()?;
+        use Kind::*;
+        for kind in [Trackless,TranscribedEarlier,ChineseDrama,Silent,EnglishTrack,ChineseTrack,BothTracks,UnlabelledTrack,EnglishPictureTrack] {
+            for (english,chinese) in [(true,true),(true,false),(false,true),(false,false)] {
+                let fake=Fake{kind,english,chinese};
+                let info=json!({"subtitle_tracks":tracks(kind)});
+                let input=Path::new(VIDEO);
+                let mut planned:Vec<Planned>=Vec::new();
+                for (source,language,target) in subtitle_plan(info["subtitle_tracks"].as_array().unwrap()) {
+                    let track=source["track"].as_u64().unwrap();
+                    planned.push((input.to_owned(),track,language,None));
+                    if language!=target || target=="auto" {planned.push((input.to_owned(),track,language,Some(target)));}
+                }
+                let outcome=runtime.block_on(plan_subtitles(&fake,input,&info,false,planned))?;
+                let how=|language:&str|outcome.prepared.iter().filter(|j|j["language"]==language).map(|j|j["how"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
+                let case=format!("{kind:?}, OpenSubtitles English {english}, Chinese {chinese}: en {:?}, zh {:?}",how("en"),how("zh-Hans"));
+                if kind==Silent && !english && !chinese {
+                    assert!(how("en").is_empty() && how("zh-Hans").is_empty(),"{case}");
+                    // The one title allowed none: nothing anywhere, and no English or Mandarin speech.
+                    assert!(missing_subtitles(&outcome.prepared,&outcome.progress).is_none(),"{case}");
+                    continue;
+                }
+                assert_eq!((how("en").len(),how("zh-Hans").len()),(1,1),"{case}");
+                assert!(missing_subtitles(&outcome.prepared,&outcome.progress).is_none(),"{case}");
+                // Had a language been lost, the pass would be reported, not signed off.
+                let mut lost=outcome.prepared.clone();
+                lost.retain(|j|j["language"]!="zh-Hans");
+                assert!(missing_subtitles(&lost,&outcome.progress).is_some(),"{case}");
+                // OpenSubtitles wins for each language it has.
+                if english {assert_eq!(how("en"),["opensubtitles"],"{case}");}
+                if chinese {assert_eq!(how("zh-Hans"),["opensubtitles"],"{case}");}
+                // Chinese read from the picture of a Chinese show is kept over a translation.
+                if kind==ChineseDrama && !chinese {assert_eq!(how("zh-Hans"),["ocr"],"{case}");}
+                // A file's own Chinese text is kept over a translation.
+                if matches!(kind,ChineseTrack|BothTracks) && !chinese {assert_eq!(how("zh-Hans"),["track"],"{case}");}
+                if kind==BothTracks && !english {assert_eq!(how("en"),["track"],"{case}");}
+                // A translation of the speech is made again from OpenSubtitles' English.
+                if english && !chinese && !matches!(kind,ChineseDrama|ChineseTrack|BothTracks) {assert_eq!(how("zh-Hans"),["translation of opensubtitles"],"{case}");}
+            }
+        }
+        Ok(())
+    }
+}
 #[cfg(test)]
 mod priority_tests {
     use super::*;

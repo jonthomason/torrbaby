@@ -130,7 +130,9 @@ fn reopen_one_language(db:&Database)->Result<usize> {
 }
 /// Subtitle errors a later build no longer has: the subtitle store's old 4,096-file cap, and
 /// a subtitle track in neither English nor Chinese blocking the picture and the speech.
-const RETIRED_SUBTITLE_ERRORS:[&str;5]=[crate::subtitle_jobs::STORAGE_FULL,crate::ocr_subtitles::UNIDENTIFIED_LANGUAGE,
+const RETIRED_SUBTITLE_ERRORS:[&str;6]=[crate::subtitle_jobs::STORAGE_FULL,crate::ocr_subtitles::UNIDENTIFIED_LANGUAGE,
+    // A translation that ran out of time is tried again: complete means English and Chinese.
+    "Subtitle translation timed out%",
     // A file read before its download finished (Outlander S04E13 kept no Chinese): now retried.
     DOWNLOAD_INCOMPLETE,
     // The Matroska reader on a file still being copied in (see `settling`).
@@ -832,6 +834,9 @@ pub fn summary(db:&Database,jobs:&crate::subtitle_jobs::Manager)->Result<Value> 
         let cues=detail["completed_cues"].as_u64().unwrap_or(0);let total=detail["total_cues"].as_u64().unwrap_or(0);
         let named=name(&asset,asset["entity_id"].as_str().and_then(|e|entities.get(e)));
         if row.is_some_and(|r|r["inventory_state"]=="ready"){scanned+=1;}
+        // Complete means English and Chinese subtitles: a file whose subtitle stage failed
+        // (Needs attention says why) is not counted complete, though it plays.
+        if state=="ready" && asset["role"]!="extra" && row.is_some_and(|r|r["subtitles_state"]=="skipped") {state="failed";}
         if state=="ready"{completed+=1;}
         if state=="failed"{failed+=1;}
         let item=json!({"id":id,"asset_id":id,"title":title,"source":detail["source"],"show":named["show"],"season":named["season"],"episode":named["episode"],"episode_name":named["episode_name"],"state":state,"stage":stage,"target":detail["target"],"error":row.map(|r|r["error"].clone()).unwrap_or(Value::Null),"completed_cues":cues,"total_cues":total,"method":detail["extraction_method"],
