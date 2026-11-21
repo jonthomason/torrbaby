@@ -410,8 +410,14 @@ final class Store: ObservableObject {
     /// "Connected · TB (Bronze)"), so Settings → Connection is needed only for more.
     var connectionLabel: String {
         guard connected else { return L10n.text("Offline") }
+        #if os(iOS)
+        let abtWay = abtPath
+        #else
+        // Only the iPhone/iPad app reads ABT's path (from the VPN's shared state).
+        let abtWay: String? = nil
+        #endif
         let (source, way): (String?, String?) = switch path {
-        case .abt: ("ABT", ["lan": "LAN", "punched": L10n.text("Direct"), "ipv6": "IPv6", "bronze": "Bronze"][abtPath ?? ""])
+        case .abt: ("ABT", ["lan": "LAN", "punched": L10n.text("Direct"), "ipv6": "IPv6", "bronze": "Bronze"][abtWay ?? ""])
         case .tunnel: ("TB", nil)
         case .direct: ("TB", L10n.text("Direct"))
         case .relay: ("TB", "Bronze")
