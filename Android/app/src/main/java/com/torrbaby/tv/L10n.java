@@ -199,6 +199,7 @@ final class L10n {
     IDS.put("Connected via direct", R.string.ui_31dd3d9b2dfc);
     IDS.put("Connected via home network", R.string.ui_ce8afaed4421);
     IDS.put("Connected via relay", R.string.ui_fef332f9ab65);
+    IDS.put("Connected · %s", R.string.ui_43a219b38f0c);
     IDS.put("Connected · not used for new downloads", R.string.ui_9449502ae14e);
     IDS.put("Connecting to Torrbaby’s relay…", R.string.ui_ca7e4b990121);
     IDS.put("Connecting…", R.string.ui_fd3e79699426);
@@ -216,6 +217,7 @@ final class L10n {
     IDS.put("Could not load users", R.string.ui_47dd74c0c423);
     IDS.put("Could not reach Torrbaby’s relay. Check this TV’s internet connection, then choose New setup code.", R.string.ui_dd5a1a5ba7fd);
     IDS.put("Could not reach Torrbaby’s relay. Check this device’s internet connection; still trying…", R.string.ui_db822b0454a3);
+    IDS.put("Could not reach Torrbaby’s relay. Check this phone’s internet connection, then choose New setup code.", R.string.ui_ccf7d59b8065);
     IDS.put("Could not refresh.", R.string.ui_3bcad4a3da4b);
     IDS.put("Could not write to this drive", R.string.ui_ec6c4f8da528);
     IDS.put("Couldn’t add release", R.string.ui_5a538c5c5377);
@@ -271,6 +273,7 @@ final class L10n {
     IDS.put("Disconnect", R.string.ui_ed28e0686e12);
     IDS.put("Disconnect this TV", R.string.ui_d9835d7b9245);
     IDS.put("Disconnect this TV?", R.string.ui_3e06b932237a);
+    IDS.put("Disconnect this phone", R.string.ui_c3ec1e31e67c);
     IDS.put("Dismiss", R.string.ui_70afe9eff3f2);
     IDS.put("Dismiss all", R.string.ui_a5c313167365);
     IDS.put("Dismiss notification", R.string.ui_dc83cd803134);
@@ -444,6 +447,7 @@ final class L10n {
     IDS.put("Login cookie", R.string.ui_cec3ed33b848);
     IDS.put("Logs sent", R.string.ui_0b63361952a9);
     IDS.put("Look up again", R.string.ui_82b4b1ef514f);
+    IDS.put("Looking for your server on this network…", R.string.ui_e02432a775b2);
     IDS.put("Looking up…", R.string.ui_27d9ea3d190c);
     IDS.put("Lookup will retry", R.string.ui_3f4fc9a34ef7);
     IDS.put("Lossless", R.string.ui_f3b36f28ca45);
@@ -524,6 +528,7 @@ final class L10n {
     IDS.put("No releases found", R.string.ui_6fd4ab12ee28);
     IDS.put("No reported seeds", R.string.ui_4c57e22bd419);
     IDS.put("No server found", R.string.ui_74cd1304973c);
+    IDS.put("No server found on this network.", R.string.ui_b438edb05053);
     IDS.put("No shows are being watched", R.string.ui_f7dca3322c11);
     IDS.put("No subtitle jobs", R.string.ui_3e36b40ea99d);
     IDS.put("No supported subtitle source", R.string.ui_55b63277f6b3);
@@ -592,6 +597,7 @@ final class L10n {
     IDS.put("Photo", R.string.ui_d01d900383e4);
     IDS.put("Picture", R.string.ui_61852524b8f8);
     IDS.put("Play", R.string.ui_5d12bd53552c);
+    IDS.put("Play S%d E%d", R.string.ui_ed6892118264);
     IDS.put("Play again", R.string.ui_576766d387ec);
     IDS.put("Play or resume original file", R.string.ui_dc3b71c61700);
     IDS.put("Playback", R.string.ui_c8e308704911);
@@ -715,6 +721,7 @@ final class L10n {
     IDS.put("Scan this code with Torrbaby on a phone or tablet that is already connected to your server.", R.string.ui_00839fc38e1c);
     IDS.put("Search", R.string.ui_bce06414177f);
     IDS.put("Search TV shows.", R.string.ui_9ac904fe540c);
+    IDS.put("Search again", R.string.ui_1178a4ffb40c);
     IDS.put("Search for", R.string.ui_0f53c93d9994);
     IDS.put("Search movies and TV shows", R.string.ui_c4cfc9981ae1);
     IDS.put("Search movies and TV shows.", R.string.ui_06040cbe6a6a);
@@ -844,6 +851,7 @@ final class L10n {
     IDS.put("Text opacity", R.string.ui_83e097038017);
     IDS.put("That drive is not connected", R.string.ui_84226c2c5018);
     IDS.put("The Pirate Bay", R.string.ui_22b20e9773ff);
+    IDS.put("The connection has expired or was revoked. Link this phone again.", R.string.ui_032172241d16);
     IDS.put("The connection to Transmission was interrupted. Please try again.", R.string.ui_17640422b43a);
     IDS.put("The download is incomplete.", R.string.ui_ceaf21e9d02f);
     IDS.put("The downloaded update was damaged. Try again.", R.string.ui_aca10e690616);
@@ -1014,6 +1022,7 @@ final class L10n {
     IDS.put("Your selected profile is unavailable. Choose a user to continue.", R.string.ui_19d4fb4f3901);
     IDS.put("Your server did not send its identity. Update Torrbaby on the server, then choose New setup code.", R.string.ui_e5f8d0476fd7);
     IDS.put("Your server is not answering through the relay yet. Still trying…", R.string.ui_3012c956c2bc);
+    IDS.put("Your server is not answering. Check this phone’s internet connection.", R.string.ui_ff6d173b8c7a);
     IDS.put("tb · Offline", R.string.ui_8f3182a89e24);
     IDS.put("track", R.string.ui_42aef171c1c0);
     IDS.put("…", R.string.ui_df316e17de9c);

@@ -5,7 +5,7 @@ import java.net.*;
 import java.nio.charset.StandardCharsets;
 import org.json.*;
 
-final class Api {
+public final class Api {
   final String base, token, client, profile, profileName;
   JSONObject profileAppearance = new JSONObject();
   volatile String libraryRaw = "", libraryRevision = "";
@@ -140,6 +140,9 @@ final class Api {
     }
   }
 
+  /** How this device appears in Settings → Devices: a phone or tablet says "android" (PhoneActivity). */
+  static volatile String platform = "other";
+
   void register() throws Exception {
     request(
         "POST",
@@ -147,7 +150,7 @@ final class Api {
         new JSONObject()
             .put("client_id", client)
             .put("name", android.os.Build.MODEL)
-            .put("platform", "other"));
+            .put("platform", platform));
   }
 
   static final class HttpException extends IOException {

@@ -82,6 +82,8 @@ public class MainActivity extends Activity {
   @Override
   public void onCreate(Bundle state) {
     super.onCreate(state);
+    // Phones and tablets get the iPhone app's screens (PhoneActivity); this one is the remote's.
+    if (!television(this)) { startActivity(new Intent(this, PhoneActivity.class)); finish(); return; }
     StartupTrace.start(this);
     updateStatus = Updates.receiver(this, this::error);
     if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(updateStatus, Updates.filter(), android.content.Context.RECEIVER_NOT_EXPORTED);
@@ -217,6 +219,12 @@ public class MainActivity extends Activity {
         }
       } catch (Exception ignored) { /* Keep the cached avatar when the server is unavailable. */ }
     });
+  }
+
+  static boolean television(android.content.Context context) {
+    android.app.UiModeManager mode = (android.app.UiModeManager) context.getSystemService(UI_MODE_SERVICE);
+    return (mode != null && mode.getCurrentModeType() == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION)
+        || context.getPackageManager().hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK);
   }
 
   @Override

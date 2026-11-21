@@ -1084,3 +1084,12 @@ Not now	暂不
 The update was not installed.	更新未安装。
 The downloaded update was damaged. Try again.	下载的更新已损坏，请重试。
 The update could not be downloaded.	无法下载更新。
+Connected · %s	已连接 · %s
+Could not reach Torrbaby’s relay. Check this phone’s internet connection, then choose New setup code.	无法连接 Torrbaby 中继。请检查这部手机的网络连接，然后选择“新设置码”。
+Disconnect this phone	断开这部手机
+Looking for your server on this network…	正在此网络中查找你的服务器…
+No server found on this network.	此网络中未找到服务器。
+Play S%d E%d	播放 第%d季 第%d集
+Search again	重新查找
+The connection has expired or was revoked. Link this phone again.	连接已过期或已被撤销。请重新连接这部手机。
+Your server is not answering. Check this phone’s internet connection.	服务器没有响应。请检查这部手机的网络连接。

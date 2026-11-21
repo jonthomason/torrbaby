@@ -20,6 +20,12 @@ import tempfile
 import uuid
 
 DIAMOND_DATA = "Library/Application Support/Torrbaby/updates/android"
+# For a first install: Torrbaby's own page (scripts/package_ota.py) and the OTA Installs page,
+# which lists Android apps from ~/.cache/miyu/ota/<key>/ (current.json, builds/<tag>/, icon.png).
+PAGE = Path("~/.cache/miyu/ota/torrbaby").expanduser()
+PAGE_BASE = "https://jons-m5-mbp.bengal-locrian.ts.net/ota/torrbaby"
+INSTALLS = Path("~/.cache/miyu/ota/torrbaby-android").expanduser()
+ICON = Path(__file__).resolve().parent.parent / "Android/app/src/main/res/drawable-nodpi/torrbaby_icon.png"
 PACKAGE = "com.torrbaby.tv.debug"
 
 
@@ -54,6 +60,18 @@ def main():
     subprocess.run(["ssh", "diamond", "mkdir -p " + folder + " && cd " + folder + " && tar -xf - && mv current.json.new current.json"
                     # The five newest builds are kept; older ones go.
                     + " && ls -d */ | sort -t- -k1,1nr | tail -n +6 | xargs rm -rf --"], input=packed, check=True)
+    # And on the install page.
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from package_ota import atomic, write_page
+    artifact = f"android/Torrbaby-{version}-build{build}.apk"
+    atomic(PAGE / artifact, payload)
+    atomic(PAGE / "android.json", json.dumps({"version": version, "build": build, "artifact": artifact, "sha256": current["sha256"]}, indent=2).encode())
+    write_page(PAGE, PAGE_BASE)
+    atomic(INSTALLS / "builds" / tag / "Torrbaby.apk", payload)
+    atomic(INSTALLS / "icon.png", ICON.read_bytes())
+    atomic(INSTALLS / "current.json", json.dumps({"version": version, "build": str(build), "size": len(payload),
+                                                   "sha256": current["sha256"], "artifact": f"builds/{tag}/Torrbaby.apk"}, indent=2).encode())
     print(json.dumps({k: current[k] for k in ("build", "version", "sha256", "size")}, indent=2))
 
 

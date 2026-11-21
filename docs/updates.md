@@ -20,10 +20,16 @@ no timer.
   certificate: Diamond's ABT host answers TLS for `*.diamond.abt.jonthomason.com` (ABT's
   scripts/host_certificate.sh). The device must be on ABT for the name to resolve.
 
-## Android TVs (from build 125)
+## Android phones, tablets and TVs (TVs from build 125, phones from 127)
+
+One APK: TVs open the remote's screens (MainActivity), phones and tablets the iPhone app's
+(PhoneActivity, Kotlin and Compose); both update the same way.
 
 - Publish: `python3 scripts/publish_android_update.py` (the debug APK; it checks the package and
-  reads the version code from the APK itself).
+  reads the version code from the APK itself). It also puts the APK on Torrbaby's install page
+  and in `~/.cache/miyu/ota/torrbaby-android/` for the OTA Installs page, which shows Android
+  apps to an Android browser (no New mark: the app offers its own updates).
+- Phones show Install N in the menu and in Settings beside Version.
 - Coming to the front, the TV app reads `GET /v1/updates/android`; a newer build is offered once
   per run (Install / Not now) and in Settings → About. The APK is downloaded from Diamond,
   checked against the published SHA-256 and handed to Android's installer, which asks on the TV.

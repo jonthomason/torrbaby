@@ -1,1 +1,5 @@
-plugins { id 'com.android.application' version '9.2.1' apply false }
+plugins {
+    id 'com.android.application' version '9.2.1' apply false
+    // Kotlin is built into the Android plugin; the Compose compiler comes with Kotlin's own version.
+    id 'org.jetbrains.kotlin.plugin.compose' version '2.4.20' apply false
+}

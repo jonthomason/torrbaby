@@ -39,9 +39,12 @@ final class Pairing {
   }
 
   /** What the QR code holds. */
-  String code(String name) throws Exception {
+  String code(String name) throws Exception { return code(name, "android-tv"); }
+
+  /** A phone or tablet says "android", so Settings → Devices tells it from a TV. */
+  String code(String name, String platform) throws Exception {
     return new JSONObject().put("app", "torrbaby").put("kind", "join").put("v", 1)
-        .put("secret", b64(secret)).put("name", name).put("platform", "android-tv").toString();
+        .put("secret", b64(secret)).put("name", name).put("platform", platform).toString();
   }
 
   /** The claim's request body. */

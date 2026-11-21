@@ -10,7 +10,7 @@ import java.util.*;
 import java.util.concurrent.*;
 
 /** Artwork only: bounded memory/disk cache, coalesced requests, no video cache. */
-final class Art {
+public final class Art {
   private final Api api;
   private final BrowseCache disk;
   private final ThreadPoolExecutor pool = new ThreadPoolExecutor(3, 3, 0, TimeUnit.MILLISECONDS,
@@ -68,7 +68,22 @@ final class Art {
     disk = new BrowseCache(context, a);
   }
 
+  /** Callers without an ImageView (the phone's Compose screens): the picture, on the main thread. */
+  private final java.util.Map<String, List<java.util.function.Consumer<Bitmap>>> listeners = new java.util.HashMap<>();
+
+  void bitmap(String id, String variant, String revision, java.util.function.Consumer<Bitmap> done) {
+    String key = id + "/" + variant + "/" + revision;
+    Bitmap cached = cache.get(key);
+    if (cached != null) { done.accept(cached); return; }
+    synchronized (waiting) { listeners.computeIfAbsent(key, k -> new ArrayList<>()).add(done); }
+    load(null, id, variant, revision, variant.equals("backdrop") ? 0 : 2);
+  }
+
   void load(ImageView view, String id, String variant, String revision) {
+    load(view, id, variant, revision, view == null ? 3 : variant.equals("backdrop") ? 0 : 2);
+  }
+
+  private void load(ImageView view, String id, String variant, String revision, int priority) {
     String key = id + "/" + variant + "/" + revision;
     if (view != null) {
       if (key.equals(view.getTag()) && view.getDrawable() != null) return;
@@ -90,7 +105,7 @@ final class Art {
       if(view!=null)group.add(new WeakReference<>(view));
       waiting.put(key, group);
     }
-    Job job = new Job(key, view==null?3:variant.equals("backdrop")?0:2,
+    Job job = new Job(key, priority,
         () -> {
           Bitmap result = null;
           try {
@@ -118,10 +133,13 @@ final class Art {
           main.post(
               () -> {
                 List<WeakReference<ImageView>> group;
+                List<java.util.function.Consumer<Bitmap>> wanted;
                 synchronized (waiting) {
                   group = waiting.remove(key);
+                  wanted = listeners.remove(key);
                   jobs.remove(key);
                 }
+                if (wanted != null && bitmap != null) for (java.util.function.Consumer<Bitmap> done : wanted) done.accept(bitmap);
                 if (group != null && bitmap != null)
                   for (WeakReference<ImageView> ref : group) {
                     ImageView target = ref.get();

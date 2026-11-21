@@ -19060,6 +19060,159 @@
           }
         }
       }
+    },
+    "Connected · %s": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connected · %s"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已连接 · %s"
+          }
+        }
+      }
+    },
+    "Could not reach Torrbaby’s relay. Check this phone’s internet connection, then choose New setup code.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not reach Torrbaby’s relay. Check this phone’s internet connection, then choose New setup code."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法连接 Torrbaby 中继。请检查这部手机的网络连接，然后选择“新设置码”。"
+          }
+        }
+      }
+    },
+    "Disconnect this phone": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disconnect this phone"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "断开这部手机"
+          }
+        }
+      }
+    },
+    "Looking for your server on this network…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Looking for your server on this network…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在此网络中查找你的服务器…"
+          }
+        }
+      }
+    },
+    "No server found on this network.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No server found on this network."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此网络中未找到服务器。"
+          }
+        }
+      }
+    },
+    "Play S%d E%d": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Play S%d E%d"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "播放 第%d季 第%d集"
+          }
+        }
+      }
+    },
+    "Search again": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search again"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新查找"
+          }
+        }
+      }
+    },
+    "The connection has expired or was revoked. Link this phone again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The connection has expired or was revoked. Link this phone again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接已过期或已被撤销。请重新连接这部手机。"
+          }
+        }
+      }
+    },
+    "Your server is not answering. Check this phone’s internet connection.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your server is not answering. Check this phone’s internet connection."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "服务器没有响应。请检查这部手机的网络连接。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

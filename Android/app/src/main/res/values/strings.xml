@@ -188,6 +188,7 @@
     <string name="ui_31dd3d9b2dfc" formatted="false">Connected via direct</string>
     <string name="ui_ce8afaed4421" formatted="false">Connected via home network</string>
     <string name="ui_fef332f9ab65" formatted="false">Connected via relay</string>
+    <string name="ui_43a219b38f0c" formatted="false">Connected · %s</string>
     <string name="ui_9449502ae14e" formatted="false">Connected · not used for new downloads</string>
     <string name="ui_ca7e4b990121" formatted="false">Connecting to Torrbaby’s relay…</string>
     <string name="ui_fd3e79699426" formatted="false">Connecting…</string>
@@ -205,6 +206,7 @@
     <string name="ui_47dd74c0c423" formatted="false">Could not load users</string>
     <string name="ui_dd5a1a5ba7fd" formatted="false">Could not reach Torrbaby’s relay. Check this TV’s internet connection, then choose New setup code.</string>
     <string name="ui_db822b0454a3" formatted="false">Could not reach Torrbaby’s relay. Check this device’s internet connection; still trying…</string>
+    <string name="ui_ccf7d59b8065" formatted="false">Could not reach Torrbaby’s relay. Check this phone’s internet connection, then choose New setup code.</string>
     <string name="ui_3bcad4a3da4b" formatted="false">Could not refresh.</string>
     <string name="ui_ec6c4f8da528" formatted="false">Could not write to this drive</string>
     <string name="ui_5a538c5c5377" formatted="false">Couldn’t add release</string>
@@ -260,6 +262,7 @@
     <string name="ui_ed28e0686e12" formatted="false">Disconnect</string>
     <string name="ui_d9835d7b9245" formatted="false">Disconnect this TV</string>
     <string name="ui_3e06b932237a" formatted="false">Disconnect this TV?</string>
+    <string name="ui_c3ec1e31e67c" formatted="false">Disconnect this phone</string>
     <string name="ui_70afe9eff3f2" formatted="false">Dismiss</string>
     <string name="ui_a5c313167365" formatted="false">Dismiss all</string>
     <string name="ui_dc83cd803134" formatted="false">Dismiss notification</string>
@@ -433,6 +436,7 @@
     <string name="ui_cec3ed33b848" formatted="false">Login cookie</string>
     <string name="ui_0b63361952a9" formatted="false">Logs sent</string>
     <string name="ui_82b4b1ef514f" formatted="false">Look up again</string>
+    <string name="ui_e02432a775b2" formatted="false">Looking for your server on this network…</string>
     <string name="ui_27d9ea3d190c" formatted="false">Looking up…</string>
     <string name="ui_3f4fc9a34ef7" formatted="false">Lookup will retry</string>
     <string name="ui_f3b36f28ca45" formatted="false">Lossless</string>
@@ -513,6 +517,7 @@
     <string name="ui_6fd4ab12ee28" formatted="false">No releases found</string>
     <string name="ui_4c57e22bd419" formatted="false">No reported seeds</string>
     <string name="ui_74cd1304973c" formatted="false">No server found</string>
+    <string name="ui_b438edb05053" formatted="false">No server found on this network.</string>
     <string name="ui_f7dca3322c11" formatted="false">No shows are being watched</string>
     <string name="ui_3e36b40ea99d" formatted="false">No subtitle jobs</string>
     <string name="ui_55b63277f6b3" formatted="false">No supported subtitle source</string>
@@ -581,6 +586,7 @@
     <string name="ui_d01d900383e4" formatted="false">Photo</string>
     <string name="ui_61852524b8f8" formatted="false">Picture</string>
     <string name="ui_5d12bd53552c" formatted="false">Play</string>
+    <string name="ui_ed6892118264" formatted="false">Play S%d E%d</string>
     <string name="ui_576766d387ec" formatted="false">Play again</string>
     <string name="ui_dc3b71c61700" formatted="false">Play or resume original file</string>
     <string name="ui_c8e308704911" formatted="false">Playback</string>
@@ -704,6 +710,7 @@
     <string name="ui_00839fc38e1c" formatted="false">Scan this code with Torrbaby on a phone or tablet that is already connected to your server.</string>
     <string name="ui_bce06414177f" formatted="false">Search</string>
     <string name="ui_9ac904fe540c" formatted="false">Search TV shows.</string>
+    <string name="ui_1178a4ffb40c" formatted="false">Search again</string>
     <string name="ui_0f53c93d9994" formatted="false">Search for</string>
     <string name="ui_c4cfc9981ae1" formatted="false">Search movies and TV shows</string>
     <string name="ui_06040cbe6a6a" formatted="false">Search movies and TV shows.</string>
@@ -833,6 +840,7 @@
     <string name="ui_83e097038017" formatted="false">Text opacity</string>
     <string name="ui_84226c2c5018" formatted="false">That drive is not connected</string>
     <string name="ui_22b20e9773ff" formatted="false">The Pirate Bay</string>
+    <string name="ui_032172241d16" formatted="false">The connection has expired or was revoked. Link this phone again.</string>
     <string name="ui_17640422b43a" formatted="false">The connection to Transmission was interrupted. Please try again.</string>
     <string name="ui_ceaf21e9d02f" formatted="false">The download is incomplete.</string>
     <string name="ui_aca10e690616" formatted="false">The downloaded update was damaged. Try again.</string>
@@ -1003,6 +1011,7 @@
     <string name="ui_19d4fb4f3901" formatted="false">Your selected profile is unavailable. Choose a user to continue.</string>
     <string name="ui_e5f8d0476fd7" formatted="false">Your server did not send its identity. Update Torrbaby on the server, then choose New setup code.</string>
     <string name="ui_3012c956c2bc" formatted="false">Your server is not answering through the relay yet. Still trying…</string>
+    <string name="ui_ff6d173b8c7a" formatted="false">Your server is not answering. Check this phone’s internet connection.</string>
     <string name="ui_8f3182a89e24" formatted="false">tb · Offline</string>
     <string name="ui_42aef171c1c0" formatted="false">track</string>
     <string name="ui_df316e17de9c" formatted="false">…</string>
