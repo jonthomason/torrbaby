@@ -29,6 +29,8 @@ public class MainActivity extends Activity {
   private LinearLayout root, content, nav;
   private String section = "Home", query = "", genre = "", detailId = "", restoreId = "";
   private int sort = 0, season = -1;
+  /** Movies and TV Shows leave out titles watched to the end; remembered with the sort, as on iOS. */
+  private boolean hidesWatched;
   private boolean showingCast;
   private boolean loading = false, played = false, selectingProfile, switchingProfile;
   private TextView status;
@@ -85,6 +87,9 @@ public class MainActivity extends Activity {
     if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(updateStatus, Updates.filter(), android.content.Context.RECEIVER_NOT_EXPORTED);
     else registerReceiver(updateStatus, Updates.filter());
     store = new SecureStore(this);
+    android.content.SharedPreferences browsing = getSharedPreferences("library", MODE_PRIVATE);
+    sort = browsing.getInt("sort", 0);
+    hidesWatched = browsing.getBoolean("hides_watched", false);
     Relay.watchNetwork(this);
     if (state != null) {
       section = state.getString("section", "Home");
@@ -92,7 +97,6 @@ public class MainActivity extends Activity {
       showingCast = state.getBoolean("cast", false);
       query = state.getString("query", "");
       genre = state.getString("genre", "");
-      sort = state.getInt("sort");
       season = state.getInt("season", -1);
       collectionName = state.getString("collection", "");
       ArrayList<String> ids = state.getStringArrayList("collection_ids");
@@ -129,7 +133,6 @@ public class MainActivity extends Activity {
     s.putBoolean("cast", showingCast);
     s.putString("query", query);
     s.putString("genre", genre);
-    s.putInt("sort", sort);
     s.putInt("season", season);
     s.putString("collection", collectionName);
     s.putStringArrayList("collection_ids", collectionIds);
@@ -160,6 +163,10 @@ public class MainActivity extends Activity {
       if (played) { played = false; load(); }
       else refreshLibrary();
     }
+  }
+
+  private void remember() {
+    getSharedPreferences("library", MODE_PRIVATE).edit().putInt("sort", sort).putBoolean("hides_watched", hidesWatched).apply();
   }
 
   /** Coming to the front, asks Diamond for a newer build and offers it once per build. */
@@ -269,7 +276,6 @@ public class MainActivity extends Activity {
                 section = label;
                 collectionName = "";
                 restoreShelf = "";
-                sort = label.equals("Search") ? 0 : 1;
                 detailId = "";
                 genre = "";
                 query = "";
@@ -1005,20 +1011,21 @@ public class MainActivity extends Activity {
         -2,
         44);
     Ui.gap(controls, 10);
-    String[] sorts = {"Recently added", "A–Z", "Year"};
+    String[] sorts = {"Recently added", "Alphabetical", "Release date"};
     Ui.add(
         controls,
         Ui.button(
             this,
-            sorts[sort],
+            L10n.t(sorts[sort]),
             () ->
                 new AppDialog(this)
                     .setTitle(L10n.t("Sort by"))
                     .setSingleChoiceItems(
-                        sorts,
+                        L10n.labels(sorts),
                         sort,
                         (d, w) -> {
                           sort = w;
+                          remember();
                           restoreId = "";
                           d.dismiss();
                           render();
@@ -1026,6 +1033,15 @@ public class MainActivity extends Activity {
                     .show()),
         -2,
         44);
+    if (!section.equals("Search")) {
+      Ui.gap(controls, 10);
+      Ui.add(controls, Ui.button(this, (hidesWatched ? "✓ " : "") + L10n.t("Hide watched"), () -> {
+        hidesWatched = !hidesWatched;
+        remember();
+        restoreId = "";
+        render();
+      }), -2, 44);
+    }
     Ui.add(content, controls, -1, 48);
     Ui.gap(content, 12);
     if (section.equals("Search") && query.trim().isEmpty()) {
@@ -1033,8 +1049,10 @@ public class MainActivity extends Activity {
       return;
     }
     List<Library.Title> items = library.filter(kind, query, genre, sort);
+    boolean hiding = hidesWatched && !section.equals("Search");
+    if (hiding) items.removeIf(Library.Title::watched);
     if (items.isEmpty()) {
-      Ui.add(content, Ui.text(this, L10n.t("No matching titles"), 18, Ui.MUTED), -1, 70);
+      Ui.add(content, Ui.text(this, L10n.t(hiding && query.trim().isEmpty() && genre.isEmpty() ? "Everything here has been watched." : "No matching titles"), 18, Ui.MUTED), -1, 70);
       controls.post(
           () -> {
             View field = firstFocusable(controls);

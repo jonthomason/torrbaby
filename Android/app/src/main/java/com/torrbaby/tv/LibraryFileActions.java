@@ -150,6 +150,11 @@ final class LibraryFileActions {
   }
   private void status(JSONObject operation) {
     String phase = operation.optString("phase");
+    // Closed before the server finished: keep following it, so the library updates when it does.
+    if (!visible()) {
+      if (phase.equals("done")) changed.run(); else handler.postDelayed(() -> poll(operation), 2500);
+      return;
+    }
     String key = phase + "|" + operation.optString("error");
     if (key.equals(renderedStatus)) {
       if (!phase.equals("done")) handler.postDelayed(() -> poll(operation), 2500);
@@ -165,18 +170,20 @@ final class LibraryFileActions {
     else changed.run();
   }
   private void poll(JSONObject previous) {
-    if (!visible()) return;
     io.execute(() -> {
       try {
         JSONArray operations = api.request("GET", "/v1/library/operations", null).getJSONArray("operations");
         JSONObject found = null;
         for (int i = 0; i < operations.length(); i++)
           if (previous.optString("id").equals(operations.getJSONObject(i).optString("id"))) found = operations.getJSONObject(i);
-        if (found == null) throw new Exception("Operation status is unavailable. The server may still be processing it.");
-        final JSONObject next = found;
-        activity.runOnUiThread(() -> { if (visible()) status(next); });
+        // The server drops only finished removals (when the download is added again).
+        final JSONObject next = found != null ? found : new JSONObject().put("id", previous.optString("id")).put("phase", "done");
+        activity.runOnUiThread(() -> { if (!activity.isDestroyed()) status(next); });
       } catch (Exception e) {
-        activity.runOnUiThread(() -> { if (visible()) failure(e, () -> poll(previous)); });
+        activity.runOnUiThread(() -> {
+          if (visible()) failure(e, () -> poll(previous));
+          else if (!activity.isDestroyed()) handler.postDelayed(() -> poll(previous), 2500);
+        });
       }
     });
   }
