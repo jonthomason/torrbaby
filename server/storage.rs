@@ -176,7 +176,7 @@ impl Database {
             .context("client_id must be a UUID")?
             .to_string();
         validate_name(name)?;
-        if !["macOS", "iOS", "iPadOS", "tvOS", "CLI", "other"].contains(&platform) {
+        if !["macOS", "iOS", "iPadOS", "tvOS", "Android", "Android TV", "CLI", "other"].contains(&platform) {
             bail!("Unknown client platform");
         }
         let time = now();
