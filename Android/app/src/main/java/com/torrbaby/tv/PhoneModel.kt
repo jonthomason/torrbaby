@@ -46,7 +46,7 @@ object Phone {
     fun attach(context: Context) {
         if (::app.isInitialized) return
         app = context.applicationContext
-        Api.platform = "android"
+        Api.platform = "Android"
         Relay.watchNetwork(app)
         start()
     }
@@ -88,7 +88,7 @@ object Phone {
             val home = ServerRoute.find(app, 5000)
             if (home.isEmpty()) { post { searching = false }; return@execute }
             try {
-                val credential = Api(home, "", "").request("POST", "/v1/lan/register", JSONObject().put("name", Build.MODEL).put("platform", "android"))
+                val credential = Api(home, "", "").request("POST", "/v1/lan/register", JSONObject().put("name", Build.MODEL).put("platform", Api.platform))
                 val linked = Api(home, credential.getString("token"), credential.getString("client_id"))
                 post { searching = false; linked(linked) }
             } catch (e: Exception) {
@@ -127,7 +127,7 @@ object Phone {
         val attempt = ++generation
         stage = Stage.Pairing
         val pairing = try { Pairing.fresh() } catch (e: Exception) { problem = MainActivity.message(e); return }
-        pairingCode = try { QrCode.bitmap(pairing.code(Build.MODEL, "android"), 720) } catch (e: Exception) { null }
+        pairingCode = try { QrCode.bitmap(pairing.code(Build.MODEL, Api.platform), 720) } catch (e: Exception) { null }
         pairingStatus = L10n.t("Connecting to Torrbaby’s relay…")
         val current = { attempt == generation && stage == Stage.Pairing }
         val say = { text: String -> post { if (current()) pairingStatus = text } }

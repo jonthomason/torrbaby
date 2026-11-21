@@ -20,6 +20,9 @@ class PhoneActivity : ComponentActivity() {
     override fun onCreate(saved: Bundle?) {
         enableEdgeToEdge(SystemBarStyle.dark(Color.TRANSPARENT), SystemBarStyle.dark(Color.TRANSPARENT))
         super.onCreate(saved)
+        // A phone's screens are portrait, as on the iPhone; a tablet's turn either way.
+        requestedOrientation = if (resources.configuration.smallestScreenWidthDp < 600) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT
+            else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_USER
         window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.BLACK))
         Phone.attach(this)
         // Android's installer answers an update here: its confirmation to show, or why it failed.

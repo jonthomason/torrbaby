@@ -52,6 +52,8 @@ public class PlaybackActivity extends Activity {
   private String session = "";
   private int sequence = 0;
   private boolean stopped = false, wasPlaying = true, finished = false, ready = false;
+  /** A phone or tablet: full screen, double-tap to skip, picture in picture on leaving. */
+  private boolean phone;
   private long localPosition = 0;
   private final Runnable ticker =
       new Runnable() {
@@ -202,6 +204,12 @@ public class PlaybackActivity extends Activity {
     view.setShowNextButton(false);
     view.setShowPreviousButton(false);
     setContentView(view);
+    phone = !MainActivity.television(this);
+    if (phone) {
+      // Video plays the way the phone or tablet is held, portrait or landscape (rotation lock respected).
+      setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_USER);
+      touch();
+    }
     // Authentication stays on the configured origin. Redirects never carry a bearer token to
     // another host.
     DataSource.Factory factory = () -> new OriginDataSource(api);
@@ -654,6 +662,64 @@ public class PlaybackActivity extends Activity {
       if (view.dispatchKeyEvent(e)) return true;
     }
     return super.dispatchKeyEvent(e);
+  }
+
+  /**
+   * The phone's screen: the picture fills it under hidden system bars (a swipe from an edge shows
+   * them), a tap shows or hides the controls, and a double tap on the left or right skips back or
+   * forward 15 seconds.
+   */
+  private void touch() {
+    if (android.os.Build.VERSION.SDK_INT >= 30) {
+      getWindow().setDecorFitsSystemWindows(false);
+      android.view.WindowInsetsController bars = getWindow().getInsetsController();
+      if (bars != null) {
+        bars.hide(android.view.WindowInsets.Type.systemBars());
+        bars.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+      }
+    } else {
+      getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_FULLSCREEN
+          | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+    }
+    android.view.GestureDetector taps = new android.view.GestureDetector(this, new android.view.GestureDetector.SimpleOnGestureListener() {
+      @Override public boolean onDown(android.view.MotionEvent e) { return true; }
+      @Override public boolean onSingleTapConfirmed(android.view.MotionEvent e) {
+        if (view.isControllerFullyVisible()) view.hideController(); else view.showController();
+        return true;
+      }
+      @Override public boolean onDoubleTap(android.view.MotionEvent e) {
+        if (player == null) return true;
+        if (e.getX() < view.getWidth() / 2f) player.seekBack(); else player.seekForward();
+        return true;
+      }
+    });
+    // Touches on the controls themselves reach them; the picture's go to the detector.
+    view.setOnTouchListener((v, e) -> taps.onTouchEvent(e));
+  }
+
+  /** Leaving for the home screen while it plays: picture in picture, as on the iPhone. */
+  @Override
+  protected void onUserLeaveHint() {
+    super.onUserLeaveHint();
+    if (phone && player != null && player.isPlaying())
+      enterPictureInPictureMode(new android.app.PictureInPictureParams.Builder().setAspectRatio(pictureShape()).build());
+  }
+
+  /** The picture's own shape for the small window, within what Android allows (2.39:1 to 1:2.39). */
+  private android.util.Rational pictureShape() {
+    androidx.media3.common.VideoSize size = player.getVideoSize();
+    if (size.width <= 0 || size.height <= 0) return new android.util.Rational(16, 9);
+    double ratio = Math.max(1 / 2.39, Math.min(2.39, size.width * size.pixelWidthHeightRatio / size.height));
+    return new android.util.Rational((int) Math.round(ratio * 1000), 1000);
+  }
+
+  @Override
+  public void onPictureInPictureModeChanged(boolean small, android.content.res.Configuration configuration) {
+    super.onPictureInPictureModeChanged(small, configuration);
+    if (view == null) return;
+    view.setUseController(!small);
+    if (heading != null) heading.setVisibility(small ? View.GONE : heading.getVisibility());
+    if (nextEpisodeButton != null && small) nextEpisodeButton.setVisibility(View.GONE);
   }
 
   @Override

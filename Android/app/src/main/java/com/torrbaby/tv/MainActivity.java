@@ -2696,7 +2696,7 @@ public class MainActivity extends Activity {
                 publicApi.request(
                     "POST",
                     "/v1/lan/register",
-                    new JSONObject().put("name", Build.MODEL).put("platform", "other"));
+                    new JSONObject().put("name", Build.MODEL).put("platform", Api.platform));
             StartupTrace.mark("LAN registration finished");
             Api connected =
                 new Api(address, credential.getString("token"), credential.getString("client_id"));

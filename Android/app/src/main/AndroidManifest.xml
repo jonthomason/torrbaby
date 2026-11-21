@@ -14,6 +14,6 @@
         </activity>
         <activity android:name=".PhoneActivity" android:exported="false" android:launchMode="singleTask" android:windowSoftInputMode="adjustResize" android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden" />
         <activity android:name=".TorrentSearchActivity" android:exported="false" android:screenOrientation="landscape" />
-        <activity android:name=".PlaybackActivity" android:exported="false" android:screenOrientation="landscape" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|uiMode" />
+        <activity android:name=".PlaybackActivity" android:exported="false" android:supportsPictureInPicture="true" android:resizeableActivity="true" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|uiMode" />
     </application>
 </manifest>

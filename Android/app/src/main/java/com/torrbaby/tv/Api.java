@@ -140,8 +140,8 @@ public final class Api {
     }
   }
 
-  /** How this device appears in Settings → Devices: a phone or tablet says "android" (PhoneActivity). */
-  static volatile String platform = "other";
+  /** How this device appears in Settings → Devices: "Android TV", or "Android" for a phone or tablet (PhoneActivity). */
+  static volatile String platform = "Android TV";
 
   void register() throws Exception {
     request(
