@@ -513,7 +513,9 @@ fn remux_pass(input: &Path, output: &Path, max_bytes: u64, mapping: Mapping,
             let a = t.audio().context("Missing audio parameters")?;
             let (core_rate, output_rate, channels) = aac_configuration(&params.extradata)?;
             let output_rate = aac_output_rate(core_rate, output_rate, a.sampling_frequency(), a.output_sampling_frequency())
-                .filter(|_| a.channels().get() == channels as u64)
+                // The stream's configuration decides what is decoded. Matroska may count 7.1 as
+                // seven (Coco's HE-AAC 7.1); any other disagreement is still refused.
+                .filter(|_| a.channels().get() == channels as u64 || (channels == 8 && a.channels().get() == 7))
                 .with_context(|| format!("AAC layout mismatch: the stream says {core_rate}/{output_rate} Hz, {channels} channels; Matroska says {}/{:?} Hz, {} channels",
                     a.sampling_frequency(), a.output_sampling_frequency(), a.channels().get()))?;
             params.sample_rate = Some(output_rate);
@@ -1212,8 +1214,9 @@ fn aac_configuration(data: &[u8]) -> Result<(u32, u32, u8)> {
     let mut b = Bits {bytes: data, at: 0};
     let object = b.read(5)?;
     let core = b.rate()?;
-    let channels = b.read(4)? as u8;
-    ensure!((1..=6).contains(&channels), "AAC channel layout needs additional support");
+    // Channel configurations 1-6 are that many channels; 7 is 7.1, eight (Coco's HE-AAC 7.1).
+    // 0 (a program config element) and the newer ones stay unsupported.
+    let channels = match b.read(4)? as u8 { 7 => 8, layout @ 1..=6 => layout, _ => anyhow::bail!("AAC channel layout needs additional support") };
     // HE-AAC with explicit (hierarchical) signalling: object type 5 (SBR), the output rate,
     // then the AAC-LC core. Parametric stereo (29) stays unsupported.
     let explicit = if object == 5 {
@@ -1261,6 +1264,9 @@ mod aac_tests {
         // The Office S01E01's second track: AAC-LC 24 kHz stereo in the configuration (13 10),
         // 48 kHz in Matroska.
         assert_eq!(super::aac_configuration(&[0x13,0x10]).unwrap(), (24000,24000,2));
+        // AAC 7.1 (configuration 7) is eight channels; a program config element (0) is refused.
+        assert_eq!(super::aac_configuration(&[0x11,0xB8]).unwrap(), (48000,48000,8));
+        assert!(super::aac_configuration(&[0x11,0x80]).is_err());
         assert_eq!(rate(24000, 24000, 48000.0, None), Some(48000));
         assert_eq!(rate(24000, 24000, 24000.0, Some(48000.0)), Some(48000));
         // Plain AAC-LC and explicit HE-AAC as before.

@@ -39,7 +39,10 @@ struct Job {
 // the 48 kHz output: The Office S01), which failed as "AAC layout mismatch"; retried once.
 // Version 8 smooths the audio's jumps at a broadcast capture's advert cuts (remux::splice), which
 // failed as "Audio offset/gap needs additional timing support" (Dancing with the Stars S26); retried once.
-const PREPARATION_VERSION: u32 = 8;
+// Version 9 takes AAC 7.1 (channel configuration 7: Coco's HE-AAC 7.1), which failed as "AAC channel
+// layout needs additional support"; version 10 also when Matroska counts it as seven channels
+// (Coco again, "AAC layout mismatch"). Retried once.
+const PREPARATION_VERSION: u32 = 10;
 /// The preparation version from which indexes carry random-access tables (see version 5).
 const RANDOM_ACCESS_VERSION: u32 = 5;
 const LAYOUT_VERSION: u32 = 3;
