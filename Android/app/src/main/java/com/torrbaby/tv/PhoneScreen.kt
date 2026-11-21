@@ -44,7 +44,7 @@ import androidx.compose.ui.unit.sp
 import org.json.JSONObject
 
 /** The iPhone app's colours (Apple/Torrbaby/App.swift Theme). */
-private object Ink {
+internal object Ink {
     val canvas = Color.Black
     val sidebar = Color(0xFF0E0E0E)
     val panel = Color(0xFF171717)
@@ -60,16 +60,20 @@ private sealed interface Page {
     data object Movies : Page
     data object Shows : Page
     data object Settings : Page
+    data object Find : Page
+    data class Downloads(val shelf: Shelf) : Page
+    data class Transfer(val hash: String) : Page
+    data class Release(val item: JSONObject) : Page
     data class Title(val id: String) : Page
 }
 
 @Composable
-private fun Words(text: String, size: TextUnit = 15.sp, weight: FontWeight = FontWeight.Normal, color: Color = Ink.text,
+internal fun Words(text: String, size: TextUnit = 15.sp, weight: FontWeight = FontWeight.Normal, color: Color = Ink.text,
                   lines: Int = Int.MAX_VALUE, modifier: Modifier = Modifier) =
     BasicText(text, modifier, TextStyle(color = color, fontSize = size, fontWeight = weight), overflow = TextOverflow.Ellipsis, maxLines = lines)
 
 @Composable
-private fun Action(label: String, prominent: Boolean = false, modifier: Modifier = Modifier, onClick: () -> Unit) {
+internal fun Action(label: String, prominent: Boolean = false, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(modifier.clip(RoundedCornerShape(10.dp)).background(if (prominent) Ink.text else Ink.control).clickable(onClick = onClick)
         .padding(horizontal = 16.dp, vertical = 11.dp), contentAlignment = Alignment.Center) {
         Words(label, 15.sp, FontWeight.SemiBold, if (prominent) Color.Black else Ink.text, 1)
@@ -186,7 +190,9 @@ private fun Browser(activity: Activity) {
             Spacer(Modifier.width(4.dp))
             Words(when (page) {
                 Page.Home -> L10n.t("Home"); Page.Movies -> L10n.t("Movies"); Page.Shows -> L10n.t("TV Shows")
-                Page.Settings -> L10n.t("Settings"); is Page.Title -> ""
+                Page.Settings -> L10n.t("Settings"); Page.Find -> L10n.t("Find")
+                is Page.Downloads -> L10n.t(page.shelf.label)
+                is Page.Title, is Page.Transfer, is Page.Release -> ""
             }, 20.sp, FontWeight.Bold, lines = 1)
         }
         Box(Modifier.weight(1f)) {
@@ -196,6 +202,10 @@ private fun Browser(activity: Activity) {
                 Page.Movies -> Grid("movie", open)
                 Page.Shows -> Grid("tv", open)
                 Page.Settings -> Settings(activity)
+                Page.Find -> FindPage { pages.add(Page.Release(it)) }
+                is Page.Release -> ReleasePage(page.item)
+                is Page.Downloads -> DownloadsPage(page.shelf) { pages.add(Page.Transfer(it)) }
+                is Page.Transfer -> TransferDetail(page.hash) { pages.removeAt(pages.lastIndex) }
                 is Page.Title -> TitlePage(activity, page.id)
             }
         }
@@ -212,14 +222,20 @@ private fun Menu(current: Page, choose: (Page) -> Unit) {
             Words("tb", 22.sp, FontWeight.Bold, Ink.brand); Spacer(Modifier.width(8.dp)); Words("torrbaby", 20.sp, FontWeight.Bold)
         }
         Spacer(Modifier.height(20.dp))
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
         Words(L10n.t("Library"), 13.sp, FontWeight.SemiBold, Ink.muted)
         Spacer(Modifier.height(6.dp))
-        for ((page, label) in listOf(Page.Home to "Home", Page.Movies to "Movies", Page.Shows to "TV Shows")) MenuItem(L10n.t(label), page == current) { choose(page) }
+        for ((page, label) in listOf(Page.Home to "Home", Page.Find to "Find", Page.Movies to "Movies", Page.Shows to "TV Shows")) MenuItem(L10n.t(label), page == current) { choose(page) }
+        Spacer(Modifier.height(14.dp))
+        Words(L10n.t("Torrents"), 13.sp, FontWeight.SemiBold, Ink.muted)
+        Spacer(Modifier.height(6.dp))
+        for (shelf in Shelf.entries) MenuItem(L10n.t(shelf.label), current == Page.Downloads(shelf), shelf == Shelf.Attention && Torrents.hasNewAttention) { choose(Page.Downloads(shelf)) }
         Spacer(Modifier.height(14.dp))
         Words(L10n.t("Server"), 13.sp, FontWeight.SemiBold, Ink.muted)
         Spacer(Modifier.height(6.dp))
         MenuItem(L10n.t("Settings"), current == Page.Settings) { choose(Page.Settings) }
-        Spacer(Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(10.dp))
         Phone.update?.let { Action(String.format(L10n.locale(), L10n.t("Install %s"), it.optString("build")), prominent = true, modifier = Modifier.fillMaxWidth()) { Phone.installUpdate(activity) }; Spacer(Modifier.height(10.dp)) }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(7.dp).clip(CircleShape).background(Ink.green)); Spacer(Modifier.width(7.dp))
@@ -229,19 +245,22 @@ private fun Menu(current: Page, choose: (Page) -> Unit) {
 }
 
 @Composable
-private fun MenuItem(label: String, selected: Boolean, onClick: () -> Unit) {
-    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (selected) Ink.text else Color.Transparent).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 12.dp)) {
+private fun MenuItem(label: String, selected: Boolean, dot: Boolean = false, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (selected) Ink.text else Color.Transparent).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically) {
         Words(label, 17.sp, FontWeight.SemiBold, if (selected) Color.Black else Ink.text)
+        // Something new needs attention since the page was last looked at.
+        if (dot) { Spacer(Modifier.width(8.dp)); Box(Modifier.size(7.dp).clip(CircleShape).background(Color(0xFFFF9F0A))) }
     }
 }
 
 /** Room at the end of a list for Android's navigation bar, which the pages draw under. */
 @Composable
-private fun bottomRoom(extra: Int = 24) = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + extra.dp
+internal fun bottomRoom(extra: Int = 24) = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + extra.dp
 
 /** A title's artwork from Diamond (Art's caches), grey until it arrives. */
 @Composable
-private fun Artwork(id: String, variant: String, revision: String, modifier: Modifier) {
+internal fun Artwork(id: String, variant: String, revision: String, modifier: Modifier) {
     var picture by remember(id, variant, revision) { mutableStateOf<Bitmap?>(null) }
     val art = Phone.art
     LaunchedEffect(id, variant, revision, art) { if (revision.isNotEmpty()) art?.bitmap(id, variant, revision) { picture = it } }
@@ -352,7 +371,7 @@ private fun Grid(kind: String, open: (String) -> Unit) {
 
 /** A list to choose one from, over the page. */
 @Composable
-private fun Choice(labels: List<String>, selected: Int, dismiss: () -> Unit, choose: (Int) -> Unit) {
+internal fun Choice(labels: List<String>, selected: Int, dismiss: () -> Unit, choose: (Int) -> Unit) {
     BackHandler(onBack = dismiss)
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable(onClick = dismiss), contentAlignment = Alignment.Center) {
         LazyColumn(Modifier.fillMaxWidth(0.8f).heightIn(max = 480.dp).clip(RoundedCornerShape(14.dp)).background(Ink.panel).padding(vertical = 6.dp)) {

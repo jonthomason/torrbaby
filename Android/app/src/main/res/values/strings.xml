@@ -3,6 +3,7 @@
     <string name="ui_6f96f2ca6923" formatted="false">%d DOWNLOADS</string>
     <string name="ui_bb4f08e94b1c" formatted="false">%d episodes</string>
     <string name="ui_0290129bc977" formatted="false">%d episodes found</string>
+    <string name="ui_6bac58c4b2f8" formatted="false">%d files</string>
     <string name="ui_22cb980ab05c" formatted="false">%d min</string>
     <string name="ui_b909e7d6e8c9" formatted="false">%d min remaining</string>
     <string name="ui_66bd1c71457f" formatted="false">%d missing episodes on Quark Drive</string>
@@ -11,6 +12,7 @@
     <string name="ui_5f03e85d806c" formatted="false">%d of %d releases</string>
     <string name="ui_cf5dae5645db" formatted="false">%d of %d videos</string>
     <string name="ui_f8713dc1c4d5" formatted="false">%d of %d videos are already in your library; the rest will download.</string>
+    <string name="ui_586f95626647" formatted="false">%d peers</string>
     <string name="ui_b4d8b30e51a8" formatted="false">%d releases</string>
     <string name="ui_55d456f87a3f" formatted="false">%d releases hidden by filters</string>
     <string name="ui_b295fde49b7b" formatted="false">%d selected</string>
@@ -20,6 +22,7 @@
     <string name="ui_660a76df86fd" formatted="false">%dh %dm left</string>
     <string name="ui_659748ef61cf" formatted="false">%dm left</string>
     <string name="ui_9b722d3ba900" formatted="false">%s free of %s</string>
+    <string name="ui_3fd293a9d615" formatted="false">%s of %s</string>
     <string name="ui_c428b17e2512" formatted="false">1 DOWNLOAD</string>
     <string name="ui_a6456c91027d" formatted="false">1 FILE</string>
     <string name="ui_54fc19e5c9f4" formatted="false">1 episode</string>
@@ -338,10 +341,13 @@
     <string name="ui_97d4488a6fcd" formatted="false">Fallback address</string>
     <string name="ui_2c3cafa4db3f" formatted="false">File</string>
     <string name="ui_11b2dac9eb17" formatted="false">File list unavailable</string>
+    <string name="ui_6ce6c512ea43" formatted="false">Files</string>
     <string name="ui_df12077fa702" formatted="false">Files and details</string>
     <string name="ui_120041389b39" formatted="false">Files are copied and checked before the originals are removed. Watch history and subtitles are kept.</string>
     <string name="ui_b677e2df8e0a" formatted="false">Files removed</string>
     <string name="ui_df251b06eefd" formatted="false">Find</string>
+    <string name="ui_2c20c8c1892e" formatted="false">Find a TV show</string>
+    <string name="ui_967f9e5d31b5" formatted="false">Find a movie</string>
     <string name="ui_16689b7611c8" formatted="false">Find a torrent</string>
     <string name="ui_c7d293cdeab6" formatted="false">Find missing episodes</string>
     <string name="ui_2893768e025f" formatted="false">Find servers</string>
@@ -516,6 +522,7 @@
     <string name="ui_96d679237100" formatted="false">No release found</string>
     <string name="ui_6fd4ab12ee28" formatted="false">No releases found</string>
     <string name="ui_4c57e22bd419" formatted="false">No reported seeds</string>
+    <string name="ui_b993b0c53719" formatted="false">No results</string>
     <string name="ui_74cd1304973c" formatted="false">No server found</string>
     <string name="ui_b438edb05053" formatted="false">No server found on this network.</string>
     <string name="ui_f7dca3322c11" formatted="false">No shows are being watched</string>
@@ -543,6 +550,7 @@
     <string name="ui_0008c8375b5d" formatted="false">Not progressing</string>
     <string name="ui_be8f2e94e7b3" formatted="false">Not set up</string>
     <string name="ui_5a28f15df569" formatted="false">Not yet available</string>
+    <string name="ui_76216f7884fd" formatted="false">Nothing here</string>
     <string name="ui_602f15feebf4" formatted="false">Nothing to add</string>
     <string name="ui_753a22b2eb61" formatted="false">Notifications</string>
     <string name="ui_8c9bc3ae4603" formatted="false">Now processing</string>
@@ -626,6 +634,7 @@
     <string name="ui_034f14206811" formatted="false">RATIO</string>
     <string name="ui_03e91053622d" formatted="false">REMAINING</string>
     <string name="ui_794f65e9d206" formatted="false">Ratio</string>
+    <string name="ui_c3704095373a" formatted="false">Ratio %s</string>
     <string name="ui_2c84dfc5ede1" formatted="false">Read the new device\'s code</string>
     <string name="ui_41f4b068f102" formatted="false">Reading image subtitles</string>
     <string name="ui_3a421a191f8f" formatted="false">Reading image subtitles (OCR)</string>
@@ -657,6 +666,7 @@
     <string name="ui_e512d90885bf" formatted="false">Remove torrent, keep files</string>
     <string name="ui_1b8ce9f15cc0" formatted="false">Remove torrent, keeping files?</string>
     <string name="ui_3e0feffd1ffa" formatted="false">Remove torrent…</string>
+    <string name="ui_3903f61a6978" formatted="false">Remove “%s”?</string>
     <string name="ui_24062e0e3221" formatted="false">Removed from Continue Watching</string>
     <string name="ui_8ed77723b4d4" formatted="false">Remove…</string>
     <string name="ui_522b4f2f5a23" formatted="false">Removing %d of %d…</string>
@@ -1014,6 +1024,9 @@
     <string name="ui_ff6d173b8c7a" formatted="false">Your server is not answering. Check this phone’s internet connection.</string>
     <string name="ui_8f3182a89e24" formatted="false">tb · Offline</string>
     <string name="ui_42aef171c1c0" formatted="false">track</string>
+    <string name="ui_3448c54a20c5" formatted="false">~%dd %dh remaining</string>
+    <string name="ui_21b8bf137a9e" formatted="false">~%dh %dm remaining</string>
+    <string name="ui_f4c5d78e5202" formatted="false">~%dm remaining</string>
     <string name="ui_df316e17de9c" formatted="false">…</string>
     <string name="ui_b78b49990274" formatted="false">⋯  More</string>
     <string name="ui_f77b6feff6f9" formatted="false">ⓘ</string>

@@ -3,6 +3,7 @@
     <string name="ui_6f96f2ca6923" formatted="false">%d 个下载</string>
     <string name="ui_bb4f08e94b1c" formatted="false">%d 集</string>
     <string name="ui_0290129bc977" formatted="false">找到 %d 集</string>
+    <string name="ui_6bac58c4b2f8" formatted="false">%d 个文件</string>
     <string name="ui_22cb980ab05c" formatted="false">%d 分钟</string>
     <string name="ui_b909e7d6e8c9" formatted="false">剩余 %d 分钟</string>
     <string name="ui_66bd1c71457f" formatted="false">夸克网盘上有 %d 集缺失剧集</string>
@@ -11,6 +12,7 @@
     <string name="ui_5f03e85d806c" formatted="false">%d / %d 个资源</string>
     <string name="ui_cf5dae5645db" formatted="false">%d / %d 个视频</string>
     <string name="ui_f8713dc1c4d5" formatted="false">%d / %d 个视频已在你的资料库中，其余将会下载。</string>
+    <string name="ui_586f95626647" formatted="false">%d 个节点</string>
     <string name="ui_b4d8b30e51a8" formatted="false">%d 个资源</string>
     <string name="ui_55d456f87a3f" formatted="false">筛选条件隐藏了 %d 个资源</string>
     <string name="ui_b295fde49b7b" formatted="false">已选 %d 个</string>
@@ -20,6 +22,7 @@
     <string name="ui_660a76df86fd" formatted="false">剩余 %d 小时 %d 分钟</string>
     <string name="ui_659748ef61cf" formatted="false">剩余 %d 分钟</string>
     <string name="ui_9b722d3ba900" formatted="false">可用 %s，共 %s</string>
+    <string name="ui_3fd293a9d615" formatted="false">%s / %s</string>
     <string name="ui_c428b17e2512" formatted="false">1 个下载</string>
     <string name="ui_a6456c91027d" formatted="false">1 个文件</string>
     <string name="ui_54fc19e5c9f4" formatted="false">1 集</string>
@@ -338,10 +341,13 @@
     <string name="ui_97d4488a6fcd" formatted="false">备用地址</string>
     <string name="ui_2c3cafa4db3f" formatted="false">文件</string>
     <string name="ui_11b2dac9eb17" formatted="false">文件列表不可用</string>
+    <string name="ui_6ce6c512ea43" formatted="false">文件</string>
     <string name="ui_df12077fa702" formatted="false">文件与详情</string>
     <string name="ui_120041389b39" formatted="false">文件会先复制并核对，再删除原文件。观看记录和字幕都会保留。</string>
     <string name="ui_b677e2df8e0a" formatted="false">文件已删除</string>
     <string name="ui_df251b06eefd" formatted="false">查找</string>
+    <string name="ui_2c20c8c1892e" formatted="false">查找剧集</string>
+    <string name="ui_967f9e5d31b5" formatted="false">查找电影</string>
     <string name="ui_16689b7611c8" formatted="false">查找种子</string>
     <string name="ui_c7d293cdeab6" formatted="false">查找缺失剧集</string>
     <string name="ui_2893768e025f" formatted="false">查找服务器</string>
@@ -516,6 +522,7 @@
     <string name="ui_96d679237100" formatted="false">未找到资源</string>
     <string name="ui_6fd4ab12ee28" formatted="false">未找到资源</string>
     <string name="ui_4c57e22bd419" formatted="false">暂无做种信息</string>
+    <string name="ui_b993b0c53719" formatted="false">没有结果</string>
     <string name="ui_74cd1304973c" formatted="false">未找到服务器</string>
     <string name="ui_b438edb05053" formatted="false">此网络中未找到服务器。</string>
     <string name="ui_f7dca3322c11" formatted="false">没有正在追更的剧集</string>
@@ -543,6 +550,7 @@
     <string name="ui_0008c8375b5d" formatted="false">无进展</string>
     <string name="ui_be8f2e94e7b3" formatted="false">未设置</string>
     <string name="ui_5a28f15df569" formatted="false">暂不可用</string>
+    <string name="ui_76216f7884fd" formatted="false">这里没有内容</string>
     <string name="ui_602f15feebf4" formatted="false">没有可添加的内容</string>
     <string name="ui_753a22b2eb61" formatted="false">通知</string>
     <string name="ui_8c9bc3ae4603" formatted="false">正在处理</string>
@@ -626,6 +634,7 @@
     <string name="ui_034f14206811" formatted="false">分享率</string>
     <string name="ui_03e91053622d" formatted="false">剩余</string>
     <string name="ui_794f65e9d206" formatted="false">分享率</string>
+    <string name="ui_c3704095373a" formatted="false">分享率 %s</string>
     <string name="ui_2c84dfc5ede1" formatted="false">读取新设备的设置码</string>
     <string name="ui_41f4b068f102" formatted="false">识别图像字幕</string>
     <string name="ui_3a421a191f8f" formatted="false">正在识别图像字幕（OCR）</string>
@@ -657,6 +666,7 @@
     <string name="ui_e512d90885bf" formatted="false">移除种子，保留文件</string>
     <string name="ui_1b8ce9f15cc0" formatted="false">移除种子并保留文件？</string>
     <string name="ui_3e0feffd1ffa" formatted="false">移除种子…</string>
+    <string name="ui_3903f61a6978" formatted="false">移除“%s”？</string>
     <string name="ui_24062e0e3221" formatted="false">已从继续观看中移除</string>
     <string name="ui_8ed77723b4d4" formatted="false">移除…</string>
     <string name="ui_522b4f2f5a23" formatted="false">正在移除第 %d 个，共 %d 个…</string>
@@ -1014,6 +1024,9 @@
     <string name="ui_ff6d173b8c7a" formatted="false">服务器没有响应。请检查这部手机的网络连接。</string>
     <string name="ui_8f3182a89e24" formatted="false">tb · 离线</string>
     <string name="ui_42aef171c1c0" formatted="false">轨道</string>
+    <string name="ui_3448c54a20c5" formatted="false">约剩余 %d 天 %d 小时</string>
+    <string name="ui_21b8bf137a9e" formatted="false">约剩余 %d 小时 %d 分钟</string>
+    <string name="ui_f4c5d78e5202" formatted="false">约剩余 %d 分钟</string>
     <string name="ui_df316e17de9c" formatted="false">…</string>
     <string name="ui_b78b49990274" formatted="false">⋯  更多</string>
     <string name="ui_f77b6feff6f9" formatted="false">ⓘ</string>

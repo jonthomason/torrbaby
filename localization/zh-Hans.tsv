@@ -1093,3 +1093,16 @@ Play S%d E%d	播放 第%d季 第%d集
 Search again	重新查找
 The connection has expired or was revoked. Link this phone again.	连接已过期或已被撤销。请重新连接这部手机。
 Your server is not answering. Check this phone’s internet connection.	服务器没有响应。请检查这部手机的网络连接。
+%d files	%d 个文件
+%d peers	%d 个节点
+%s of %s	%s / %s
+Files	文件
+Find a TV show	查找剧集
+Find a movie	查找电影
+No results	没有结果
+Nothing here	这里没有内容
+Ratio %s	分享率 %s
+Remove “%s”?	移除“%s”？
+~%dd %dh remaining	约剩余 %d 天 %d 小时
+~%dh %dm remaining	约剩余 %d 小时 %d 分钟
+~%dm remaining	约剩余 %d 分钟

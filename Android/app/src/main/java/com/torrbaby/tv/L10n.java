@@ -14,6 +14,7 @@ final class L10n {
     IDS.put("%d DOWNLOADS", R.string.ui_6f96f2ca6923);
     IDS.put("%d episodes", R.string.ui_bb4f08e94b1c);
     IDS.put("%d episodes found", R.string.ui_0290129bc977);
+    IDS.put("%d files", R.string.ui_6bac58c4b2f8);
     IDS.put("%d min", R.string.ui_22cb980ab05c);
     IDS.put("%d min remaining", R.string.ui_b909e7d6e8c9);
     IDS.put("%d missing episodes on Quark Drive", R.string.ui_66bd1c71457f);
@@ -22,6 +23,7 @@ final class L10n {
     IDS.put("%d of %d releases", R.string.ui_5f03e85d806c);
     IDS.put("%d of %d videos", R.string.ui_cf5dae5645db);
     IDS.put("%d of %d videos are already in your library; the rest will download.", R.string.ui_f8713dc1c4d5);
+    IDS.put("%d peers", R.string.ui_586f95626647);
     IDS.put("%d releases", R.string.ui_b4d8b30e51a8);
     IDS.put("%d releases hidden by filters", R.string.ui_55d456f87a3f);
     IDS.put("%d selected", R.string.ui_b295fde49b7b);
@@ -31,6 +33,7 @@ final class L10n {
     IDS.put("%dh %dm left", R.string.ui_660a76df86fd);
     IDS.put("%dm left", R.string.ui_659748ef61cf);
     IDS.put("%s free of %s", R.string.ui_9b722d3ba900);
+    IDS.put("%s of %s", R.string.ui_3fd293a9d615);
     IDS.put("1 DOWNLOAD", R.string.ui_c428b17e2512);
     IDS.put("1 FILE", R.string.ui_a6456c91027d);
     IDS.put("1 episode", R.string.ui_54fc19e5c9f4);
@@ -349,10 +352,13 @@ final class L10n {
     IDS.put("Fallback address", R.string.ui_97d4488a6fcd);
     IDS.put("File", R.string.ui_2c3cafa4db3f);
     IDS.put("File list unavailable", R.string.ui_11b2dac9eb17);
+    IDS.put("Files", R.string.ui_6ce6c512ea43);
     IDS.put("Files and details", R.string.ui_df12077fa702);
     IDS.put("Files are copied and checked before the originals are removed. Watch history and subtitles are kept.", R.string.ui_120041389b39);
     IDS.put("Files removed", R.string.ui_b677e2df8e0a);
     IDS.put("Find", R.string.ui_df251b06eefd);
+    IDS.put("Find a TV show", R.string.ui_2c20c8c1892e);
+    IDS.put("Find a movie", R.string.ui_967f9e5d31b5);
     IDS.put("Find a torrent", R.string.ui_16689b7611c8);
     IDS.put("Find missing episodes", R.string.ui_c7d293cdeab6);
     IDS.put("Find servers", R.string.ui_2893768e025f);
@@ -527,6 +533,7 @@ final class L10n {
     IDS.put("No release found", R.string.ui_96d679237100);
     IDS.put("No releases found", R.string.ui_6fd4ab12ee28);
     IDS.put("No reported seeds", R.string.ui_4c57e22bd419);
+    IDS.put("No results", R.string.ui_b993b0c53719);
     IDS.put("No server found", R.string.ui_74cd1304973c);
     IDS.put("No server found on this network.", R.string.ui_b438edb05053);
     IDS.put("No shows are being watched", R.string.ui_f7dca3322c11);
@@ -554,6 +561,7 @@ final class L10n {
     IDS.put("Not progressing", R.string.ui_0008c8375b5d);
     IDS.put("Not set up", R.string.ui_be8f2e94e7b3);
     IDS.put("Not yet available", R.string.ui_5a28f15df569);
+    IDS.put("Nothing here", R.string.ui_76216f7884fd);
     IDS.put("Nothing to add", R.string.ui_602f15feebf4);
     IDS.put("Notifications", R.string.ui_753a22b2eb61);
     IDS.put("Now processing", R.string.ui_8c9bc3ae4603);
@@ -637,6 +645,7 @@ final class L10n {
     IDS.put("RATIO", R.string.ui_034f14206811);
     IDS.put("REMAINING", R.string.ui_03e91053622d);
     IDS.put("Ratio", R.string.ui_794f65e9d206);
+    IDS.put("Ratio %s", R.string.ui_c3704095373a);
     IDS.put("Read the new device's code", R.string.ui_2c84dfc5ede1);
     IDS.put("Reading image subtitles", R.string.ui_41f4b068f102);
     IDS.put("Reading image subtitles (OCR)", R.string.ui_3a421a191f8f);
@@ -668,6 +677,7 @@ final class L10n {
     IDS.put("Remove torrent, keep files", R.string.ui_e512d90885bf);
     IDS.put("Remove torrent, keeping files?", R.string.ui_1b8ce9f15cc0);
     IDS.put("Remove torrent…", R.string.ui_3e0feffd1ffa);
+    IDS.put("Remove “%s”?", R.string.ui_3903f61a6978);
     IDS.put("Removed from Continue Watching", R.string.ui_24062e0e3221);
     IDS.put("Remove…", R.string.ui_8ed77723b4d4);
     IDS.put("Removing %d of %d…", R.string.ui_522b4f2f5a23);
@@ -1025,6 +1035,9 @@ final class L10n {
     IDS.put("Your server is not answering. Check this phone’s internet connection.", R.string.ui_ff6d173b8c7a);
     IDS.put("tb · Offline", R.string.ui_8f3182a89e24);
     IDS.put("track", R.string.ui_42aef171c1c0);
+    IDS.put("~%dd %dh remaining", R.string.ui_3448c54a20c5);
+    IDS.put("~%dh %dm remaining", R.string.ui_21b8bf137a9e);
+    IDS.put("~%dm remaining", R.string.ui_f4c5d78e5202);
     IDS.put("…", R.string.ui_df316e17de9c);
     IDS.put("⋯  More", R.string.ui_b78b49990274);
     IDS.put("ⓘ", R.string.ui_f77b6feff6f9);

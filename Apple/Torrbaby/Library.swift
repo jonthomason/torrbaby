@@ -693,6 +693,9 @@ struct LibraryBrowser: View {
         // Titles imported together share an added time; the title settles their order, which
         // was otherwise arbitrary and changed from one visit to the next.
         let alphabetical = { (a: LibraryTitle, b: LibraryTitle) in a.title.localizedStandardCompare(b.title) == .orderedAscending }
+        // Home has no sort control: its shelves ("Recently added" first) are always newest first,
+        // whatever Movies and TV Shows are sorted by.
+        let order = isHome ? "Recently added" : order
         return result.sorted {
             if order == "Release date" { return $0.year != $1.year ? ($0.year ?? "") > ($1.year ?? "") : alphabetical($0, $1) }
             if order == "Alphabetical" { return alphabetical($0, $1) }

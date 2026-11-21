@@ -233,6 +233,7 @@ object Phone {
             } catch (e: Exception) { failed(e) }
         }
         checkForUpdate()
+        Torrents.refresh()
     }
 
     private fun failed(e: Exception) = post {
