@@ -292,6 +292,17 @@ object Phone {
             .putStringArrayListExtra("queue_ids", ids).putStringArrayListExtra("queue_names", names).putStringArrayListExtra("queue_headings", headings))
     }
 
+    /** Mark as Watched / Unwatched, as on the iPhone; the library then shows it. */
+    fun markWatched(asset: Library.Asset, watched: Boolean) {
+        val current = api ?: return
+        io.execute {
+            try {
+                current.request("POST", "/v1/library/assets/" + Api.part(asset.id) + "/watched", JSONObject().put("watched", watched))
+                post { refresh() }
+            } catch (e: Exception) { failed(e) }
+        }
+    }
+
     fun playSaved(activity: Activity, copy: SavedItem, beginning: Boolean, position: Double = copy.position) {
         activity.startActivity(Intent(activity, PlaybackActivity::class.java)
             .putExtra("saved", copy.id).putExtra("asset", copy.assetId).putExtra("title_id", copy.titleId).putExtra("title", copy.title)

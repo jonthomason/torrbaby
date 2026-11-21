@@ -52,6 +52,8 @@ public class PlaybackActivity extends Activity {
   private String session = "";
   /** The saved copy being played (Saved), or null when streaming from Diamond. */
   private String saved;
+  /** A phone's ✕ at the top left, shown with the controls (a TV leaves with Back). */
+  private TextView closeButton;
   private int sequence = 0;
   private boolean stopped = false, wasPlaying = true, finished = false, ready = false;
   /** A phone or tablet: full screen, double-tap to skip, picture in picture on leaving. */
@@ -298,15 +300,35 @@ public class PlaybackActivity extends Activity {
     nextEpisodeButton.setNextFocusDownId(playPause.getId());
     playPause.setNextFocusUpId(nextEpisodeButton.getId());
     addHeading();
+    if (phone) addCloseButton();
     view.setControllerVisibilityListener((PlayerView.ControllerVisibilityListener) visibility -> {
       controlsVisible = visibility == View.VISIBLE;
       if (!controlsVisible) navigatingControls = false;
       heading.setVisibility(controlsVisible ? View.VISIBLE : View.GONE);
+      if (closeButton != null) closeButton.setVisibility(controlsVisible ? View.VISIBLE : View.GONE);
       updateNextEpisodeButton();
     });
     view.showController();
     view.findViewById(androidx.media3.ui.R.id.exo_play_pause).requestFocus();
     main.postDelayed(ticker, 1000);
+  }
+
+  private void addCloseButton() {
+    closeButton = Ui.text(this, "✕", 22, 0xFFFFFFFF);
+    closeButton.setGravity(Gravity.CENTER);
+    closeButton.setShadowLayer(8, 0, 1, 0x99000000);
+    closeButton.setContentDescription(L10n.t("Close"));
+    closeButton.setOnClickListener(v -> finish());
+    int size = Ui.dp(this, 48);
+    android.widget.FrameLayout.LayoutParams layout =
+        new android.widget.FrameLayout.LayoutParams(size, size, Gravity.TOP | Gravity.START);
+    // Clear of a camera cutout or the status bar's place.
+    int top = 0;
+    if (android.os.Build.VERSION.SDK_INT >= 28 && getWindow().getDecorView().getRootWindowInsets() != null
+        && getWindow().getDecorView().getRootWindowInsets().getDisplayCutout() != null)
+      top = getWindow().getDecorView().getRootWindowInsets().getDisplayCutout().getSafeInsetTop();
+    layout.setMargins(Ui.dp(this, 8), Math.max(top, Ui.dp(this, 12)), 0, 0);
+    view.addView(closeButton, layout);
   }
 
   private void addHeading() {
@@ -742,8 +764,46 @@ public class PlaybackActivity extends Activity {
         return true;
       }
     });
-    // Touches on the controls themselves reach them; the picture's go to the detector.
-    view.setOnTouchListener((v, e) -> taps.onTouchEvent(e));
+    // Touches on the controls themselves reach them; the picture's go to the detector. Dragging
+    // down moves the picture with the finger; far or fast enough, it closes, as on the iPhone.
+    float slop = Ui.dp(this, 24);
+    float[] start = new float[2];
+    boolean[] dragging = {false};
+    android.view.VelocityTracker[] velocity = {null};
+    view.setOnTouchListener((v, e) -> {
+      switch (e.getActionMasked()) {
+        case android.view.MotionEvent.ACTION_DOWN:
+          start[0] = e.getRawX(); start[1] = e.getRawY(); dragging[0] = false;
+          velocity[0] = android.view.VelocityTracker.obtain();
+          break;
+        case android.view.MotionEvent.ACTION_MOVE: {
+          float dx = e.getRawX() - start[0], dy = e.getRawY() - start[1];
+          if (!dragging[0] && dy > slop && dy > Math.abs(dx) * 1.5f && !isInPictureInPictureMode()) dragging[0] = true;
+          if (dragging[0]) {
+            v.setTranslationY(Math.max(0, dy));
+            v.setAlpha(1 - Math.min(.5f, Math.max(0, dy) / v.getHeight()));
+          }
+          break;
+        }
+        case android.view.MotionEvent.ACTION_UP:
+        case android.view.MotionEvent.ACTION_CANCEL:
+          if (dragging[0]) {
+            if (velocity[0] != null) { velocity[0].addMovement(e); velocity[0].computeCurrentVelocity(1000); }
+            float speed = velocity[0] == null ? 0 : velocity[0].getYVelocity();
+            float dy = e.getRawY() - start[1];
+            if (e.getActionMasked() == android.view.MotionEvent.ACTION_UP && (dy > v.getHeight() * .2f || speed > Ui.dp(this, 1000))) {
+              v.animate().translationY(v.getHeight()).alpha(0).setDuration(160).withEndAction(this::finish).start();
+            } else {
+              v.animate().translationY(0).alpha(1).setDuration(160).start();
+            }
+          }
+          if (velocity[0] != null) { velocity[0].recycle(); velocity[0] = null; }
+          break;
+      }
+      if (velocity[0] != null) velocity[0].addMovement(e);
+      if (dragging[0]) return true;
+      return taps.onTouchEvent(e);
+    });
   }
 
   /** Leaving for the home screen while it plays: picture in picture, as on the iPhone. */

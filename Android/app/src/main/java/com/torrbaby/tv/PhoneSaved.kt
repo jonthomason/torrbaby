@@ -143,7 +143,7 @@ private fun askToNotify(activity: Activity) {
 
 /** The title page's Download (beside Play): its progress while it comes, then Downloaded. */
 @Composable
-internal fun SaveButton(title: Library.Title, asset: Library.Asset, openSaved: () -> Unit) {
+internal fun SaveButton(title: Library.Title, asset: Library.Asset, openSaved: () -> Unit, modifier: Modifier = Modifier) {
     val activity = LocalContext.current as Activity
     val copy = Saved.items.firstOrNull { it.assetId == asset.id }
     val received = Saved.live?.takeIf { it.first == copy?.id }?.second ?: copy?.received ?: 0
@@ -155,9 +155,9 @@ internal fun SaveButton(title: Library.Title, asset: Library.Asset, openSaved: (
         "paused" -> L10n.t("Paused")
         else -> L10n.t("Queued")
     }
-    Row(Modifier.clip(RoundedCornerShape(10.dp)).background(Ink.control).clickable {
+    Row(modifier.clip(RoundedCornerShape(10.dp)).background(Ink.control).clickable {
         if (copy == null || copy.state == "failed") { askToNotify(activity); Saved.add(title, asset) } else openSaved()
-    }.padding(horizontal = 14.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+    }.padding(horizontal = 14.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
         Symbol(if (copy?.state == "ready") Glyph.Check else Glyph.Save, 18.dp, if (copy?.state == "ready") SavedGreen else Ink.text)
         Spacer(Modifier.width(6.dp))
         Words(label, 15.sp, FontWeight.SemiBold, lines = 1)

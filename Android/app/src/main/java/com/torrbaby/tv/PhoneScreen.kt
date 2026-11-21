@@ -440,12 +440,14 @@ private fun TitlePage(activity: Activity, id: String, openSaved: () -> Unit) {
                 Words(listOf(title.yearLabel(), title.rating).plus(title.genres.take(3)).filter { it.isNotEmpty() }.joinToString(" · "), 13.sp, color = Ink.muted)
                 Spacer(Modifier.height(16.dp))
                 if (preferred != null) {
-                    // Play/Resume and Download share a row (AGENTS.md); a series downloads by episode.
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Action(preferred.playLabel(title), prominent = true, modifier = Modifier.weight(1f)) { Phone.play(activity, title, preferred, false) }
-                        if (!preferred.hasSeason || title.kind != "tv") { Spacer(Modifier.width(10.dp)); SaveButton(title, preferred, openSaved) }
+                    // As on the iPhone: Play, then each action full width under it.
+                    Action(preferred.playLabel(title), prominent = true, modifier = Modifier.fillMaxWidth()) { Phone.play(activity, title, preferred, false) }
+                    if (preferred.position > 0) { Spacer(Modifier.height(8.dp)); Action(L10n.t("Start from Beginning"), modifier = Modifier.fillMaxWidth()) { Phone.play(activity, title, preferred, true) } }
+                    if (!preferred.hasSeason || title.kind != "tv") {
+                        Spacer(Modifier.height(8.dp))
+                        Action(L10n.t(if (preferred.watched) "Mark as Unwatched" else "Mark as Watched"), modifier = Modifier.fillMaxWidth()) { Phone.markWatched(preferred, !preferred.watched) }
+                        if (preferred.complete) { Spacer(Modifier.height(8.dp)); SaveButton(title, preferred, openSaved, Modifier.fillMaxWidth()) }
                     }
-                    if (preferred.position > 0) { Spacer(Modifier.height(10.dp)); Action(L10n.t("Start from Beginning"), modifier = Modifier.fillMaxWidth()) { Phone.play(activity, title, preferred, true) } }
                 }
                 if (title.summary.isNotEmpty()) { Spacer(Modifier.height(16.dp)); Words(title.summary, 14.sp, color = Color.White.copy(alpha = 0.85f)) }
                 if (seasons.size > 1) {
