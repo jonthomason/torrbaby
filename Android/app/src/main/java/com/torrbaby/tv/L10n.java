@@ -1055,6 +1055,7 @@ final class L10n {
     IDS.put("▶  Play", R.string.ui_4159b402b262);
     IDS.put("▶  Resume", R.string.ui_dfb6d85fbc2f);
     IDS.put("▶  Start", R.string.ui_3afbe2dee41f);
+    IDS.put("✕", R.string.ui_0951b9a0228a);
   }
   static Context wrap(Context base) {
     String choice = base.getSharedPreferences("interface",0).getString("language","system");
