@@ -1396,7 +1396,12 @@ final class Store: ObservableObject {
     /// and waits for one already under way so it shows that action.
     #if os(iOS)
     /// A newer iPhone/iPad build published on Diamond (server/updates.rs), offered as Install N.
-    struct AppUpdate: Decodable, Equatable { let build: String; let version: String; let manifest: String }
+    struct AppUpdate: Decodable, Equatable {
+        let build: String; let version: String; let manifest: String
+        /// When iOS's installer last began fetching this build from Diamond.
+        var fetchedAt: Double? = nil
+        static func == (a: Self, b: Self) -> Bool { a.build == b.build && a.manifest == b.manifest }
+    }
     @Published private(set) var availableUpdate: AppUpdate?
     /// Asked when the app comes to the foreground; one small request, no timer.
     func checkForUpdate() async {
@@ -1405,12 +1410,25 @@ final class Store: ObservableObject {
         let newer = (Int(update.build) ?? 0) > installed ? update : nil
         if availableUpdate != newer { availableUpdate = newer }
     }
-    /// iOS asks to confirm, downloads the build from Diamond (through ABT) and installs it.
-    func installUpdate() {
+    /// iOS asks to confirm, downloads the build from Diamond (through ABT) and installs it, but only
+    /// once Torrbaby is off the screen. When Diamond sees the download begin (Install was chosen,
+    /// not Cancel), the app goes to the home screen by itself, as ABT does.
+    func installUpdate() async {
         guard let update = availableUpdate,
               let manifest = update.manifest.addingPercentEncoding(withAllowedCharacters: .alphanumerics),
               let url = URL(string: "itms-services://?action=download-manifest&url=" + manifest) else { return }
-        UIApplication.shared.open(url)
+        // Diamond's own clock: a fetch newer than the one known before asking is this install.
+        let before = (try? await request("GET", "/v1/updates/ios", timeout: 5) as AppUpdate)?.fetchedAt
+        await UIApplication.shared.open(url)
+        for _ in 0..<40 {
+            try? await Task.sleep(for: .milliseconds(500))
+            guard UIApplication.shared.applicationState == .active,
+                  let latest: AppUpdate = try? await request("GET", "/v1/updates/ios", timeout: 5) else { continue }
+            if latest.manifest == update.manifest, let fetched = latest.fetchedAt, fetched != before {
+                UIApplication.shared.perform(NSSelectorFromString("suspend"))
+                return
+            }
+        }
     }
     #endif
     /// Follows a file removal until the server finishes it, then shows the library without it.

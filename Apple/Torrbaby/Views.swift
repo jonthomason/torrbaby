@@ -184,7 +184,7 @@ struct InstallUpdateButton: View {
     @EnvironmentObject var store: Store
     var body: some View {
         if let update = store.availableUpdate {
-            Button { store.installUpdate() } label: {
+            Button { Task { await store.installUpdate() } } label: {
                 Label(String(format: L10n.text("Install %@"), update.build), systemImage: "arrow.down.app.fill")
                     .font(.caption.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 30)
             }.buttonStyle(MonoButtonStyle(prominent: true))

@@ -23,11 +23,21 @@ fn root(data: &Path, platform: &str) -> Result<PathBuf> {
     Ok(data.join("updates").join(platform))
 }
 
-/// The newest published build of a platform: `build`, `version` and the `manifest` URL to install.
+/// When each build's app file was last asked for (seconds since 1970), by build folder. iOS installs
+/// only once Torrbaby is off the screen; the app learns from this that Install was chosen (iOS's
+/// installer has begun fetching it) and goes to the home screen by itself, as ABT does.
+static FETCHED: LazyLock<std::sync::Mutex<std::collections::HashMap<String, f64>>> = LazyLock::new(Default::default);
+
+/// The newest published build of a platform: `build`, `version` and the `manifest` URL to install,
+/// with `fetched_at` once its app file has been asked for.
 pub fn current(data: &Path, platform: &str) -> Result<Value> {
     let file = root(data, platform)?.join("current.json");
     let text = std::fs::read_to_string(&file).with_context(|| format!("No build of {platform} is published on this server"))?;
-    Ok(serde_json::from_str(&text)?)
+    let mut current: Value = serde_json::from_str(&text)?;
+    let link = current["manifest"].as_str().or(current["apk"].as_str()).unwrap_or("").to_owned();
+    let fetched = FETCHED.lock().ok().and_then(|f| f.iter().find(|(tag, _)| link.contains(&format!("/{tag}/"))).map(|(_, at)| *at));
+    if let Some(at) = fetched { current["fetched_at"] = serde_json::json!(at); }
+    Ok(current)
 }
 
 /// `/updates/<platform>/<build>-<random>/<file>`, or nothing.
@@ -42,6 +52,10 @@ pub async fn file(data: &Path, platform: &str, tag: &str, name: &str) -> Result<
     use tokio::io::AsyncReadExt;
     let path = root(data, platform)?.join(tag).join(name);
     let file = tokio::fs::File::open(&path).await.context("No such build")?;
+    if name.starts_with("Torrbaby.") && !name.ends_with(".plist") {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+        if let Ok(mut fetched) = FETCHED.lock() { fetched.insert(tag.to_owned(), now); }
+    }
     let size = file.metadata().await?.len();
     let kind = if name.ends_with(".plist") { "text/xml" } else if name.ends_with(".apk") { "application/vnd.android.package-archive" } else { "application/octet-stream" };
     let chunks = futures_util::stream::try_unfold((file, size), |(mut file, remaining)| async move {
