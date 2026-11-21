@@ -46,6 +46,8 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
         private var hide: Task<Void, Never>?
         private let height: CGFloat = 150
         private var screen: UIScreen? { view?.window?.windowScene?.screen }
+        /// Off while the film is in Picture in Picture: the page left behind only says so.
+        var enabled = true { didSet { if !enabled { hide?.cancel(); level.alpha = 0 } } }
 
         func install(in view: UIView) {
             self.view = view
@@ -115,7 +117,7 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
             if level.alpha < 1 { UIView.animate(withDuration: 0.15) { self.level.alpha = 1 } }
         }
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            guard let view, let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+            guard enabled, let view, let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
             let point = pan.location(in: view), velocity = pan.velocity(in: view)
             // The left third, away from the top and bottom edges (system gestures, the timeline).
             return point.x < view.bounds.width / 3 && point.y > 70 && point.y < view.bounds.height - 110
@@ -133,7 +135,9 @@ struct MobilePlayerPresentation: UIViewControllerRepresentable {
         private var lastSize = CGSize.zero
         var advanceEpisode: (() -> Void)?
         var nextEpisodeAvailable = false { didSet { updateNextButton() } }
-        var inPictureInPicture = false { didSet { pictureInPicture = inPictureInPicture; updateNextButton() } }
+        var inPictureInPicture = false {
+            didSet { pictureInPicture = inPictureInPicture; brightness.enabled = !inPictureInPicture; updateNextButton() }
+        }
         /// During the closing credits the button shows without a tap.
         var creditsPrompt = false { didSet { updateNextButton() } }
         private let nextButton = UIButton(type: .system)
