@@ -233,6 +233,20 @@ fn tag_container(asset: &mut Value, path: &Path, metadata: Option<&fs::Metadata>
         }
     }
 }
+/// A file with no episode number among numbered episodes is bonus material left outside its
+/// Featurettes folder (Battlestar Galactica's "S01/The Oracle.mkv" beside S01E01-S01E13): an
+/// extra, like its copies inside that folder. A file the user matched stays as matched.
+fn bonus_beside_episodes(assets: &mut [Value]) {
+    let numbered = |a: &Value| a["episode"].is_u64();
+    let mut episodes: HashMap<PathBuf, usize> = HashMap::new();
+    for asset in assets.iter().filter(|a| numbered(a)) {
+        if let Some(parent) = asset["path"].as_str().and_then(|p| Path::new(p).parent()) { *episodes.entry(parent.to_owned()).or_default() += 1; }
+    }
+    for asset in assets.iter_mut().filter(|a| !numbered(a) && a["role"] == "main" && a["confirmed"] != true) {
+        let beside = asset["path"].as_str().and_then(|p| Path::new(p).parent()).and_then(|parent| episodes.get(parent)).copied().unwrap_or(0);
+        if beside >= 2 { asset["role"] = json!("extra"); }
+    }
+}
 pub struct Inventory {
     pub assets: Vec<Value>,
     pub errors: Vec<String>,
@@ -562,6 +576,7 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
         }
         assets.push(asset);
     }
+    bonus_beside_episodes(&mut assets);
     let mut superseded = Vec::new();
     // A drive that went away during the walk is away for these records too.
     let online: HashSet<String> = online.intersection(&drives.online()).cloned().collect();
@@ -608,6 +623,23 @@ pub fn inventory_with(config: &Config, old: Vec<Value>, torrents: Vec<Value>, in
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_file_without_an_episode_number_among_episodes_is_an_extra() {
+        let file = |path: &str, episode: Option<u64>, confirmed: bool| json!({"path":path,"episode":episode,"role":"main","confirmed":confirmed});
+        let mut assets = vec![
+            file("/TV/BSG/S01/BSG - S01E01.mkv", Some(1), false),
+            file("/TV/BSG/S01/BSG - S01E02.mkv", Some(2), false),
+            file("/TV/BSG/S01/The Oracle.mkv", None, false),
+            file("/TV/BSG/S01/Matched by hand.mkv", None, true),
+            file("/Movies/Heat (1995)/Heat.mkv", None, false),
+            file("/TV/Show/S01/Show - S01E01.mkv", Some(1), false),
+            file("/TV/Show/S01/Lonely.mkv", None, false),
+        ];
+        bonus_beside_episodes(&mut assets);
+        let roles: Vec<&str> = assets.iter().map(|a| a["role"].as_str().unwrap()).collect();
+        assert_eq!(roles, ["main", "main", "extra", "main", "main", "main", "main"]);
+    }
+
     use super::*;
     #[test]
     fn titles_of_a_dead_drive_taken_off_the_list_stay_offline_until_their_file_returns() {

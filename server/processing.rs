@@ -114,11 +114,13 @@ fn reopen_for_everything(db:&Database,flags:Flags)->Result<usize> {
 /// signed off with OpenSubtitles' English alone, the Chinese they had dropped (216 titles,
 /// 2026-11-21); a pass now keeps or makes the other language.
 fn reopen_one_language(db:&Database)->Result<usize> {
-    let rows=db.rows("SELECT m.asset_id,m.revision,i.document FROM media_processing m JOIN media_inventory i ON i.asset_id=m.asset_id AND i.revision=m.revision LEFT JOIN library_assets a ON a.id=m.asset_id WHERE m.state='ready' AND m.subtitles_state='ready' AND coalesce(json_extract(a.document,'$.role'),'')!='extra'",[])?;
+    let rows=db.rows("SELECT m.asset_id,m.revision,i.document,json_extract(a.document,'$.season') AS season,json_extract(a.document,'$.watch_first') AS first FROM media_processing m JOIN media_inventory i ON i.asset_id=m.asset_id AND i.revision=m.revision LEFT JOIN library_assets a ON a.id=m.asset_id WHERE m.state='ready' AND m.subtitles_state='ready' AND coalesce(json_extract(a.document,'$.role'),'')!='extra'",[])?;
     let mut reopened=0;
     for row in rows {
         let (Some(id),Some(revision),Some(document))=(row["asset_id"].as_str(),row["revision"].as_str(),row["document"].as_str()) else{continue};
         let Ok(info)=serde_json::from_str::<Value>(document) else{continue};
+        // Specials are bonus material too (catalog::bonus).
+        if row["season"]==0 && row["first"]!=true && row["first"]!=1 {continue;}
         let has=|language:&str|info["prepared"].as_array().is_some_and(|jobs|jobs.iter().any(|j|j["state"]=="ready" && j["language"]==language));
         if has("en")==has("zh-Hans") {continue;}
         let changed=db.connection.execute("UPDATE media_processing SET subtitles_state='pending',stage='subtitles',state='queued',retry_after=0,completed_at=NULL,error=NULL,updated=? WHERE asset_id=? AND revision=?",rusqlite::params![now(),id,revision])?;
@@ -744,9 +746,8 @@ async fn advance(s:&Service,asset:&Value,revision:&str,prior:&Value)->Result<()>
         if !done && !external && translating.is_none() {return Ok(());}
     }
     if !finished(prior["credits_state"].as_str().unwrap_or("")) {
-        // Specials list as extras (except a watch-first pilot), so no Next Episode offer needs their credits.
-        let special=asset["season"]==0 && asset["watch_first"]!=true;
-        let not_applicable=asset["role"]=="extra" || special || path.extension().is_some_and(|e|e.eq_ignore_ascii_case("webm"));
+        // Bonus material, specials among it (catalog::bonus), never has a Next Episode offer to place.
+        let not_applicable=crate::catalog::bonus(asset) || path.extension().is_some_and(|e|e.eq_ignore_ascii_case("webm"));
         {let db=s.db.lock().map_err(|_|anyhow::anyhow!("Database unavailable"))?;
             db.connection.execute("UPDATE media_processing SET stage='credits',detail='{}' WHERE asset_id=? AND revision=?",rusqlite::params![id,revision])?;}
         let mut scan_error=None;
@@ -836,7 +837,7 @@ pub fn summary(db:&Database,jobs:&crate::subtitle_jobs::Manager)->Result<Value> 
         if row.is_some_and(|r|r["inventory_state"]=="ready"){scanned+=1;}
         // Complete means English and Chinese subtitles: a file whose subtitle stage failed
         // (Needs attention says why) is not counted complete, though it plays.
-        if state=="ready" && asset["role"]!="extra" && row.is_some_and(|r|r["subtitles_state"]=="skipped") {state="failed";}
+        if state=="ready" && !crate::catalog::bonus(asset) && row.is_some_and(|r|r["subtitles_state"]=="skipped") {state="failed";}
         if state=="ready"{completed+=1;}
         if state=="failed"{failed+=1;}
         let item=json!({"id":id,"asset_id":id,"title":title,"source":detail["source"],"show":named["show"],"season":named["season"],"episode":named["episode"],"episode_name":named["episode_name"],"state":state,"stage":stage,"target":detail["target"],"error":row.map(|r|r["error"].clone()).unwrap_or(Value::Null),"completed_cues":cues,"total_cues":total,"method":detail["extraction_method"],

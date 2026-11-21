@@ -449,6 +449,12 @@ impl Database {
 /// An extra's name from its file, without the series prefix, special number and
 /// release tags: `Show (2003) - S00E22 - The Plan (1080p BluRay x265)` is `The Plan`.
 /// A `display_name` on the asset (set by hand for a mislabelled file) wins.
+/// Bonus material: a file in an Extras/Featurettes folder (or beside numbered episodes), or a
+/// special (season 0) not marked to be watched first. The library lists both with the extras;
+/// processing treats them alike (no subtitles made for them, no credits).
+pub(crate) fn bonus(asset: &Value) -> bool {
+    asset["role"] == "extra" || (asset["season"] == 0 && asset["watch_first"] != true)
+}
 pub(crate) fn extra_name(asset: &Value) -> String {
     if let Some(name) = asset["display_name"].as_str().filter(|n| !n.trim().is_empty()) {
         return name.to_owned();

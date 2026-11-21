@@ -282,7 +282,7 @@ pub async fn process(s: &Service, asset: &Value) -> Result<Value> {
     // Bonus material (featurettes, deleted scenes) keeps the text subtitles it carries and
     // nothing more: no reading of picture tracks, translation, OpenSubtitles or transcription
     // (the user's rule, 2026-11-16).
-    let extra=asset["role"]=="extra";
+    let extra=crate::catalog::bonus(asset);
     let outcome=plan_subtitles(&Live{s,asset,id,input:&input},&input,&info,extra,planned).await?;
     let Outcome{mut prepared,jobs,complete,mut progress,..}=outcome;
     // While replacements are made (OpenSubtitles' English for a transcript, then its Chinese
