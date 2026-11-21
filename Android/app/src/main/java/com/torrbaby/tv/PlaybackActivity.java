@@ -126,7 +126,7 @@ public class PlaybackActivity extends Activity {
                       if (!cancelled)
                         Toast.makeText(
                                 this,
-                                "Subtitles unavailable: " + MainActivity.message(e),
+                                L10n.t("Subtitles unavailable") + ": " + MainActivity.message(e),
                                 Toast.LENGTH_LONG)
                             .show();
                     });
@@ -344,7 +344,7 @@ public class PlaybackActivity extends Activity {
 
   // Own the row layout: vendor AlertDialog list layouts differ across TV firmware.
   private void playbackSettings() {
-    showChoices("Playback", new String[] {"Audio", "Subtitles", "Playback speed"}, -1,
+    showChoices("Playback", L10n.labels(new String[] {"Audio", "Subtitles", "Playback speed"}), -1,
             (dialog, which) -> {
               if (which < 2) tracks(which == 0 ? C.TRACK_TYPE_AUDIO : C.TRACK_TYPE_TEXT);
               else {
@@ -373,7 +373,7 @@ public class PlaybackActivity extends Activity {
     LinearLayout panel = Ui.column(this);
     Ui.pad(panel, 24, 20);
     panel.setBackground(Ui.shape(Ui.PANEL, 0, this));
-    Ui.add(panel, Ui.title(this, title, 24), -1, -2);
+    Ui.add(panel, Ui.title(this, L10n.t(title), 24), -1, -2);
     Ui.gap(panel, 16);
     ScrollView scroll = new ScrollView(this);
     LinearLayout rows = Ui.column(this);
@@ -386,7 +386,7 @@ public class PlaybackActivity extends Activity {
         listener.onClick(dialog, index);
       });
       row.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
-      row.setContentDescription(labels[i] + (i == selected ? ", selected" : ""));
+      row.setContentDescription(labels[i] + (i == selected ? ", " + L10n.t("Selected") : ""));
       Ui.add(rows, row, -1, 48);
       Ui.gap(rows, 6);
       if (i == Math.max(0, selected)) initial = row;
@@ -427,7 +427,7 @@ public class PlaybackActivity extends Activity {
   private void tracks(int type) {
     List<String> labels = new ArrayList<>();
     List<TrackSelectionOverride> overrides = new ArrayList<>();
-    labels.add(type == C.TRACK_TYPE_TEXT ? "Off" : "Automatic");
+    labels.add(L10n.t(type == C.TRACK_TYPE_TEXT ? "Off" : "Automatic"));
     overrides.add(null);
     int selected = 0;
     for (Tracks.Group group : player.getCurrentTracks().getGroups())
@@ -442,7 +442,7 @@ public class PlaybackActivity extends Activity {
           String name =
               format.label != null
                   ? format.label
-                  : language.isEmpty() ? "Track " + labels.size() : language;
+                  : language.isEmpty() ? String.format(L10n.t("Track %d"), labels.size()) : language;
           if (type == C.TRACK_TYPE_TEXT) {
             if (format.id != null && format.id.contains(SIDELOADED) && format.label != null) {
               name = format.label;
@@ -459,7 +459,7 @@ public class PlaybackActivity extends Activity {
           }
           if (type == C.TRACK_TYPE_AUDIO && format.channelCount > 0)
             name +=
-                " · " + format.channelCount + (format.channelCount == 1 ? " channel" : " channels");
+                " · " + String.format(L10n.t(format.channelCount == 1 ? "%d channel" : "%d channels"), format.channelCount);
           labels.add(name);
           overrides.add(new TrackSelectionOverride(group.getMediaTrackGroup(), index));
           if (group.isTrackSelected(index)) selected = labels.size() - 1;
@@ -477,7 +477,7 @@ public class PlaybackActivity extends Activity {
       });
       List<String> sortedLabels = new ArrayList<>();
       List<TrackSelectionOverride> sortedOverrides = new ArrayList<>();
-      sortedLabels.add("Off"); sortedOverrides.add(null);
+      sortedLabels.add(L10n.t("Off")); sortedOverrides.add(null);
       int sortedSelection = 0;
       for (int index : order) {
         if (index == selected) sortedSelection = sortedLabels.size();

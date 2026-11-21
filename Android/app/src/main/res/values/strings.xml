@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="ui_6f96f2ca6923" formatted="false">%d DOWNLOADS</string>
+    <string name="ui_91838a84f896" formatted="false">%d channel</string>
+    <string name="ui_085c77a18761" formatted="false">%d channels</string>
     <string name="ui_bb4f08e94b1c" formatted="false">%d episodes</string>
     <string name="ui_0290129bc977" formatted="false">%d episodes found</string>
     <string name="ui_6bac58c4b2f8" formatted="false">%d files</string>
@@ -920,6 +922,7 @@
     <string name="ui_3e8f36b12ffb" formatted="false">Torrents</string>
     <string name="ui_5b95afc278cd" formatted="false">Torrents and downloads appear when your server can be reached again.</string>
     <string name="ui_5edf6af8c64e" formatted="false">Torrents are still using this drive</string>
+    <string name="ui_f0aeb28a3914" formatted="false">Track %d</string>
     <string name="ui_44f08a6839a5" formatted="false">Transcribing audio</string>
     <string name="ui_cbb4cc49824b" formatted="false">Transfer</string>
     <string name="ui_8a095c5d2bc7" formatted="false">Transfer interrupted. Tap resume.</string>

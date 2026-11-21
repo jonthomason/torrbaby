@@ -40,7 +40,9 @@ final class Ui {
         new int[][]{new int[]{android.R.attr.state_focused},new int[]{android.R.attr.state_pressed},new int[]{}},
         new int[]{Color.BLACK,Color.BLACK,Color.WHITE}));
     v.setFocusable(true);
-    v.setFocusableInTouchMode(true);
+    // Under a remote a press lands on the focused view; on a touchscreen one tap must act, not
+    // first take focus (which made the phone player's Subtitles row need two taps).
+    v.setFocusableInTouchMode(MainActivity.television(c));
   }
 
   /** A main action (Play, More…): a quiet fill at rest so it reads as a button, white under the remote. */
@@ -62,7 +64,7 @@ final class Ui {
     s.addState(new int[] {}, shape(PANEL, 0, c));
     v.setBackground(s);
     v.setFocusable(true);
-    v.setFocusableInTouchMode(true);
+    v.setFocusableInTouchMode(MainActivity.television(c));
     v.setOnFocusChangeListener((view, focused) -> tint(view, focused ? Color.BLACK : Color.WHITE));
     tint(v, Color.WHITE);
   }

@@ -1106,3 +1106,6 @@ Remove “%s”?	移除“%s”？
 ~%dd %dh remaining	约剩余 %d 天 %d 小时
 ~%dh %dm remaining	约剩余 %d 小时 %d 分钟
 ~%dm remaining	约剩余 %d 分钟
+Track %d	轨道 %d
+%d channel	%d 声道
+%d channels	%d 声道

@@ -213,44 +213,66 @@ private fun Browser(activity: Activity) {
     if (menu) Menu(pages.first()) { chosen -> pages.clear(); pages.add(chosen); menu = false }
 }
 
-/** The iPhone's menu: the library's sections, Settings, an update to install, and how it is connected. */
+/** The iPhone's menu (Views.swift phoneMenu): grouped panels of rows with coloured icon squares. */
 @Composable
 private fun Menu(current: Page, choose: (Page) -> Unit) {
     val activity = LocalContext.current as Activity
-    Column(Modifier.fillMaxSize().background(Ink.sidebar).systemBarsPadding().padding(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Words("tb", 22.sp, FontWeight.Bold, Ink.brand); Spacer(Modifier.width(8.dp)); Words("torrbaby", 20.sp, FontWeight.Bold)
+    Column(Modifier.fillMaxSize().background(Ink.canvas).systemBarsPadding()) {
+        Row(Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Words("tb", 26.sp, FontWeight.Black, Ink.brand); Spacer(Modifier.width(8.dp)); Words("torrbaby", 24.sp, FontWeight.Bold)
         }
-        Spacer(Modifier.height(20.dp))
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-        Words(L10n.t("Library"), 13.sp, FontWeight.SemiBold, Ink.muted)
-        Spacer(Modifier.height(6.dp))
-        for ((page, label) in listOf(Page.Home to "Home", Page.Find to "Find", Page.Movies to "Movies", Page.Shows to "TV Shows")) MenuItem(L10n.t(label), page == current) { choose(page) }
-        Spacer(Modifier.height(14.dp))
-        Words(L10n.t("Torrents"), 13.sp, FontWeight.SemiBold, Ink.muted)
-        Spacer(Modifier.height(6.dp))
-        for (shelf in Shelf.entries) MenuItem(L10n.t(shelf.label), current == Page.Downloads(shelf), shelf == Shelf.Attention && Torrents.hasNewAttention) { choose(Page.Downloads(shelf)) }
-        Spacer(Modifier.height(14.dp))
-        Words(L10n.t("Server"), 13.sp, FontWeight.SemiBold, Ink.muted)
-        Spacer(Modifier.height(6.dp))
-        MenuItem(L10n.t("Settings"), current == Page.Settings) { choose(Page.Settings) }
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+            MenuGroup(L10n.t("Library")) {
+                for ((i, entry) in listOf(
+                    Triple(Page.Home, "Home", Glyph.Play to Color(0xFF0A84FF)),
+                    Triple(Page.Find, "Find", Glyph.Search to Color(0xFF5E5CE6)),
+                    Triple(Page.Movies, "Movies", Glyph.Film to Color(0xFFFF453A)),
+                    Triple(Page.Shows, "TV Shows", Glyph.Tv to Color(0xFFBF5AF2)),
+                ).withIndex()) MenuItem(L10n.t(entry.second), entry.third, entry.first == current, first = i == 0) { choose(entry.first) }
+            }
+            MenuGroup(L10n.t("Torrents")) {
+                for (shelf in Shelf.entries) MenuItem(L10n.t(shelf.label), when (shelf) {
+                    Shelf.Downloading -> Glyph.Down to Color(0xFF30B0C7)
+                    Shelf.Seeding -> Glyph.Up to Color(0xFF00C7BE)
+                    Shelf.Complete -> Glyph.Check to Color(0xFF8E8E93)
+                    Shelf.Attention -> Glyph.Alert to Color(0xFFFF9F0A)
+                }, current == Page.Downloads(shelf), first = shelf.ordinal == 0, dot = shelf == Shelf.Attention && Torrents.hasNewAttention) { choose(Page.Downloads(shelf)) }
+            }
+            MenuGroup(L10n.t("Server")) {
+                MenuItem(L10n.t("Settings"), Glyph.Gear to Color(0xFF8E8E93), current == Page.Settings, first = true) { choose(Page.Settings) }
+            }
         }
-        Spacer(Modifier.height(10.dp))
-        Phone.update?.let { Action(String.format(L10n.locale(), L10n.t("Install %s"), it.optString("build")), prominent = true, modifier = Modifier.fillMaxWidth()) { Phone.installUpdate(activity) }; Spacer(Modifier.height(10.dp)) }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(7.dp).clip(CircleShape).background(Ink.green)); Spacer(Modifier.width(7.dp))
-            Words(Phone.connectionLabel, 12.sp, FontWeight.SemiBold)
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Phone.update?.let { Action(String.format(L10n.locale(), L10n.t("Install %s"), it.optString("build")), prominent = true, modifier = Modifier.fillMaxWidth()) { Phone.installUpdate(activity) }; Spacer(Modifier.height(12.dp)) }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(7.dp).clip(CircleShape).background(Ink.green)); Spacer(Modifier.width(7.dp))
+                Words(Phone.connectionLabel, 12.sp, FontWeight.SemiBold, Ink.muted)
+            }
         }
     }
 }
 
 @Composable
-private fun MenuItem(label: String, selected: Boolean, dot: Boolean = false, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (selected) Ink.text else Color.Transparent).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        Words(label, 17.sp, FontWeight.SemiBold, if (selected) Color.Black else Ink.text)
-        // Something new needs attention since the page was last looked at.
-        if (dot) { Spacer(Modifier.width(8.dp)); Box(Modifier.size(7.dp).clip(CircleShape).background(Color(0xFFFF9F0A))) }
+private fun MenuGroup(title: String, rows: @Composable ColumnScope.() -> Unit) {
+    Spacer(Modifier.height(18.dp))
+    Words(title.uppercase(L10n.locale()), 12.sp, FontWeight.SemiBold, Ink.muted, modifier = Modifier.padding(start = 16.dp, bottom = 7.dp))
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Ink.panel), content = rows)
+}
+
+@Composable
+private fun MenuItem(label: String, badge: Pair<Glyph, Color>, selected: Boolean, first: Boolean, dot: Boolean = false, onClick: () -> Unit) {
+    Column(Modifier.fillMaxWidth().background(if (selected) Ink.control else Color.Transparent).clickable(onClick = onClick)) {
+        // A hairline between rows, starting under the label as on iOS.
+        if (!first) Box(Modifier.padding(start = 58.dp).fillMaxWidth().height(0.5.dp).background(Color(0xFF38383A)))
+        Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Badge(badge.first, badge.second)
+            Spacer(Modifier.width(14.dp))
+            Words(label, 17.sp, if (selected) FontWeight.SemiBold else FontWeight.Normal, lines = 1)
+            // Something new needs attention since the page was last looked at.
+            if (dot) { Spacer(Modifier.width(8.dp)); Box(Modifier.size(8.dp).clip(CircleShape).background(Color(0xFFFF9F0A))) }
+            Spacer(Modifier.weight(1f))
+            Words("›", 22.sp, FontWeight.Normal, Color(0xFF5A5A5E))
+        }
     }
 }
 

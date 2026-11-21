@@ -31,6 +31,17 @@ public class PreparedSubtitlesTest {
         "asset-1", () -> false);
     assertEquals(1,result.length());
   }
+  @Test public void openSubtitlesDownloadsAreAttached() throws Exception {
+    // Spider-Man (2002): no subtitles in the file, English and Chinese from OpenSubtitles.
+    JSONArray result = PreparedSubtitles.ready((m,p,b) -> new JSONObject("{\"subtitle_tracks\":[],\"prepared\":["
+        + "{\"generated\":false,\"extraction_method\":\"opensubtitles\",\"kind\":\"text\",\"state\":\"ready\",\"language\":\"en\",\"path\":\"/en.vtt\"},"
+        + "{\"generated\":false,\"extraction_method\":\"opensubtitles\",\"kind\":\"text\",\"sdh\":true,\"state\":\"ready\",\"language\":\"zh-Hans\",\"path\":\"/zh.vtt\"},"
+        + "{\"generated\":false,\"extraction_method\":\"text\",\"state\":\"ready\",\"language\":\"en\",\"path\":\"/own.vtt\"}]}"),
+        "asset-1", () -> false);
+    assertEquals(2, result.length());
+    assertEquals("/en.vtt", result.getJSONObject(0).getString("path"));
+    assertEquals("/zh.vtt", result.getJSONObject(1).getString("path"));
+  }
   @Test public void sdhNamesGeneratedTracksAndCollectsOwnSdhTracks() throws Exception {
     java.util.Set<Integer> sdh = new java.util.HashSet<>();
     JSONArray result = PreparedSubtitles.ready((m,p,b) -> new JSONObject("{\"subtitle_tracks\":["

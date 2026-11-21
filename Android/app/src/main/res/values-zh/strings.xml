@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="ui_6f96f2ca6923" formatted="false">%d 个下载</string>
+    <string name="ui_91838a84f896" formatted="false">%d 声道</string>
+    <string name="ui_085c77a18761" formatted="false">%d 声道</string>
     <string name="ui_bb4f08e94b1c" formatted="false">%d 集</string>
     <string name="ui_0290129bc977" formatted="false">找到 %d 集</string>
     <string name="ui_6bac58c4b2f8" formatted="false">%d 个文件</string>
@@ -920,6 +922,7 @@
     <string name="ui_3e8f36b12ffb" formatted="false">种子</string>
     <string name="ui_5b95afc278cd" formatted="false">服务器恢复连接后，这里会显示种子和下载。</string>
     <string name="ui_5edf6af8c64e" formatted="false">仍有种子在使用这块硬盘</string>
+    <string name="ui_f0aeb28a3914" formatted="false">轨道 %d</string>
     <string name="ui_44f08a6839a5" formatted="false">正在转写音频</string>
     <string name="ui_cbb4cc49824b" formatted="false">传输</string>
     <string name="ui_8a095c5d2bc7" formatted="false">传输已中断，请点击继续。</string>

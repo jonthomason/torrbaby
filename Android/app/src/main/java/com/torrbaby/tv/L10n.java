@@ -12,6 +12,8 @@ final class L10n {
   private static final Map<String,Integer> IDS = new HashMap<>();
   static {
     IDS.put("%d DOWNLOADS", R.string.ui_6f96f2ca6923);
+    IDS.put("%d channel", R.string.ui_91838a84f896);
+    IDS.put("%d channels", R.string.ui_085c77a18761);
     IDS.put("%d episodes", R.string.ui_bb4f08e94b1c);
     IDS.put("%d episodes found", R.string.ui_0290129bc977);
     IDS.put("%d files", R.string.ui_6bac58c4b2f8);
@@ -931,6 +933,7 @@ final class L10n {
     IDS.put("Torrents", R.string.ui_3e8f36b12ffb);
     IDS.put("Torrents and downloads appear when your server can be reached again.", R.string.ui_5b95afc278cd);
     IDS.put("Torrents are still using this drive", R.string.ui_5edf6af8c64e);
+    IDS.put("Track %d", R.string.ui_f0aeb28a3914);
     IDS.put("Transcribing audio", R.string.ui_44f08a6839a5);
     IDS.put("Transfer", R.string.ui_cbb4cc49824b);
     IDS.put("Transfer interrupted. Tap resume.", R.string.ui_8a095c5d2bc7);

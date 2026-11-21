@@ -101,6 +101,7 @@ object Phone {
     }
 
     private fun linked(next: Api) {
+        problem = null
         SecureStore(app).save(next)
         use(next)
         if (!Relay.isRelay(next.base)) learnAtHome(next.base)

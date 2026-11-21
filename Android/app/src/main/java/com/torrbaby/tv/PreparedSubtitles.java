@@ -35,8 +35,10 @@ final class PreparedSubtitles {
     if (prepared == null) return result;
     for (int i = 0; i < prepared.length(); i++) {
       JSONObject job = prepared.getJSONObject(i);
-      // Embedded originals already belong to the media item; attach only generated output.
-      if (!job.optBoolean("generated") || !job.optString("state").equals("ready")) continue;
+      // The file's own tracks already belong to the media item; everything else ready is attached:
+      // generated tracks and those downloaded from OpenSubtitles (often a title's only ones).
+      boolean downloaded = job.optString("extraction_method").equals("opensubtitles");
+      if (!(job.optBoolean("generated") || downloaded) || !job.optString("state").equals("ready")) continue;
       String path = job.optString("path");
       if (path.isEmpty() || !paths.add(path)) continue;
       String language = job.optString("language", job.optString("target", "und"));
