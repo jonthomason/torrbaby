@@ -416,7 +416,11 @@ struct Playback: Identifiable, Codable, Hashable {
     var libraryTitleID: String? = nil
 }
 
-func bytes(_ count: Int64) -> String { ByteCountFormatter.string(fromByteCount: count, countStyle: .file) }
+/// "0 KB", never "Zero KB".
+func bytes(_ count: Int64) -> String { byteFormatter.string(fromByteCount: count) }
+private let byteFormatter: ByteCountFormatter = {
+    let formatter = ByteCountFormatter(); formatter.countStyle = .file; formatter.allowsNonnumericFormatting = false; return formatter
+}()
 /// A transfer speed in megabits per second: "0.8 Mbps", "42 Mbps".
 func rate(_ count: Int64) -> String {
     let megabits = Double(max(0, count)) * 8 / 1_000_000

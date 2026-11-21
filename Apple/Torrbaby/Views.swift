@@ -553,6 +553,24 @@ struct RootView: View {
                 try? await Task.sleep(for: .seconds(3)); debugScreen = DebugScreen(id: screen)
             }
         }
+        #if os(macOS)
+        // Mac layout checks without screen recording or input: TORRBABY_DEBUG_SNAPSHOT=<folder>
+        // writes the main window as <folder>/<seconds>.png at each of TORRBABY_DEBUG_SNAPSHOT_AT
+        // (seconds after launch, comma separated; default 10).
+        .task {
+            guard let folder = ProcessInfo.processInfo.environment["TORRBABY_DEBUG_SNAPSHOT"], !folder.isEmpty else { return }
+            let times = (ProcessInfo.processInfo.environment["TORRBABY_DEBUG_SNAPSHOT_AT"] ?? "10").split(separator: ",").compactMap { Double($0) }
+            var waited = 0.0
+            for time in times.sorted() {
+                try? await Task.sleep(for: .seconds(time - waited)); waited = time
+                guard let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil && $0.frame.height > 200 }),
+                      let view = window.contentView?.superview ?? window.contentView,
+                      let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
+                view.cacheDisplay(in: view.bounds, to: bitmap)
+                try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: folder).appendingPathComponent("\(Int(time)).png"))
+            }
+        }
+        #endif
         #if os(iOS)
         // Simulator layout checks without input: TORRBABY_DEBUG_LEAVE_SETTINGS=<seconds> presses
         // Settings' Done on iPad.

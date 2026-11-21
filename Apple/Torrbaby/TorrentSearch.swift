@@ -153,7 +153,9 @@ struct CloudCopy: Decodable {
         return parts.joined(separator: " · ")
     }
 }
-struct TorrentSearchItem: Decodable, Identifiable {
+struct TorrentSearchItem: Decodable, Identifiable, Hashable {
+    static func == (a: Self, b: Self) -> Bool { a.id == b.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
     var infoHash: String
     let name: String
     let magnet: String
@@ -427,7 +429,9 @@ struct TorrentSearchView: View {
     init(initialQuery: String = "", year: Int? = nil, season: Int? = nil, episode: Int? = nil) {
         _draft = State(initialValue: SearchDraft(initialQuery)); _year = State(initialValue: year)
         _season = State(initialValue: season); _episode = State(initialValue: episode)
-        _freeText = State(initialValue: !initialQuery.isEmpty)
+        // UI smoke tests (as -initialSection): -initialFindByTitle YES looks the words up as a
+        // title; -initialChooseFirst YES then chooses the first title found.
+        _freeText = State(initialValue: !initialQuery.isEmpty && !UserDefaults.standard.bool(forKey: "initialFindByTitle"))
     }
     @AppStorage("torrentSearchMarket") private var market = "world"
     @AppStorage("torrentSearchResolution") private var resolution = "all"
@@ -452,7 +456,6 @@ struct TorrentSearchView: View {
     @State private var error: String?
     @State private var searching = false
     @State private var work: Task<Void, Never>?
-    @State private var selectedID: String?
     #if os(macOS)
     @State private var trialMode = false
     @State private var trialCandidates: [String: [String: Any]] = [:]
@@ -461,6 +464,8 @@ struct TorrentSearchView: View {
     #endif
     @FocusState private var searchFocused: Bool
     @State private var prepareNextSearch = false
+    /// UI smoke tests: -initialOpenFirstRelease YES opens the first release found.
+    @State private var smokeRelease: TorrentSearchItem?
     #if !os(tvOS)
     #endif
     private var resolutionItems: [TorrentSearchItem] {
@@ -597,24 +602,9 @@ struct TorrentSearchView: View {
                 }
         }
     }
-    private var selectedItem: TorrentSearchItem? { visibleItems.first { $0.id == selectedID } }
     var body: some View {
-        GeometryReader { geometry in
             VStack(spacing: 0) {
                 searchHeader
-                #if os(macOS)
-                HStack(spacing: 12) {
-                    Toggle("Compare releases", isOn: $trialMode).toggleStyle(.button)
-                    if trialMode {
-                        Text("\(trialCandidates.count) selected").font(.caption)
-                        Button("Start trial") { Task { await startTrial() } }
-                            .disabled(!(3...5).contains(trialCandidates.count) || startingTrial)
-                        Button("Clear selection") { trialCandidates.removeAll() }.disabled(trialCandidates.isEmpty)
-                    }
-                    Spacer()
-                    Button("Trials") { showTrials = true }
-                }.padding(.horizontal, 16).padding(.bottom, 8)
-                #endif
                 if searching {
                     // The search in progress takes the page, not a small spinner under the box.
                     VStack(spacing: 14) {
@@ -637,34 +627,23 @@ struct TorrentSearchView: View {
                             } description: {
                                 Text("None of them match the resolution or other filters you have chosen.")
                             } actions: {
-                                Button("Show all") { resolution = "all"; scopeFilter = "all"; seasonFilter = nil; episodeFilter = nil; selectedID = visibleItems.first?.id }
+                                Button("Show all") { resolution = "all"; scopeFilter = "all"; seasonFilter = nil; episodeFilter = nil }
                             }
                         } else {
                             ContentUnavailableView("No releases found", systemImage: "magnifyingglass", description: Text("Try a shorter title."))
                         }
-                    } else if usesColumns(geometry.size.width) {
-                        HStack(spacing: 0) {
-                            results(visibleItems, inline: true)
-                                .frame(width: min(440, max(280, geometry.size.width * 0.43)))
-                            Divider()
-                            if let selectedItem, selectedItem.isCloud {
-                                CloudShareView(item: selectedItem, query: response.query ?? query, embedded: true).id(selectedItem.id)
-                            } else if let selectedItem {
-                                TorrentSearchDetail(item: selectedItem, embedded: true, onAdded: { prepareNextSearch = true }).id(selectedItem.id)
-                            } else {
-                                ContentUnavailableView("Choose a release", systemImage: "text.magnifyingglass")
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            }
-                        }
                     } else {
-                        results(visibleItems, inline: false)
+                        // Full width, as on iPad: a release opens its own page.
+                        results(visibleItems)
+                            .navigationDestination(item: $smokeRelease) { item in
+                                TorrentSearchDetail(item: item, ownership: ownership(item), artworkYear: artworkYear(item), titleID: chosen?.id)
+                            }
                     }
                 } else {
                     ContentUnavailableView("Find your next watch", systemImage: "magnifyingglass", description: Text(LocalizedStringKey(kind == "movie" ? "Search movies." : "Search TV shows.")))
                 }
             }
-        }
-        .navigationTitle("Find")
+        .navigationTitle(L10n.text("Find"))
         #if os(iOS)
         .toolbar { ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("Done") { searchFocused = false } } }
         #endif
@@ -673,18 +652,6 @@ struct TorrentSearchView: View {
         #if os(macOS)
         .sheet(isPresented: $showTrials) { LocalizedInterface { TorrentTrialsView() } }
         .task {while !Task.isCancelled {await deduplicateKnownHashes();try? await Task.sleep(for:.seconds(5))}}
-        #endif
-    }
-    private func usesColumns(_ width: CGFloat) -> Bool {
-        #if os(macOS)
-        if trialMode { return false }
-        #endif
-        #if os(iOS) || os(tvOS)
-        // iPad lists results full width like iPhone: a release is usually chosen from its row,
-        // and details beside the list were squeezed and loaded for every selection.
-        return false
-        #else
-        return width >= 640
         #endif
     }
     // MARK: Find by title
@@ -736,7 +703,30 @@ struct TorrentSearchView: View {
     }
     /// The titles TMDB knows by that name; choosing one searches for it. The words alone stay
     /// available for anything TMDB does not know.
-    private func titleList(_ titles: [FindTitle]) -> some View {
+    @ViewBuilder private func titleList(_ titles: [FindTitle]) -> some View {
+        #if os(tvOS)
+        titleListTV(titles)
+        #else
+        // Cards, not table rows: the poster large enough to recognise, the summary kept to a
+        // readable width.
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 10) {
+                if titles.isEmpty {
+                    Text("No titles found").font(SearchFont.title).foregroundStyle(Theme.muted).padding(.vertical, 8)
+                }
+                ForEach(titles) { title in
+                    FindTitleCard(title: title, poster: poster(title.poster, width: 64)) { choose(title) }
+                }
+                Button { freeText = true; searchText() } label: {
+                    Label(L10n.format("Search torrents for “%@”", query.trimmingCharacters(in: .whitespacesAndNewlines)), systemImage: "text.magnifyingglass")
+                }.buttonStyle(SearchChipStyle()).padding(.top, 4)
+            }.padding(.horizontal, 16).padding(.vertical, 8).frame(maxWidth: 820, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }.background(Theme.canvas)
+        #endif
+    }
+    #if os(tvOS)
+    private func titleListTV(_ titles: [FindTitle]) -> some View {
         List {
             if titles.isEmpty {
                 Text("No titles found").font(SearchFont.title).foregroundStyle(Theme.muted).padding(.vertical, 8)
@@ -760,6 +750,7 @@ struct TorrentSearchView: View {
             }.buttonStyle(.plain).foregroundStyle(Theme.accent).padding(.vertical, 6)
         }.listStyle(.plain).canvasBackground()
     }
+    #endif
     /// The chosen title on one quiet line, and for a series what is wanted of it: whole
     /// seasons or one season's episodes. A hairline sets it off from the results.
     private func chosenTitle(_ title: FindTitle) -> some View {
@@ -799,7 +790,7 @@ struct TorrentSearchView: View {
         }
     }
     private var changeButton: some View {
-        Button("Change") { work?.cancel(); searching = false; chosen = nil; facts = nil; response = nil; selectedID = nil }
+        Button("Change") { work?.cancel(); searching = false; chosen = nil; facts = nil; response = nil }
             .buttonStyle(SearchChipStyle()).fixedSize()
     }
     /// World or China. A phone keeps just the globe and flag.
@@ -825,7 +816,7 @@ struct TorrentSearchView: View {
                   clear: {
                       // Clears the box and results, ready for the next search.
                       work?.cancel(); searching = false
-                      draft.text = ""; response = nil; selectedID = nil; error = nil
+                      draft.text = ""; response = nil; error = nil
                       titles = nil; chosen = nil; facts = nil; freeText = false
                       resetFilters()
                       focusNextSearch()
@@ -844,7 +835,7 @@ struct TorrentSearchView: View {
                 }
             }
             .onChange(of: market) {
-                work?.cancel(); searching = false; response = nil; selectedID = nil; error = nil
+                work?.cancel(); searching = false; response = nil; error = nil
                 if chosen != nil { searchTitle() } else if query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 { search() }
             }
             if let chosen { chosenTitle(chosen) }
@@ -868,6 +859,9 @@ struct TorrentSearchView: View {
                     if chosen == nil { scopePicker; seasonPicker; episodePicker }
                     else if want == "episodes" { episodePicker }
                     sortPicker
+                    #if os(macOS)
+                    trialControls
+                    #endif
                     if year != nil || season != nil || episode != nil {
                         Button { year = nil; season = nil; episode = nil; search() } label: {
                             HStack(spacing: 5) {
@@ -881,13 +875,29 @@ struct TorrentSearchView: View {
             searchStatus.fixedSize()
         }
     }
+    #if os(macOS)
+    /// Compare releases (a trial of 3-5 of them) and the trials so far, as chips after the filters.
+    @ViewBuilder private var trialControls: some View {
+        Rectangle().fill(Theme.muted.opacity(0.3)).frame(width: 1, height: SearchFont.chip - 12).padding(.horizontal, 4)
+        Button { trialMode.toggle(); if !trialMode { trialCandidates.removeAll() } } label: {
+            Label("Compare releases", systemImage: "square.stack.3d.up")
+        }.buttonStyle(SearchChipStyle(prominent: trialMode))
+        if trialMode {
+            Text("\(trialCandidates.count) selected").font(.caption).foregroundStyle(.secondary).fixedSize()
+            Button("Start trial") { Task { await startTrial() } }.buttonStyle(SearchChipStyle(prominent: (3...5).contains(trialCandidates.count)))
+                .disabled(!(3...5).contains(trialCandidates.count) || startingTrial)
+            Button("Clear selection") { trialCandidates.removeAll() }.buttonStyle(SearchChipStyle()).disabled(trialCandidates.isEmpty)
+        }
+        Button { showTrials = true } label: { Label("Trials", systemImage: "flask") }.buttonStyle(SearchChipStyle())
+    }
+    #endif
     private var resolutionPicker: some View {
         SearchChipMenu(title: "Resolution", selection: $resolution, current: resolution == "all" ? Text("All resolutions") : Text(verbatim: resolution)) {
                     Text("All resolutions").tag("all")
                     Text(verbatim:"2160p").tag("2160p")
                     Text(verbatim:"1080p").tag("1080p")
                     Text(verbatim:"720p").tag("720p")
-        }.onChange(of: resolution) { selectedID = visibleItems.first?.id }
+        }
     }
     private var scopePicker: some View {
         SearchChipMenu(title: "Show", selection: $scopeFilter, current: Text(LocalizedStringKey(scopeFilter == "seasons" ? "Complete seasons" : scopeFilter == "episodes" ? "Single episodes" : "All releases"))) {
@@ -895,7 +905,6 @@ struct TorrentSearchView: View {
             Text("Complete seasons").tag("seasons")
             Text("Single episodes").tag("episodes")
         }
-            .onChange(of: scopeFilter) { selectedID = visibleItems.first?.id }
     }
     @ViewBuilder private var seasonPicker: some View {
         if availableSeasons.count > 1 {
@@ -903,7 +912,7 @@ struct TorrentSearchView: View {
                 Text("All seasons").tag(Int?.none)
                 ForEach(availableSeasons, id: \.self) { Text("Season \($0)").tag(Int?.some($0)) }
             }
-                .onChange(of: seasonFilter) { episodeFilter = nil; selectedID = visibleItems.first?.id }
+                .onChange(of: seasonFilter) { episodeFilter = nil }
         }
     }
     @ViewBuilder private var episodePicker: some View {
@@ -912,7 +921,6 @@ struct TorrentSearchView: View {
                 Text("All episodes").tag(Int?.none)
                 ForEach(availableEpisodes, id: \.self) { Text("Episode \($0)").tag(Int?.some($0)) }
             }
-                .onChange(of: episodeFilter) { selectedID = visibleItems.first?.id }
         }
     }
     private var sortPicker: some View {
@@ -938,7 +946,7 @@ struct TorrentSearchView: View {
         }
         return groups
     }
-    private func results(_ items: [TorrentSearchItem], inline: Bool) -> some View {
+    private func results(_ items: [TorrentSearchItem]) -> some View {
         List {
             #if !os(tvOS)
             if wideResults && !trialSearch { columnHeader }
@@ -946,7 +954,7 @@ struct TorrentSearchView: View {
             if sortOrder == "episode" {
                 ForEach(seasonGroups(items), id: \.season) { group in
                     SwiftUI.Section {
-                        ForEach(group.items) { resultRow($0, inline: inline) }
+                        ForEach(group.items) { resultRow($0) }
                     } header: {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(group.season.flatMap { $0 > 0 ? L10n.format("Season %d", $0) : nil } ?? L10n.text("Other releases"))
@@ -956,7 +964,7 @@ struct TorrentSearchView: View {
                     }
                 }
             } else {
-                ForEach(items) { resultRow($0, inline: inline) }
+                ForEach(items) { resultRow($0) }
             }
         }.listStyle(.plain).canvasBackground().disabled(searching)
         #if os(iOS)
@@ -970,7 +978,7 @@ struct TorrentSearchView: View {
         false
         #endif
     }
-    @ViewBuilder private func resultRow(_ item: TorrentSearchItem, inline: Bool) -> some View {
+    @ViewBuilder private func resultRow(_ item: TorrentSearchItem) -> some View {
         Group {
             #if os(macOS)
             if trialMode {
@@ -978,9 +986,9 @@ struct TorrentSearchView: View {
                     if trialCandidates[value] != nil {trialCandidates.removeValue(forKey: value)}
                     else if trialCandidates.count < 5 {trialCandidates[value] = ["name":name,"source":[kind:value],"listing_key":key]}
                 }, trialSelected: Set(trialCandidates.keys))
-            } else { ordinaryRow(item, inline: inline) }
+            } else { ordinaryRow(item) }
             #else
-            ordinaryRow(item, inline: inline)
+            ordinaryRow(item)
             #endif
         }
         #if os(iOS)
@@ -1009,7 +1017,7 @@ struct TorrentSearchView: View {
             .overlay(alignment: .bottom) { Rectangle().fill(Theme.muted.opacity(0.45)).frame(height: 1).offset(y: 6) }
     }
     private func headerButton(_ name: String, order: String) -> some View {
-        Button { sortOrder = order; selectedID = visibleItems.first?.id } label: {
+        Button { sortOrder = order } label: {
             HStack(spacing: 2) {
                 Text(LocalizedStringKey(name))
                 if sortOrder == order { Image(systemName: "chevron.down").font(.caption2.weight(.bold)) }
@@ -1017,17 +1025,12 @@ struct TorrentSearchView: View {
         }.buttonStyle(.plain).accessibilityAddTraits(sortOrder == order ? .isSelected : [])
     }
     #endif
-    @ViewBuilder private func ordinaryRow(_ item: TorrentSearchItem, inline: Bool) -> some View {
-            if item.isCloud && !inline {
-                NavigationLink { CloudShareView(item: item, query: response?.query ?? query) } label: { TorrentSearchRow(item: item, ownership: ownership(item), artworkYear: artworkYear(item), titleID: chosen?.id) }
-            } else if inline {
-                TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true }, ownership: ownership(item), artworkYear: artworkYear(item), titleID: chosen?.id)
-                    .contentShape(Rectangle()).onTapGesture { selectedID = item.id }
-                    .listRowBackground(selectedID == item.id ? Theme.accent.opacity(0.13) : Color.clear)
-                    .accessibilityAddTraits(selectedID == item.id ? .isSelected : [])
-            } else {
-                NavigationLink { TorrentSearchDetail(item: item, onAdded: { prepareNextSearch = true }).id(item.id) } label: { TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true }, ownership: ownership(item), artworkYear: artworkYear(item), titleID: chosen?.id) }
-            }
+    @ViewBuilder private func ordinaryRow(_ item: TorrentSearchItem) -> some View {
+        if item.isCloud {
+            NavigationLink { CloudShareView(item: item, query: response?.query ?? query) } label: { TorrentSearchRow(item: item, ownership: ownership(item), artworkYear: artworkYear(item), titleID: chosen?.id) }
+        } else {
+            NavigationLink { TorrentSearchDetail(item: item, onAdded: { prepareNextSearch = true }, ownership: ownership(item), artworkYear: artworkYear(item), titleID: chosen?.id).id(item.id) } label: { TorrentSearchRow(item: item, onAdded: { prepareNextSearch = true }, ownership: ownership(item), artworkYear: artworkYear(item), titleID: chosen?.id) }
+        }
     }
     #if os(macOS)
     private func deduplicateKnownHashes() async {
@@ -1080,13 +1083,14 @@ struct TorrentSearchView: View {
         let wanted = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard wanted.count >= 2 else { return }
         work?.cancel(); searching = true; error = nil
-        chosen = nil; facts = nil; response = nil; selectedID = nil; resetFilters()
+        chosen = nil; facts = nil; response = nil; resetFilters()
         let kind = kind
         work = Task { @MainActor in
             do {
                 let found: FindTitles = try await store.request("POST", "/v1/search/titles", body: ["query": wanted, "kind": kind], timeout: 30)
                 guard !Task.isCancelled else { return }
                 titles = found.titles
+                if UserDefaults.standard.bool(forKey: "initialChooseFirst"), response == nil, let first = found.titles.first { choose(first) }
             } catch {
                 guard !Task.isCancelled else { return }; self.error = error.localizedDescription
             }
@@ -1114,7 +1118,7 @@ struct TorrentSearchView: View {
     private func searchTitle() {
         guard let chosen else { return }
         if want == "episodes" && wantSeason == nil { wantSeason = facts?.aired.last ?? 1 }
-        work?.cancel(); searching = true; error = nil; response = nil; selectedID = nil
+        work?.cancel(); searching = true; error = nil; response = nil
         scopeFilter = "all"; seasonFilter = nil; episodeFilter = nil; downloaderSeason = wantSeason
         var body: [String: Any] = ["title": chosen.id, "market": market, "want": want, "sources": [] as [String]]
         if let wantSeason { body["season"] = wantSeason }
@@ -1123,7 +1127,7 @@ struct TorrentSearchView: View {
                 // Episodes ask for each aired episode by its tag: allow for that.
                 let value: TorrentSearchResponse = try await store.request("POST", "/v1/search/torrents", body: body, timeout: market == "china" ? 90 : 60)
                 guard !Task.isCancelled else { return }; response = value
-                selectedID = visibleItems.first?.id
+                if UserDefaults.standard.bool(forKey: "initialOpenFirstRelease"), smokeRelease == nil { smokeRelease = visibleItems.first }
             } catch {
                 guard !Task.isCancelled else { return }; self.error = error.localizedDescription
             }
@@ -1142,9 +1146,9 @@ struct TorrentSearchView: View {
             do {
                 let value: TorrentSearchResponse = try await store.request("POST", "/v1/search/torrents", body: body, timeout: market == "china" ? 90 : 30)
                 guard !Task.isCancelled else { return }; response = value
+                if UserDefaults.standard.bool(forKey: "initialOpenFirstRelease"), smokeRelease == nil { smokeRelease = visibleItems.first }
                 if let seasonFilter, !availableSeasons.contains(seasonFilter) { self.seasonFilter = nil }
                 if let episodeFilter, !availableEpisodes.contains(episodeFilter) { self.episodeFilter = nil }
-                if !visibleItems.contains(where: { $0.id == selectedID }) { selectedID = visibleItems.first?.id }
             } catch {
                 guard !Task.isCancelled else { return }; self.error = error.localizedDescription
             }
@@ -1323,6 +1327,34 @@ final class SearchDraft: ObservableObject {
     init(_ text: String) { self.text = text }
 }
 /// The search field with its clear and Search buttons. It alone redraws while typing.
+#if !os(tvOS)
+/// One title TMDB knows by the words typed: poster, name, year and country, and its summary.
+private struct FindTitleCard<Poster: View>: View {
+    let title: FindTitle
+    let poster: Poster
+    let choose: () -> Void
+    @State private var hovering = false
+    var body: some View {
+        Button(action: choose) {
+            HStack(alignment: .top, spacing: 14) {
+                poster
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(verbatim: title.shownTitle).font(.title3.weight(.semibold)).foregroundStyle(.primary)
+                    if title.shownTitle != title.title { Text(verbatim: title.title).font(.subheadline).foregroundStyle(Theme.muted) }
+                    if !title.line.isEmpty { Text(verbatim: title.line).font(.subheadline).foregroundStyle(Theme.muted) }
+                    if let summary = title.summary, !summary.isEmpty {
+                        Text(verbatim: summary).font(.callout).foregroundStyle(.secondary).lineLimit(3).padding(.top, 2)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.muted)
+                    .frame(maxHeight: .infinity)
+            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .background(hovering ? Theme.control : Theme.panel, in: RoundedRectangle(cornerRadius: 12))
+                .contentShape(RoundedRectangle(cornerRadius: 12))
+        }.buttonStyle(.plain).onHover { hovering = $0 }
+    }
+}
+#endif
 private struct SearchBox: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @ObservedObject var draft: SearchDraft
@@ -1453,6 +1485,18 @@ enum SearchFont {
     #endif
     static let detail = Font.caption
 }
+extension SearchReleaseArtwork {
+    /// A release's poster, looked up by its title (with a year borrowed from same-titled results
+    /// when it has none) or, in Find, by the title chosen.
+    static func of(_ item: TorrentSearchItem, artworkYear: Int?, titleID: String?, width: CGFloat = 34, onFacts: @escaping (SearchReleaseFacts) -> Void = { _ in }) -> SearchReleaseArtwork {
+        let episodic = item.hints.season != nil || item.hints.episodeCount != nil
+        // A year borrowed from same-titled results is sent as a plain "Title Year S01" name.
+        // A cloud share's own name says little; the series' title and year find its artwork.
+        return SearchReleaseArtwork(name: item.cloud?.show != nil && item.hints.year != nil ? "\(item.title) \(item.hints.year!) S\(String(format: "%02d", item.hints.season ?? 1))" : item.hints.year == nil && artworkYear != nil ? "\(item.title) \(artworkYear!)\(episodic ? " S01" : "")" : item.name,
+            identity: "\(item.title.lowercased()):\((item.hints.year ?? artworkYear).map(String.init) ?? ""):\(episodic ? "tv:\(item.hints.season ?? 0)" : "movie")",
+            season: item.hints.season, titleID: titleID, width: width, onFacts: onFacts)
+    }
+}
 private struct SearchReleaseArtwork: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
@@ -1460,6 +1504,7 @@ private struct SearchReleaseArtwork: View {
     let identity: String
     var season: Int? = nil
     var titleID: String? = nil
+    var width: CGFloat = 34
     var onFacts: (SearchReleaseFacts) -> Void = { _ in }
     @State private var data: Data?
     private static var facts: [String: SearchReleaseFacts] = [:]
@@ -1477,7 +1522,7 @@ private struct SearchReleaseArtwork: View {
                 RoundedRectangle(cornerRadius: 7).fill(Theme.panel)
                     .overlay(Image(systemName: "film").foregroundStyle(Theme.muted))
             }
-        }.frame(width: 34, height: 51).clipShape(RoundedRectangle(cornerRadius: 7))
+        }.frame(width: width, height: width * 1.5).clipShape(RoundedRectangle(cornerRadius: width > 50 ? 10 : 7))
             .accessibilityHidden(true)
             .task(id: store.server + identity + (titleID ?? "")) {
                 data = nil
@@ -1638,12 +1683,7 @@ private struct TorrentSearchRow: View {
         }
     }
     private var artwork: some View {
-        let episodic = item.hints.season != nil || item.hints.episodeCount != nil
-        // A year borrowed from same-titled results is sent as a plain "Title Year S01" name.
-        // A cloud share's own name says little; the series' title and year find its artwork.
-        return SearchReleaseArtwork(name: item.cloud?.show != nil && item.hints.year != nil ? "\(item.title) \(item.hints.year!) S\(String(format: "%02d", item.hints.season ?? 1))" : item.hints.year == nil && artworkYear != nil ? "\(item.title) \(artworkYear!)\(episodic ? " S01" : "")" : item.name,
-            identity: "\(item.title.lowercased()):\((item.hints.year ?? artworkYear).map(String.init) ?? ""):\(episodic ? "tv:\(item.hints.season ?? 0)" : "movie")",
-            season: item.hints.season, titleID: titleID, onFacts: { facts = $0 })
+        SearchReleaseArtwork.of(item, artworkYear: artworkYear, titleID: titleID, onFacts: { facts = $0 })
     }
     /// The Apple TV's row, and the Mac's trial picker: everything stacked beside the artwork.
     private var stackedBody: some View {
@@ -1761,8 +1801,11 @@ private struct TorrentSearchDetail: View {
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) private var dismiss
     let item: TorrentSearchItem
-    var embedded = false
     var onAdded: () -> Void = {}
+    /// What the user already has of it, and what finds its poster, as its row in the list has.
+    var ownership: String? = nil
+    var artworkYear: Int? = nil
+    var titleID: String? = nil
     @State private var detail: TorrentSearchDetails?
     @State private var attachment = 0
     private var release: TorrentSearchDetails.Release? {
@@ -1778,7 +1821,8 @@ private struct TorrentSearchDetail: View {
     @State private var message: String?
     @State private var detailError: String?
 
-    var body: some View {
+    #if os(tvOS)
+    private var content: some View {
         List {
             SwiftUI.Section {
                 Text(item.title).font(.title2.bold()).searchSelectable
@@ -1838,7 +1882,122 @@ private struct TorrentSearchDetail: View {
                     }
                 }
             }
-        }.searchDetailTitle(embedded: embedded)
+        }
+    }
+    #else
+    /// A page, not a form: the release with its poster, tags, size and seeds; Add; then where it
+    /// was found, its description and its files.
+    private var content: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                header
+                actions
+                if let releases = detail?.releases, releases.count > 1 {
+                    Picker("Release", selection: $attachment) {
+                        ForEach(Array(releases.enumerated()), id: \.offset) { index, release in Text(verbatim: release.item.name).tag(index) }
+                    }.pickerStyle(.menu).fixedSize()
+                }
+                group("Sources") {
+                    SearchTagFlow(spacing: 8) {
+                        ForEach(item.sources, id: \.url) { source in
+                            if let url = URL(string: source.url) {
+                                Link(destination: url) {
+                                    HStack(spacing: 5) { Text(source.label); Image(systemName: "arrow.up.right").font(.system(size: 9, weight: .bold)).opacity(0.6) }
+                                }.buttonStyle(SearchChipStyle())
+                            }
+                        }
+                    }
+                }
+                if let detail, !detail.languages.isEmpty {
+                    group("Source languages") { Text(verbatim: detail.languages.joined(separator: "   ")).font(.callout).searchSelectable }
+                }
+                if let detail, !detail.description.isEmpty {
+                    DisclosureGroup {
+                        Text(detail.description).font(.callout).foregroundStyle(.secondary).searchSelectable
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8)
+                    } label: { Text(verbatim: L10n.text("Description")).font(.subheadline.weight(.semibold)) }
+                        .padding(14).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+                }
+                if loading {
+                    HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Loading details…").font(.callout).foregroundStyle(Theme.muted) }
+                }
+                if let detailError { Text(detailError).font(.callout).foregroundStyle(Theme.muted) }
+                if let files = release?.files ?? detail?.files { fileTable(files) }
+            }.padding(.horizontal, 24).padding(.vertical, 20).frame(maxWidth: 760, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }.background(Theme.canvas)
+    }
+    private var header: some View {
+        HStack(alignment: .top, spacing: 16) {
+            SearchReleaseArtwork.of(item, artworkYear: artworkYear, titleID: titleID, width: 84)
+            VStack(alignment: .leading, spacing: 7) {
+                Text(item.title).font(.title2.bold()).searchSelectable
+                if !item.edition.isEmpty { Text(item.edition).font(.headline).foregroundStyle(.secondary) }
+                if !resolved.tags.isEmpty { SearchTags(tags: resolved.tags) }
+                HStack(spacing: 16) {
+                    if !displayedSize.isEmpty {
+                        Label { Text(verbatim: displayedSize).monospacedDigit() } icon: { Image(systemName: "internaldrive") }
+                    }
+                    if let seeders = item.seeders {
+                        HStack(spacing: 6) {
+                            Circle().fill(seeders >= 10 ? SearchColumns.healthy : seeders > 0 ? SearchColumns.few : SearchColumns.none).frame(width: 8, height: 8)
+                            Text(verbatim: item.availability).monospacedDigit()
+                        }
+                    }
+                }.font(.subheadline.weight(.semibold)).padding(.top, 2)
+                Text(verbatim: resolved.name).font(.caption).foregroundStyle(Theme.muted).lineLimit(3).searchSelectable
+                if let ownership {
+                    Label(LocalizedStringKey(ownership), systemImage: "checkmark.circle.fill").font(.caption.weight(.semibold)).foregroundStyle(Theme.accent)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+    private var actions: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 16) {
+                Button { Task { await add() } } label: {
+                    Label(LocalizedStringKey(added ? "Added to Transmission" : adding ? "Adding…" : "Add torrent"), systemImage: added ? "checkmark.circle.fill" : "plus.circle.fill")
+                        .font(.headline).frame(minWidth: 150)
+                }.buttonStyle(MonoButtonStyle(prominent: true)).disabled(adding || added).keyboardShortcut(.defaultAction)
+                #if os(macOS)
+                Toggle("Add paused", isOn: $paused).toggleStyle(.checkbox).disabled(adding || added)
+                #else
+                Toggle("Add paused", isOn: $paused).toggleStyle(MonoToggleStyle()).fixedSize().disabled(adding || added)
+                #endif
+            }
+            if let message { Text(L10n.text(message)).font(.callout).foregroundStyle(.secondary) }
+        }
+    }
+    private func group<Content: View>(_ title: LocalizedStringKey, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.muted)
+            content()
+        }
+    }
+    /// The files as a table: name (with its tags) and size, a hairline between them.
+    private func fileTable(_ files: [TorrentSearchDetails.File]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Files · \(files.count)").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.muted)
+            LazyVStack(spacing: 0) {
+                ForEach(Array(files.enumerated()), id: \.offset) { index, file in
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(verbatim: file.name).font(.callout).lineLimit(3).searchSelectable
+                            if !file.hints.summary.isEmpty { Text(verbatim: file.hints.summary).font(.caption).foregroundStyle(Theme.muted) }
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                        if let size = file.sizeBytes {
+                            Text(verbatim: ByteCountFormatter.string(fromByteCount: Int64(clamping: size), countStyle: .file))
+                                .font(.callout).monospacedDigit().foregroundStyle(.secondary).fixedSize()
+                        }
+                    }.padding(.horizontal, 14).padding(.vertical, 9)
+                        .overlay(alignment: .top) { if index > 0 { Rectangle().fill(Color.white.opacity(0.07)).frame(height: 0.5).padding(.leading, 14) } }
+                }
+            }.background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+    #endif
+    var body: some View {
+        content.navigationTitle(L10n.text("Release"))
         .task {
             guard let source = item.sources.first(where: { $0.provider == "tpb" }) ?? item.sources.first(where: { $0.provider == "nyaa" }) ?? item.sources.first else { return }
             loading = true; defer { loading = false }
@@ -1861,16 +2020,13 @@ private struct TorrentSearchDetail: View {
             store.notify(message ?? "Torrent added", detail: item.name, torrentHash: resolved.infoHash)
             #if !os(tvOS)
             onAdded()
-            if !embedded { dismiss() }
+            dismiss()
             #endif
         } catch { message = error.localizedDescription }
     }
 }
 
 private extension View {
-    @ViewBuilder func searchDetailTitle(embedded: Bool) -> some View {
-        if embedded { self } else { self.navigationTitle("Release") }
-    }
     @ViewBuilder var searchSelectable: some View {
         #if os(tvOS)
         self
@@ -2175,7 +2331,6 @@ struct CloudShareView: View {
     @Environment(\.dismiss) private var dismiss
     let item: TorrentSearchItem
     let query: String
-    var embedded = false
     @State private var share: CloudShare?
     @State private var loading = true
     @State private var chosen: Set<String> = []
@@ -2277,7 +2432,7 @@ struct CloudShareView: View {
                 Text("This share’s file list is no longer available. Add brings in every video it holds.").foregroundStyle(.secondary)
             }
         }
-        .navigationTitle(embedded ? "" : L10n.text("Quark Drive"))
+        .navigationTitle(L10n.text("Quark Drive"))
         .task(id: item.id) {
             name = Self.libraryName(item.title)
             defer { loading = false }
