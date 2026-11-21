@@ -2329,12 +2329,17 @@ fn byte_range(header: Option<&str>, size: u64) -> Result<(u64, u64)> {
 /// clients' "Needs attention" list (for example, a title waiting to be identified).
 /// Torrents with a finished video the library could not name: its lookup ended in review or
 /// no match, so it is filed nowhere a member would look. Needs attention lists them.
+/// Finished downloads none of whose videos reached the library (DWTS, filed under no title).
+/// A package whose episodes are in the library is not one, though a stray piece without an
+/// episode number waits for review (Battlestar Galactica's "The Oracle.mkv").
 fn unmatched(db: &crate::storage::Database) -> Result<std::collections::HashSet<String>> {
-    Ok(db.rows("SELECT DISTINCT json_extract(document,'$.torrent_hash') AS hash FROM library_assets
-        WHERE json_extract(document,'$.entity_id') IS NULL AND json_extract(document,'$.status') IN ('review','no_match')
-        AND json_extract(document,'$.complete') = 1 AND json_extract(document,'$.available') = 1
+    Ok(db.rows("SELECT json_extract(document,'$.torrent_hash') AS hash FROM library_assets
+        WHERE json_extract(document,'$.torrent_hash') IS NOT NULL
         AND coalesce(json_extract(document,'$.role'),'') != 'extra' AND coalesce(json_extract(document,'$.container'),'') != 'not_media'
-        AND json_extract(document,'$.torrent_hash') IS NOT NULL", [])?
+        GROUP BY hash
+        HAVING sum(json_extract(document,'$.entity_id') IS NOT NULL AND json_extract(document,'$.status') = 'matched') = 0
+        AND sum(json_extract(document,'$.entity_id') IS NULL AND json_extract(document,'$.status') IN ('review','no_match')
+            AND json_extract(document,'$.complete') = 1 AND json_extract(document,'$.available') = 1) > 0", [])?
         .iter().filter_map(|row| row["hash"].as_str().map(str::to_owned)).collect())
 }
 
@@ -3237,6 +3242,19 @@ fn save_torrent_metadata(s: &Service, record: &Value) -> Result<()> {
 #[cfg(test)]
 mod backfill_tests {
     use super::*;
+    #[test]
+    fn only_a_download_with_nothing_in_the_library_needs_its_title() -> Result<()> {
+        let db = crate::storage::Database { connection: rusqlite::Connection::open_in_memory()? };
+        db.connection.execute_batch(include_str!("schema.sql"))?;
+        let video = |id: &str, hash: &str, matched: bool| json!({"id":id,"torrent_hash":hash,"role":"main","complete":true,"available":true,
+            "status": if matched {"matched"} else {"review"}, "entity_id": if matched {json!("show")} else {Value::Null}});
+        for asset in [video("e1","show",true), video("oracle","show",false), video("dwts","lost",false)] {
+            db.connection.execute("INSERT INTO library_assets VALUES(?,?)", rusqlite::params![asset["id"].as_str(), asset.to_string()])?;
+        }
+        assert_eq!(unmatched(&db)?, std::collections::HashSet::from(["lost".to_owned()]));
+        Ok(())
+    }
+
     #[test]
     fn superseded_duplicates_are_removed_unless_they_carry_history_or_a_choice() -> Result<()> {
         let root = std::env::temp_dir().join(format!("torrbaby-superseded-{}",uuid::Uuid::new_v4()));
