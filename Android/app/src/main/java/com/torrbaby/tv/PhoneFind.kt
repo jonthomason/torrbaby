@@ -57,6 +57,11 @@ object Find {
     var results by mutableStateOf<List<JSONObject>?>(null)
     var bySize by mutableStateOf(false)
     var searched = ""
+    /** ✕ in the box: the words and everything found for them go, ready for the next search. */
+    fun clear() {
+        generation++
+        busy = false; note = ""; query = ""; titles = emptyList(); chosen = null; seasons = emptyList(); results = null; searched = ""
+    }
 
     private fun start(label: String): Int { busy = true; note = L10n.t(label); return ++generation }
     private fun failed(request: Int, e: Exception) = main.post { if (request == generation) { busy = false; note = MainActivity.message(e) } }
@@ -163,15 +168,11 @@ private fun Chip(label: String, selected: Boolean, onClick: () -> Unit) = Action
 fun FindPage(openRelease: (JSONObject) -> Unit) {
     val focus = LocalFocusManager.current
     val search = { focus.clearFocus(); Find.findTitles() }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = bottomRoom())) {
+    LazyColumn(Modifier.fillMaxSize().dismissesKeyboard(), contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = bottomRoom())) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(Modifier.fillMaxWidth().height(42.dp).clip(RoundedCornerShape(10.dp)).background(Ink.control).padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
-                    if (Find.query.isEmpty()) Words(L10n.t(if (Find.kind == "movie") "Find a movie" else "Find a TV show"), color = Ink.muted, lines = 1)
-                    BasicTextField(Find.query, { Find.query = it }, Modifier.fillMaxWidth(), singleLine = true,
-                        textStyle = TextStyle(color = Ink.text, fontSize = 16.sp), cursorBrush = SolidColor(Ink.text),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { search() }))
-                }
+                SearchField(Find.query, { Find.query = it }, L10n.t(if (Find.kind == "movie") "Find a movie" else "Find a TV show"),
+                    ImeAction.Search, onAction = { Find.findTitles() }, onClear = { Find.clear() })
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Chip(L10n.t("Movies"), Find.kind == "movie") { Find.kind = "movie"; if (Find.query.isNotBlank()) search() }
                     Chip(L10n.t("TV Shows"), Find.kind == "tv") { Find.kind = "tv"; if (Find.query.isNotBlank()) search() }

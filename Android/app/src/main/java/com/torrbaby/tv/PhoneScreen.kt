@@ -375,14 +375,11 @@ private fun Grid(kind: String, open: (String) -> Unit) {
     val titles = library.filter(kind, search, genre, sort).filter { !hides || !it.watched() }
     val state = rememberLazyGridState(initialFirstVisibleItemIndex = 1)
     val sorts = listOf("Recently added", "Alphabetical", "Release date")
-    LazyVerticalGrid(GridCells.Adaptive(104.dp), Modifier.fillMaxSize(), state, PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = bottomRoom(12)),
+    LazyVerticalGrid(GridCells.Adaptive(104.dp), Modifier.fillMaxSize().dismissesKeyboard(), state, PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = bottomRoom(12)),
         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(10.dp)).background(Ink.control).padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
-                    if (search.isEmpty()) Words(L10n.t("Search movies and TV shows"), color = Ink.muted, lines = 1)
-                    BasicTextField(search, { search = it }, Modifier.fillMaxWidth(), singleLine = true, textStyle = TextStyle(color = Ink.text, fontSize = 15.sp), cursorBrush = SolidColor(Ink.text))
-                }
+                SearchField(search, { search = it }, L10n.t("Search movies and TV shows"))
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Action(if (genre.isEmpty()) L10n.t("All genres") else genre) { choosing = "genre" }
                     Action(L10n.t(sorts[sort])) { choosing = "sort" }
