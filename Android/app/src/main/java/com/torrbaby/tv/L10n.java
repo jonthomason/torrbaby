@@ -397,6 +397,8 @@ final class L10n {
     IDS.put("Incompatible movie or TV show", R.string.ui_32c0f7a837e9);
     IDS.put("Individual torrent limits take precedence.", R.string.ui_fc2d046feac3);
     IDS.put("Initial or emoji", R.string.ui_8bfa1406b66d);
+    IDS.put("Install", R.string.ui_fd6c3ebf7bef);
+    IDS.put("Install %s", R.string.ui_0d5970601d13);
     IDS.put("Interface language", R.string.ui_9407e9ca65ce);
     IDS.put("Internal", R.string.ui_fc9225a1693f);
     IDS.put("Interrupted", R.string.ui_50be3afcff74);
@@ -543,6 +545,7 @@ final class L10n {
     IDS.put("Not enough free space on that drive", R.string.ui_e07feb82ca22);
     IDS.put("Not in the library yet: choose its title", R.string.ui_f804fd4766d0);
     IDS.put("Not needed", R.string.ui_2518be9b9cea);
+    IDS.put("Not now", R.string.ui_e45714907316);
     IDS.put("Not progressing", R.string.ui_0008c8375b5d);
     IDS.put("Not set up", R.string.ui_be8f2e94e7b3);
     IDS.put("Not yet available", R.string.ui_5a28f15df569);
@@ -844,6 +847,7 @@ final class L10n {
     IDS.put("The Pirate Bay", R.string.ui_22b20e9773ff);
     IDS.put("The connection to Transmission was interrupted. Please try again.", R.string.ui_17640422b43a);
     IDS.put("The download is incomplete.", R.string.ui_ceaf21e9d02f);
+    IDS.put("The downloaded update was damaged. Try again.", R.string.ui_aca10e690616);
     IDS.put("The entire package will be hidden from everyone, continue seeding, and be permanently deleted when seeding finishes.", R.string.ui_9a212ea4c5bb);
     IDS.put("The entire package will be hidden now, continue seeding, and be permanently deleted when seeding finishes.", R.string.ui_fa9822b1acbe);
     IDS.put("The file changed. Remove this download and add it again.", R.string.ui_b540d8e8df09);
@@ -858,6 +862,8 @@ final class L10n {
     IDS.put("The server will continue this operation if you close this screen.", R.string.ui_2dee52785f6e);
     IDS.put("The server will retry automatically.", R.string.ui_1bab38b72a4a);
     IDS.put("The torrent is still listed. Refresh in a moment to check whether removal finished.", R.string.ui_6ddf94adca4b);
+    IDS.put("The update could not be downloaded.", R.string.ui_060603305929);
+    IDS.put("The update was not installed.", R.string.ui_92eb241f1780);
     IDS.put("The video stream was interrupted. Check the server and network connection.", R.string.ui_196686e4c2fc);
     IDS.put("These files are already moving", R.string.ui_02b324383658);
     IDS.put("These settings apply to everyone who uses this server.", R.string.ui_6315e169d054);

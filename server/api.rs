@@ -548,6 +548,15 @@ async fn dispatch(
                 .into_response(),
         };
     }
+    // iOS's installer fetches a published build without the app's credentials (updates.rs).
+    if method == Method::GET {
+        if let Some((platform, tag, name)) = crate::updates::requested(uri.path()) {
+            return match crate::updates::file(&s.data_dir, platform, tag, name).await {
+                Ok(response) => response,
+                Err(error) => (StatusCode::NOT_FOUND, Json(json!({"error":error.to_string()}))).into_response(),
+            };
+        }
+    }
     let supplied = headers
         .get("authorization")
         .and_then(|h| h.to_str().ok())
@@ -1726,6 +1735,8 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
             Ok(json!({"name":state["server"]["name"],"id":state["server"]["id"]}))
         }
         // Settings → Connection → Send logs to Diamond: saved under client-logs/ for debugging.
+        ("GET","/v1/updates/ios") => { drop(db); return crate::updates::current(&s.data_dir, "ios"); }
+        ("GET","/v1/updates/android") => { drop(db); return crate::updates::current(&s.data_dir, "android"); }
         ("POST","/v1/diagnostics/logs") => { drop(db); return crate::diagnostics::receive(&s.data_dir, &body); }
         ("POST","/v1/punch") => { drop(db); return crate::punch::TESTS.start(&body).await; }
         ("POST","/v1/direct/ipv6") => { drop(db); return crate::direct::ipv6::expect(&body); }

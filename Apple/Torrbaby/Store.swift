@@ -1388,6 +1388,25 @@ final class Store: ObservableObject {
     }
     /// `polling` marks the periodic refresh; a refresh after a user action does everything
     /// and waits for one already under way so it shows that action.
+    #if os(iOS)
+    /// A newer iPhone/iPad build published on Diamond (server/updates.rs), offered as Install N.
+    struct AppUpdate: Decodable, Equatable { let build: String; let version: String; let manifest: String }
+    @Published private(set) var availableUpdate: AppUpdate?
+    /// Asked when the app comes to the foreground; one small request, no timer.
+    func checkForUpdate() async {
+        guard configured, let update: AppUpdate = try? await request("GET", "/v1/updates/ios", timeout: 10) else { return }
+        let installed = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
+        let newer = (Int(update.build) ?? 0) > installed ? update : nil
+        if availableUpdate != newer { availableUpdate = newer }
+    }
+    /// iOS asks to confirm, downloads the build from Diamond (through ABT) and installs it.
+    func installUpdate() {
+        guard let update = availableUpdate,
+              let manifest = update.manifest.addingPercentEncoding(withAllowedCharacters: .alphanumerics),
+              let url = URL(string: "itms-services://?action=download-manifest&url=" + manifest) else { return }
+        UIApplication.shared.open(url)
+    }
+    #endif
     /// Follows a file removal until the server finishes it, then shows the library without it.
     func follow(_ started: LibraryFileOperation) {
         let known = followedRemovals[started.id] != nil

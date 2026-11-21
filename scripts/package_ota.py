@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import shlex
 import subprocess
 import tempfile
 import urllib.parse
@@ -21,12 +22,37 @@ def atomic(path, data):
     os.replace(tmp, path)
 
 
+DIAMOND_BASE = "https://torrbaby.diamond.abt.jonthomason.com/updates/ios"
+DIAMOND_DATA = "Library/Application Support/Torrbaby/updates/ios"
+
+
+def publish_on_diamond(directory, tag, info, build, digest):
+    """The build goes to Diamond's data folder (server/updates.rs); current.json is written last,
+    so no device is offered a build whose files are not all there."""
+    manifest = {"items": [{"assets": [{"kind": "software-package", "url": DIAMOND_BASE + "/" + tag + "/Torrbaby.ipa"}], "metadata": {"bundle-identifier": info["CFBundleIdentifier"], "bundle-version": info["CFBundleShortVersionString"], "kind": "software", "title": "Torrbaby " + info["CFBundleShortVersionString"] + " (" + build + ")"}}]}
+    current = {"build": build, "version": info["CFBundleShortVersionString"], "sha256": digest,
+               "size": (directory / "Torrbaby.ipa").stat().st_size, "manifest": DIAMOND_BASE + "/" + tag + "/manifest.plist"}
+    with tempfile.TemporaryDirectory(prefix="torrbaby-diamond-") as tmp:
+        staged = Path(tmp) / tag
+        staged.mkdir()
+        subprocess.run(["cp", str(directory / "Torrbaby.ipa"), str(staged / "Torrbaby.ipa")], check=True)
+        (staged / "manifest.plist").write_bytes(plistlib.dumps(manifest))
+        (Path(tmp) / "current.json").write_text(json.dumps(current, indent=2))
+        # current.json arrives under another name and replaces the old one only once the build is in.
+        (Path(tmp) / "current.json").rename(Path(tmp) / "current.json.new")
+        packed = subprocess.run(["tar", "-C", tmp, "-cf", "-", tag, "current.json.new"], check=True, capture_output=True).stdout
+        folder = shlex.quote(DIAMOND_DATA)
+        subprocess.run(["ssh", "diamond", "mkdir -p " + folder + " && cd " + folder + " && tar -xf - && mv current.json.new current.json"
+                        # The five newest builds are kept; older ones go.
+                        + " && ls -d */ | sort -t- -k1,1nr | tail -n +6 | xargs rm -rf --"], input=packed, check=True)
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", required=True, type=Path)
     parser.add_argument("--publish-dir", required=True, type=Path)
     parser.add_argument("--base-url", required=True, help="HTTPS URL serving publish-dir")
     parser.add_argument("--device", action="append", default=[], help="Required registered device UDID; repeat as needed")
+    parser.add_argument("--diamond", action="store_true", help="Also publish the build on Diamond, where the app finds it (Install N)")
     args = parser.parse_args()
     if urllib.parse.urlsplit(args.base_url).scheme != "https":
         parser.error("OTA requires HTTPS")
@@ -85,6 +111,8 @@ def main():
     atomic(destination / "current.json", json.dumps(metadata, indent=2).encode())
     atomic(destination / "manifest.plist", plistlib.dumps(manifest))
     atomic(destination / "index.html", html.encode())
+    if args.diamond:
+        publish_on_diamond(directory, tag, info, build, digest)
     print(json.dumps({"install_page": base + "/index.html", "sha256": digest, "build": build, "profile_expires": metadata["profile_expires"], "devices": len(devices)}, indent=2))
 
 

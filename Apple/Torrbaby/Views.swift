@@ -177,6 +177,22 @@ private struct TorrentDraft: Identifiable {
 }
 
 /// The connection status at the foot of a sidebar. Tapping it opens Settings → Connection.
+#if os(iOS)
+/// "Install 382" when Diamond has a newer build than this one; nothing otherwise.
+struct InstallUpdateButton: View {
+    @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
+    @EnvironmentObject var store: Store
+    var body: some View {
+        if let update = store.availableUpdate {
+            Button { store.installUpdate() } label: {
+                Label(String(format: L10n.text("Install %@"), update.build), systemImage: "arrow.down.app.fill")
+                    .font(.caption.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 30)
+            }.buttonStyle(MonoButtonStyle(prominent: true))
+        }
+    }
+}
+#endif
+
 struct SidebarConnectionStatus: View {
     @ObservedObject private var interfaceLanguage = InterfaceLanguage.shared
     @EnvironmentObject var store: Store
@@ -423,6 +439,9 @@ struct RootView: View {
                 #else
                 sidebarMenu
                 #endif
+                #if os(iOS)
+                InstallUpdateButton().padding(.horizontal, 18)
+                #endif
                 SidebarConnectionStatus {
                     SettingsRequest.shared.page = .connection
                     navigate(Location(section: .settings))
@@ -571,6 +590,9 @@ struct RootView: View {
             // Back in the foreground: everything at once; then the periodic refresh, which
             // checks in fully once a minute and keeps on-screen live data current.
             if phase == .active { store.refreshFullyNext() }
+            #if os(iOS)
+            if phase == .active { Task { await store.checkForUpdate() } }
+            #endif
             while !Task.isCancelled {
                 if phase == .active { await store.refresh(polling: true) }
                 try? await Task.sleep(for: .seconds(store.connectionError == nil ? 5 : 15))

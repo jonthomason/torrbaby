@@ -16,6 +16,9 @@ public class MainActivity extends Activity {
 
   private final ExecutorService io = Executors.newSingleThreadExecutor();
   private Api api;
+  /** A newer build Diamond offers (Updates), for Settings → About. */
+  private org.json.JSONObject update;
+  private android.content.BroadcastReceiver updateStatus;
   private ServerDiscovery discovery;
   private final Handler discoveryHandler = new Handler(Looper.getMainLooper());
   private volatile int connectionGeneration;
@@ -78,6 +81,9 @@ public class MainActivity extends Activity {
   public void onCreate(Bundle state) {
     super.onCreate(state);
     StartupTrace.start(this);
+    updateStatus = Updates.receiver(this, this::error);
+    if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(updateStatus, Updates.filter(), android.content.Context.RECEIVER_NOT_EXPORTED);
+    else registerReceiver(updateStatus, Updates.filter());
     store = new SecureStore(this);
     Relay.watchNetwork(this);
     if (state != null) {
@@ -149,10 +155,40 @@ public class MainActivity extends Activity {
       foregroundView.postInvalidateOnAnimation();
     }
     refreshProfileAppearance();
+    offerUpdate();
     if (!discoveringScreen && api != null && library != null) {
       if (played) { played = false; load(); }
       else refreshLibrary();
     }
+  }
+
+  /** Coming to the front, asks Diamond for a newer build and offers it once per build. */
+  private void offerUpdate() {
+    final Api requested = api;
+    if (requested == null) return;
+    io.execute(() -> {
+      org.json.JSONObject found = Updates.available(requested);
+      runOnUiThread(() -> {
+        if (isDestroyed() || api != requested) return;
+        update = found;
+        if (found != null && Updates.firstOffer(found)) {
+          new AppDialog(this)
+              .setTitle("Torrbaby " + found.optString("version") + " (" + found.optString("build") + ")")
+              .setPositiveButton(L10n.t("Install"), (d, w) -> installUpdate(found))
+              .setNegativeButton(L10n.t("Not now"), null)
+              .show();
+        }
+      });
+    });
+  }
+
+  private void installUpdate(org.json.JSONObject found) {
+    final Api requested = api;
+    if (requested == null) return;
+    io.execute(() -> {
+      try { Updates.install(this, requested, found); }
+      catch (Exception e) { runOnUiThread(() -> error(message(e))); }
+    });
   }
 
   private void refreshProfileAppearance() {
@@ -178,6 +214,7 @@ public class MainActivity extends Activity {
 
   @Override
   protected void onDestroy() {
+    if (updateStatus != null) unregisterReceiver(updateStatus);
     stopDiscovery();
     connectionGeneration++;
     super.onDestroy();
@@ -2372,15 +2409,21 @@ public class MainActivity extends Activity {
           else if (w == 3) settingsPage("Connection", new String[] {"Change server connection", "Disconnect this TV"}, i -> {
             if (i == 0) discover(""); else disconnect();
           });
-          else new AppDialog(this)
-              .setTitle(L10n.t("About"))
+          else about();
+        })
+        .show();
+  }
+
+  private void about() {
+    AppDialog about = new AppDialog(this);
+    about.setTitle(L10n.t("About"))
               .setMessage(L10n.t("Version") + " " + BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")")
               .setNeutralButton(L10n.t("Startup diagnostics"), (x, y) -> new AppDialog(this)
                   .setTitle(L10n.t("Startup timings")).setMessage(StartupTrace.text()).setPositiveButton(L10n.t("Close"), null).show())
-              .setPositiveButton(L10n.t("Close"), null)
-              .show();
-        })
-        .show();
+              .setPositiveButton(L10n.t("Close"), null);
+    final org.json.JSONObject found = update;
+    if (found != null) about.setNegativeButton(String.format(L10n.locale(), L10n.t("Install %s"), found.optString("build")), (x, y) -> installUpdate(found));
+    about.show();
   }
 
   private void settingsPage(String title, String[] items, java.util.function.IntConsumer action) {

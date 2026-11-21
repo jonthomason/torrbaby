@@ -175,7 +175,12 @@ private struct SettingsQuickRows: View {
         } icon: { icon("info", .gray) }
         #else
         LabeledContent {
-            Text(verbatim: AppRelease.description.replacingOccurrences(of: "Version ", with: "")).monospacedDigit().textSelection(.enabled)
+            HStack(spacing: 10) {
+                Text(verbatim: AppRelease.description.replacingOccurrences(of: "Version ", with: "")).monospacedDigit().textSelection(.enabled)
+                #if os(iOS)
+                InstallUpdateButton().fixedSize()
+                #endif
+            }
         } label: {
             Label { Text("Version") } icon: { icon("info", .gray) }
         }

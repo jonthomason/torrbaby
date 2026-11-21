@@ -1078,3 +1078,10 @@ Not in the library yet: choose its title	尚未加入媒体库：请选择片名
 Connected · %@	已连接 · %@
 Hide watched	隐藏已看
 Everything here has been watched.	这里的内容都已看完。
+Install %@	安装 %@
+Install %s	安装 %s
+Install	安装
+Not now	暂不
+The update was not installed.	更新未安装。
+The downloaded update was damaged. Try again.	下载的更新已损坏，请重试。
+The update could not be downloaded.	无法下载更新。

@@ -386,6 +386,8 @@
     <string name="ui_32c0f7a837e9" formatted="false">不兼容的电影或剧集</string>
     <string name="ui_fc2d046feac3" formatted="false">单个种子的限制优先。</string>
     <string name="ui_8bfa1406b66d" formatted="false">首字母或表情符号</string>
+    <string name="ui_fd6c3ebf7bef" formatted="false">安装</string>
+    <string name="ui_0d5970601d13" formatted="false">安装 %s</string>
     <string name="ui_9407e9ca65ce" formatted="false">界面语言</string>
     <string name="ui_fc9225a1693f" formatted="false">内置</string>
     <string name="ui_50be3afcff74" formatted="false">已中断</string>
@@ -532,6 +534,7 @@
     <string name="ui_e07feb82ca22" formatted="false">那块硬盘的可用空间不足</string>
     <string name="ui_f804fd4766d0" formatted="false">尚未加入媒体库：请选择片名</string>
     <string name="ui_2518be9b9cea" formatted="false">不需要</string>
+    <string name="ui_e45714907316" formatted="false">暂不</string>
     <string name="ui_0008c8375b5d" formatted="false">无进展</string>
     <string name="ui_be8f2e94e7b3" formatted="false">未设置</string>
     <string name="ui_5a28f15df569" formatted="false">暂不可用</string>
@@ -833,6 +836,7 @@
     <string name="ui_22b20e9773ff" formatted="false">The Pirate Bay</string>
     <string name="ui_17640422b43a" formatted="false">与 Transmission 的连接已中断，请重试。</string>
     <string name="ui_ceaf21e9d02f" formatted="false">下载不完整。</string>
+    <string name="ui_aca10e690616" formatted="false">下载的更新已损坏，请重试。</string>
     <string name="ui_9a212ea4c5bb" formatted="false">整个下载包将对所有用户隐藏，继续做种，并在做种完成后永久删除。</string>
     <string name="ui_fa9822b1acbe" formatted="false">整个下载包将立即隐藏，继续做种，并在做种完成后永久删除。</string>
     <string name="ui_b540d8e8df09" formatted="false">文件已更改，请移除此下载后重新添加。</string>
@@ -847,6 +851,8 @@
     <string name="ui_2dee52785f6e" formatted="false">关闭此页面后，服务器仍将继续此操作。</string>
     <string name="ui_1bab38b72a4a" formatted="false">服务器将自动重试。</string>
     <string name="ui_6ddf94adca4b" formatted="false">种子仍在列表中，请稍后刷新以确认是否已移除。</string>
+    <string name="ui_060603305929" formatted="false">无法下载更新。</string>
+    <string name="ui_92eb241f1780" formatted="false">更新未安装。</string>
     <string name="ui_196686e4c2fc" formatted="false">视频流已中断，请检查服务器和网络连接。</string>
     <string name="ui_02b324383658" formatted="false">这些文件正在移动</string>
     <string name="ui_6315e169d054" formatted="false">这些设置适用于使用此服务器的所有人。</string>
