@@ -167,6 +167,46 @@ fn moov(source: &Source) -> Result<(u64, Vec<u8>, u64)> {
     let (mask, movie) = result.context("Missing movie metadata")?;
     Ok((mask, movie, at))
 }
+/// A track box with its HEVC sample entry renamed for Apple's players
+/// (media_format::apple_hevc_name), or None when it needs no change. The source file is
+/// never written: a torrent's file must keep its bytes to go on seeding.
+fn apple_track(trak: &[u8]) -> Result<Option<Vec<u8>>> {
+    fn walk(data: &[u8], depth: usize) -> Result<Option<Vec<u8>>> {
+        ensure!(depth < 6, "Unexpected MP4 nesting");
+        let mut changed = false;
+        let mut out = Vec::with_capacity(data.len());
+        for (kind, body) in children(data)? {
+            let rewritten = if [b"mdia", b"minf", b"stbl"].contains(&&kind) {
+                walk(body, depth + 1)?
+            } else if &kind == b"stsd" && body.len() >= 8 {
+                let mut entries = body[..8].to_vec();
+                let mut renamed = false;
+                for (entry, inner) in children(&body[8..])? {
+                    let mut name = entry;
+                    if inner.len() >= 78 {
+                        let configs = children(&inner[78..]).unwrap_or_default();
+                        if let Some(wanted) = crate::media_format::apple_hevc_name(entry, &configs) { name = wanted; renamed = true; }
+                    }
+                    entries.extend(atom(&name, inner));
+                }
+                renamed.then_some(entries)
+            } else {
+                None
+            };
+            changed |= rewritten.is_some();
+            out.extend(atom(&kind, rewritten.as_deref().unwrap_or(body)));
+        }
+        Ok(changed.then_some(out))
+    }
+    walk(trak, 0)
+}
+/// Whether an MP4's video needs its sample entry renamed before Apple's players will show it,
+/// so it is served through a virtual copy rather than directly.
+pub fn needs_apple_names(path: &Path) -> bool {
+    let Ok(source) = Source::file(path) else { return false };
+    let Ok((_, movie, _)) = moov(&source) else { return false };
+    children(&movie).is_ok_and(|boxes| boxes.iter().any(|(kind, data)| kind == b"trak" && matches!(apple_track(data), Ok(Some(_)))))
+}
 fn language(tag: &str) -> u16 {
     let tag = tag.to_ascii_lowercase();
     let code = if tag.starts_with("en") {
@@ -334,19 +374,21 @@ fn track(
 }
 impl Reader {
     pub fn new(source: Source, tracks: &[Caption]) -> Result<Self> {
-        let base = source.len()?;
-        if tracks.is_empty() {
-            return Ok(Self {
-                source,
-                base,
-                mask: None,
-                append: Vec::new(),
-            });
-        }
+        let whole = source.len()?;
+        let passthrough = |source: Source| -> Result<Self> { Ok(Self { source, base: whole, mask: None, append: Vec::new() }) };
+        // A Matroska source is remuxed with Apple's names already.
+        if tracks.is_empty() && matches!(source, Source::Indexed(_)) { return passthrough(source); }
         ensure!(tracks.len() <= 8, "Too many subtitle tracks");
         // Anything after the last box is left out; the captions follow straight after it.
-        let (mask, movie, base) = moov(&source)?;
+        // With no captions to add, a movie box that cannot be read is served as it is (only the
+        // renaming below would have needed it).
+        let (mask, movie, base) = match moov(&source) {
+            Err(_) if tracks.is_empty() => return passthrough(source),
+            found => found?,
+        };
         let boxes = children(&movie)?;
+        let renamed: Vec<Option<Vec<u8>>> = boxes.iter().map(|(kind, data)| if kind == b"trak" { apple_track(data) } else { Ok(None) }).collect::<Result<_>>()?;
+        if tracks.is_empty() && renamed.iter().all(Option::is_none) { return passthrough(source); }
         ensure!(
             !boxes.iter().any(|(k, _)| k == b"mvex"),
             "Fragmented movie unsupported"
@@ -391,8 +433,8 @@ impl Reader {
             next = next.checked_add(1).context("Track ID overflow")?;
         }
         let mut merged = Vec::new();
-        for (kind, data) in boxes {
-            let mut data = data.to_vec();
+        for ((kind, data), renamed) in boxes.into_iter().zip(renamed) {
+            let mut data = renamed.unwrap_or_else(|| data.to_vec());
             if &kind == b"mvhd" {
                 ensure!(data.len() >= 4, "Invalid movie header");
                 let n = data.len();
@@ -540,6 +582,55 @@ mod layout_tests {
         let found = moov(&Source::file(&path)?);
         std::fs::remove_file(&path)?;
         found
+    }
+    /// Star Trek (1966) and Beauty and the Beast (1991): MP4s whose HEVC is named "hev1"
+    /// played sound over a QuickTime logo. The virtual copy names it "hvc1", leaving the source as it is.
+    #[test]
+    fn hev1_video_is_served_as_hvc1_when_its_description_holds_the_parameter_sets() -> Result<()> {
+        let trak = |sets: &[u8]| {
+            let mut config = vec![0u8; 22];
+            config.push(sets.len() as u8);
+            for kind in sets { config.extend([*kind, 0, 1, 0, 2, 0xAA, 0xBB]); }
+            let mut entry = vec![0u8; 78];
+            entry.extend(atom(b"hvcC", &config));
+            let mut stsd = vec![0, 0, 0, 0, 0, 0, 0, 1];
+            stsd.extend(atom(b"hev1", &entry));
+            let mut handler = vec![0u8; 8];
+            handler.extend(b"vide");
+            handler.extend([0u8; 13]);
+            let mut mdia = atom(b"hdlr", &handler);
+            mdia.extend(atom(b"minf", &atom(b"stbl", &atom(b"stsd", &stsd))));
+            let mut header = vec![0u8; 84];
+            header[12..16].copy_from_slice(&1u32.to_be_bytes());
+            let mut trak = atom(b"tkhd", &header);
+            trak.extend(atom(b"mdia", &mdia));
+            trak
+        };
+        let renamed = apple_track(&trak(&[32, 33, 34]))?.expect("renamed");
+        assert!(renamed.windows(4).any(|w| w == b"hvc1") && !renamed.windows(4).any(|w| w == b"hev1"));
+        assert_eq!(renamed.len(), trak(&[32, 33, 34]).len());
+        assert!(apple_track(&renamed)?.is_none());
+        // Without the sets in the description it stays as it is.
+        assert!(apple_track(&trak(&[33, 34]))?.is_none());
+        // Through a whole file: the source keeps "hev1", the virtual copy says "hvc1".
+        let mut file = atom(b"ftyp", b"isom0000");
+        let mut movie = atom(b"mvhd", &[0u8; 100]);
+        movie.extend(atom(b"trak", &trak(&[32, 33, 34])));
+        file.extend(atom(b"moov", &movie));
+        file.extend(atom(b"mdat", &[0; 32]));
+        let path = std::env::temp_dir().join(format!("torrbaby-hev1-{}.mp4", uuid::Uuid::new_v4()));
+        std::fs::write(&path, &file)?;
+        assert!(needs_apple_names(&path));
+        let reader = Reader::new(Source::file(&path)?, &[])?;
+        let mut served = vec![0u8; reader.len() as usize];
+        let mut at = 0;
+        while at < served.len() { let n = reader.read_at(at as u64, &mut served[at..])?; assert!(n > 0); at += n; }
+        assert!(std::fs::read(&path)?.windows(4).any(|w| w == b"hev1"));
+        assert!(served.windows(4).any(|w| w == b"hvc1"));
+        let (_, last, _) = layout(&served)?;
+        assert!(!last.windows(4).any(|w| w == b"hev1"));
+        std::fs::remove_file(&path)?;
+        Ok(())
     }
     #[test]
     fn a_short_tail_that_is_no_box_ends_the_file() -> Result<()> {

@@ -161,6 +161,33 @@ fn report(path: &Path) -> Result<Value> {
     ensure!(status.success(), "Format reading failed");
     Ok(serde_json::from_slice(&bytes)?)
 }
+/// The name Apple's players need for an HEVC video sample entry, given its name and the
+/// configuration boxes inside it, when that differs from the name it has. "hev1" (and Dolby
+/// Vision's "dvhe") allow the parameter sets to sit in the stream instead of the description,
+/// and Apple's players show nothing for them (the sound plays over a QuickTime logo); when the
+/// description does hold the VPS, SPS and PPS, "hvc1" (or "dvh1") is true of the same video.
+/// Dolby Vision that cannot be shown as plain HEVC (profile 5) must be named "dvh1".
+pub fn apple_hevc_name(kind: [u8; 4], configs: &[([u8; 4], &[u8])]) -> Option<[u8; 4]> {
+    if ![*b"hev1", *b"dvhe", *b"hvc1"].contains(&kind) { return None; }
+    let mut sets = std::collections::BTreeSet::new();
+    let mut exclusive = false;
+    for (inner, record) in configs {
+        if inner == b"dvcC" || inner == b"dvvC" { exclusive |= dolby_exclusive(record); }
+        if inner != b"hvcC" || record.len() < 23 { continue; }
+        let mut at = 23;
+        for _ in 0..record[22] {
+            if at + 3 > record.len() { break; }
+            sets.insert(record[at] & 0x3f);
+            let count = u16::from_be_bytes([record[at + 1], record[at + 2]]);
+            at += 3;
+            for _ in 0..count { if at + 2 > record.len() { break; } at += 2 + u16::from_be_bytes([record[at], record[at + 1]]) as usize; }
+        }
+    }
+    let complete = [32u8, 33, 34].iter().all(|kind| sets.contains(kind));
+    let wanted: [u8; 4] = if exclusive || &kind == b"dvhe" { *b"dvh1" } else { *b"hvc1" };
+    // Without the parameter sets in the description the entry stays as it is.
+    (kind != wanted && (complete || &kind == b"hvc1")).then_some(wanted)
+}
 /// A file's Dolby Vision configuration, as the sample-description box an MP4 needs
 /// to say so: the box's name ("dvcC", or "dvvC" from profile 8 up), its 24 bytes
 /// (ETSI TS 103 572 / Dolby's ISOBMFF mapping), and whether the picture can only be

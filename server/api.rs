@@ -971,7 +971,8 @@ async fn handle(s: &Arc<Service>, method: &Method, path: &str, body: Value, prof
                 }
             }
             // By content: Matroska named .mp4 must not be streamed directly to AVFoundation.
-            if captions.is_empty() && !crate::container::is_matroska(&input) {
+            // So must an MP4 whose HEVC is named "hev1": the virtual copy names it "hvc1".
+            if captions.is_empty() && !crate::container::is_matroska(&input) && !crate::virtual_captions::needs_apple_names(&input) {
                 return Ok(json!({"state":"direct", "id":""}));
             }
             return s.virtual_media.prepare(id, input, captions);

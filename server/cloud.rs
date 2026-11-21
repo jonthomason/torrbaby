@@ -358,29 +358,16 @@ pub fn retag_hev1(path: &Path) -> Result<usize> {
         // stsd: version and flags, entry count, then the entries.
         for (kind, entry, end) in boxes(&mut file, body + 8, stop)? {
             if ![*b"hev1", *b"dvhe", *b"hvc1"].contains(&kind) { continue; }
-            let mut sets = std::collections::BTreeSet::new();
-            // Dolby Vision that cannot be shown as plain HEVC (profile 5) must be named "dvh1".
-            let mut exclusive = false;
+            let mut configs = Vec::new();
             for (inner, config, config_end) in boxes(&mut file, entry + 78, end)? {
                 if config_end - config > 1 << 20 { continue; }
                 let mut record = vec![0u8; (config_end - config) as usize];
                 file.seek(SeekFrom::Start(config))?;
                 file.read_exact(&mut record)?;
-                if &inner == b"dvcC" || &inner == b"dvvC" { exclusive |= crate::media_format::dolby_exclusive(&record); }
-                if &inner != b"hvcC" || record.len() < 23 { continue; }
-                let mut at = 23;
-                for _ in 0..record[22] {
-                    if at + 3 > record.len() { break; }
-                    sets.insert(record[at] & 0x3f);
-                    let count = u16::from_be_bytes([record[at + 1], record[at + 2]]);
-                    at += 3;
-                    for _ in 0..count { if at + 2 > record.len() { break; } at += 2 + u16::from_be_bytes([record[at], record[at + 1]]) as usize; }
-                }
+                configs.push((inner, record));
             }
-            let complete = [32u8, 33, 34].iter().all(|kind| sets.contains(kind));
-            // Parameter sets in the description allow the out-of-band names; without them the entry stays as it is.
-            let wanted: [u8; 4] = if exclusive || &kind == b"dvhe" { *b"dvh1" } else { *b"hvc1" };
-            if kind != wanted && (complete || &kind == b"hvc1") {
+            let configs: Vec<([u8; 4], &[u8])> = configs.iter().map(|(k, r)| (*k, r.as_slice())).collect();
+            if let Some(wanted) = crate::media_format::apple_hevc_name(kind, &configs) {
                 file.seek(SeekFrom::Start(entry - 4))?;
                 file.write_all(&wanted)?;
                 retagged += 1;

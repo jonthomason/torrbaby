@@ -425,7 +425,10 @@ impl Manager {
         );
         let revision = crate::subtitle_jobs::revision(&input)?;
         let id: String = Sha256::digest(serde_json::to_vec(&(
-            LAYOUT_VERSION + if dolby(&input) { 1000 * DOLBY_LAYOUT } else { 0 }, asset, &input, &revision, &captions,
+            // An MP4 whose HEVC entry is renamed for Apple's players has other bytes, so another identity.
+            LAYOUT_VERSION + if dolby(&input) { 1000 * DOLBY_LAYOUT } else { 0 }
+                + if !is_mkv(&input) && crate::virtual_captions::needs_apple_names(&input) { 10_000 } else { 0 },
+            asset, &input, &revision, &captions,
         ))?)
         .iter()
         .map(|b| format!("{b:02x}"))
