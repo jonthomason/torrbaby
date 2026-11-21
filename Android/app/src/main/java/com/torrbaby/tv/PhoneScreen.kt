@@ -61,6 +61,7 @@ private sealed interface Page {
     data object Shows : Page
     data object Settings : Page
     data object Find : Page
+    data object Saved : Page
     data class Downloads(val shelf: Shelf) : Page
     data class Transfer(val hash: String) : Page
     data class Release(val item: JSONObject) : Page
@@ -178,7 +179,7 @@ private fun Avatar(person: JSONObject?, size: Int) {
 
 @Composable
 private fun Browser(activity: Activity) {
-    val pages = remember { mutableStateListOf<Page>(Page.Home) }
+    val pages = remember { mutableStateListOf<Page>(if (Phone.offline) Page.Saved else Page.Home) }
     var menu by remember { mutableStateOf(false) }
     BackHandler(enabled = menu || pages.size > 1) { if (menu) menu = false else pages.removeAt(pages.lastIndex) }
     val page = pages.last()
@@ -190,7 +191,7 @@ private fun Browser(activity: Activity) {
             Spacer(Modifier.width(4.dp))
             Words(when (page) {
                 Page.Home -> L10n.t("Home"); Page.Movies -> L10n.t("Movies"); Page.Shows -> L10n.t("TV Shows")
-                Page.Settings -> L10n.t("Settings"); Page.Find -> L10n.t("Find")
+                Page.Settings -> L10n.t("Settings"); Page.Find -> L10n.t("Find"); Page.Saved -> L10n.t("Downloads")
                 is Page.Downloads -> L10n.t(page.shelf.label)
                 is Page.Title, is Page.Transfer, is Page.Release -> ""
             }, 20.sp, FontWeight.Bold, lines = 1)
@@ -203,10 +204,11 @@ private fun Browser(activity: Activity) {
                 Page.Shows -> Grid("tv", open)
                 Page.Settings -> Settings(activity)
                 Page.Find -> FindPage { pages.add(Page.Release(it)) }
+                Page.Saved -> SavedPage(activity)
                 is Page.Release -> ReleasePage(page.item)
                 is Page.Downloads -> DownloadsPage(page.shelf) { pages.add(Page.Transfer(it)) }
                 is Page.Transfer -> TransferDetail(page.hash) { pages.removeAt(pages.lastIndex) }
-                is Page.Title -> TitlePage(activity, page.id)
+                is Page.Title -> TitlePage(activity, page.id) { pages.add(Page.Saved) }
             }
         }
     }
@@ -220,6 +222,17 @@ private fun Menu(current: Page, choose: (Page) -> Unit) {
     Column(Modifier.fillMaxSize().background(Ink.canvas).systemBarsPadding()) {
         Row(Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Words("tb", 26.sp, FontWeight.Black, Ink.brand); Spacer(Modifier.width(8.dp)); Words("torrbaby", 24.sp, FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            // The interface language, at the top right as on the iPhone (AGENTS.md).
+            Row(Modifier.clip(RoundedCornerShape(8.dp)).background(Ink.panel).padding(3.dp)) {
+                for ((code, name) in listOf("en" to "EN", "zh" to "中文")) {
+                    val chosen = L10n.locale().language == code
+                    Box(Modifier.clip(RoundedCornerShape(6.dp)).background(if (chosen) Ink.control else Color.Transparent)
+                        .clickable { if (!chosen) Phone.language(activity, code) }.padding(horizontal = 10.dp, vertical = 5.dp)) {
+                        Words(name, 13.sp, FontWeight.SemiBold, if (chosen) Ink.text else Ink.muted)
+                    }
+                }
+            }
         }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
             MenuGroup(L10n.t("Library")) {
@@ -228,6 +241,7 @@ private fun Menu(current: Page, choose: (Page) -> Unit) {
                     Triple(Page.Find, "Find", Glyph.Search to Color(0xFF5E5CE6)),
                     Triple(Page.Movies, "Movies", Glyph.Film to Color(0xFFFF453A)),
                     Triple(Page.Shows, "TV Shows", Glyph.Tv to Color(0xFFBF5AF2)),
+                    Triple(Page.Saved, "Downloads", Glyph.Save to Color(0xFF30D158)),
                 ).withIndex()) MenuItem(L10n.t(entry.second), entry.third, entry.first == current, first = i == 0) { choose(entry.first) }
             }
             MenuGroup(L10n.t("Torrents")) {
@@ -408,7 +422,7 @@ internal fun Choice(labels: List<String>, selected: Int, dismiss: () -> Unit, ch
 }
 
 @Composable
-private fun TitlePage(activity: Activity, id: String) {
+private fun TitlePage(activity: Activity, id: String, openSaved: () -> Unit) {
     val title = Phone.library?.find(id) ?: return Waiting(L10n.t("Loading library…"))
     val preferred = title.preferred()
     val episodes = title.assets.filter { it.hasSeason && !it.extra() }
@@ -426,7 +440,11 @@ private fun TitlePage(activity: Activity, id: String) {
                 Words(listOf(title.yearLabel(), title.rating).plus(title.genres.take(3)).filter { it.isNotEmpty() }.joinToString(" · "), 13.sp, color = Ink.muted)
                 Spacer(Modifier.height(16.dp))
                 if (preferred != null) {
-                    Action(preferred.playLabel(title), prominent = true, modifier = Modifier.fillMaxWidth()) { Phone.play(activity, title, preferred, false) }
+                    // Play/Resume and Download share a row (AGENTS.md); a series downloads by episode.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Action(preferred.playLabel(title), prominent = true, modifier = Modifier.weight(1f)) { Phone.play(activity, title, preferred, false) }
+                        if (!preferred.hasSeason || title.kind != "tv") { Spacer(Modifier.width(10.dp)); SaveButton(title, preferred, openSaved) }
+                    }
                     if (preferred.position > 0) { Spacer(Modifier.height(10.dp)); Action(L10n.t("Start from Beginning"), modifier = Modifier.fillMaxWidth()) { Phone.play(activity, title, preferred, true) } }
                 }
                 if (title.summary.isNotEmpty()) { Spacer(Modifier.height(16.dp)); Words(title.summary, 14.sp, color = Color.White.copy(alpha = 0.85f)) }
@@ -449,6 +467,7 @@ private fun TitlePage(activity: Activity, id: String) {
                     Words(episode.status(), 12.sp, color = Ink.muted, lines = 1)
                 }
                 if (episode.watched) Words("✓", 15.sp, FontWeight.Bold, Ink.muted)
+                SaveMark(title, episode, openSaved)
             }
         }
     }

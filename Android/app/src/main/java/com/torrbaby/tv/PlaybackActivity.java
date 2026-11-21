@@ -50,6 +50,8 @@ public class PlaybackActivity extends Activity {
   private final ExecutorService io = Executors.newSingleThreadExecutor();
   private final Handler main = new Handler(Looper.getMainLooper());
   private String session = "";
+  /** The saved copy being played (Saved), or null when streaming from Diamond. */
+  private String saved;
   private int sequence = 0;
   private boolean stopped = false, wasPlaying = true, finished = false, ready = false;
   /** A phone or tablet: full screen, double-tap to skip, picture in picture on leaving. */
@@ -90,6 +92,8 @@ public class PlaybackActivity extends Activity {
           try {
             api = new SecureStore(this).load();
             if (api == null) throw new Exception("Link this TV to your server again.");
+            String savedId = getIntent().getStringExtra("saved");
+            if (savedId != null) { playSaved(savedId); return; }
             // Opened straight into playback (Android restarted the app): find the server on
             // the home network first, as the library does, then the relay; no address is saved.
             if (ServerRoute.found.isEmpty()) {
@@ -106,6 +110,9 @@ public class PlaybackActivity extends Activity {
             List<MediaItem.SubtitleConfiguration> subtitles = new ArrayList<>();
             try {
               subtitlePreferences = Subtitles.load(api, getIntent().getStringExtra("title_id"));
+              // Kept for watching saved copies away from the server.
+              if (subtitlePreferences != null)
+                getSharedPreferences("player", MODE_PRIVATE).edit().putString("subtitles", subtitlePreferences.toString()).apply();
             } catch (Exception ignored) {
               subtitlePreferences = null;
             }
@@ -212,7 +219,9 @@ public class PlaybackActivity extends Activity {
     }
     // Authentication stays on the configured origin. Redirects never carry a bearer token to
     // another host.
-    DataSource.Factory factory = () -> new OriginDataSource(api);
+    DataSource.Factory factory = saved != null
+        ? new androidx.media3.datasource.DefaultDataSource.Factory(this)
+        : () -> new OriginDataSource(api);
     player =
         new ExoPlayer.Builder(this)
             .setMediaSourceFactory(
@@ -229,7 +238,7 @@ public class PlaybackActivity extends Activity {
     player.setHandleAudioBecomingNoisy(true);
     view.setPlayer(player);
     Subtitles.apply(subtitlePreferences, player, view.getSubtitleView(), overPicture);
-    mediaSession = new MediaSession.Builder(this, player).setId(session).build();
+    mediaSession = new MediaSession.Builder(this, player).setId(saved != null ? "saved-" + saved : session).build();
     player.addListener(
         new Player.Listener() {
           @Override
@@ -513,6 +522,7 @@ public class PlaybackActivity extends Activity {
                             : language != null && language.startsWith("en") ? "en" : "original");
                   }
                   JSONObject saved = new JSONObject(subtitlePreferences.toString());
+                  getSharedPreferences("player", MODE_PRIVATE).edit().putString("subtitles", saved.toString()).apply();
                   io.execute(
                         () -> {
                           try {
@@ -538,6 +548,7 @@ public class PlaybackActivity extends Activity {
 
   /** {@code completed}: an explicit completion (Next Episode), as at the end of the file. */
   private void report(boolean ended, boolean completed) {
+    if (saved != null) { reportSaved(ended, completed); return; }
     if (player == null || api == null || session.isEmpty() || !ready || (finished && !ended))
       return;
     long duration = player.getDuration();
@@ -556,6 +567,43 @@ public class PlaybackActivity extends Activity {
       io.execute(() -> ProgressQueue.flush(this, api));
     } catch (Exception ignored) {
     }
+  }
+
+  /** A saved copy: where it was left is kept with it and reported to Diamond later (Saved.sync). */
+  private void reportSaved(boolean ended, boolean completed) {
+    if (player == null || !ready || (finished && !ended)) return;
+    long duration = player.getDuration();
+    if (duration <= 0 || duration == C.TIME_UNSET) return;
+    Saved.INSTANCE.progress(saved, api == null ? "" : api.profile, Math.min(player.getCurrentPosition(), duration) / 1000.0,
+        duration / 1000.0, player.isPlaying(), completed || player.getPlaybackState() == Player.STATE_ENDED);
+  }
+
+  /** Plays a copy saved on this phone, without the server. */
+  private void playSaved(String id) {
+    saved = id;
+    SavedItem item = Saved.INSTANCE.item(id);
+    if (item == null || !Saved.INSTANCE.media(item).exists()) {
+      main.post(() -> failure(L10n.t("This download is no longer on this phone.")));
+      return;
+    }
+    try {
+      subtitlePreferences = new JSONObject(getSharedPreferences("player", MODE_PRIVATE).getString("subtitles", "{}"));
+    } catch (Exception e) {
+      subtitlePreferences = null;
+    }
+    creditsStart = item.getCredits();
+    long resume = getIntent().getBooleanExtra("beginning", false) ? 0
+        : (long) (getIntent().getDoubleExtra("position", item.getPosition()) * 1000);
+    MediaItem media = new MediaItem.Builder()
+        .setUri(Uri.fromFile(Saved.INSTANCE.media(item)))
+        .setMediaMetadata(new MediaMetadata.Builder()
+            .setTitle(getIntent().getStringExtra("title"))
+            .setDisplayTitle(getIntent().getStringExtra("name"))
+            .build())
+        .build();
+    main.post(() -> {
+      if (!isFinishing() && !isDestroyed()) prepare(media, localPosition > 0 ? localPosition : resume);
+    });
   }
 
   private boolean hasNextEpisode() {

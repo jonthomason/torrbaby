@@ -48,6 +48,10 @@ final class Updates {
     download(api, update.getString("apk"), apk, update.getString("sha256"));
     PackageInstaller installer = activity.getPackageManager().getPackageInstaller();
     PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+    // Android 12+: an app updating itself may install without the confirmation screen (Android
+    // still asks when it must, as for the first update after a browser install).
+    if (android.os.Build.VERSION.SDK_INT >= 31)
+      params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED);
     params.setAppPackageName(activity.getPackageName());
     int id = installer.createSession(params);
     try (PackageInstaller.Session session = installer.openSession(id)) {

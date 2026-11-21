@@ -25,6 +25,7 @@
     <string name="ui_659748ef61cf" formatted="false">剩余 %d 分钟</string>
     <string name="ui_9b722d3ba900" formatted="false">可用 %s，共 %s</string>
     <string name="ui_3fd293a9d615" formatted="false">%s / %s</string>
+    <string name="ui_4de3ded5eecd" formatted="false">已用 %s · 可用 %s</string>
     <string name="ui_c428b17e2512" formatted="false">1 个下载</string>
     <string name="ui_a6456c91027d" formatted="false">1 个文件</string>
     <string name="ui_54fc19e5c9f4" formatted="false">1 集</string>
@@ -277,6 +278,7 @@
     <string name="ui_4d53d7ff3f86" formatted="false">下载特别篇</string>
     <string name="ui_9f86fc7f9614" formatted="false">下载和做种更新</string>
     <string name="ui_95efb337ce26" formatted="false">下载完成</string>
+    <string name="ui_01125e1be1f5" formatted="false">下载失败</string>
     <string name="ui_e0d24db8d04c" formatted="false">下载失败，请重新连接后再试。</string>
     <string name="ui_a89d78db8f1d" formatted="false">优先下载</string>
     <string name="ui_20aeeeb840f5" formatted="false">下载已中断，请点击继续。</string>
@@ -552,6 +554,7 @@
     <string name="ui_0008c8375b5d" formatted="false">无进展</string>
     <string name="ui_be8f2e94e7b3" formatted="false">未设置</string>
     <string name="ui_5a28f15df569" formatted="false">暂不可用</string>
+    <string name="ui_268b9b986f59" formatted="false">尚无下载</string>
     <string name="ui_76216f7884fd" formatted="false">这里没有内容</string>
     <string name="ui_602f15feebf4" formatted="false">没有可添加的内容</string>
     <string name="ui_753a22b2eb61" formatted="false">通知</string>
@@ -661,6 +664,7 @@
     <string name="ui_01d9cc52a205" formatted="false">移除 %d 个种子？</string>
     <string name="ui_cd1bd819178d" formatted="false">移除硬盘</string>
     <string name="ui_a8cc3b78d828" formatted="false">移除夸克登录</string>
+    <string name="ui_14774251de5e" formatted="false">删除下载</string>
     <string name="ui_b589f73a82dc" formatted="false">从继续观看中移除</string>
     <string name="ui_727db09f06c8" formatted="false">要移除这块硬盘吗？</string>
     <string name="ui_63db985f6027" formatted="false">移除种子</string>
@@ -884,6 +888,7 @@
     <string name="ui_fa5a6dd9d249" formatted="false">此设备</string>
     <string name="ui_6aacdc553205" formatted="false">此设备无法解码该视频或音频格式。</string>
     <string name="ui_63f0d417cbbf" formatted="false">此下载无法就地更新。请删除后重新下载。</string>
+    <string name="ui_c8d8ca7116dc" formatted="false">此下载已不在这部手机上。</string>
     <string name="ui_9e9f1ebdec89" formatted="false">这块硬盘已在使用中</string>
     <string name="ui_be4dda23e02a" formatted="false">这块硬盘未连接。移除后，其中的影片仍以离线状态保留在媒体库中，以便重新下载。</string>
     <string name="ui_9f9b021c3d1c" formatted="false">这块硬盘是只读的</string>
@@ -996,6 +1001,7 @@
     <string name="ui_924884106540" formatted="false">正在等待批准…</string>
     <string name="ui_99c90cff2803" formatted="false">等待连接</string>
     <string name="ui_d1884a2d21c7" formatted="false">等待识别影片后才能移入媒体库，请选择正确的片名</string>
+    <string name="ui_6f118d2eeee3" formatted="false">等待网络</string>
     <string name="ui_0736f273254e" formatted="false">等待节点</string>
     <string name="ui_83ed73bbc425" formatted="false">等待播放结束</string>
     <string name="ui_64189e6dc1d9" formatted="false">正在等待播放停止</string>

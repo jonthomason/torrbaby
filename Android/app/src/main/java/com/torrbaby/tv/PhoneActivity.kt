@@ -17,6 +17,8 @@ import androidx.activity.enableEdgeToEdge
 class PhoneActivity : ComponentActivity() {
     private var updateStatus: BroadcastReceiver? = null
 
+    override fun attachBaseContext(base: Context) { super.attachBaseContext(L10n.wrap(base)) }
+
     override fun onCreate(saved: Bundle?) {
         enableEdgeToEdge(SystemBarStyle.dark(Color.TRANSPARENT), SystemBarStyle.dark(Color.TRANSPARENT))
         super.onCreate(saved)

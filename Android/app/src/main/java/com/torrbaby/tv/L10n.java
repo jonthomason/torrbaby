@@ -36,6 +36,7 @@ final class L10n {
     IDS.put("%dm left", R.string.ui_659748ef61cf);
     IDS.put("%s free of %s", R.string.ui_9b722d3ba900);
     IDS.put("%s of %s", R.string.ui_3fd293a9d615);
+    IDS.put("%s used · %s free", R.string.ui_4de3ded5eecd);
     IDS.put("1 DOWNLOAD", R.string.ui_c428b17e2512);
     IDS.put("1 FILE", R.string.ui_a6456c91027d);
     IDS.put("1 episode", R.string.ui_54fc19e5c9f4);
@@ -288,6 +289,7 @@ final class L10n {
     IDS.put("Download Specials", R.string.ui_4d53d7ff3f86);
     IDS.put("Download and seeding updates", R.string.ui_9f86fc7f9614);
     IDS.put("Download complete", R.string.ui_95efb337ce26);
+    IDS.put("Download failed", R.string.ui_01125e1be1f5);
     IDS.put("Download failed. Reconnect and try again.", R.string.ui_e0d24db8d04c);
     IDS.put("Download first", R.string.ui_a89d78db8f1d);
     IDS.put("Download interrupted. Tap resume.", R.string.ui_20aeeeb840f5);
@@ -563,6 +565,7 @@ final class L10n {
     IDS.put("Not progressing", R.string.ui_0008c8375b5d);
     IDS.put("Not set up", R.string.ui_be8f2e94e7b3);
     IDS.put("Not yet available", R.string.ui_5a28f15df569);
+    IDS.put("Nothing downloaded yet", R.string.ui_268b9b986f59);
     IDS.put("Nothing here", R.string.ui_76216f7884fd);
     IDS.put("Nothing to add", R.string.ui_602f15feebf4);
     IDS.put("Notifications", R.string.ui_753a22b2eb61);
@@ -672,6 +675,7 @@ final class L10n {
     IDS.put("Remove %d torrents?", R.string.ui_01d9cc52a205);
     IDS.put("Remove Drive", R.string.ui_cd1bd819178d);
     IDS.put("Remove Quark login", R.string.ui_a8cc3b78d828);
+    IDS.put("Remove download", R.string.ui_14774251de5e);
     IDS.put("Remove from Continue Watching", R.string.ui_b589f73a82dc);
     IDS.put("Remove this drive?", R.string.ui_727db09f06c8);
     IDS.put("Remove torrent", R.string.ui_63db985f6027);
@@ -895,6 +899,7 @@ final class L10n {
     IDS.put("This device", R.string.ui_fa5a6dd9d249);
     IDS.put("This device could not decode the video or audio format.", R.string.ui_6aacdc553205);
     IDS.put("This download can't be updated in place. Delete it and download it again.", R.string.ui_63f0d417cbbf);
+    IDS.put("This download is no longer on this phone.", R.string.ui_c8d8ca7116dc);
     IDS.put("This drive is already in use", R.string.ui_9e9f1ebdec89);
     IDS.put("This drive is not connected. If you remove it, its titles stay in the library as offline, so they can be downloaded again.", R.string.ui_be4dda23e02a);
     IDS.put("This drive is read-only", R.string.ui_9f9b021c3d1c);
@@ -1007,6 +1012,7 @@ final class L10n {
     IDS.put("Waiting for approval…", R.string.ui_924884106540);
     IDS.put("Waiting for connection", R.string.ui_99c90cff2803);
     IDS.put("Waiting for media identification before moving to the library", R.string.ui_d1884a2d21c7);
+    IDS.put("Waiting for network", R.string.ui_6f118d2eeee3);
     IDS.put("Waiting for peers", R.string.ui_0736f273254e);
     IDS.put("Waiting for playback to finish", R.string.ui_83ed73bbc425);
     IDS.put("Waiting for playback to stop", R.string.ui_64189e6dc1d9);

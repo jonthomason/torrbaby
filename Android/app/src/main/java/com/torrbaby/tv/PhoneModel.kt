@@ -40,6 +40,8 @@ object Phone {
     var pairingCode by mutableStateOf<Bitmap?>(null)
     var pairingStatus by mutableStateOf("")
     var update by mutableStateOf<JSONObject?>(null)
+    /** The server could not be reached at the start: only saved copies are shown. */
+    var offline by mutableStateOf(false)
     /** Bumped by each new linking attempt; an older one's thread stops. */
     private var generation = 0
 
@@ -48,6 +50,11 @@ object Phone {
         app = context.applicationContext
         Api.platform = "Android"
         Relay.watchNetwork(app)
+        Saved.attach(app)
+        // Offline at the start: back to the server as soon as a network appears.
+        (app.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).registerNetworkCallback(Saved.realNetworks, object : android.net.ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: android.net.Network) { post { if (offline) start() } }
+        })
         start()
     }
 
@@ -59,14 +66,35 @@ object Phone {
         val saved = SecureStore(app).load()
         if (saved == null) { stage = Stage.Setup; findHome(); return }
         stage = if (library == null) Stage.Starting else stage
+        // No network at all: straight to what is saved on the phone, without waiting for timeouts.
+        if (!anyNetwork() && Saved.items.isNotEmpty() && saved.profile.isNotEmpty()) {
+            offline = true; stage = Stage.Ready; problem = L10n.t("Offline"); return
+        }
         io.execute {
             val base = ServerRoute.locate(app, saved.client, saved.token, 8000)
             post {
-                if (base.isEmpty()) { problem = L10n.t("Your server is not answering. Check this phone’s internet connection."); return@post }
+                if (base.isEmpty()) {
+                    problem = L10n.t("Your server is not answering. Check this phone’s internet connection.")
+                    // Away from any network the saved copies can still be watched.
+                    if (Saved.items.isNotEmpty() && saved.profile.isNotEmpty()) { offline = true; stage = Stage.Ready }
+                    return@post
+                }
+                offline = false
                 use(Api(base, saved.token, saved.client, saved.profile, saved.profileName).also { it.profileAppearance = saved.profileAppearance })
                 if (!Relay.isRelay(base)) learnAtHome(base)
                 if (saved.profile.isEmpty()) chooseProfile(false) else { stage = Stage.Ready; refresh() }
             }
+        }
+    }
+
+    /** A Wi-Fi, mobile or wired network (a VPN such as ABT stays up without one). */
+    @Suppress("DEPRECATION")
+    private fun anyNetwork(): Boolean {
+        val connectivity = app.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        return connectivity.allNetworks.any { network ->
+            connectivity.getNetworkCapabilities(network)?.let {
+                it.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) && !it.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)
+            } ?: false
         }
     }
 
@@ -235,6 +263,8 @@ object Phone {
         }
         checkForUpdate()
         Torrents.refresh()
+        Saved.kick()
+        Saved.sync()
     }
 
     private fun failed(e: Exception) = post {
@@ -245,6 +275,11 @@ object Phone {
     // Playback --------------------------------------------------------------------------------
 
     fun play(activity: Activity, title: Library.Title, asset: Library.Asset, beginning: Boolean) {
+        // A copy on the phone plays from there, from where the library says it was left.
+        Saved.ready(asset.id)?.let { copy ->
+            val position = if (asset.lastPlayed >= copy.recordedAt) asset.position else copy.position
+            playSaved(activity, copy, beginning, position); return
+        }
         if (asset.offline) { problem = L10n.t("This title is on a drive that is not connected"); return }
         if (!asset.complete) { problem = L10n.t("This media file is not yet available on the server."); return }
         val ids = ArrayList<String>(); val names = ArrayList<String>(); val headings = ArrayList<String>()
@@ -255,6 +290,20 @@ object Phone {
             .putExtra("asset", asset.id).putExtra("title_id", title.id).putExtra("title", title.title)
             .putExtra("name", asset.label()).putExtra("heading", asset.heading(title)).putExtra("beginning", beginning)
             .putStringArrayListExtra("queue_ids", ids).putStringArrayListExtra("queue_names", names).putStringArrayListExtra("queue_headings", headings))
+    }
+
+    fun playSaved(activity: Activity, copy: SavedItem, beginning: Boolean, position: Double = copy.position) {
+        activity.startActivity(Intent(activity, PlaybackActivity::class.java)
+            .putExtra("saved", copy.id).putExtra("asset", copy.assetId).putExtra("title_id", copy.titleId).putExtra("title", copy.title)
+            .putExtra("name", copy.label).putExtra("heading", copy.heading).putExtra("beginning", beginning).putExtra("position", position))
+    }
+
+    /** Switch the interface language: the screens are made again, and titles read in it. */
+    fun language(activity: Activity, code: String) {
+        activity.getSharedPreferences("interface", 0).edit().putString("language", code).apply()
+        library = null
+        activity.recreate()
+        refresh()
     }
 
     // Updates (server/updates.rs) ----------------------------------------------------------------

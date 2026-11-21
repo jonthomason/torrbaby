@@ -29,7 +29,10 @@ One APK: TVs open the remote's screens (MainActivity), phones and tablets the iP
   reads the version code from the APK itself). It also puts the APK on Torrbaby's install page
   and in `~/.cache/miyu/ota/torrbaby-android/` for the OTA Installs page, which shows Android
   apps to an Android browser (no New mark: the app offers its own updates).
-- Phones show Install N in the menu and in Settings beside Version.
+- Phones show Install N in the menu and in Settings beside Version. From build 132 the app asks
+  Android to install its own updates without the confirmation screen (Android 12+,
+  `USER_ACTION_NOT_REQUIRED`); Android still asks when it must, as for the first update after
+  installing from the browser.
 - Coming to the front, the TV app reads `GET /v1/updates/android`; a newer build is offered once
   per run (Install / Not now) and in Settings → About. The APK is downloaded from Diamond,
   checked against the published SHA-256 and handed to Android's installer, which asks on the TV.

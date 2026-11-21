@@ -1109,3 +1109,11 @@ Remove “%s”?	移除“%s”？
 Track %d	轨道 %d
 %d channel	%d 声道
 %d channels	%d 声道
+Remove download	删除下载
+%s used · %s free	已用 %s · 可用 %s
+Nothing downloaded yet	尚无下载
+Download failed	下载失败
+Resume download	继续下载
+Pause download	暂停下载
+Waiting for network	等待网络
+This download is no longer on this phone.	此下载已不在这部手机上。
